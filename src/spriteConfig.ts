@@ -44,6 +44,7 @@ export class SpriteConfigTool {
   private statsTxt: Phaser.GameObjects.Text;
   private hintTxt: Phaser.GameObjects.Text;
   private originOf: (key: string) => { x: number; y: number };
+  private uiCam: Phaser.Cameras.Scene2D.Camera;
 
   constructor(scene: Phaser.Scene, originOf: (key: string) => { x: number; y: number }) {
     this.scene = scene;
@@ -89,6 +90,24 @@ export class SpriteConfigTool {
     ]);
     this.root.setDepth(DEPTH).setScrollFactor(0);
 
+    this.uiCam = scene.cameras.add(0, 0, w, h, false, "spriteRig");
+    this.uiCam.setScroll(0, 0);
+    this.uiCam.setZoom(1);
+    this.uiCam.transparent = true;
+    this.uiCam.setVisible(false);
+    scene.cameras.main.ignore(this.root);
+    for (const child of scene.children.list) {
+      if (child !== this.root) this.uiCam.ignore(child);
+    }
+    scene.events.on("addedtoscene", (go: Phaser.GameObjects.GameObject) => {
+      if (go !== this.root) this.uiCam.ignore(go);
+    });
+    scene.scale.on("resize", (gameSize: Phaser.Structs.Size) => {
+      this.uiCam.setSize(gameSize.width, gameSize.height);
+      this.dim.setSize(gameSize.width, gameSize.height);
+      if (this.open) this.refreshPreview();
+    });
+
     scene.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
       if (!this.open) return;
       if (p.x < 210) {
@@ -114,6 +133,7 @@ export class SpriteConfigTool {
     this.statsTxt.setVisible(this.open);
     this.hintTxt.setVisible(this.open);
     this.scene.input.setDefaultCursor(this.open ? "crosshair" : "none");
+    this.uiCam.setVisible(this.open);
     if (this.open) this.refreshPreview();
     else this.overlay.clear();
   }
@@ -222,7 +242,7 @@ export class SpriteConfigTool {
 
   private uvAt(p: Phaser.Input.Pointer): { uvx: number; uvy: number; px: number; py: number } | null {
     const spr = this.preview;
-    const lp = spr.getLocalPoint(p.worldX, p.worldY);
+    const lp = spr.getLocalPoint(p.x, p.y, undefined, this.uiCam);
     if (lp.x < -0.5 || lp.y < -0.5 || lp.x > spr.width + 0.5 || lp.y > spr.height + 0.5) return null;
     const px = lp.x;
     const py = lp.y;

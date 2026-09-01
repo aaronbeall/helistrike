@@ -54,6 +54,7 @@ export function bakeAll(textures: Phaser.Textures.TextureManager): void {
   add(textures, "smoke", drawSmoke());
   add(textures, "muzzle", drawMuzzle());
   add(textures, "reticle", drawReticle());
+  add(textures, "reticle_bore", drawBoreDot());
   add(textures, "lock", drawLock());
   add(textures, "minimap_mask", drawMinimapMask());
   add(textures, "track", drawTrack());
@@ -568,23 +569,36 @@ function drawMuzzle(): HTMLCanvasElement {
 }
 
 function drawReticle(): HTMLCanvasElement {
-  const c = canvas(48, 48);
+  const c = canvas(96, 96);
   const g = ctxOf(c);
-  g.strokeStyle = "rgba(232,184,74,0.9)";
-  g.lineWidth = 1.5;
+  const cx = 48;
+  const cy = 48;
+  g.strokeStyle = "#e8b84a";
+  g.lineWidth = 2;
+  g.lineCap = "butt";
   g.beginPath();
-  g.arc(24, 24, 16, 0, Math.PI * 2);
+  g.arc(cx, cy, 34, 0, Math.PI * 2);
   g.stroke();
   g.beginPath();
-  g.moveTo(24, 4);
-  g.lineTo(24, 12);
-  g.moveTo(24, 36);
-  g.lineTo(24, 44);
-  g.moveTo(4, 24);
-  g.lineTo(12, 24);
-  g.moveTo(36, 24);
-  g.lineTo(44, 24);
+  g.moveTo(cx, 6);
+  g.lineTo(cx, 26);
+  g.moveTo(cx, 70);
+  g.lineTo(cx, 90);
+  g.moveTo(6, cy);
+  g.lineTo(26, cy);
+  g.moveTo(70, cy);
+  g.lineTo(90, cy);
   g.stroke();
+  return c;
+}
+
+function drawBoreDot(): HTMLCanvasElement {
+  const c = canvas(10, 10);
+  const g = ctxOf(c);
+  g.beginPath();
+  g.arc(5, 5, 3.2, 0, Math.PI * 2);
+  g.fillStyle = "rgba(232, 56, 48, 0.5)";
+  g.fill();
   return c;
 }
 

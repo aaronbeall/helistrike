@@ -52,6 +52,8 @@ export interface Shot {
   guided?: boolean;
 }
 
+export type SparkKind = "flame" | "spark" | "dirt" | "splash";
+
 export interface Spark {
   x: number;
   y: number;
@@ -63,6 +65,9 @@ export interface Spark {
   max: number;
   scale: number;
   bounces: number;
+  kind: SparkKind;
+  tint: number;
+  additive: boolean;
 }
 
 export interface Frag {

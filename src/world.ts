@@ -130,10 +130,21 @@ export function sampleHeight(world: WorldData, x: number, y: number): number {
 }
 
 export function isWater(world: WorldData, x: number, y: number): boolean {
+  const b = sampleBiomeId(world, x, y);
+  return b === BIOME_ID.water || b === BIOME_ID.river;
+}
+
+export function sampleBiome(world: WorldData, x: number, y: number): Biome {
+  const id = sampleBiomeId(world, x, y);
+  return (
+    (["water", "river", "sand", "grass", "forest", "rock", "peak"] as const)[id] ?? "grass"
+  );
+}
+
+function sampleBiomeId(world: WorldData, x: number, y: number): number {
   const tx = Phaser.Math.Clamp(Math.floor((x / WORLD) * TEX), 0, TEX - 1);
   const ty = Phaser.Math.Clamp(Math.floor((y / WORLD) * TEX), 0, TEX - 1);
-  const b = world.biome[ty * TEX + tx]!;
-  return b === BIOME_ID.water || b === BIOME_ID.river;
+  return world.biome[ty * TEX + tx]!;
 }
 
 export const Z_LIFT = 0.05;

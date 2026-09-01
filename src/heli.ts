@@ -99,7 +99,7 @@ export class Heli {
     } else {
       this.angVel *= Math.pow(0.04, dt);
     }
-    this.gunAngle = Phaser.Math.Angle.RotateTo(this.gunAngle, desired, 16 * dt);
+    this.gunAngle = Phaser.Math.Angle.RotateTo(this.gunAngle, desired, 6.4 * dt);
 
     const ca = Math.cos(this.angle);
     const sa = Math.sin(this.angle);
