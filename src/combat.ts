@@ -85,6 +85,9 @@ export interface Frag {
   gravity?: boolean;
   bounces: number;
   trailOnly?: boolean;
+  trailR: number;
+  trailFade?: number;
+  trailFadeMax?: number;
 }
 
 let nid = 1;

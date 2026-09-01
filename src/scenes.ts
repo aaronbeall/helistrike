@@ -293,6 +293,7 @@ export class MissionScene extends Phaser.Scene {
       speed: { min: 10, max: 70 },
       scale: { start: 0.6, end: 2.4 },
       alpha: { start: 0.55, end: 0 },
+      gravityY: -28,
       emitting: false,
     });
     this.smoke.setDepth(Layer.WORLD);
@@ -309,6 +310,7 @@ export class MissionScene extends Phaser.Scene {
       speed: { min: 8, max: 40 },
       scale: { start: 0.7, end: 0.1 },
       alpha: { start: 0.9, end: 0 },
+      gravityY: -36,
       emitting: false,
     });
     this.flame.setDepth(Layer.WORLD);
@@ -317,14 +319,26 @@ export class MissionScene extends Phaser.Scene {
       speed: { min: 6, max: 28 },
       scale: { start: 0.4, end: 1.3 },
       alpha: { start: 0.5, end: 0 },
+      gravityY: -28,
       emitting: false,
     });
     this.hurtSmoke.setDepth(Layer.WORLD);
     this.burn = this.add.particles(0, 0, "flame", {
-      lifespan: 280,
-      speed: { min: 6, max: 28 },
-      scale: { start: 0.55, end: 0.08 },
-      alpha: { start: 0.95, end: 0 },
+      lifespan: { min: 240, max: 420 },
+      speed: { min: 2, max: 14 },
+      scale: {
+        onEmit: (p: Phaser.GameObjects.Particles.Particle) => {
+          const s = 0.38 + Math.pow(Math.random(), 0.65) * 0.9;
+          (p as Phaser.GameObjects.Particles.Particle & { s0?: number }).s0 = s;
+          return s;
+        },
+        onUpdate: (p: Phaser.GameObjects.Particles.Particle, _k: string, t: number) =>
+          ((p as Phaser.GameObjects.Particles.Particle & { s0?: number }).s0 ?? 1) * (1 - t * 0.9),
+      },
+      alpha: { start: 1, end: 0 },
+      blendMode: "ADD",
+      tint: [0xfff4c0, 0xff9a32, 0xff5a18],
+      gravityY: -40,
       emitting: false,
     });
     this.burn.setDepth(Layer.WORLD);
@@ -334,8 +348,8 @@ export class MissionScene extends Phaser.Scene {
       scale: { start: 1.9, end: 0.18 },
       alpha: { start: 0.88, end: 0 },
       blendMode: "ADD",
+      gravityY: -34,
       emitting: false,
-      gravityY: -50,
     });
     this.blastFire.setDepth(Layer.WORLD);
     this.fragSmoke = this.add.particles(0, 0, "smoke", {
@@ -343,6 +357,7 @@ export class MissionScene extends Phaser.Scene {
       speed: { min: 8, max: 36 },
       scale: { start: 0.35, end: 1.4 },
       alpha: { start: 0.5, end: 0 },
+      gravityY: -30,
       emitting: false,
     });
     this.fragSmoke.setDepth(Layer.WORLD);
@@ -653,15 +668,20 @@ export class MissionScene extends Phaser.Scene {
     g.clear();
     const dx = x1 - x0;
     const dy = y1 - y0;
-    if (dx * dx + dy * dy < 36) return;
-    const segs = 28;
-    for (let i = 0; i < segs; i++) {
-      const t0 = i / segs;
-      const t1 = (i + 1) / segs;
-      const a = t1 * t1 * 0.42;
-      g.lineStyle(1, 0x4dff62, a);
-      g.lineBetween(x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1);
+    if (dx * dx + dy * dy >= 36) {
+      const segs = 28;
+      for (let i = 0; i < segs; i++) {
+        const t0 = i / segs;
+        const t1 = (i + 1) / segs;
+        const a = t1 * t1 * 0.42;
+        g.lineStyle(1, 0x4dff62, a);
+        g.lineBetween(x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1);
+      }
     }
+    g.fillStyle(0x5cff6a, 0.55);
+    g.fillCircle(x1, y1, 3.1);
+    g.fillStyle(0xd8ffc4, 1);
+    g.fillCircle(x1, y1, 1.7);
   }
 
   worldToHud(wx: number, wy: number): { x: number; y: number } {
@@ -890,7 +910,8 @@ export class MissionScene extends Phaser.Scene {
       s.x += s.vx * dt;
       s.y += s.vy * dt;
       s.z += s.vz * dt;
-      s.vz -= Z_GRAVITY * dt;
+      if (s.kind === "dirt" || s.kind === "spark") s.vz -= Z_GRAVITY * dt;
+      else if (s.kind === "flame") s.vz += 90 * dt;
       s.vx *= drag;
       s.vy *= drag;
       s.vz *= zDrag;
@@ -1119,8 +1140,8 @@ export class MissionScene extends Phaser.Scene {
     const sy = y - screenLift(z);
     if (he) this.heFireBurst(x, y, z, dx, dy, dz, blast);
     if (!water) {
-      this.smoke.setDepth(worldDepth(z, 1));
-      this.smoke.emitParticleAt(x, sy, he ? 16 : objectHit ? 6 : 8);
+      this.smoke.setDepth(worldDepth(z, 0.2));
+      this.smoke.emitParticleAt(x, sy + 12, he ? 16 : objectHit ? 6 : 8);
     }
     this.shake = Math.min(8, this.shake + blast * (he ? 0.055 : 0.028));
     if (!he) {
@@ -1209,8 +1230,15 @@ export class MissionScene extends Phaser.Scene {
         gravity: true,
         bounces: Math.random() < 0.4 ? 1 : 0,
         trailOnly: true,
+        trailR: 3 + Math.random() * 9,
       });
     }
+  }
+
+  texTrailR(key: string): number {
+    if (!this.textures.exists(key)) return 10;
+    const src = this.textures.get(key).getSourceImage() as { width: number; height: number };
+    return Math.max(4, Math.max(src.width, src.height) * 0.18);
   }
 
   hurt(u: Unit, dmg: number): void {
@@ -1223,13 +1251,16 @@ export class MissionScene extends Phaser.Scene {
     u.dead = true;
     const hz = u.z + heightOf(u.kind) * 0.5;
     this.heFireBurst(u.x, u.y, hz, 0, 0, 1, Math.max(42, radius(u.kind) * 2.4));
-    this.smoke.setDepth(worldDepth(u.z, 1));
-    this.smoke.emitParticleAt(u.x, u.y - screenLift(u.z), 16);
+    this.smoke.setDepth(worldDepth(u.z, 0.2));
+    this.smoke.emitParticleAt(u.x, u.y - screenLift(u.z) + 12, 16);
     this.shake = Math.min(10, this.shake + 3);
     const n = u.kind === "soldier" ? 4 : u.kind === "bunker" || u.kind === "radar" ? 16 : 10;
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
       const sp = 55 + Math.random() * 200;
+      const key = this.textures.exists(FRAG_KEYS[i % FRAG_KEYS.length]!)
+        ? FRAG_KEYS[i % FRAG_KEYS.length]!
+        : "frag_metal";
       this.frags.push({
         x: u.x,
         y: u.y,
@@ -1240,12 +1271,11 @@ export class MissionScene extends Phaser.Scene {
         angle: a,
         spin: (Math.random() - 0.5) * 10,
         life: 0.45 + Math.random() * 0.4,
-        key: this.textures.exists(FRAG_KEYS[i % FRAG_KEYS.length]!)
-          ? FRAG_KEYS[i % FRAG_KEYS.length]!
-          : "frag_metal",
+        key,
         settled: false,
         gravity: true,
         bounces: Math.random() < 1 / 3 ? 2 + ((Math.random() * 2) | 0) : 0,
+        trailR: this.texTrailR(key),
       });
     }
     if (u.kind !== "heli" && u.kind !== "boat") {
@@ -1272,6 +1302,7 @@ export class MissionScene extends Phaser.Scene {
       );
       const a = Math.random() * Math.PI * 2;
       const throwSp = 90 + Math.random() * 110;
+      const turretKey = this.textures.exists("hulk_tank_turret") ? "hulk_tank_turret" : "tank_turret";
       this.frags.push({
         x: u.x,
         y: u.y,
@@ -1282,10 +1313,11 @@ export class MissionScene extends Phaser.Scene {
         angle: u.turret + Math.PI / 2,
         spin: (Math.random() - 0.5) * 10,
         life: 5,
-        key: this.textures.exists("hulk_tank_turret") ? "hulk_tank_turret" : "tank_turret",
+        key: turretKey,
         settled: false,
         gravity: true,
         bounces: Math.random() < 1 / 3 ? 2 + ((Math.random() * 2) | 0) : 0,
+        trailR: this.texTrailR(turretKey),
       });
     } else {
       this.hulkG.add(
@@ -1301,12 +1333,13 @@ export class MissionScene extends Phaser.Scene {
   updateFrags(dt: number): void {
     const keep: Frag[] = [];
     for (const f of this.frags) {
-      if (f.trailOnly) {
+      if (f.trailOnly && !f.settled) {
         f.life -= dt;
-        if (f.life <= 0 || f.settled) continue;
+        if (f.life <= 0) continue;
       }
       if (f.settled) {
-        keep.push(f);
+        this.tickFragTrailFade(f, dt);
+        if (!f.trailOnly || (f.trailFade ?? 0) > 0) keep.push(f);
         continue;
       }
       f.x += f.vx * dt;
@@ -1319,14 +1352,7 @@ export class MissionScene extends Phaser.Scene {
         else f.vz -= 1100 * dt;
         f.vx *= Math.pow(0.78, dt);
         f.vy *= Math.pow(0.78, dt);
-        if (f.z > groundZ(this.world, f.x, f.y) + 2) {
-          const px = f.x;
-          const py = f.y - screenLift(f.z);
-          this.burn.setDepth(worldDepth(f.z, 0.6));
-          this.fragSmoke.setDepth(worldDepth(f.z, 0.8));
-          if (Math.random() < (f.trailOnly ? 0.85 : 0.7)) this.burn.emitParticleAt(px, py, 1);
-          if (Math.random() < (f.trailOnly ? 0.65 : 0.5)) this.fragSmoke.emitParticleAt(px, py, 1);
-        }
+        if (f.z > groundZ(this.world, f.x, f.y) + 2) this.emitFragTrail(f, 1);
         const g = groundZ(this.world, f.x, f.y);
         if (f.z <= g) {
           f.z = g;
@@ -1344,6 +1370,7 @@ export class MissionScene extends Phaser.Scene {
             f.vx = 0;
             f.vy = 0;
             f.vz = 0;
+            this.beginFragTrailFade(f);
           }
         }
       } else {
@@ -1354,12 +1381,42 @@ export class MissionScene extends Phaser.Scene {
           f.settled = true;
           f.vx = 0;
           f.vy = 0;
+          this.beginFragTrailFade(f);
         }
       }
-      if (!(f.trailOnly && (f.settled || f.life <= 0))) keep.push(f);
+      if (!(f.trailOnly && f.life <= 0 && !f.settled)) keep.push(f);
     }
     this.frags = keep;
     this.syncFragSprites();
+  }
+
+  beginFragTrailFade(f: Frag): void {
+    f.trailFadeMax = 0.55 + Math.random() * 0.5;
+    f.trailFade = f.trailFadeMax;
+  }
+
+  tickFragTrailFade(f: Frag, dt: number): void {
+    if (f.trailFade == null) this.beginFragTrailFade(f);
+    if ((f.trailFade ?? 0) <= 0) return;
+    f.trailFade! -= dt;
+    const dim = Phaser.Math.Clamp(f.trailFade! / (f.trailFadeMax || 1), 0, 1);
+    if (dim > 0) this.emitFragTrail(f, dim * dim);
+  }
+
+  emitFragTrail(f: Frag, dim: number): void {
+    const px = f.x;
+    const py = f.y - screenLift(f.z);
+    const r = f.trailR;
+    this.burn.setDepth(worldDepth(f.z, 0.6));
+    this.fragSmoke.setDepth(worldDepth(f.z, 0.15));
+    if (Math.random() < (f.trailOnly ? 0.85 : 0.7) * dim) {
+      const p = jitterDisk(px, py, r * 0.55);
+      this.burn.emitParticleAt(p.x, p.y, 1);
+    }
+    if (Math.random() < (f.trailOnly ? 0.65 : 0.5) * dim) {
+      const p = jitterDisk(px, py, r);
+      this.fragSmoke.emitParticleAt(p.x, p.y + 10, 1);
+    }
   }
 
   updateUnits(dt: number): void {
@@ -2038,12 +2095,12 @@ export class MissionScene extends Phaser.Scene {
     const sa = Math.sin(h.angle);
     const dmgDepth = worldDepth(h.z, ZOff.dmg);
     this.flame.setDepth(dmgDepth);
-    this.hurtSmoke.setDepth(dmgDepth);
+    this.hurtSmoke.setDepth(worldDepth(h.z, ZOff.dmg - 1.2));
     for (const s of h.dmgSites) {
       const x = h.x + ca * s.f - sa * s.s;
       const y = h.y + sa * s.f + ca * s.s - lift;
       if (Math.random() < 0.45) this.flame.emitParticleAt(x, y, 1);
-      if (Math.random() < 0.4) this.hurtSmoke.emitParticleAt(x, y, 1);
+      if (Math.random() < 0.4) this.hurtSmoke.emitParticleAt(x, y + 9, 1);
     }
   }
 
@@ -2069,6 +2126,12 @@ function pickSparkKind(style: "muzzle" | "ground" | "water" | "object", sparkFra
   if (style === "water") return "splash";
   if (style === "object" || style === "muzzle") return "flame";
   return Math.random() < sparkFrac ? "spark" : "dirt";
+}
+
+function jitterDisk(x: number, y: number, r: number): { x: number; y: number } {
+  const a = Math.random() * Math.PI * 2;
+  const d = Math.sqrt(Math.random()) * r;
+  return { x: x + Math.cos(a) * d, y: y + Math.sin(a) * d };
 }
 
 function biasedDir(
