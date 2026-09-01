@@ -1,7 +1,7 @@
 import type Phaser from "phaser";
 import { rotorLayout, tankLayout, gunLayout } from "./sprites";
 
-const DEPTH = 2400;
+const DEPTH = 9200;
 const MONO = "Share Tech Mono, monospace";
 const GOLD = "#e8b84a";
 const PAPER = "#f0e6c8";

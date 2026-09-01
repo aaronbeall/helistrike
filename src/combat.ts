@@ -52,6 +52,19 @@ export interface Shot {
   guided?: boolean;
 }
 
+export interface Spark {
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  life: number;
+  max: number;
+  scale: number;
+  bounces: number;
+}
+
 export interface Frag {
   x: number;
   y: number;
@@ -65,6 +78,7 @@ export interface Frag {
   key: string;
   settled: boolean;
   gravity?: boolean;
+  bounces: number;
 }
 
 let nid = 1;
