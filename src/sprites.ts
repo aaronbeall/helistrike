@@ -45,8 +45,8 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   tankLayout.mountOrigin = darkMountOrigin(hull);
   tankLayout.turretOrigin = cupolaOrigin(turret);
   const wreck = sliceGrid(keyImage(src(textures, "src_tank_wreck"), "magenta"), 2, 1);
-  put(textures, "hulk_tank_hull", fit(wreck[0]!, 70));
-  const hulkTurret = fit(wreck[1]!, 70);
+  put(textures, "hulk_tank_hull", darkenWreck(fit(wreck[0]!, 70)));
+  const hulkTurret = darkenWreck(fit(wreck[1]!, 70));
   put(textures, "hulk_tank_turret", hulkTurret);
   tankLayout.hulkTurretOrigin = cupolaOrigin(hulkTurret);
 
@@ -69,10 +69,10 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     "hulk_crater",
   ] as const;
   const hulkSizes = [70, 90, 86, 84, 58, 74, 28, 40, 48];
-  hulkKeys.forEach((key, i) => put(textures, key, fit(hulks[i]!, hulkSizes[i]!)));
+  hulkKeys.forEach((key, i) => put(textures, key, darkenWreck(fit(hulks[i]!, hulkSizes[i]!))));
 
   const debris = sliceGrid(keyImage(src(textures, "src_debris"), "magenta"), 4, 3);
-  debris.forEach((c, i) => put(textures, `frag_${i}`, fit(c, 22)));
+  debris.forEach((c, i) => put(textures, `frag_${i}`, darkenWreck(fit(c, 22), 0.7)));
 
   const wpn = sliceGrid(keyImage(src(textures, "src_weapons"), "magenta"), 2, 2);
   put(textures, "heli_gun", fit(wpn[0]!, 46));
@@ -318,6 +318,20 @@ function fit(src: HTMLCanvasElement, max: number): HTMLCanvasElement {
   g.imageSmoothingQuality = "high";
   g.drawImage(src, 0, 0, c.width, c.height);
   return c;
+}
+
+function darkenWreck(src: HTMLCanvasElement, mul = 0.55): HTMLCanvasElement {
+  const g = src.getContext("2d")!;
+  const pix = g.getImageData(0, 0, src.width, src.height);
+  const d = pix.data;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3]! < 8) continue;
+    d[i] = d[i]! * mul;
+    d[i + 1] = d[i + 1]! * mul * 0.94;
+    d[i + 2] = d[i + 2]! * mul * 0.88;
+  }
+  g.putImageData(pix, 0, 0);
+  return src;
 }
 
 function sliceGrid(src: HTMLCanvasElement, cols: number, rows: number): HTMLCanvasElement[] {
