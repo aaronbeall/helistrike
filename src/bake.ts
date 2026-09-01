@@ -54,6 +54,7 @@ export function bakeAll(textures: Phaser.Textures.TextureManager): void {
   add(textures, "smoke", drawSmoke());
   add(textures, "muzzle", drawMuzzle());
   add(textures, "reticle", drawReticle());
+  add(textures, "reticle_sq", drawReticleSquare());
   add(textures, "lock", drawLock());
   add(textures, "minimap_mask", drawMinimapMask());
   add(textures, "track", drawTrack());
@@ -578,6 +579,29 @@ function drawReticle(): HTMLCanvasElement {
   g.beginPath();
   g.arc(cx, cy, 34, 0, Math.PI * 2);
   g.stroke();
+  g.beginPath();
+  g.moveTo(cx, 6);
+  g.lineTo(cx, 26);
+  g.moveTo(cx, 70);
+  g.lineTo(cx, 90);
+  g.moveTo(6, cy);
+  g.lineTo(26, cy);
+  g.moveTo(70, cy);
+  g.lineTo(90, cy);
+  g.stroke();
+  return c;
+}
+
+function drawReticleSquare(): HTMLCanvasElement {
+  const c = canvas(96, 96);
+  const g = ctxOf(c);
+  const cx = 48;
+  const cy = 48;
+  const half = 30;
+  g.strokeStyle = "#e8b84a";
+  g.lineWidth = 2;
+  g.lineCap = "butt";
+  g.strokeRect(cx - half, cy - half, half * 2, half * 2);
   g.beginPath();
   g.moveTo(cx, 6);
   g.lineTo(cx, 26);

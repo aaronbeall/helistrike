@@ -5,6 +5,7 @@ import { Rng } from "./rng";
 export const WORLD = 5600;
 export const TEX = 1400;
 export const SCALE = WORLD / TEX;
+export const WRECK_TEX = 4096;
 
 export type Biome = "water" | "river" | "sand" | "grass" | "forest" | "rock" | "peak";
 
