@@ -261,6 +261,49 @@ function paintTerrain(
   return c;
 }
 
+export function paintHeightMap(height: Float32Array, biome: Uint8Array): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = TEX;
+  c.height = TEX;
+  const g = c.getContext("2d")!;
+  const img = g.createImageData(TEX, TEX);
+  const d = img.data;
+  const water = BIOME_ID.water;
+  const river = BIOME_ID.river;
+  const isWet = (b: number) => b === water || b === river;
+  for (let y = 0; y < TEX; y++) {
+    for (let x = 0; x < TEX; x++) {
+      const i = y * TEX + x;
+      const v = Phaser.Math.Clamp(height[i]!, 0, 1) * 255;
+      const o = i * 4;
+      let r = v;
+      let gc = v;
+      let b = v;
+      const here = biome[i]!;
+      const left = x > 0 ? biome[i - 1]! : here;
+      const up = y > 0 ? biome[i - TEX]! : here;
+      if (here !== left || here !== up) {
+        const other = here !== left ? left : up;
+        if (isWet(here) !== isWet(other)) {
+          r = 40;
+          gc = 210;
+          b = 255;
+        } else {
+          r = 255;
+          gc = 196;
+          b = 64;
+        }
+      }
+      d[o] = r;
+      d[o + 1] = gc;
+      d[o + 2] = b;
+      d[o + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  return c;
+}
+
 function findSpawn(
   height: Float32Array,
   biome: Uint8Array,

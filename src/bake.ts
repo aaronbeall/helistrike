@@ -56,6 +56,16 @@ export function bakeAll(textures: Phaser.Textures.TextureManager): void {
   add(textures, "reticle", drawReticle());
   add(textures, "lock", drawLock());
   add(textures, "minimap_mask", drawMinimapMask());
+  add(textures, "track", drawTrack());
+  add(textures, "flame", drawFlame());
+  add(textures, "blast_0", drawBlast(0));
+  add(textures, "blast_1", drawBlast(1));
+  add(textures, "blast_2", drawBlast(2));
+  add(textures, "blast_3", drawBlast(3));
+  add(textures, "tank_hull", drawTank());
+  add(textures, "tank_turret", drawTurret());
+  add(textures, "hulk_tank_hull", drawTank());
+  add(textures, "hulk_tank_turret", drawHulkTurret());
 }
 
 function add(
@@ -176,14 +186,81 @@ function drawPlayerHeli(): HTMLCanvasElement {
 }
 
 function drawGun(): HTMLCanvasElement {
-  const c = canvas(40, 40);
+  const c = canvas(28, 52);
   const g = ctxOf(c);
-  g.translate(20, 20);
+  g.translate(14, 8);
   g.fillStyle = "#2a2e28";
-  g.fillRect(-4, -4, 8, 8);
+  g.fillRect(-5, -4, 10, 10);
   g.fillStyle = "#4a4e46";
-  roundRect(g, -3, 0, 6, 18, 2);
+  roundRect(g, -2.5, 4, 5, 36, 2);
   g.fill();
+  g.fillStyle = "#1a1c18";
+  g.fillRect(-1.5, 36, 3, 6);
+  return c;
+}
+
+function drawTrack(): HTMLCanvasElement {
+  const c = canvas(28, 18);
+  const g = ctxOf(c);
+  g.fillStyle = "rgba(28,24,16,0.45)";
+  g.fillRect(2, 2, 8, 14);
+  g.fillRect(18, 2, 8, 14);
+  return c;
+}
+
+function drawFlame(): HTMLCanvasElement {
+  const c = canvas(16, 20);
+  const g = ctxOf(c);
+  const grd = g.createRadialGradient(8, 14, 0, 8, 10, 10);
+  grd.addColorStop(0, "#fff3a0");
+  grd.addColorStop(0.45, "#ff6a18");
+  grd.addColorStop(1, "rgba(180,20,0,0)");
+  g.fillStyle = grd;
+  g.fillRect(0, 0, 16, 20);
+  return c;
+}
+
+function drawBlast(variant: number): HTMLCanvasElement {
+  const c = canvas(80, 80);
+  const g = ctxOf(c);
+  g.translate(40, 40);
+  g.rotate(variant * 0.9);
+  const outer = g.createRadialGradient(0, 0, 6, 0, 0, 38);
+  outer.addColorStop(0, "rgba(22,16,10,0.72)");
+  outer.addColorStop(0.35, "rgba(48,32,18,0.5)");
+  outer.addColorStop(0.7, "rgba(90,62,32,0.22)");
+  outer.addColorStop(1, "rgba(60,44,24,0)");
+  g.fillStyle = outer;
+  g.beginPath();
+  g.ellipse(2, -1, 36 - variant * 2, 30 + variant, 0.2 * variant, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = "rgba(10,8,6,0.7)";
+  g.beginPath();
+  g.ellipse(-2, 1, 12 + variant, 10, 0.4, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = "rgba(18,14,10,0.55)";
+  const n = 5 + variant;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + variant;
+    const r = 10 + ((i * 13 + variant * 7) % 11);
+    g.beginPath();
+    g.ellipse(Math.cos(a) * r, Math.sin(a) * r, 7 + (i % 3), 4 + (i % 2), a, 0, Math.PI * 2);
+    g.fill();
+  }
+  g.globalCompositeOperation = "destination-out";
+  g.fillStyle = "rgba(0,0,0,0.35)";
+  for (let i = 0; i < 3; i++) {
+    const a = variant * 1.7 + i * 2.1;
+    g.beginPath();
+    g.ellipse(Math.cos(a) * 16, Math.sin(a) * 14, 4 + i, 3, a, 0, Math.PI * 2);
+    g.fill();
+  }
+  g.globalCompositeOperation = "source-over";
+  g.strokeStyle = "rgba(28,22,14,0.35)";
+  g.lineWidth = 1.2;
+  g.beginPath();
+  g.ellipse(0, 0, 18 + variant * 2, 14, 0.3, 0.2, Math.PI * 1.6);
+  g.stroke();
   return c;
 }
 
@@ -225,14 +302,48 @@ function drawTank(): HTMLCanvasElement {
   g.fillStyle = "#5a624c";
   roundRect(g, -16, -14, 32, 28, 4);
   g.fill();
+  return c;
+}
+
+function drawTurret(): HTMLCanvasElement {
+  const c = canvas(48, 64);
+  const g = ctxOf(c);
+  g.translate(24, 28);
   g.fillStyle = "#4a5240";
   g.beginPath();
-  g.arc(0, 0, 10, 0, Math.PI * 2);
+  g.arc(0, 0, 11, 0, Math.PI * 2);
   g.fill();
   g.fillStyle = "#2e3228";
-  g.fillRect(-3, 0, 6, 28);
+  g.fillRect(-3, 0, 6, 30);
   g.fillStyle = "#8a9a6a";
   g.fillRect(-4, -4, 8, 4);
+  return c;
+}
+
+function drawHulkTurret(): HTMLCanvasElement {
+  const c = canvas(52, 72);
+  const g = ctxOf(c);
+  g.translate(26, 34);
+  g.fillStyle = "#2a2418";
+  g.beginPath();
+  g.arc(0, 0, 13, 0.4, Math.PI * 1.85);
+  g.lineTo(10, 4);
+  g.lineTo(4, -2);
+  g.closePath();
+  g.fill();
+  g.fillStyle = "#3a3428";
+  g.beginPath();
+  g.arc(-2, 1, 8, 0, Math.PI * 2);
+  g.fill();
+  g.save();
+  g.rotate(0.28);
+  g.fillStyle = "#1e1c16";
+  g.fillRect(-2.5, -4, 5, 34);
+  g.fillStyle = "#4a4030";
+  g.fillRect(-2, 8, 4, 10);
+  g.fillStyle = "#12100c";
+  g.fillRect(-3, 28, 7, 5);
+  g.restore();
   return c;
 }
 
@@ -445,14 +556,14 @@ function drawSmoke(): HTMLCanvasElement {
 }
 
 function drawMuzzle(): HTMLCanvasElement {
-  const c = canvas(28, 16);
+  const c = canvas(16, 10);
   const g = ctxOf(c);
-  const grd = g.createRadialGradient(8, 8, 0, 14, 8, 14);
+  const grd = g.createRadialGradient(5, 5, 0, 8, 5, 8);
   grd.addColorStop(0, "#fff8d0");
   grd.addColorStop(0.5, "#ffb040");
   grd.addColorStop(1, "rgba(255,80,0,0)");
   g.fillStyle = grd;
-  g.fillRect(0, 0, 28, 16);
+  g.fillRect(0, 0, 16, 10);
   return c;
 }
 

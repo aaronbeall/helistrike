@@ -21,7 +21,7 @@ export class Heli {
   vy = 0;
   vz = 0;
   angle = 0;
-  av = 0;
+  angVel = 0;
   pitch = 0;
   roll = 0;
   rotor = 0;
@@ -33,6 +33,7 @@ export class Heli {
   weapon = 0;
   fireCd = 0;
   hellfireLock: { id: number; t: number } | null = null;
+  dmgSites: { f: number; s: number }[] = [];
 
   constructor(x: number, y: number, world: WorldData) {
     this.x = x;
@@ -41,17 +42,18 @@ export class Heli {
   }
 
   get noseX(): number {
-    return this.x + Math.cos(this.angle) * 28;
+    return this.x + Math.cos(this.angle) * 42;
   }
   get noseY(): number {
-    return this.y + Math.sin(this.angle) * 28;
+    return this.y + Math.sin(this.angle) * 42;
   }
 
   update(
     dt: number,
     world: WorldData,
     stick: Stick,
-    pointer: Phaser.Input.Pointer,
+    aimX: number,
+    aimY: number,
     spaceDown: boolean
   ): void {
     if (this.phase === "dead") return;
@@ -82,18 +84,19 @@ export class Heli {
       this.rotorSpd = Phaser.Math.Linear(this.rotorSpd, 32, 1 - Math.pow(0.2, dt));
     }
 
-    const wx = pointer.worldX;
-    const wy = pointer.worldY;
-    const desired = Math.atan2(wy - this.y, wx - this.x);
-    let da = Phaser.Math.Angle.Wrap(desired - this.angle);
-    const turnAccel = airborne ? 10 : 0;
-    this.av += Phaser.Math.Clamp(da * 6, -turnAccel, turnAccel) * dt;
-    this.av *= Math.pow(0.08, dt);
-    this.av = Phaser.Math.Clamp(this.av, -2.9, 2.9);
-    this.angle = Phaser.Math.Angle.Wrap(this.angle + this.av * dt);
-
-    let gda = Phaser.Math.Angle.Wrap(desired - this.gunAngle);
-    this.gunAngle = Phaser.Math.Angle.Wrap(this.gunAngle + Phaser.Math.Clamp(gda, -14 * dt, 14 * dt));
+    const desired = Math.atan2(aimY - this.y, aimX - this.x);
+    if (airborne) {
+      const err = Phaser.Math.Angle.Wrap(desired - this.angle);
+      const maxRate = 2.55;
+      const targetRate = Phaser.Math.Clamp(err * 5.4, -maxRate, maxRate);
+      const yawAcc = 11;
+      if (this.angVel < targetRate) this.angVel = Math.min(targetRate, this.angVel + yawAcc * dt);
+      else this.angVel = Math.max(targetRate, this.angVel - yawAcc * dt);
+      this.angle += this.angVel * dt;
+    } else {
+      this.angVel *= Math.pow(0.04, dt);
+    }
+    this.gunAngle = Phaser.Math.Angle.RotateTo(this.gunAngle, desired, 16 * dt);
 
     const ca = Math.cos(this.angle);
     const sa = Math.sin(this.angle);
@@ -125,20 +128,41 @@ export class Heli {
 
     const gnd = groundZ(world, this.x, this.y);
     if (this.phase === "flight") {
+      const ceiling = gnd + MAX_Z;
+      const floor = gnd + 8;
       const targetZ = spaceDown ? MAX_Z : CRUISE_Z;
       const want = gnd + targetZ;
-      const k = spaceDown ? 2.4 : 1.15;
+      const k = spaceDown ? 1.85 : 1.15;
       this.vz += (want - this.z) * k * dt;
       this.vz *= Math.pow(0.18, dt);
+      const headroom = ceiling - this.z;
+      if (headroom < 36) {
+        const t = 1 - Phaser.Math.Clamp(headroom / 36, 0, 1);
+        if (this.vz > 0) this.vz *= Math.pow(0.08, dt * (0.4 + t * 2.2));
+        this.vz -= t * t * 14 * dt;
+      }
       this.z += this.vz * 40 * dt;
-      this.z = Phaser.Math.Clamp(this.z, gnd + 8, gnd + MAX_Z);
+      if (this.z > ceiling) {
+        this.vz += (ceiling - this.z) * 6 * dt;
+        this.vz *= Math.pow(0.12, dt);
+        this.z += (ceiling - this.z) * (1 - Math.pow(0.18, dt));
+      }
+      if (this.z < floor) this.z = floor;
       if (this.z < gnd + 6) this.kill();
     }
 
     const localFwd = this.vx * ca + this.vy * sa;
     const localStr = -this.vx * sa + this.vy * ca;
-    this.pitch = Phaser.Math.Linear(this.pitch, Phaser.Math.Clamp(localFwd / 280, -0.45, 0.45), 1 - Math.pow(0.04, dt));
-    this.roll = Phaser.Math.Linear(this.roll, Phaser.Math.Clamp(localStr / 240, -0.5, 0.5), 1 - Math.pow(0.04, dt));
+    this.pitch = Phaser.Math.Linear(
+      this.pitch,
+      Phaser.Math.Clamp(localFwd / 240, -0.42, 0.42),
+      1 - Math.pow(0.06, dt)
+    );
+    this.roll = Phaser.Math.Linear(
+      this.roll,
+      Phaser.Math.Clamp(localStr / 200, -0.4, 0.4),
+      1 - Math.pow(0.06, dt)
+    );
     this.fireCd = Math.max(0, this.fireCd - dt);
   }
 

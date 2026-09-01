@@ -25,12 +25,14 @@ export interface Unit {
   vx: number;
   vy: number;
   angle: number;
+  turret: number;
   health: number;
   max: number;
   hv?: string;
   dead: boolean;
   fireCd: number;
   rotor: number;
+  track: number;
 }
 
 export interface Shot {
@@ -53,13 +55,16 @@ export interface Shot {
 export interface Frag {
   x: number;
   y: number;
+  z: number;
   vx: number;
   vy: number;
+  vz: number;
   angle: number;
   spin: number;
   life: number;
   key: string;
   settled: boolean;
+  gravity?: boolean;
 }
 
 let nid = 1;
@@ -107,5 +112,44 @@ export function radius(kind: UnitKind): number {
 
 export function textureOf(kind: UnitKind): string {
   if (kind === "heli") return "enemy_heli";
+  if (kind === "tank") return "tank_hull";
   return kind;
 }
+
+export function heightOf(kind: UnitKind): number {
+  switch (kind) {
+    case "soldier":
+      return 9;
+    case "tank":
+      return 20;
+    case "boat":
+      return 16;
+    case "tower":
+      return 38;
+    case "bunker":
+      return 26;
+    case "radar":
+      return 34;
+    case "heli":
+      return 16;
+  }
+}
+
+export function hulkOf(kind: UnitKind): string {
+  return `hulk_${kind}`;
+}
+
+export const FRAG_KEYS = [
+  "frag_0",
+  "frag_1",
+  "frag_2",
+  "frag_3",
+  "frag_4",
+  "frag_5",
+  "frag_6",
+  "frag_7",
+  "frag_8",
+  "frag_9",
+  "frag_10",
+  "frag_11",
+] as const;
