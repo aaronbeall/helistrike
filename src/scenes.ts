@@ -310,7 +310,7 @@ export class MissionScene extends Phaser.Scene {
       speed: { min: 8, max: 40 },
       scale: { start: 0.7, end: 0.1 },
       alpha: { start: 0.9, end: 0 },
-      gravityY: -36,
+      gravityY: -72,
       emitting: false,
     });
     this.flame.setDepth(Layer.WORLD);
@@ -338,7 +338,7 @@ export class MissionScene extends Phaser.Scene {
       alpha: { start: 1, end: 0 },
       blendMode: "ADD",
       tint: [0xfff4c0, 0xff9a32, 0xff5a18],
-      gravityY: -40,
+      gravityY: -78,
       emitting: false,
     });
     this.burn.setDepth(Layer.WORLD);
@@ -348,7 +348,7 @@ export class MissionScene extends Phaser.Scene {
       scale: { start: 1.9, end: 0.18 },
       alpha: { start: 0.88, end: 0 },
       blendMode: "ADD",
-      gravityY: -34,
+      gravityY: -68,
       emitting: false,
     });
     this.blastFire.setDepth(Layer.WORLD);
@@ -466,6 +466,7 @@ export class MissionScene extends Phaser.Scene {
     this.cameras.main.centerOn(this.heli.x, this.heli.y);
     this.cameras.main.startFollow(this.body, true, 0.12, 0.12);
     this.cameras.main.setDeadzone(80, 80);
+    this.cameras.main.setZoom(this.playZoom());
     this.playScrollX = this.heli.x - this.scale.width / 2;
     this.playScrollY = this.heli.y - this.scale.height / 2;
     this.playViewX = this.playScrollX;
@@ -793,6 +794,7 @@ export class MissionScene extends Phaser.Scene {
         blast: 70,
         dmg: 55,
       });
+      this.missileMuzzle(px, py, h.z, h.angle);
     }
 
     if (wpn === "hellfire") {
@@ -811,11 +813,14 @@ export class MissionScene extends Phaser.Scene {
       ) {
         h.fireCd = 0.55;
         this.ammo[2]!--;
+        const side = this.ammo[2]! % 2 === 0 ? 1 : -1;
+        const px = h.x + Math.cos(h.angle + Math.PI / 2) * 22 * side;
+        const py = h.y + Math.sin(h.angle + Math.PI / 2) * 22 * side;
         this.spawnShot({
           kind: "hellfire",
           from: "player",
-          x: h.x,
-          y: h.y,
+          x: px,
+          y: py,
           z: h.z + ZOff.shot,
           vx: Math.cos(h.angle) * 280,
           vy: Math.sin(h.angle) * 280,
@@ -826,6 +831,7 @@ export class MissionScene extends Phaser.Scene {
           blast: 85,
           dmg: 95,
         });
+        this.missileMuzzle(px, py, h.z, h.angle);
       }
     } else h.hellfireLock = null;
 
@@ -833,11 +839,13 @@ export class MissionScene extends Phaser.Scene {
       h.fireCd = 1.1;
       this.ammo[3]!--;
       const side = this.ammo[3]! % 2 === 0 ? 1 : -1;
+      const px = h.x + Math.cos(h.angle + Math.PI / 2) * 24 * side;
+      const py = h.y + Math.sin(h.angle + Math.PI / 2) * 24 * side;
       this.spawnShot({
         kind: "tow",
         from: "player",
-        x: h.x + Math.cos(h.angle + Math.PI / 2) * 24 * side,
-        y: h.y + Math.sin(h.angle + Math.PI / 2) * 24 * side,
+        x: px,
+        y: py,
         z: h.z + ZOff.shot,
         vx: Math.cos(h.angle) * 240,
         vy: Math.sin(h.angle) * 240,
@@ -848,7 +856,34 @@ export class MissionScene extends Phaser.Scene {
         dmg: 88,
         guided: true,
       });
+      this.missileMuzzle(px, py, h.z, h.angle);
     }
+  }
+
+  missileMuzzle(x: number, y: number, z: number, ang: number): void {
+    const ca = Math.cos(ang);
+    const sa = Math.sin(ang);
+    this.spawnSparks(x, y, z, {
+      style: "muzzle",
+      n: 14,
+      spdMin: 200,
+      spdMax: 520,
+      bx: ca,
+      by: sa,
+      bz: 0.2,
+      tight: 0.84,
+    });
+    const sx = x;
+    const sy = y - screenLift(z);
+    this.muzzle
+      .setVisible(true)
+      .setPosition(sx, sy)
+      .setRotation(ang + Math.PI / 2)
+      .setScale(0.9)
+      .setAlpha(1);
+    this.time.delayedCall(70, () => {
+      this.muzzle.setVisible(false).setScale(0.55);
+    });
   }
 
   spawnShot(s: Shot): void {
@@ -911,10 +946,13 @@ export class MissionScene extends Phaser.Scene {
       s.y += s.vy * dt;
       s.z += s.vz * dt;
       if (s.kind === "dirt" || s.kind === "spark") s.vz -= Z_GRAVITY * dt;
-      else if (s.kind === "flame") s.vz += 90 * dt;
       s.vx *= drag;
       s.vy *= drag;
       s.vz *= zDrag;
+      if (s.kind === "flame") {
+        s.vy -= 90 * dt;
+        s.vz += 170 * dt;
+      }
       s.life -= dt;
       const g = groundZ(this.world, s.x, s.y);
       if (s.z < g) {
@@ -954,13 +992,15 @@ export class MissionScene extends Phaser.Scene {
       const thick = s.scale * (dirt ? 0.52 + fade * 0.5 : spark ? 0.52 + fade * 0.78 : 0.4 + fade * 0.7);
       const scrX = s.vx;
       const scrY = s.vy - screenLift(s.vz);
+      const baseA = s.additive ? 0.45 + fade * 0.55 : 0.55 + fade * 0.4;
+      const spdFade = Phaser.Math.Clamp(spd / 280, 0, 1);
       im.setVisible(true)
         .setPosition(s.x, s.y - screenLift(s.z))
         .setRotation(Math.atan2(scrY, scrX))
         .setScale(thick * stretch, thick / (dirt ? Math.pow(stretch, 0.75) : Math.sqrt(stretch)))
         .setTint(s.tint)
         .setBlendMode(s.additive ? Phaser.BlendModes.ADD : Phaser.BlendModes.NORMAL)
-        .setAlpha(s.additive ? 0.45 + fade * 0.55 : 0.55 + fade * 0.4)
+        .setAlpha(baseA * (0.06 + 0.94 * spdFade))
         .setDepth(worldDepth(s.z, 0.3));
     });
   }
@@ -1697,8 +1737,10 @@ export class MissionScene extends Phaser.Scene {
           : h.phase === "dead"
             ? "DOWN"
             : "AIRBORNE";
+    const ptr = this.worldPointer();
+    const elv = groundZ(this.world, ptr.x, ptr.y) | 0;
     this.hud.setText(
-      `ALT ${castZ(this.world, h.x, h.y, h.z) | 0}   SPD ${Math.hypot(h.vx, h.vy) | 0}   TIME ${this.timeScale.toFixed(2)}×\n${phase}\nWPN ${w.name}  ${ammoS}`
+      `ALT ${castZ(this.world, h.x, h.y, h.z) | 0}   ELV ${elv}   SPD ${Math.hypot(h.vx, h.vy) | 0}   TIME ${this.timeScale.toFixed(2)}×\n${phase}\nWPN ${w.name}  ${ammoS}`
     );
 
     const lines = this.world.hv.map((spec) => this.hvLine(spec));
@@ -1852,9 +1894,12 @@ export class MissionScene extends Phaser.Scene {
   }
 
   playZoom(): number {
-    const spdN = Phaser.Math.Clamp(Math.hypot(this.heli.vx, this.heli.vy) / 340, 0, 1);
-    const zNorm = Phaser.Math.Clamp(castZ(this.world, this.heli.x, this.heli.y, this.heli.z) / MAX_Z, 0, 1);
-    return Phaser.Math.Linear(1.05, 0.7, spdN * 0.75 + zNorm * 0.25);
+    const h = this.heli;
+    const spdN = Phaser.Math.Clamp(Math.hypot(h.vx, h.vy) / 340, 0, 1);
+    const zNorm = Phaser.Math.Clamp(castZ(this.world, h.x, h.y, h.z) / MAX_Z, 0, 1);
+    const flight = Phaser.Math.Linear(1.05, 0.7, spdN * 0.75 + zNorm * 0.25);
+    const spool = Phaser.Math.Easing.Sine.In(Phaser.Math.Clamp(h.rotorSpd / 32, 0, 1));
+    return Phaser.Math.Linear(2.55, flight, spool);
   }
 
   theaterZoom(): number {
