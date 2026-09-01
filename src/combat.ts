@@ -84,6 +84,7 @@ export interface Frag {
   settled: boolean;
   gravity?: boolean;
   bounces: number;
+  trailOnly?: boolean;
 }
 
 let nid = 1;
