@@ -158,8 +158,6 @@ export class MissionScene extends Phaser.Scene {
   sparkG!: Phaser.GameObjects.Group;
   trackG!: Phaser.GameObjects.Group;
   hulkG!: Phaser.GameObjects.Group;
-  fx!: Phaser.GameObjects.Particles.ParticleEmitter;
-  spark!: Phaser.GameObjects.Particles.ParticleEmitter;
   smoke!: Phaser.GameObjects.Particles.ParticleEmitter;
   tracer!: Phaser.GameObjects.Particles.ParticleEmitter;
   flame!: Phaser.GameObjects.Particles.ParticleEmitter;
@@ -283,21 +281,6 @@ export class MissionScene extends Phaser.Scene {
       });
     }
 
-    this.fx = this.add.particles(0, 0, "spark", {
-      lifespan: 520,
-      speed: { min: 40, max: 280 },
-      scale: { start: 1.6, end: 0 },
-      alpha: { start: 1, end: 0 },
-      emitting: false,
-    });
-    this.fx.setDepth(Layer.WORLD);
-    this.spark = this.add.particles(0, 0, "spark", {
-      lifespan: 320,
-      speed: { min: 90, max: 420 },
-      scale: { start: 1.1, end: 0 },
-      emitting: false,
-    });
-    this.spark.setDepth(Layer.WORLD);
     this.smoke = this.add.particles(0, 0, "smoke", {
       lifespan: 900,
       speed: { min: 10, max: 70 },
@@ -1537,7 +1520,7 @@ export class MissionScene extends Phaser.Scene {
     const s = this.timeScale;
     this.time.timeScale = s;
     this.tweens.timeScale = s;
-    for (const em of [this.fx, this.spark, this.smoke, this.tracer, this.flame, this.hurtSmoke, this.burn, this.fragSmoke]) {
+    for (const em of [this.smoke, this.tracer, this.flame, this.hurtSmoke, this.burn, this.fragSmoke]) {
       if (em) em.timeScale = s;
     }
   }
