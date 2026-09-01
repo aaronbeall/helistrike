@@ -136,10 +136,28 @@ export function isWater(world: WorldData, x: number, y: number): boolean {
   return b === BIOME_ID.water || b === BIOME_ID.river;
 }
 
+export const Z_LIFT = 0.05;
+
 export function groundZ(world: WorldData, x: number, y: number): number {
   const h = sampleHeight(world, x, y);
   if (h < 0.34) return 0;
   return (h - 0.34) * 160;
+}
+
+export function screenLift(z: number): number {
+  return z * Z_LIFT;
+}
+
+export function castZ(world: WorldData, x: number, y: number, z: number): number {
+  return Math.max(0, z - groundZ(world, x, y));
+}
+
+export function groundSlope(world: WorldData, x: number, y: number): { dx: number; dy: number } {
+  const e = 14;
+  return {
+    dx: (groundZ(world, x + e, y) - groundZ(world, x - e, y)) / (2 * e),
+    dy: (groundZ(world, x, y + e) - groundZ(world, x, y - e)) / (2 * e),
+  };
 }
 
 function carveRivers(height: Float32Array, biome: Uint8Array, rng: Rng): void {

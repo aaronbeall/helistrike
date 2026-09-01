@@ -10,6 +10,8 @@ export interface Stick {
 
 export const CRUISE_Z = 46;
 export const MAX_Z = 118;
+export const LOW_Z = 12;
+export const HELI_HEIGHT = 14;
 
 export type Phase = "grounded" | "spool" | "liftoff" | "flight" | "dead";
 
@@ -54,7 +56,8 @@ export class Heli {
     stick: Stick,
     aimX: number,
     aimY: number,
-    spaceDown: boolean
+    spaceDown: boolean,
+    shiftDown: boolean
   ): void {
     if (this.phase === "dead") return;
     const up = stick.up;
@@ -128,27 +131,13 @@ export class Heli {
 
     const gnd = groundZ(world, this.x, this.y);
     if (this.phase === "flight") {
-      const ceiling = gnd + MAX_Z;
-      const floor = gnd + 8;
-      const targetZ = spaceDown ? MAX_Z : CRUISE_Z;
-      const want = gnd + targetZ;
-      const k = spaceDown ? 1.85 : 1.15;
-      this.vz += (want - this.z) * k * dt;
-      this.vz *= Math.pow(0.18, dt);
-      const headroom = ceiling - this.z;
-      if (headroom < 36) {
-        const t = 1 - Phaser.Math.Clamp(headroom / 36, 0, 1);
-        if (this.vz > 0) this.vz *= Math.pow(0.08, dt * (0.4 + t * 2.2));
-        this.vz -= t * t * 14 * dt;
-      }
-      this.z += this.vz * 40 * dt;
-      if (this.z > ceiling) {
-        this.vz += (ceiling - this.z) * 6 * dt;
-        this.vz *= Math.pow(0.12, dt);
-        this.z += (ceiling - this.z) * (1 - Math.pow(0.18, dt));
-      }
-      if (this.z < floor) this.z = floor;
-      if (this.z < gnd + 6) this.kill();
+      const agl = spaceDown ? MAX_Z : shiftDown ? LOW_Z : CRUISE_Z;
+      const want = gnd + agl;
+      const follow = spaceDown || shiftDown ? 1 - Math.pow(0.14, dt) : 1 - Math.pow(0.08, dt);
+      const next = Phaser.Math.Linear(this.z, want, follow);
+      this.vz = dt > 0.0001 ? (next - this.z) / dt : 0;
+      this.z = next;
+      if (this.z < gnd + 8) this.z = gnd + 8;
     }
 
     const localFwd = this.vx * ca + this.vy * sa;

@@ -11,6 +11,7 @@ const SRC = {
   tankWreck: "sprites/helistrike-tank-wreck-parts.png",
   weapons: "sprites/helistrike-weapons.png",
   blasts: "sprites/helistrike-blasts.png",
+  rotors: "sprites/helistrike-rotors.png",
 } as const;
 
 export function preloadArt(scene: Phaser.Scene): void {
@@ -24,6 +25,7 @@ export function preloadArt(scene: Phaser.Scene): void {
   scene.load.image("src_tank_wreck", SRC.tankWreck);
   scene.load.image("src_weapons", SRC.weapons);
   scene.load.image("src_blasts", SRC.blasts);
+  scene.load.image("src_rotors", SRC.rotors);
 }
 
 export const tankLayout = {
@@ -32,9 +34,36 @@ export const tankLayout = {
   hulkTurretOrigin: { x: 0.5, y: 0.78 },
 };
 
+export const rotorLayout = {
+  player: { x: 0.498, y: 0.453 },
+  enemy: { x: 0.497, y: 0.411 },
+};
+
+export const gunLayout = {
+  origin: { x: 0.5, y: 0.7 },
+  mount: { x: 0.497, y: 0.174 },
+};
+
+export function spriteUvPos(
+  spr: { x: number; y: number; rotation: number; displayWidth: number; displayHeight: number; originX: number; originY: number },
+  uvx: number,
+  uvy: number
+): { x: number; y: number } {
+  const lx = (uvx - spr.originX) * spr.displayWidth;
+  const ly = (uvy - spr.originY) * spr.displayHeight;
+  const c = Math.cos(spr.rotation);
+  const s = Math.sin(spr.rotation);
+  return { x: spr.x + lx * c - ly * s, y: spr.y + lx * s + ly * c };
+}
+
 export function prepareArt(textures: Phaser.Textures.TextureManager): void {
-  put(textures, "heli_body", fit(keyImage(src(textures, "src_heli"), "studio"), 120));
-  put(textures, "enemy_heli", fit(keyImage(src(textures, "src_enemy"), "magenta"), 104));
+  const body = fit(keyImage(src(textures, "src_heli"), "studio"), 120);
+  const enemy = fit(keyImage(src(textures, "src_enemy"), "magenta"), 104);
+  put(textures, "heli_body", body);
+  put(textures, "enemy_heli", enemy);
+  const rotors = splitRotorSheet(keyPixels(src(textures, "src_rotors"), "magenta"));
+  put(textures, "heli_rotor", squareCenter(rotors[0]!));
+  put(textures, "enemy_rotor", squareCenter(rotors[1]!));
   put(textures, "rock", fit(keyImage(src(textures, "src_rock"), "magenta"), 36));
 
   const parts = sliceGrid(keyImage(src(textures, "src_tank_parts"), "magenta"), 2, 1);
@@ -50,7 +79,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   put(textures, "hulk_tank_turret", hulkTurret);
   tankLayout.hulkTurretOrigin = cupolaOrigin(hulkTurret);
 
-  const sheet = keyImage(src(textures, "src_units"), "magenta");
+  const sheet = keyPixels(src(textures, "src_units"), "magenta");
   const cells = sliceGrid(sheet, 3, 2);
   const keys = ["boat", "tower", "bunker", "radar", "soldier", "tree"] as const;
   const sizes = [78, 58, 92, 88, 26, 42];
@@ -147,6 +176,10 @@ function copyToCanvas(img: CanvasImageSource, w: number, h: number): HTMLCanvasE
 }
 
 function keyImage(img: HTMLImageElement, mode: "magenta" | "studio"): HTMLCanvasElement {
+  return trim(keyPixels(img, mode));
+}
+
+function keyPixels(img: HTMLImageElement, mode: "magenta" | "studio"): HTMLCanvasElement {
   const c = copyToCanvas(img, img.width, img.height);
   const g = c.getContext("2d")!;
   const pix = g.getImageData(0, 0, c.width, c.height);
@@ -225,7 +258,7 @@ function keyImage(img: HTMLImageElement, mode: "magenta" | "studio"): HTMLCanvas
     }
   }
   g.putImageData(pix, 0, 0);
-  return trim(c);
+  return c;
 }
 
 function matteMagenta(src: HTMLCanvasElement): HTMLCanvasElement {
@@ -276,7 +309,7 @@ function matteMagenta(src: HTMLCanvasElement): HTMLCanvasElement {
   return src;
 }
 
-function trim(src: HTMLCanvasElement): HTMLCanvasElement {
+function trim(src: HTMLCanvasElement, pad = 4): HTMLCanvasElement {
   const g = src.getContext("2d")!;
   const pix = g.getImageData(0, 0, src.width, src.height);
   const d = pix.data;
@@ -294,7 +327,6 @@ function trim(src: HTMLCanvasElement): HTMLCanvasElement {
     }
   }
   if (x1 < x0) return src;
-  const pad = 4;
   x0 = Math.max(0, x0 - pad);
   y0 = Math.max(0, y0 - pad);
   x1 = Math.min(src.width - 1, x1 + pad);
@@ -335,19 +367,196 @@ function darkenWreck(src: HTMLCanvasElement, mul = 0.55): HTMLCanvasElement {
 }
 
 function sliceGrid(src: HTMLCanvasElement, cols: number, rows: number): HTMLCanvasElement[] {
-  const cw = (src.width / cols) | 0;
-  const ch = (src.height / rows) | 0;
+  const xs = gutterCuts(src, cols, "x");
+  const ys = gutterCuts(src, rows, "y");
   const out: HTMLCanvasElement[] = [];
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
+      const x0 = xs[col]!;
+      const y0 = ys[row]!;
+      const w = xs[col + 1]! - x0;
+      const h = ys[row + 1]! - y0;
       const c = document.createElement("canvas");
-      c.width = cw;
-      c.height = ch;
-      c.getContext("2d")!.drawImage(src, col * cw, row * ch, cw, ch, 0, 0, cw, ch);
+      c.width = Math.max(1, w);
+      c.height = Math.max(1, h);
+      c.getContext("2d")!.drawImage(src, x0, y0, c.width, c.height, 0, 0, c.width, c.height);
       out.push(trim(c));
     }
   }
   return out;
+}
+
+function gutterCuts(src: HTMLCanvasElement, cells: number, axis: "x" | "y"): number[] {
+  const size = axis === "x" ? src.width : src.height;
+  const other = axis === "x" ? src.height : src.width;
+  const g = src.getContext("2d")!;
+  const pix = g.getImageData(0, 0, src.width, src.height).data;
+  const empty = new Uint8Array(size);
+  for (let i = 0; i < size; i++) {
+    let blank = 1;
+    for (let j = 0; j < other; j++) {
+      const x = axis === "x" ? i : j;
+      const y = axis === "x" ? j : i;
+      if (pix[(y * src.width + x) * 4 + 3]! >= 12) {
+        blank = 0;
+        break;
+      }
+    }
+    empty[i] = blank;
+  }
+  const runs: { a: number; b: number }[] = [];
+  let i = 0;
+  while (i < size) {
+    if (!empty[i]) {
+      i++;
+      continue;
+    }
+    const a = i;
+    while (i < size && empty[i]) i++;
+    if (i - a >= 8) runs.push({ a, b: i });
+  }
+  const interior = runs.filter((r) => r.a > 4 && r.b < size - 4);
+  const cuts = [0];
+  const used = new Set<number>();
+  for (let c = 1; c < cells; c++) {
+    const target = (size * c) / cells;
+    let best = -1;
+    let bd = 1e9;
+    for (let ri = 0; ri < interior.length; ri++) {
+      if (used.has(ri)) continue;
+      const r = interior[ri]!;
+      const d = Math.abs((r.a + r.b) / 2 - target);
+      if (d < bd) {
+        bd = d;
+        best = ri;
+      }
+    }
+    if (best < 0 || bd > size * 0.22) {
+      const eq: number[] = [0];
+      for (let k = 1; k < cells; k++) eq.push(((size * k) / cells) | 0);
+      eq.push(size);
+      return eq;
+    }
+    used.add(best);
+    cuts.push(interior[best]!.a);
+  }
+  cuts.push(size);
+  cuts.sort((a, b) => a - b);
+  return cuts;
+}
+
+function splitRotorSheet(src: HTMLCanvasElement): HTMLCanvasElement[] {
+  const g = src.getContext("2d")!;
+  const pix = g.getImageData(0, 0, src.width, src.height);
+  const d = pix.data;
+  const w = src.width;
+  const h = src.height;
+  const empty = new Uint8Array(w);
+  for (let x = 0; x < w; x++) {
+    let blank = 1;
+    for (let y = 0; y < h; y++) {
+      if (d[(y * w + x) * 4 + 3]! >= 12) {
+        blank = 0;
+        break;
+      }
+    }
+    empty[x] = blank;
+  }
+  const mid = w / 2;
+  let split = (mid) | 0;
+  let best = 1e9;
+  let x = 0;
+  while (x < w) {
+    if (!empty[x]) {
+      x++;
+      continue;
+    }
+    const x0 = x;
+    while (x < w && empty[x]) x++;
+    const len = x - x0;
+    if (len < 8) continue;
+    const cx = x0 + len / 2;
+    const dist = Math.abs(cx - mid);
+    if (dist < best) {
+      best = dist;
+      split = x0;
+    }
+  }
+  const cut = (x0: number, x1: number) => {
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, x1 - x0);
+    c.height = h;
+    c.getContext("2d")!.drawImage(src, x0, 0, c.width, c.height, 0, 0, c.width, c.height);
+    return trim(c, 14);
+  };
+  return [cut(0, split), cut(split, w)];
+}
+
+function insetHub(src: HTMLCanvasElement): { x: number; y: number } {
+  const w = src.width;
+  const h = src.height;
+  const a = src.getContext("2d")!.getImageData(0, 0, w, h).data;
+  const dist = new Float64Array(w * h);
+  const inf = 1e9;
+  for (let i = 0; i < w * h; i++) dist[i] = a[i * 4 + 3]! >= 12 ? inf : 0;
+  const s2 = Math.SQRT2;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (!dist[i]) continue;
+      let m = dist[i]!;
+      if (x > 0) m = Math.min(m, dist[i - 1]! + 1);
+      if (y > 0) m = Math.min(m, dist[i - w]! + 1);
+      if (x > 0 && y > 0) m = Math.min(m, dist[i - w - 1]! + s2);
+      if (x + 1 < w && y > 0) m = Math.min(m, dist[i - w + 1]! + s2);
+      dist[i] = m;
+    }
+  }
+  for (let y = h - 1; y >= 0; y--) {
+    for (let x = w - 1; x >= 0; x--) {
+      const i = y * w + x;
+      if (!dist[i]) continue;
+      let m = dist[i]!;
+      if (x + 1 < w) m = Math.min(m, dist[i + 1]! + 1);
+      if (y + 1 < h) m = Math.min(m, dist[i + w]! + 1);
+      if (x + 1 < w && y + 1 < h) m = Math.min(m, dist[i + w + 1]! + s2);
+      if (x > 0 && y + 1 < h) m = Math.min(m, dist[i + w - 1]! + s2);
+      dist[i] = m;
+    }
+  }
+  let best = -1;
+  let bx = w / 2;
+  let by = h / 2;
+  for (let i = 0; i < dist.length; i++) {
+    if (dist[i]! > best) {
+      best = dist[i]!;
+      bx = i % w;
+      by = (i / w) | 0;
+    }
+  }
+  return { x: bx, y: by };
+}
+
+function squareCenter(src: HTMLCanvasElement): HTMLCanvasElement {
+  const hub = insetHub(src);
+  const g = src.getContext("2d")!;
+  const pix = g.getImageData(0, 0, src.width, src.height);
+  const d = pix.data;
+  let reach = 1;
+  for (let y = 0; y < src.height; y++) {
+    for (let x = 0; x < src.width; x++) {
+      if (d[(y * src.width + x) * 4 + 3]! < 12) continue;
+      const dd = Math.hypot(x - hub.x, y - hub.y);
+      if (dd > reach) reach = dd;
+    }
+  }
+  const half = Math.ceil(reach + 10);
+  const size = half * 2;
+  const c = document.createElement("canvas");
+  c.width = size;
+  c.height = size;
+  c.getContext("2d")!.drawImage(src, half - hub.x, half - hub.y);
+  return c;
 }
 
 function rowStats(src: HTMLCanvasElement): { count: number; minx: number; maxx: number }[] {
