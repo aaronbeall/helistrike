@@ -50,6 +50,10 @@ export interface Shot {
   blast: number;
   dmg: number;
   guided?: boolean;
+  motor?: number;
+  cruise?: number;
+  loft?: number;
+  yaw?: number;
 }
 
 export type SparkKind = "flame" | "spark" | "dirt" | "splash";
@@ -66,8 +70,14 @@ export interface Spark {
   scale: number;
   bounces: number;
   kind: SparkKind;
+  tex: string;
+  frame: number;
+  angJit: number;
+  spin: number;
   tint: number;
   additive: boolean;
+  heading: number;
+  streak?: boolean;
 }
 
 export interface Frag {
@@ -88,6 +98,10 @@ export interface Frag {
   trailR: number;
   trailFade?: number;
   trailFadeMax?: number;
+  linger?: boolean;
+  wobble?: number;
+  wobFreq?: number;
+  wobAmp?: number;
 }
 
 let nid = 1;

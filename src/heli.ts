@@ -34,8 +34,9 @@ export class Heli {
   spool = 0;
   weapon = 0;
   fireCd = 0;
-  hellfireLock: { id: number; t: number } | null = null;
-  dmgSites: { f: number; s: number }[] = [];
+  hellfireLock: { id: number } | null = null;
+  hellfireSeek: { id: number; t: number } | null = null;
+  dmgSites: { i: number; scale: number }[] = [];
 
   constructor(x: number, y: number, world: WorldData) {
     this.x = x;

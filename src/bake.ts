@@ -210,14 +210,21 @@ function drawTrack(): HTMLCanvasElement {
 }
 
 function drawFlame(): HTMLCanvasElement {
-  const c = canvas(16, 20);
+  const c = canvas(22, 22);
   const g = ctxOf(c);
-  const grd = g.createRadialGradient(8, 14, 0, 8, 10, 10);
-  grd.addColorStop(0, "#fff3a0");
-  grd.addColorStop(0.45, "#ff6a18");
-  grd.addColorStop(1, "rgba(180,20,0,0)");
-  g.fillStyle = grd;
-  g.fillRect(0, 0, 16, 20);
+  const blob = (x: number, y: number, r: number, inner: string, mid: string, outer: string) => {
+    const grd = g.createRadialGradient(x, y, r * 0.08, x, y, r);
+    grd.addColorStop(0, inner);
+    grd.addColorStop(0.45, mid);
+    grd.addColorStop(1, outer);
+    g.fillStyle = grd;
+    g.beginPath();
+    g.ellipse(x, y, r * 1.05, r * 0.92, -0.25, 0, Math.PI * 2);
+    g.fill();
+  };
+  blob(11, 12, 10, "rgba(255,80,10,0.9)", "rgba(255,50,0,0.55)", "rgba(180,0,0,0)");
+  blob(10.2, 10.4, 7.2, "rgba(255,170,40,1)", "rgba(255,90,12,0.85)", "rgba(255,40,0,0)");
+  blob(10.5, 10, 3.4, "rgba(255,252,230,1)", "rgba(255,220,90,0.9)", "rgba(255,140,20,0)");
   return c;
 }
 
@@ -616,25 +623,29 @@ function drawReticleSquare(): HTMLCanvasElement {
 }
 
 function drawLock(): HTMLCanvasElement {
-  const c = canvas(40, 40);
+  const c = canvas(72, 72);
   const g = ctxOf(c);
-  g.strokeStyle = "#ff5a3a";
-  g.lineWidth = 2;
-  const s = 8;
+  g.strokeStyle = "#ff3a22";
+  g.lineWidth = 3.2;
+  g.lineCap = "square";
+  const s = 16;
   g.beginPath();
-  g.moveTo(s, 4);
-  g.lineTo(4, 4);
-  g.lineTo(4, s);
-  g.moveTo(36 - s, 4);
-  g.lineTo(36, 4);
-  g.lineTo(36, s);
-  g.moveTo(s, 36);
-  g.lineTo(4, 36);
-  g.lineTo(4, 36 - s);
-  g.moveTo(36 - s, 36);
-  g.lineTo(36, 36);
-  g.lineTo(36, 36 - s);
+  g.moveTo(s, 8);
+  g.lineTo(8, 8);
+  g.lineTo(8, s);
+  g.moveTo(64 - s, 8);
+  g.lineTo(64, 8);
+  g.lineTo(64, s);
+  g.moveTo(s, 64);
+  g.lineTo(8, 64);
+  g.lineTo(8, 64 - s);
+  g.moveTo(64 - s, 64);
+  g.lineTo(64, 64);
+  g.lineTo(64, 64 - s);
   g.stroke();
+  g.strokeStyle = "#ffd0c0";
+  g.lineWidth = 1.4;
+  g.strokeRect(18, 18, 36, 36);
   return c;
 }
 

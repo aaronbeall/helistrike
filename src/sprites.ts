@@ -14,6 +14,9 @@ const SRC = {
   rotors: "sprites/helistrike-rotors.png",
 } as const;
 
+const FX_KINDS = ["spark", "flame", "smoke", "muzzle", "dirt", "splash"] as const;
+export const FX_VARIANTS = 4;
+
 export function preloadArt(scene: Phaser.Scene): void {
   scene.load.image("src_heli", SRC.heli);
   scene.load.image("src_enemy", SRC.enemy);
@@ -26,6 +29,12 @@ export function preloadArt(scene: Phaser.Scene): void {
   scene.load.image("src_weapons", SRC.weapons);
   scene.load.image("src_blasts", SRC.blasts);
   scene.load.image("src_rotors", SRC.rotors);
+  for (const kind of FX_KINDS) {
+    scene.load.image(`src_fx_${kind}_0`, `sprites/helistrike-fx-${kind}.png`);
+    for (let i = 1; i < FX_VARIANTS; i++) {
+      scene.load.image(`src_fx_${kind}_${i}`, `sprites/helistrike-fx-${kind}-${i}.png`);
+    }
+  }
 }
 
 export const tankLayout = {
@@ -113,6 +122,13 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   const blasts = sliceGrid(matteMagenta(copyToCanvas(blastSrc, blastSrc.width, blastSrc.height)), 2, 2);
   blasts.forEach((c, i) => put(textures, `blast_${i}`, fit(c, 88)));
 
+  putFxSheet(textures, "spark", 22);
+  putFxSheet(textures, "flame", 28);
+  putFxSheet(textures, "smoke", 48);
+  putFxSheet(textures, "muzzle", 34);
+  putFxSheet(textures, "dirt", 22);
+  putFxSheet(textures, "splash", 20);
+
   const shadowSrc = [
     "heli_body",
     "enemy_heli",
@@ -164,6 +180,48 @@ function put(
 ): void {
   if (textures.exists(key)) textures.remove(key);
   textures.addCanvas(key, c);
+}
+
+function putFxSheet(
+  textures: Phaser.Textures.TextureManager,
+  destKey: string,
+  size: number
+): void {
+  const cells: HTMLCanvasElement[] = [];
+  for (let i = 0; i < FX_VARIANTS; i++) {
+    const srcKey = `src_fx_${destKey}_${i}`;
+    if (!textures.exists(srcKey)) continue;
+    const img = src(textures, srcKey);
+    cells.push(fit(trim(fxKnockBlack(copyToCanvas(img, img.width, img.height)), 2), size));
+  }
+  if (!cells.length) return;
+  const n = cells.length;
+  const sheet = document.createElement("canvas");
+  sheet.width = size * n;
+  sheet.height = size;
+  const g = sheet.getContext("2d")!;
+  cells.forEach((c, i) => {
+    g.drawImage(c, i * size + (size - c.width) / 2, (size - c.height) / 2);
+  });
+  if (textures.exists(destKey)) textures.remove(destKey);
+  textures.addSpriteSheet(destKey, sheet, { frameWidth: size, frameHeight: size, endFrame: n - 1 });
+}
+
+function fxKnockBlack(src: HTMLCanvasElement): HTMLCanvasElement {
+  const g = src.getContext("2d")!;
+  const pix = g.getImageData(0, 0, src.width, src.height);
+  const d = pix.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const lum = Math.max(d[i]!, d[i + 1]!, d[i + 2]!);
+    const srcA = d[i + 3]!;
+    if (srcA < 8 || lum < 10) {
+      d[i + 3] = 0;
+      continue;
+    }
+    d[i + 3] = Math.min(255, Math.round((lum / 255) * srcA * 1.08));
+  }
+  g.putImageData(pix, 0, 0);
+  return src;
 }
 
 function copyToCanvas(img: CanvasImageSource, w: number, h: number): HTMLCanvasElement {
