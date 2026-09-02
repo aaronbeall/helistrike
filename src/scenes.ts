@@ -1635,7 +1635,7 @@ export class MissionScene extends Phaser.Scene {
           : 0;
       const round = dart ? Math.max(edge, Phaser.Math.Clamp(1 - spd / 220, 0, 1)) : 0;
       const stretch = s.straight
-        ? Math.min(2.55, 1 + spd * 0.00135)
+        ? Math.min(3.15, 1 + spd * 0.0017)
         : shock
           ? Math.min(2.8, 1 + spd * 0.0022)
           : 1 + spd * (spark ? 0.011 : streak ? 0.0064 : dart ? 0.0052 : 0.0048);
@@ -3568,8 +3568,10 @@ export class MissionScene extends Phaser.Scene {
     const cam = this.cameras.main;
     const p = this.input.activePointer;
     const z = Math.max(cam.zoom, 0.001);
-    const pull = 0.2;
-    const max = 88;
+    const wpn = WPN_LIST[this.heli.weapon]!.id;
+    const heavy = wpn === "hellfire" || wpn === "tow";
+    const pull = heavy ? 0.55 : 0.2;
+    const max = heavy ? 210 : 88;
     let ox = ((p.x - this.scale.width / 2) / z) * pull;
     let oy = ((p.y - this.scale.height / 2) / z) * pull;
     const len = Math.hypot(ox, oy);
@@ -3577,7 +3579,7 @@ export class MissionScene extends Phaser.Scene {
       ox *= max / len;
       oy *= max / len;
     }
-    const k = 1 - Math.exp(-10 * dt);
+    const k = 1 - Math.exp(-(heavy ? 6.5 : 10) * dt);
     this.lookCamX = Phaser.Math.Linear(this.lookCamX, ox, k);
     this.lookCamY = Phaser.Math.Linear(this.lookCamY, oy, k);
     cam.centerOn(this.body.x + this.lookCamX, this.body.y + this.lookCamY);
@@ -3812,11 +3814,11 @@ export class MissionScene extends Phaser.Scene {
 }
 
 function hitSparkFx(dmg: number): { n: number; spd: number; size: number } {
-  const t = Phaser.Math.Clamp(Math.pow(Math.max(0.5, dmg) / 8, 0.28), 0.7, 1.5);
+  const t = Phaser.Math.Clamp(Math.pow(Math.max(0.35, dmg) / 8, 0.32), 0.28, 1.5);
   return {
     n: t,
     spd: 0.86 + 0.1 * t,
-    size: Phaser.Math.Clamp(0.74 + 0.34 * t, 0.74, 1.26),
+    size: Phaser.Math.Clamp(0.4 + 0.58 * t, 0.4, 1.26),
   };
 }
 
