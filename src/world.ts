@@ -182,19 +182,24 @@ function sampleBiomeId(world: WorldData, x: number, y: number): number {
 
 export const Z_LIFT = 0.05;
 export const Z_CAM = 480;
+export const Z_SCALE_NEAR = 96;
+/** Height-map value at or below this becomes groundZ 0. */
+export const GROUND_H_ZERO = 0.16;
+/** World Z per unit of height-map above GROUND_H_ZERO. Peak ≈ (0.94 - GROUND_H_ZERO) * this. */
+export const GROUND_Z_SCALE = 258;
 
 export function screenLift(z: number): number {
   return z * Z_LIFT;
 }
 
 export function zScale(z: number): number {
-  const d = Math.max(96, Z_CAM - z);
+  const d = Math.max(Z_SCALE_NEAR, Z_CAM - z);
   return Z_CAM / d;
 }
 
 export function groundZ(world: WorldData, x: number, y: number): number {
   const h = sampleHeight(world, x, y);
-  return Math.max(0, (h - 0.16) * 158);
+  return Math.max(0, (h - GROUND_H_ZERO) * GROUND_Z_SCALE);
 }
 
 export function castZ(world: WorldData, x: number, y: number, z: number): number {

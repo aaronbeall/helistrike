@@ -18,7 +18,7 @@ import {
 } from "./combat";
 import { Layer, ZOff, Z_GRAVITY, worldDepth } from "./depth";
 import { range } from "./rng";
-import { CRUISE_Z, HELI_HEIGHT, Heli, LOW_Z, MAX_Z } from "./heli";
+import { CRUISE_AGL, HELI_HEIGHT, Heli, LOW_AGL, MAX_AGL } from "./heli";
 import { SpriteConfigTool } from "./spriteConfig";
 import { preloadArt, prepareArt, extractBiomeTiles, gunLayout, rotorLayout, shadowAlpha, shadowKey, shadowOff, spriteUvPos, tankLayout, FX_VARIANTS } from "./sprites";
 import {
@@ -400,7 +400,7 @@ export class MissionScene extends Phaser.Scene {
         kind: s.kind,
         x: s.x,
         y: s.y,
-        z: s.kind === "heli" ? groundZ(this.world, s.x, s.y) + CRUISE_Z : groundZ(this.world, s.x, s.y),
+        z: s.kind === "heli" ? groundZ(this.world, s.x, s.y) + CRUISE_AGL : groundZ(this.world, s.x, s.y),
         vx: 0,
         vy: 0,
         angle: Math.random() * Math.PI * 2,
@@ -1765,7 +1765,7 @@ export class MissionScene extends Phaser.Scene {
     ) {
       return true;
     }
-    const ceil = groundZ(this.world, s.x, s.y) + MAX_Z + 28;
+    const ceil = groundZ(this.world, s.x, s.y) + MAX_AGL + 28;
     return s.z > ceil;
   }
 
@@ -1857,7 +1857,7 @@ export class MissionScene extends Phaser.Scene {
       s.y += s.vy * dt;
       s.z += s.vz * dt;
       if (s.kind === "hellfire") {
-        const zCeil = groundZ(this.world, s.x, s.y) + MAX_Z + 70;
+        const zCeil = groundZ(this.world, s.x, s.y) + MAX_AGL + 70;
         if (s.z > zCeil) {
           s.z = zCeil;
           if (s.vz > 0) s.vz = 0;
@@ -2546,7 +2546,7 @@ export class MissionScene extends Phaser.Scene {
         u.x += u.vx * dt;
         u.y += u.vy * dt;
         const g = groundZ(this.world, u.x, u.y);
-        const want = g + CRUISE_Z + 10 + Math.sin(this.time.now * 0.002 + u.id) * 6;
+        const want = g + CRUISE_AGL + 10 + Math.sin(this.time.now * 0.002 + u.id) * 6;
         u.z = Phaser.Math.Linear(u.z, want, 1 - Math.pow(0.1, dt));
       } else {
         if (u.kind === "boat" && isWater(this.world, u.x, u.y)) {
@@ -3600,7 +3600,7 @@ export class MissionScene extends Phaser.Scene {
     if (this.mapBlend < 0.12 && !this.over && this.heli.phase !== "dead") {
       const heli = this.heli;
       const spdN = Phaser.Math.Clamp(Math.hypot(heli.vx, heli.vy) / 320, 0, 1);
-      const altN = Phaser.Math.Clamp(castZ(this.world, heli.x, heli.y, heli.z) / MAX_Z, 0, 1);
+      const altN = Phaser.Math.Clamp(castZ(this.world, heli.x, heli.y, heli.z) / MAX_AGL, 0, 1);
       wantS = Phaser.Math.Clamp(1 - spdN * 0.07 - altN * 0.08, 0.86, 1);
       wantX = -heli.roll * 24;
       wantY = -heli.pitch * 20;
@@ -3639,11 +3639,11 @@ export class MissionScene extends Phaser.Scene {
     else if (this.keyShift?.isDown) altZoom = napeZ;
     else {
       const agl = castZ(this.world, h.x, h.y, h.z);
-      if (agl <= CRUISE_Z) {
-        const t = Phaser.Math.Clamp((agl - LOW_Z) / Math.max(1, CRUISE_Z - LOW_Z), 0, 1);
+      if (agl <= CRUISE_AGL) {
+        const t = Phaser.Math.Clamp((agl - LOW_AGL) / Math.max(1, CRUISE_AGL - LOW_AGL), 0, 1);
         altZoom = Phaser.Math.Linear(napeZ, cruiseZ, t);
       } else {
-        const t = Phaser.Math.Clamp((agl - CRUISE_Z) / Math.max(1, MAX_Z - CRUISE_Z), 0, 1);
+        const t = Phaser.Math.Clamp((agl - CRUISE_AGL) / Math.max(1, MAX_AGL - CRUISE_AGL), 0, 1);
         altZoom = Phaser.Math.Linear(cruiseZ, popZ, t);
       }
     }

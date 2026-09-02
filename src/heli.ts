@@ -8,9 +8,16 @@ export interface Stick {
   right: boolean;
 }
 
-export const CRUISE_Z = 46;
-export const MAX_Z = 118;
-export const LOW_Z = 4;
+/** Nape / cruise / pop-up ceilings are AGL (added to local groundZ), not world Z. */
+export const LOW_AGL = 4;
+export const CRUISE_AGL = 46;
+export const MAX_AGL = 118;
+export const Z_THRUST = 520;
+/** Gentle collective toward cruise. Far weaker than Z_THRUST. */
+export const CRUISE_THRUST = 36;
+export const CRUISE_DAMP = 2.2;
+/** How fast cruise's ground reference tracks real terrain. Low = ignore rivers. */
+export const GND_FOLLOW = 0.55;
 export const HELI_HEIGHT = 14;
 
 export type Phase = "grounded" | "spool" | "liftoff" | "flight" | "dead";
@@ -38,11 +45,13 @@ export class Heli {
   hellfireLock: { id: number } | null = null;
   hellfireSeek: { id: number; t: number } | null = null;
   dmgSites: { i: number; scale: number }[] = [];
+  gndSmooth: number;
 
   constructor(x: number, y: number, world: WorldData) {
     this.x = x;
     this.y = y;
-    this.z = groundZ(world, x, y) + 2;
+    this.gndSmooth = groundZ(world, x, y);
+    this.z = this.gndSmooth + 2;
   }
 
   get noseX(): number {
@@ -78,7 +87,7 @@ export class Heli {
     }
     if (this.phase === "liftoff") {
       this.rotorSpd = Phaser.Math.Linear(this.rotorSpd, 28, 1 - Math.pow(0.05, dt));
-      const cruise = CRUISE_Z + groundZ(world, this.x, this.y);
+      const cruise = CRUISE_AGL + groundZ(world, this.x, this.y);
       this.z = Phaser.Math.Linear(this.z, cruise, 1 - Math.pow(0.12, dt));
       if (this.z > cruise - 4) this.phase = "flight";
     }
@@ -110,8 +119,8 @@ export class Heli {
     const fwd = (up ? 1 : 0) + (down ? -1 : 0);
     const str = (right ? 1 : 0) + (left ? -1 : 0);
     if (airborne && this.phase === "flight") {
-      ax += ca * fwd * 520;
-      ay += sa * fwd * 520;
+      ax += ca * fwd * Z_THRUST;
+      ay += sa * fwd * Z_THRUST;
       ax += -sa * str * 340;
       ay += ca * str * 340;
     }
@@ -132,14 +141,16 @@ export class Heli {
     this.y = Phaser.Math.Clamp(this.y, 40, 5560);
 
     const gnd = groundZ(world, this.x, this.y);
+    this.gndSmooth += (gnd - this.gndSmooth) * (1 - Math.exp(-GND_FOLLOW * dt));
     if (airborne && this.phase === "flight") {
-      const minZ = gnd + LOW_Z;
-      const maxZ = gnd + MAX_Z;
-      const restZ = gnd + CRUISE_Z;
+      const minZ = gnd + LOW_AGL;
+      const maxZ = gnd + MAX_AGL;
+      const restZ = this.gndSmooth + CRUISE_AGL;
       const zIn = (spaceDown ? 1 : 0) + (shiftDown ? -1 : 0);
-      let az = zIn * 520;
+      let az = zIn * Z_THRUST;
       if (zIn === 0) {
-        az += Phaser.Math.Clamp((restZ - this.z) * 0.55, -42, 42);
+        az += Phaser.Math.Clamp(restZ - this.z, -CRUISE_THRUST, CRUISE_THRUST);
+        this.vz *= Math.pow(1 / (1 + CRUISE_DAMP * dt), 1);
       }
       const ceilPad = 26;
       const floorPad = 14;
