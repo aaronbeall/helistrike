@@ -17,6 +17,7 @@ import {
   type Wpn,
 } from "./combat";
 import { Layer, ZOff, Z_GRAVITY, worldDepth } from "./depth";
+import { range } from "./rng";
 import { CRUISE_Z, HELI_HEIGHT, Heli, LOW_Z, MAX_Z } from "./heli";
 import { SpriteConfigTool } from "./spriteConfig";
 import { preloadArt, prepareArt, extractBiomeTiles, gunLayout, rotorLayout, shadowAlpha, shadowKey, shadowOff, spriteUvPos, tankLayout, FX_VARIANTS } from "./sprites";
@@ -230,7 +231,9 @@ export class MissionScene extends Phaser.Scene {
   mapWant = false;
   mapBlend = 0;
   camZoom = 2.55;
-  camFollow = true;
+  camFollow = false;
+  lookCamX = 0;
+  lookCamY = 0;
   playLastFrame = false;
   playScrollX = 0;
   playScrollY = 0;
@@ -256,7 +259,9 @@ export class MissionScene extends Phaser.Scene {
     this.mapView = false;
     this.mapWant = false;
     this.mapBlend = 0;
-    this.camFollow = true;
+    this.camFollow = false;
+    this.lookCamX = 0;
+    this.lookCamY = 0;
     this.playLastFrame = false;
     this.debugHit = false;
     this.showHeightMap = false;
@@ -661,8 +666,6 @@ export class MissionScene extends Phaser.Scene {
     this.miniMask.setVisible(false);
 
     this.cameras.main.centerOn(this.heli.x, this.heli.y);
-    this.cameras.main.startFollow(this.body, true, 0.12, 0.12);
-    this.cameras.main.setDeadzone(80, 80);
     this.cameras.main.setZoom(this.playZoom());
     this.camZoom = this.playZoom();
     this.playScrollX = this.heli.x - this.scale.width / 2;
@@ -725,18 +728,18 @@ export class MissionScene extends Phaser.Scene {
     if (!this.textures.exists(key) && !this.textures.exists("blast_0")) return;
     const spd = Math.hypot(vx, vy);
     const ang = spd > 10 ? Math.atan2(vy, vx) : Math.random() * Math.PI * 2;
-    const sc = 0.065 + Math.random() * 0.08;
+    const sc = range(0.065, 0.145);
     const stretch = 1 + Math.min(0.7, spd * 0.0024);
     this.stampWreck(
       this.textures.exists(key) ? key : "blast_0",
-      x + (Math.random() - 0.5) * 5,
-      y + (Math.random() - 0.5) * 5,
-      ang + (Math.random() - 0.5) * 0.5,
+      x + range(-2.5, 2.5),
+      y + range(-2.5, 2.5),
+      ang + range(-0.25, 0.25),
       sc * stretch,
-      0.28 + Math.random() * 0.22,
+      range(0.28, 0.5),
       0.5,
       0.5,
-      sc * (0.72 + Math.random() * 0.22)
+      sc * range(0.72, 0.94)
     );
   }
 
@@ -750,19 +753,20 @@ export class MissionScene extends Phaser.Scene {
     const px = -uy;
     const py = ux;
     for (let i = 0; i < n; i++) {
-      const along = (Math.random() - 0.22) * (16 + Math.min(28, spd * 0.07));
-      const side = (Math.random() - 0.5) * 12;
+      const span = 16 + Math.min(28, spd * 0.07);
+      const along = range(-0.22 * span, 0.78 * span);
+      const side = range(-6, 6);
       const frame = (Math.random() * FX_VARIANTS) | 0;
-      const sc = 0.38 + Math.random() * 0.42;
-      const stretch = 0.75 + Math.random() * 0.9 + Math.min(0.5, spd * 0.0018);
-      const thin = 0.2 + Math.random() * 0.18;
+      const sc = range(0.38, 0.8);
+      const stretch = range(0.75, 1.65) + Math.min(0.5, spd * 0.0018);
+      const thin = range(0.2, 0.38);
       this.stampWreck(
         "dirt",
         x + ux * along + px * side,
         y + uy * along + py * side,
-        ang + (Math.random() - 0.5) * 0.38,
+        ang + range(-0.19, 0.19),
         sc * stretch,
-        0.36 + Math.random() * 0.34,
+        range(0.36, 0.7),
         0.12,
         0.5,
         sc * thin,
@@ -832,6 +836,8 @@ export class MissionScene extends Phaser.Scene {
       this.emitDamageFx();
       this.drawDebugHits();
     }
+
+    if (this.mapBlend < 0.001) this.syncLookCam(wallDt);
 
     const mapOn = this.mapBlend > 0.12;
     this.syncHudParallax(wallDt);
@@ -945,7 +951,7 @@ export class MissionScene extends Phaser.Scene {
     const puffs = Math.max(1, Math.round((takeoff ? 2 + power * 3 : 0.6 + power * 1.4) * rate));
     for (let i = 0; i < puffs; i++) {
       const a = Math.random() * Math.PI * 2;
-      const r = 16 + Math.random() * (40 + power * 36);
+      const r = range(16, 56 + power * 36);
       this.heliDust.setEmitterAngle(Phaser.Math.RadToDeg(a) + (Math.random() - 0.5) * 28);
       this.heliDust.emitParticleAt(h.x + Math.cos(a) * r, sy + Math.sin(a) * r * 0.55, 1);
     }
@@ -959,33 +965,33 @@ export class MissionScene extends Phaser.Scene {
       const a = Math.random() * Math.PI * 2;
       const ca = Math.cos(a);
       const sa = Math.sin(a);
-      const r0 = 8 + Math.random() * 18;
-      const spd = (420 + Math.random() * 380) * (0.55 + power * 0.7);
-      const life = 0.48 + Math.random() * 0.38;
+      const r0 = range(8, 26);
+      const spd = range(420, 800) * (0.55 + power * 0.7);
+      const life = range(0.48, 0.86);
       const look = sparkLook("dirt", biome);
       this.sparks.push({
         x: h.x + ca * r0,
         y: h.y + sa * r0,
-        z: gnd + 2 + Math.random() * 6,
+        z: gnd + range(2, 8),
         vx: ca * spd,
         vy: sa * spd,
-        vz: 8 + Math.random() * 28,
+        vz: range(8, 36),
         life,
         max: life,
-        scale: 0.62 + Math.random() * 0.38,
+        scale: range(0.62, 1),
         bounces: 0,
         kind: "dirt",
         tex: sparkTexKey("dirt"),
         frame: (Math.random() * FX_VARIANTS) | 0,
-        angJit: (Math.random() - 0.5) * 0.12,
-        spin: spinSign * (0.8 + Math.random() * 1.8),
+        angJit: range(-0.06, 0.06),
+        spin: spinSign * range(0.8, 2.6),
         tint: look.tint,
         additive: look.add,
         heading: a,
         dart: true,
         ox: h.x,
         oy: h.y,
-        swirl: spinSign * (120 + Math.random() * 180),
+        swirl: spinSign * range(120, 300),
       });
     }
   }
@@ -1345,42 +1351,47 @@ export class MissionScene extends Phaser.Scene {
       const kind = opt.forceKind ?? pickSparkKind(opt.style, opt.sparkFrac);
       const reverse = opt.style === "object" && Math.random() < 0.5;
       const d = biasedDir(opt.bx, opt.by, opt.bz, opt.tight, reverse);
+      const impact = opt.style !== "muzzle" && opt.forceKind !== "flame";
       const spd =
-        (opt.spdMin + Math.random() * (opt.spdMax - opt.spdMin)) *
-        (kind === "dirt" && opt.style === "ground" ? 1.25 : 1);
+        range(opt.spdMin, opt.spdMax) *
+        (kind === "dirt" && opt.style === "ground" ? 1.25 : 1) *
+        (impact ? 1.32 : 1);
       const life =
         kind === "dirt"
-          ? 0.45 + Math.random() * 0.35
+          ? range(0.45, 0.8)
           : kind === "spark"
-            ? 0.42 + Math.random() * 0.32
+            ? range(0.42, 0.74)
             : kind === "splash"
-              ? 0.32 + Math.random() * 0.28
-              : 0.18 + Math.random() * 0.22;
+              ? range(0.32, 0.6)
+              : range(0.18, 0.4);
       const look = sparkLook(kind, biome, opt.blood);
       const vx = d.x * spd;
       const vy = d.y * spd;
       const vz = d.z * spd + (kind === "dirt" || kind === "splash" ? 50 : 20);
       const sizeMul =
         (opt.scaleMul ?? (opt.style === "muzzle" ? 0.3 : 1)) *
-        (kind === "spark" && opt.style === "ground" ? 0.42 : 1);
+        (kind === "spark" && opt.style === "ground" ? 0.42 : 1) *
+        (impact ? 0.74 : 1);
+      const angW = kind === "dirt" ? 0.175 : kind === "spark" ? 0.09 : 0.425;
+      const spinW = kind === "dirt" ? 1.2 : 3;
       this.sparks.push({
         x,
         y,
-        z: z + 1 + Math.random() * 4,
+        z: z + range(1, 5),
         vx,
         vy,
         vz,
         life,
         max: life,
         scale:
-          (kind === "dirt" ? 0.52 + Math.random() * 0.28 : kind === "spark" ? 0.65 + Math.random() * 0.5 : 0.45 + Math.random() * 0.55) *
+          (kind === "dirt" ? range(0.52, 0.8) : kind === "spark" ? range(0.65, 1.15) : range(0.45, 1)) *
           sizeMul,
         bounces: kind === "flame" ? 1 : kind === "splash" ? 2 : 2 + ((Math.random() * 3) | 0),
         kind,
         tex: sparkTexKey(kind),
         frame: (Math.random() * FX_VARIANTS) | 0,
-        angJit: (Math.random() - 0.5) * (kind === "dirt" ? 0.35 : kind === "spark" ? 0.18 : 0.85),
-        spin: (Math.random() - 0.5) * (kind === "dirt" ? 2.4 : 6),
+        angJit: range(-angW, angW),
+        spin: range(-spinW, spinW),
         tint: look.tint,
         additive: look.add,
         heading: Math.atan2(vy - screenLift(vz), vx),
@@ -1439,8 +1450,9 @@ export class MissionScene extends Phaser.Scene {
           s.bounces--;
           s.vz = -s.vz * (s.kind === "dirt" ? 0.18 : 0.38);
           const spd = Math.hypot(s.vx, s.vy);
-          s.vx = (s.vx + (Math.random() - 0.5) * spd * 0.5) * 0.55;
-          s.vy = (s.vy + (Math.random() - 0.5) * spd * 0.5) * 0.55;
+          const jit = range(-spd * 0.25, spd * 0.25);
+          s.vx = (s.vx + jit) * 0.55;
+          s.vy = (s.vy + range(-spd * 0.25, spd * 0.25)) * 0.55;
         } else {
           s.vz = 0;
           s.vx *= 0.35;
@@ -1741,12 +1753,12 @@ export class MissionScene extends Phaser.Scene {
     if (missile && (s.motor == null || s.motor < 0)) return;
     const steps = missile ? 2 : 1;
     for (let i = 0; i < steps; i++) {
-      const t = (i + Math.random() * 0.35) / steps;
+      const t = (i + range(0, 0.35)) / steps;
       const x = x0 + (s.x - x0) * t;
       const y = y0 + (s.y - y0) * t;
       const z = z0 + (s.z - z0) * t;
       const sy = y - screenLift(z);
-      const back = 6 + Math.random() * 5;
+      const back = range(6, 11);
       const tx = x - Math.cos(s.angle) * back;
       const ty = sy - Math.sin(s.angle) * back;
       if (missile) {
@@ -1852,7 +1864,7 @@ export class MissionScene extends Phaser.Scene {
     if (!water && !objectHit) {
       if (he) {
         const key = `blast_${(Math.random() * 4) | 0}`;
-        const sc = (blast / 72) * (0.55 + Math.random() * 0.5);
+        const sc = (blast / 72) * range(0.55, 1.05);
         this.stampWreck(this.textures.exists(key) ? key : "blast_0", x, y, Math.random() * Math.PI * 2, sc, 1);
       } else {
         this.stampCannonScar(x, y, dx, dy, dz);
@@ -1898,14 +1910,15 @@ export class MissionScene extends Phaser.Scene {
     const horiz = Math.hypot(dx, dy);
     const ang =
       horiz > 2 ? Math.atan2(dy, dx) : Math.hypot(slope.dx, slope.dy) > 0.002 ? Math.atan2(slope.dy, slope.dx) : 0;
-    const px = x + (Math.random() - 0.5) * Phaser.Math.Linear(5, 14, graze);
-    const py = y + (Math.random() - 0.5) * Phaser.Math.Linear(5, 14, graze);
+    const j = Phaser.Math.Linear(5, 14, graze);
+    const px = x + range(-j * 0.5, j * 0.5);
+    const py = y + range(-j * 0.5, j * 0.5);
     const key = `blast_${(Math.random() * 4) | 0}`;
-    const base = 0.12 + Math.random() * 0.11;
-    const stretch = graze * graze * (0.75 + Math.random() * 0.5);
-    const sx = base * Phaser.Math.Linear(1, 2.55, stretch) * (0.82 + Math.random() * 0.36);
-    const sy = base * Phaser.Math.Linear(1, 0.36, graze) * (0.82 + Math.random() * 0.36);
-    const alpha = Phaser.Math.Linear(0.72, 0.22, graze) * (0.78 + Math.random() * 0.28);
+    const base = range(0.12, 0.23);
+    const stretch = graze * graze * range(0.75, 1.25);
+    const sx = base * Phaser.Math.Linear(1, 2.55, stretch) * range(0.82, 1.18);
+    const sy = base * Phaser.Math.Linear(1, 0.36, graze) * range(0.82, 1.18);
+    const alpha = Phaser.Math.Linear(0.72, 0.22, graze) * range(0.78, 1.06);
     this.stampWreck(this.textures.exists(key) ? key : "blast_0", px, py, ang, sx, alpha, 0.5, 0.5, sy);
   }
 
@@ -1959,29 +1972,29 @@ export class MissionScene extends Phaser.Scene {
     for (let i = 0; i < n; i++) {
       const reverse = Math.random() < 0.35;
       const d = biasedDir(dx, dy, Math.max(40, dz), 0.18, reverse);
-      const sp = 70 + Math.random() * 180;
+      const sp = range(70, 250);
       const jit = 0.55;
       this.frags.push({
         x,
         y,
-        z: z + 6 + Math.random() * 12,
-        vx: d.x * sp + (Math.random() - 0.5) * sp * jit,
-        vy: d.y * sp + (Math.random() - 0.5) * sp * jit,
-        vz: 140 + Math.random() * 160 + d.z * 40,
+        z: z + range(6, 18),
+        vx: d.x * sp + range(-sp * jit * 0.5, sp * jit * 0.5),
+        vy: d.y * sp + range(-sp * jit * 0.5, sp * jit * 0.5),
+        vz: range(140, 300) + d.z * 40,
         angle: 0,
         spin: 0,
-        life: 1.6 + Math.random() * 1.4,
+        life: range(1.6, 3),
         key: "frag_metal",
         settled: false,
         gravity: true,
         bounces: Math.random() < 0.4 ? 1 : 0,
         trailOnly: true,
         linger: true,
-        trailR: (soft ? 1.2 : 3) + Math.random() * (soft ? 3 : 9),
+        trailR: range(soft ? 1.2 : 3, soft ? 4.2 : 12),
         trailSoft: soft,
         wobble: Math.random() * Math.PI * 2,
-        wobFreq: 9 + Math.random() * 8,
-        wobAmp: 140 + Math.random() * 160,
+        wobFreq: range(9, 17),
+        wobAmp: range(140, 300),
       });
     }
   }
@@ -2009,7 +2022,7 @@ export class MissionScene extends Phaser.Scene {
     const keys = fragKeys(u.kind);
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
-      const sp = 55 + Math.random() * 200;
+      const sp = range(55, 255);
       const key = this.textures.exists(keys[i % keys.length]!)
         ? keys[i % keys.length]!
         : "frag_metal";
@@ -2017,13 +2030,13 @@ export class MissionScene extends Phaser.Scene {
       this.frags.push({
         x: u.x,
         y: u.y,
-        z: u.z + 8 + Math.random() * 14,
+        z: u.z + range(8, 22),
         vx: Math.cos(a) * sp,
         vy: Math.sin(a) * sp,
-        vz: 170 + Math.random() * 160,
+        vz: range(170, 330),
         angle: a,
-        spin: (Math.random() - 0.5) * 10,
-        life: 0.45 + Math.random() * 0.4,
+        spin: range(-5, 5),
+        life: range(0.45, 0.85),
         key,
         settled: false,
         gravity: true,
@@ -2035,7 +2048,7 @@ export class MissionScene extends Phaser.Scene {
     }
     if (u.kind !== "heli" && u.kind !== "boat") {
       const key = `blast_${(Math.random() * 4) | 0}`;
-      let sc = (radius(u.kind) / 20) * (0.72 + Math.random() * 0.7);
+      let sc = (radius(u.kind) / 20) * range(0.72, 1.42);
       if (u.kind === "tank") sc *= 1.25;
       this.stampWreck(this.textures.exists(key) ? key : "blast_0", u.x, u.y, Math.random() * Math.PI * 2, sc, 1);
     }
@@ -2043,7 +2056,7 @@ export class MissionScene extends Phaser.Scene {
       const hullKey = this.textures.exists("hulk_tank_hull") ? "hulk_tank_hull" : hulkOf("tank");
       this.stampWreck(hullKey, u.x, u.y, u.angle + Math.PI / 2, 1, 0.95);
       const a = Math.random() * Math.PI * 2;
-      const throwSp = 90 + Math.random() * 110;
+      const throwSp = range(90, 200);
       const turretKey = this.textures.exists("hulk_tank_turret") ? "hulk_tank_turret" : "tank_turret";
       this.frags.push({
         x: u.x,
@@ -2051,9 +2064,9 @@ export class MissionScene extends Phaser.Scene {
         z: u.z + 18,
         vx: Math.cos(a) * throwSp,
         vy: Math.sin(a) * throwSp,
-        vz: 190 + Math.random() * 80,
+        vz: range(190, 270),
         angle: u.turret + Math.PI / 2,
-        spin: (Math.random() - 0.5) * 10,
+        spin: range(-5, 5),
         life: 5,
         key: turretKey,
         settled: false,
@@ -2086,9 +2099,9 @@ export class MissionScene extends Phaser.Scene {
         const w = f.wobble;
         const amp = f.wobAmp ?? 160;
         const osc = Math.sin(w) * amp + Math.sin(w * 2.37 + 0.8) * amp * 0.55;
-        f.vx += px * osc * dt + (Math.random() - 0.5) * 70 * dt;
-        f.vy += py * osc * dt + (Math.random() - 0.5) * 70 * dt;
-        f.vz += Math.cos(w * 1.6) * amp * 0.35 * dt + (Math.random() - 0.5) * 50 * dt;
+        f.vx += px * osc * dt + range(-35, 35) * dt;
+        f.vy += py * osc * dt + range(-35, 35) * dt;
+        f.vz += Math.cos(w * 1.6) * amp * 0.35 * dt + range(-25, 25) * dt;
       }
       f.x += f.vx * dt;
       f.y += f.vy * dt;
@@ -2110,10 +2123,10 @@ export class MissionScene extends Phaser.Scene {
             f.vz = -f.vz * 0.22;
             const spd = Math.hypot(f.vx, f.vy);
             const jit = 0.45;
-            f.vx = (f.vx + (Math.random() - 0.5) * spd * jit) * 0.5;
-            f.vy = (f.vy + (Math.random() - 0.5) * spd * jit) * 0.5;
+            f.vx = (f.vx + range(-spd * jit * 0.5, spd * jit * 0.5)) * 0.5;
+            f.vy = (f.vy + range(-spd * jit * 0.5, spd * jit * 0.5)) * 0.5;
             f.spin *= 0.55;
-            f.angle += (Math.random() - 0.5) * 0.8;
+            f.angle += range(-0.4, 0.4);
           } else {
             this.settleFrag(f);
           }
@@ -2147,7 +2160,7 @@ export class MissionScene extends Phaser.Scene {
   }
 
   beginFragTrailFade(f: Frag): void {
-    f.trailFadeMax = f.linger ? 2.2 + Math.random() * 1.6 : 0.55 + Math.random() * 0.5;
+    f.trailFadeMax = f.linger ? range(2.2, 3.8) : range(0.55, 1.05);
     f.trailFade = f.trailFadeMax;
   }
 
@@ -3028,11 +3041,26 @@ export class MissionScene extends Phaser.Scene {
       this.mapLabel.setVisible(false);
       cam.setBounds(0, 0, WORLD, WORLD);
       cam.useBounds = true;
-      if (!this.camFollow) {
-        cam.startFollow(this.body, true, 0.12, 0.12);
-        this.camFollow = true;
-      }
     }
+  }
+
+  syncLookCam(dt: number): void {
+    const cam = this.cameras.main;
+    const p = this.input.activePointer;
+    const z = Math.max(cam.zoom, 0.001);
+    const pull = 0.2;
+    const max = 88;
+    let ox = ((p.x - this.scale.width / 2) / z) * pull;
+    let oy = ((p.y - this.scale.height / 2) / z) * pull;
+    const len = Math.hypot(ox, oy);
+    if (len > max) {
+      ox *= max / len;
+      oy *= max / len;
+    }
+    const k = 1 - Math.exp(-10 * dt);
+    this.lookCamX = Phaser.Math.Linear(this.lookCamX, ox, k);
+    this.lookCamY = Phaser.Math.Linear(this.lookCamY, oy, k);
+    cam.centerOn(this.body.x + this.lookCamX, this.body.y + this.lookCamY);
   }
 
   setHudVisible(on: boolean): void {
@@ -3227,7 +3255,7 @@ export class MissionScene extends Phaser.Scene {
       const pool = DMG_FLAME_UV.map((_, i) => i).filter((i) => !used.has(i));
       if (!pool.length) break;
       const i = pool[(Math.random() * pool.length) | 0]!;
-      h.dmgSites.push({ i, scale: 0.42 + Math.random() * 0.38 });
+      h.dmgSites.push({ i, scale: range(0.42, 0.8) });
     }
     if (!want) return;
     const dmgDepth = worldDepth(h.z, ZOff.dmg);
