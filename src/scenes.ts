@@ -293,6 +293,7 @@ export class MissionScene extends Phaser.Scene {
     this.textures.addCanvas("terrain", this.world.canvas);
     if (this.textures.exists("heightmap")) this.textures.remove("heightmap");
     this.textures.addCanvas("heightmap", paintHeightMap(this.world.height));
+    ensureImpactGlow(this.textures);
     this.input.setDefaultCursor("none");
     this.canFire = !this.input.activePointer.isDown;
     this.input.on("pointerup", () => {
@@ -1256,31 +1257,23 @@ export class MissionScene extends Phaser.Scene {
       const air = this.hoverAerial(ptr.x, ptr.y);
       const ang = h.gunAngle + spread;
       const spd = 780;
-      let tx: number;
-      let ty: number;
-      let tz: number;
-      if (air) {
-        tx = air.x + (Math.random() - 0.5) * 10;
-        ty = air.y + (Math.random() - 0.5) * 10;
-        tz = air.z + heightOf(air.kind) * 0.5;
-      } else {
-        tx = ptr.x + (Math.random() - 0.5) * 18;
-        ty = ptr.y + (Math.random() - 0.5) * 18;
-        tz = groundZ(this.world, tx, ty);
-      }
       const tip = this.gunTip();
       const tipY = tip.y + screenLift(h.z);
       const z0 = h.z + ZOff.shot;
-      const dist = Math.hypot(tx - tip.x, ty - tipY);
-      const t = Math.max(0.08, dist / spd);
+      const along = projectAlong(tip.x, tipY, ang, air ? air.x : ptr.x, air ? air.y : ptr.y);
+      const dist = Math.max(80, along);
+      const t = dist / spd;
+      const tx = tip.x + Math.cos(ang) * dist;
+      const ty = tipY + Math.sin(ang) * dist;
+      const tz = air ? air.z + heightOf(air.kind) * 0.5 : groundZ(this.world, tx, ty);
       this.spawnShot({
         kind: "cannon",
         from: "player",
         x: tip.x,
         y: tipY,
         z: z0,
-        vx: (tx - tip.x) / t,
-        vy: (ty - tipY) / t,
+        vx: Math.cos(ang) * spd,
+        vy: Math.sin(ang) * spd,
         vz: (tz - z0) / t,
         angle: ang,
         life: t + (air ? 0.55 : 0.08),
@@ -1423,6 +1416,32 @@ export class MissionScene extends Phaser.Scene {
       .setAlpha(1)
       .setDepth(worldDepth(this.heli.z, ZOff.muzzle));
     this.muzzleLife = life;
+  }
+
+  spawnImpactFlash(
+    x: number,
+    y: number,
+    z: number,
+    tint: number,
+    size: number,
+    alpha: number,
+    duration: number
+  ): void {
+    if (!this.textures.exists("impact_glow")) ensureImpactGlow(this.textures);
+    const glow = this.add
+      .image(x, y, "impact_glow")
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setTint(tint)
+      .setDisplaySize(size, size)
+      .setAlpha(alpha)
+      .setDepth(worldDepth(z, 2.8));
+    this.tweens.add({
+      targets: glow,
+      alpha: 0,
+      duration,
+      ease: "Quad.Out",
+      onComplete: () => glow.destroy(),
+    });
   }
 
   spawnShot(s: Shot): void {
@@ -1979,16 +1998,7 @@ export class MissionScene extends Phaser.Scene {
       this.smoke.emitParticleAt(x, sy + 12, he ? 16 : objectHit ? 6 : 8);
     }
     this.shake = Math.min(8, this.shake + blast * (he ? 0.055 : 0.028));
-    if (!he) {
-      const ring = this.add.circle(x, sy, 6, 0xffc878, 0.55).setDepth(worldDepth(z, 2));
-      this.tweens.add({
-        targets: ring,
-        radius: blast,
-        alpha: 0,
-        duration: 240,
-        onComplete: () => ring.destroy(),
-      });
-    }
+    if (!he) this.spawnImpactFlash(x, sy, z, 0xffc878, 34, 0.85, 160);
     for (const u of this.units) {
       if (u.dead) continue;
       const d = Math.hypot(u.x - x, u.y - y);
@@ -2053,22 +2063,24 @@ export class MissionScene extends Phaser.Scene {
     });
     this.blastFire.setDepth(worldDepth(z, 2.6));
     this.blastFire.explode(Math.max(6, Math.round(26 * mul)), x, sy);
-    const flash = this.add.circle(x, sy, soft ? 5 : 12, 0xffe8a0, 0.8).setDepth(worldDepth(z, 2.8)).setBlendMode(Phaser.BlendModes.ADD);
-    this.tweens.add({
-      targets: flash,
-      radius: blast * (soft ? 0.4 : 0.85) * waveMul,
-      alpha: 0,
-      duration: 220,
-      onComplete: () => flash.destroy(),
-    });
+    this.spawnImpactFlash(
+      x,
+      sy,
+      z,
+      0xffe8a0,
+      Math.max(14, blast * (soft ? 0.1 : 0.18) * waveMul),
+      0.9,
+      180
+    );
     this.spawnBlastTrails(x, y, z, dx, dy, dz, soft);
     const wave = (soft ? 0.45 : 1) * waveMul;
     const ring = this.add.circle(x, sy, 6, 0xff9a40, 0.85).setDepth(worldDepth(z, 2)).setBlendMode(Phaser.BlendModes.ADD);
     this.tweens.add({
       targets: ring,
-      radius: blast * wave,
+      scale: Math.max(2, (blast * wave) / 6),
       alpha: 0,
-      duration: waveMul > 1 ? 560 : 380,
+      duration: waveMul > 1 ? 140 : 100,
+      ease: "Expo.Out",
       onComplete: () => ring.destroy(),
     });
   }
@@ -3812,6 +3824,23 @@ function steerDir(
   if (dot < -0.999) w = norm3(-c.y, c.x, 0);
   const t = maxAng / Math.max(ang, 1e-5);
   return norm3(c.x + (w.x - c.x) * t, c.y + (w.y - c.y) * t, c.z + (w.z - c.z) * t);
+}
+
+function ensureImpactGlow(textures: Phaser.Textures.TextureManager): void {
+  if (textures.exists("impact_glow")) return;
+  const s = 96;
+  const c = document.createElement("canvas");
+  c.width = s;
+  c.height = s;
+  const g = c.getContext("2d")!;
+  const grd = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+  grd.addColorStop(0, "rgba(255,255,255,1)");
+  grd.addColorStop(0.2, "rgba(255,255,255,0.72)");
+  grd.addColorStop(0.52, "rgba(255,255,255,0.2)");
+  grd.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = grd;
+  g.fillRect(0, 0, s, s);
+  textures.addCanvas("impact_glow", c);
 }
 
 function projectAlong(x: number, y: number, ang: number, tx: number, ty: number): number {
