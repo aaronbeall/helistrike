@@ -42,7 +42,17 @@ export function bakeAll(textures: Phaser.Textures.TextureManager): void {
   add(textures, "radar", drawRadar());
   add(textures, "soldier", drawSoldier());
   add(textures, "tree", drawTree());
+  add(textures, "pine", drawPine());
+  add(textures, "palm", drawPalm());
+  add(textures, "cactus", drawCactus(false));
+  add(textures, "cactus2", drawCactus(true));
+  add(textures, "bush", drawBush("#2e5a32", "#4a7a3c"));
+  add(textures, "shrub", drawBush("#5a4a28", "#8a7040"));
   add(textures, "rock", drawRock());
+  add(textures, "boulder", drawBoulder());
+  add(textures, "reed", drawReed());
+  add(textures, "dead", drawDeadTree());
+  add(textures, "snowrock", drawSnowRock());
   add(textures, "cannon", drawCannon());
   add(textures, "rocket", drawRocket());
   add(textures, "hellfire", drawMissile("#c45c1a"));
@@ -483,6 +493,174 @@ function drawRock(): HTMLCanvasElement {
   g.moveTo(10, 8);
   g.lineTo(18, 6);
   g.lineTo(16, 12);
+  g.closePath();
+  g.fill();
+  return c;
+}
+
+function drawPine(): HTMLCanvasElement {
+  const c = canvas(32, 36);
+  const g = ctxOf(c);
+  g.translate(16, 20);
+  g.fillStyle = "#1e3a28";
+  g.beginPath();
+  g.moveTo(0, -16);
+  g.lineTo(11, 4);
+  g.lineTo(-11, 4);
+  g.closePath();
+  g.fill();
+  g.fillStyle = "#2f5a38";
+  g.beginPath();
+  g.moveTo(0, -12);
+  g.lineTo(7, 1);
+  g.lineTo(-7, 1);
+  g.closePath();
+  g.fill();
+  g.fillStyle = "#3a2c20";
+  g.fillRect(-1.5, 2, 3, 8);
+  return c;
+}
+
+function drawPalm(): HTMLCanvasElement {
+  const c = canvas(36, 36);
+  const g = ctxOf(c);
+  g.translate(18, 22);
+  g.fillStyle = "#6a4a28";
+  g.beginPath();
+  g.moveTo(-1.5, 8);
+  g.lineTo(0, -6);
+  g.lineTo(1.8, 8);
+  g.closePath();
+  g.fill();
+  g.fillStyle = "#2f6a38";
+  for (let i = 0; i < 5; i++) {
+    const a = -Math.PI * 0.85 + i * 0.42;
+    g.beginPath();
+    g.ellipse(Math.cos(a) * 8, Math.sin(a) * 6 - 8, 8, 3.2, a, 0, Math.PI * 2);
+    g.fill();
+  }
+  return c;
+}
+
+function drawCactus(branched: boolean): HTMLCanvasElement {
+  const c = canvas(28, 36);
+  const g = ctxOf(c);
+  g.translate(14, 20);
+  g.fillStyle = "#2d6a42";
+  g.beginPath();
+  g.roundRect(-3.5, -14, 7, 26, 3);
+  g.fill();
+  if (branched) {
+    g.beginPath();
+    g.roundRect(2, -8, 10, 4, 2);
+    g.fill();
+    g.beginPath();
+    g.roundRect(8, -14, 4, 10, 2);
+    g.fill();
+    g.beginPath();
+    g.roundRect(-12, -4, 10, 4, 2);
+    g.fill();
+    g.beginPath();
+    g.roundRect(-12, -10, 4, 10, 2);
+    g.fill();
+  }
+  g.fillStyle = "#c8d878";
+  g.fillRect(-1, -14, 2, 2);
+  return c;
+}
+
+function drawBush(dark: string, light: string): HTMLCanvasElement {
+  const c = canvas(28, 22);
+  const g = ctxOf(c);
+  g.translate(14, 12);
+  g.fillStyle = dark;
+  g.beginPath();
+  g.arc(-4, 2, 8, 0, Math.PI * 2);
+  g.arc(5, 3, 7, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = light;
+  g.beginPath();
+  g.arc(-2, -1, 5, 0, Math.PI * 2);
+  g.fill();
+  return c;
+}
+
+function drawBoulder(): HTMLCanvasElement {
+  const c = canvas(34, 26);
+  const g = ctxOf(c);
+  g.fillStyle = "#5a5248";
+  g.beginPath();
+  g.moveTo(4, 18);
+  g.lineTo(8, 6);
+  g.lineTo(18, 2);
+  g.lineTo(30, 8);
+  g.lineTo(32, 18);
+  g.lineTo(20, 24);
+  g.closePath();
+  g.fill();
+  g.fillStyle = "#8a8274";
+  g.beginPath();
+  g.moveTo(12, 8);
+  g.lineTo(22, 7);
+  g.lineTo(18, 14);
+  g.closePath();
+  g.fill();
+  return c;
+}
+
+function drawReed(): HTMLCanvasElement {
+  const c = canvas(20, 28);
+  const g = ctxOf(c);
+  g.strokeStyle = "#3a5a32";
+  g.lineWidth = 1.4;
+  g.lineCap = "round";
+  for (let i = 0; i < 5; i++) {
+    g.beginPath();
+    g.moveTo(6 + i * 2.2, 24);
+    g.quadraticCurveTo(8 + i * 2, 12, 4 + i * 3, 4);
+    g.stroke();
+  }
+  g.fillStyle = "#8a9a40";
+  g.fillRect(5, 3, 2, 4);
+  g.fillRect(12, 5, 2, 4);
+  return c;
+}
+
+function drawDeadTree(): HTMLCanvasElement {
+  const c = canvas(28, 32);
+  const g = ctxOf(c);
+  g.translate(14, 18);
+  g.strokeStyle = "#4a3a2c";
+  g.lineWidth = 2.2;
+  g.lineCap = "round";
+  g.beginPath();
+  g.moveTo(0, 10);
+  g.lineTo(0, -8);
+  g.moveTo(0, -2);
+  g.lineTo(-7, -10);
+  g.moveTo(0, -4);
+  g.lineTo(6, -12);
+  g.stroke();
+  return c;
+}
+
+function drawSnowRock(): HTMLCanvasElement {
+  const c = canvas(30, 22);
+  const g = ctxOf(c);
+  g.fillStyle = "#6a6864";
+  g.beginPath();
+  g.moveTo(3, 16);
+  g.lineTo(8, 5);
+  g.lineTo(20, 3);
+  g.lineTo(28, 14);
+  g.lineTo(16, 20);
+  g.closePath();
+  g.fill();
+  g.fillStyle = "#e8eef2";
+  g.beginPath();
+  g.moveTo(8, 6);
+  g.lineTo(20, 4);
+  g.lineTo(16, 10);
   g.closePath();
   g.fill();
   return c;

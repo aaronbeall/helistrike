@@ -14,6 +14,21 @@ const SRC = {
   rotors: "sprites/helistrike-rotors.png",
 } as const;
 
+export const BIOME_TILE_NAMES = ["water", "sand", "grass", "forest", "rock", "peak"] as const;
+export const DOODAD_ART: { key: string; size: number }[] = [
+  { key: "tree", size: 42 },
+  { key: "pine", size: 44 },
+  { key: "palm", size: 46 },
+  { key: "cactus", size: 36 },
+  { key: "cactus2", size: 38 },
+  { key: "bush", size: 30 },
+  { key: "shrub", size: 28 },
+  { key: "boulder", size: 40 },
+  { key: "reed", size: 30 },
+  { key: "dead", size: 38 },
+  { key: "snowrock", size: 34 },
+];
+
 const FX_KINDS = ["spark", "flame", "smoke", "muzzle", "dirt", "splash"] as const;
 export const FX_VARIANTS = 4;
 
@@ -29,6 +44,12 @@ export function preloadArt(scene: Phaser.Scene): void {
   scene.load.image("src_weapons", SRC.weapons);
   scene.load.image("src_blasts", SRC.blasts);
   scene.load.image("src_rotors", SRC.rotors);
+  for (const name of BIOME_TILE_NAMES) {
+    scene.load.image(`src_biome_${name}`, `sprites/helistrike-biome-${name}.png`);
+  }
+  for (const d of DOODAD_ART) {
+    scene.load.image(`src_doodad_${d.key}`, `sprites/helistrike-doodad-${d.key}.png`);
+  }
   for (const kind of FX_KINDS) {
     scene.load.image(`src_fx_${kind}_0`, `sprites/helistrike-fx-${kind}.png`);
     for (let i = 1; i < FX_VARIANTS; i++) {
@@ -94,6 +115,12 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   const sizes = [78, 58, 92, 88, 26, 42];
   keys.forEach((key, i) => put(textures, key, fit(cells[i]!, sizes[i]!)));
 
+  for (const d of DOODAD_ART) {
+    const srcKey = `src_doodad_${d.key}`;
+    if (!textures.exists(srcKey)) continue;
+    put(textures, d.key, fit(keyDoodad(src(textures, srcKey)), d.size));
+  }
+
   const hulks = sliceGrid(keyImage(src(textures, "src_hulks"), "magenta"), 3, 3);
   const hulkKeys = [
     "hulk_tank",
@@ -153,6 +180,34 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   for (const key of shadowSrc) {
     if (textures.exists(key)) bakeShadows(textures, key);
   }
+}
+
+export function extractBiomeTiles(textures: Phaser.Textures.TextureManager): (ImageData | null)[] {
+  const byName: Record<string, ImageData | null> = {};
+  for (const name of BIOME_TILE_NAMES) {
+    const key = `src_biome_${name}`;
+    if (!textures.exists(key)) {
+      byName[name] = null;
+      continue;
+    }
+    const img = src(textures, key);
+    const size = 320;
+    const c = document.createElement("canvas");
+    c.width = size;
+    c.height = size;
+    const g = c.getContext("2d")!;
+    g.drawImage(img, 0, 0, size, size);
+    byName[name] = g.getImageData(0, 0, size, size);
+  }
+  return [
+    byName.water ?? null,
+    byName.water ?? null,
+    byName.sand ?? null,
+    byName.grass ?? null,
+    byName.forest ?? null,
+    byName.rock ?? null,
+    byName.peak ?? null,
+  ];
 }
 
 export function shadowKey(base: string, z: number): string {
@@ -235,6 +290,65 @@ function copyToCanvas(img: CanvasImageSource, w: number, h: number): HTMLCanvasE
 
 function keyImage(img: HTMLImageElement, mode: "magenta" | "studio"): HTMLCanvasElement {
   return trim(keyPixels(img, mode));
+}
+
+function keyDoodad(img: HTMLImageElement): HTMLCanvasElement {
+  const c = keyPixels(img, "magenta");
+  const g = c.getContext("2d")!;
+  const pix = g.getImageData(0, 0, c.width, c.height);
+  const d = pix.data;
+  const w = c.width;
+  const h = c.height;
+  const n = w * h;
+  const bg = new Uint8Array(n);
+  const isBg = (i: number): boolean => {
+    const o = i * 4;
+    const r = d[o]!;
+    const gc = d[o + 1]!;
+    const b = d[o + 2]!;
+    const a = d[o + 3]!;
+    if (a < 10) return true;
+    if (r > 155 && b > 155 && gc < 205 && (r + b) / 2 - gc > 20) return true;
+    const mx = Math.max(r, gc, b);
+    const mn = Math.min(r, gc, b);
+    return mx < 24 && mx - mn < 10;
+  };
+  const q: number[] = [];
+  const push = (x: number, y: number) => {
+    if (x < 0 || y < 0 || x >= w || y >= h) return;
+    const i = y * w + x;
+    if (bg[i] || !isBg(i)) return;
+    bg[i] = 1;
+    q.push(i);
+  };
+  for (let x = 0; x < w; x++) {
+    push(x, 0);
+    push(x, h - 1);
+  }
+  for (let y = 0; y < h; y++) {
+    push(0, y);
+    push(w - 1, y);
+  }
+  for (let i = 0; i < n; i++) {
+    if (!bg[i] && isBg(i)) {
+      bg[i] = 1;
+      q.push(i);
+    }
+  }
+  for (let qi = 0; qi < q.length; qi++) {
+    const i = q[qi]!;
+    const x = i % w;
+    const y = (i / w) | 0;
+    push(x - 1, y);
+    push(x + 1, y);
+    push(x, y - 1);
+    push(x, y + 1);
+  }
+  for (let i = 0; i < n; i++) {
+    if (bg[i]) d[i * 4 + 3] = 0;
+  }
+  g.putImageData(pix, 0, 0);
+  return trim(c);
 }
 
 function keyPixels(img: HTMLImageElement, mode: "magenta" | "studio"): HTMLCanvasElement {
