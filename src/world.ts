@@ -1,4 +1,3 @@
-import Phaser from "phaser";
 import { fbm } from "./noise";
 import { Rng } from "./rng";
 
@@ -69,6 +68,17 @@ export interface WorldData {
   canvas: HTMLCanvasElement;
 }
 
+export type WorldGen = Omit<WorldData, "canvas"> & { terrain: ImageData };
+export type WorldProgress = (t: number, label: string) => void;
+
+function clamp(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
 const BIOME_ID: Record<Biome, number> = {
   water: 0,
   river: 1,
@@ -98,13 +108,19 @@ const HEIGHT_BANDS: { lo: number; hi: number; k: number }[] = [
   { lo: H_PEAK, hi: 1.08, k: 2.45 },
 ];
 
-export function generateWorld(seed: number, tiles?: (ImageData | null)[]): WorldData {
+export function generateWorld(
+  seed: number,
+  tiles?: (ImageData | null)[],
+  onProgress?: WorldProgress
+): WorldGen {
   const rng = new Rng(seed);
   const height = new Float32Array(TEX * TEX);
   const moisture = new Float32Array(TEX * TEX);
   const biome = new Uint8Array(TEX * TEX);
 
+  onProgress?.(0.02, "relief");
   for (let y = 0; y < TEX; y++) {
+    if (y % 150 === 0) onProgress?.(0.02 + (y / TEX) * 0.28, "relief");
     for (let x = 0; x < TEX; x++) {
       const i = y * TEX + x;
       const nx = x / TEX;
@@ -120,8 +136,10 @@ export function generateWorld(seed: number, tiles?: (ImageData | null)[]): World
     }
   }
 
+  onProgress?.(0.32, "river carve");
   const riverRad = new Float32Array(TEX * TEX);
   carveRivers(height, biome, rng, riverRad);
+  onProgress?.(0.52, "biomes");
 
   for (let i = 0; i < TEX * TEX; i++) {
     if (biome[i] === BIOME_ID.river) continue;
@@ -135,7 +153,9 @@ export function generateWorld(seed: number, tiles?: (ImageData | null)[]): World
     else biome[i] = BIOME_ID.grass;
   }
 
+  onProgress?.(0.58, "river banks");
   const bankT = stampRiverBanks(biome, riverRad, seed);
+  onProgress?.(0.74, "elevation");
 
   const raw = new Float32Array(height);
   const bed = H_WATER - 0.02;
@@ -150,25 +170,65 @@ export function generateWorld(seed: number, tiles?: (ImageData | null)[]): World
       const n1 = fbm(x * 0.09, y * 0.09, seed + 61, 4);
       const n2 = fbm(x * 0.28, y * 0.28, seed + 77, 3);
       let s = t * t * (3 - 2 * t);
-      s = Phaser.Math.Clamp(s + (n1 - 0.5) * 0.42, 0, 1);
-      height[i] = Phaser.Math.Linear(bed, height[i]!, s);
+      s = clamp(s + (n1 - 0.5) * 0.42, 0, 1);
+      height[i] = lerp(bed, height[i]!, s);
       height[i] += (n2 - 0.5) * RIVER_BANK_ROUGH * (1 - Math.abs(t * 2 - 1));
     }
   }
 
-  const canvas = paintTerrain(raw, biome, seed, tiles, bankT);
+  onProgress?.(0.82, "terrain paint");
+  const terrain = paintTerrain(raw, biome, seed, tiles, bankT, onProgress);
+  onProgress?.(0.96, "force laydown");
   const { spawnX, spawnY } = findSpawn(height, biome, rng);
   const { hv, spawns } = placeForces(height, biome, rng, spawnX, spawnY);
   const decor = placeDecor(biome, rng);
   const trees = decor.filter((d) => d.kind === "tree" || d.kind === "pine" || d.kind === "palm").map((d) => ({ x: d.x, y: d.y }));
   const rocks = decor.filter((d) => d.kind === "rock" || d.kind === "boulder" || d.kind === "snowrock").map((d) => ({ x: d.x, y: d.y }));
 
-  return { seed, height, biome, spawnX, spawnY, hv, spawns, trees, rocks, decor, canvas };
+  onProgress?.(1, "ready");
+  return { seed, height, biome, spawnX, spawnY, hv, spawns, trees, rocks, decor, terrain };
+}
+
+export function imageDataToCanvas(img: ImageData): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = img.width;
+  c.height = img.height;
+  c.getContext("2d")!.putImageData(img, 0, 0);
+  return c;
+}
+
+export function worldFromGen(g: WorldGen): WorldData {
+  const { terrain, ...rest } = g;
+  return { ...rest, canvas: imageDataToCanvas(terrain) };
+}
+
+export function generateWorldAsync(
+  seed: number,
+  tiles: (ImageData | null)[],
+  onProgress?: WorldProgress
+): Promise<WorldData> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL("./world.worker.ts", import.meta.url), { type: "module" });
+    worker.onmessage = (ev: MessageEvent<{ type: "progress"; t: number; label: string } | { type: "done"; world: WorldGen }>) => {
+      const msg = ev.data;
+      if (msg.type === "progress") {
+        onProgress?.(msg.t, msg.label);
+        return;
+      }
+      worker.terminate();
+      resolve(worldFromGen(msg.world));
+    };
+    worker.onerror = (err) => {
+      worker.terminate();
+      reject(err);
+    };
+    worker.postMessage({ seed, tiles });
+  });
 }
 
 export function sampleHeight(world: WorldData, x: number, y: number): number {
-  const tx = Phaser.Math.Clamp((x / WORLD) * TEX, 0, TEX - 1.001);
-  const ty = Phaser.Math.Clamp((y / WORLD) * TEX, 0, TEX - 1.001);
+  const tx = clamp((x / WORLD) * TEX, 0, TEX - 1.001);
+  const ty = clamp((y / WORLD) * TEX, 0, TEX - 1.001);
   const x0 = Math.floor(tx);
   const y0 = Math.floor(ty);
   const fx = tx - x0;
@@ -178,9 +238,9 @@ export function sampleHeight(world: WorldData, x: number, y: number): number {
   const h01 = world.height[Math.min(y0 + 1, TEX - 1) * TEX + x0]!;
   const h11 =
     world.height[Math.min(y0 + 1, TEX - 1) * TEX + Math.min(x0 + 1, TEX - 1)]!;
-  return Phaser.Math.Linear(
-    Phaser.Math.Linear(h00, h10, fx),
-    Phaser.Math.Linear(h01, h11, fx),
+  return lerp(
+    lerp(h00, h10, fx),
+    lerp(h01, h11, fx),
     fy
   );
 }
@@ -198,8 +258,8 @@ export function sampleBiome(world: WorldData, x: number, y: number): Biome {
 }
 
 function sampleBiomeId(world: WorldData, x: number, y: number): number {
-  const tx = Phaser.Math.Clamp(Math.floor((x / WORLD) * TEX), 0, TEX - 1);
-  const ty = Phaser.Math.Clamp(Math.floor((y / WORLD) * TEX), 0, TEX - 1);
+  const tx = clamp(Math.floor((x / WORLD) * TEX), 0, TEX - 1);
+  const ty = clamp(Math.floor((y / WORLD) * TEX), 0, TEX - 1);
   return world.biome[ty * TEX + tx]!;
 }
 
@@ -322,8 +382,8 @@ function jitterPath(path: RiverPt[], lo: number, hi: number, rng: Rng): void {
     const dy = c.y - a.y;
     const d = Math.hypot(dx, dy) || 1;
     const j = rng.range(-2.6, 2.6);
-    b.x = Phaser.Math.Clamp(Math.round(b.x + (-dy / d) * j), 1, TEX - 2);
-    b.y = Phaser.Math.Clamp(Math.round(b.y + (dx / d) * j), 1, TEX - 2);
+    b.x = clamp(Math.round(b.x + (-dy / d) * j), 1, TEX - 2);
+    b.y = clamp(Math.round(b.y + (dx / d) * j), 1, TEX - 2);
   }
 }
 
@@ -377,7 +437,7 @@ function estimateFlow(path: RiverPt[]): number {
 
 function maxPondArea(flow: number): number {
   const r = radFromFlow(flow);
-  return Math.round(Phaser.Math.Clamp(40 + r * r * 15, 56, 2100));
+  return Math.round(clamp(40 + r * r * 15, 56, 2100));
 }
 
 function kickDownhill(
@@ -427,8 +487,8 @@ function rollMarble(
     fx += vx;
     fy += vy;
     if (fx < 2 || fy < 2 || fx > TEX - 3 || fy > TEX - 3) break;
-    const ix = Phaser.Math.Clamp(Math.round(fx), 0, TEX - 1);
-    const iy = Phaser.Math.Clamp(Math.round(fy), 0, TEX - 1);
+    const ix = clamp(Math.round(fx), 0, TEX - 1);
+    const iy = clamp(Math.round(fy), 0, TEX - 1);
     const i = iy * TEX + ix;
     if (i !== lastI) {
       const hit = path.length > 12 ? nearbyChannel(channel, ix, iy) : -1;
@@ -584,8 +644,8 @@ function slopeAccel(height: Float32Array, fx: number, fy: number): { ax: number;
 }
 
 function sampleH(height: Float32Array, x: number, y: number): number {
-  const tx = Phaser.Math.Clamp(x, 0, TEX - 1.001);
-  const ty = Phaser.Math.Clamp(y, 0, TEX - 1.001);
+  const tx = clamp(x, 0, TEX - 1.001);
+  const ty = clamp(y, 0, TEX - 1.001);
   const x0 = Math.floor(tx);
   const y0 = Math.floor(ty);
   const x1 = Math.min(x0 + 1, TEX - 1);
@@ -596,7 +656,7 @@ function sampleH(height: Float32Array, x: number, y: number): number {
   const h10 = height[y0 * TEX + x1]!;
   const h01 = height[y1 * TEX + x0]!;
   const h11 = height[y1 * TEX + x1]!;
-  return Phaser.Math.Linear(Phaser.Math.Linear(h00, h10, fx), Phaser.Math.Linear(h01, h11, fx), fy);
+  return lerp(lerp(h00, h10, fx), lerp(h01, h11, fx), fy);
 }
 
 function stampRiver(biome: Uint8Array, riverRad: Float32Array, x: number, y: number, rad: number): void {
@@ -662,14 +722,14 @@ function stampRiverBanks(biome: Uint8Array, riverRad: Float32Array, seed: number
 }
 
 function terrace(t: number, k: number): number {
-  const u = Phaser.Math.Clamp(t, 0, 1) * 2 - 1;
+  const u = clamp(t, 0, 1) * 2 - 1;
   const a = Math.abs(u);
   if (a < 1e-8) return 0.5;
   return 0.5 + 0.5 * Math.sign(u) * Math.pow(a, k);
 }
 
 function remapBand(h: number): number {
-  const x = Phaser.Math.Clamp(h, 0, 1);
+  const x = clamp(h, 0, 1);
   for (let i = 0; i < HEIGHT_BANDS.length; i++) {
     const b = HEIGHT_BANDS[i]!;
     if (x < b.hi || i === HEIGHT_BANDS.length - 1) {
@@ -696,7 +756,7 @@ function overlayChan(base: number, tex: number, a: number): number {
   const b = base / 255;
   const t = tex / 255;
   const o = b < 0.5 ? 2 * b * t : 1 - 2 * (1 - b) * (1 - t);
-  return Phaser.Math.Clamp((b * (1 - a) + o * a) * 255, 0, 255);
+  return clamp((b * (1 - a) + o * a) * 255, 0, 255);
 }
 
 function paintTerrain(
@@ -704,15 +764,13 @@ function paintTerrain(
   biome: Uint8Array,
   seed: number,
   tiles?: (ImageData | null)[],
-  bankT?: Float32Array
-): HTMLCanvasElement {
-  const c = document.createElement("canvas");
-  c.width = TEX;
-  c.height = TEX;
-  const g = c.getContext("2d")!;
-  const img = g.createImageData(TEX, TEX);
+  bankT?: Float32Array,
+  onProgress?: WorldProgress
+): ImageData {
+  const img = new ImageData(TEX, TEX);
   const d = img.data;
   for (let y = 0; y < TEX; y++) {
+    if (y % 150 === 0) onProgress?.(0.82 + (y / TEX) * 0.13, "terrain paint");
     for (let x = 0; x < TEX; x++) {
       const i = y * TEX + x;
       const h = raw[i]!;
@@ -722,7 +780,7 @@ function paintTerrain(
         gch = 0,
         bl = 0;
       if (b === BIOME_ID.water) {
-        const deep = Phaser.Math.Clamp((H_WATER - h) * 4, 0, 1);
+        const deep = clamp((H_WATER - h) * 4, 0, 1);
         r = 28 + n * 0.3;
         gch = 72 - deep * 22;
         bl = 92 - deep * 10;
@@ -755,9 +813,9 @@ function paintTerrain(
       }
       const shade = 0.82 + h * 0.35;
       let rgb: [number, number, number] = [
-        Phaser.Math.Clamp(r * shade, 0, 255),
-        Phaser.Math.Clamp(gch * shade, 0, 255),
-        Phaser.Math.Clamp(bl * shade, 0, 255),
+        clamp(r * shade, 0, 255),
+        clamp(gch * shade, 0, 255),
+        clamp(bl * shade, 0, 255),
       ];
       const tile = tiles?.[b];
       const riverBed = b === BIOME_ID.river && tile;
@@ -799,8 +857,7 @@ function paintTerrain(
       d[o + 3] = 255;
     }
   }
-  g.putImageData(img, 0, 0);
-  return c;
+  return img;
 }
 
 export function applyTerrainLight(canvas: HTMLCanvasElement, height: Float32Array): void {
@@ -823,13 +880,13 @@ export function applyTerrainLight(canvas: HTMLCanvasElement, height: Float32Arra
       nx /= len;
       ny /= len;
       nz /= len;
-      const ndot = Phaser.Math.Clamp(nx * lx + ny * ly + nz * lz, 0, 1);
+      const ndot = clamp(nx * lx + ny * ly + nz * lz, 0, 1);
       const lit = 0.38 + Math.pow(ndot, 1.15) * 0.82;
       const spec = Math.pow(Math.max(0, ndot - 0.48), 1.85) * 72;
       const o = i * 4;
-      d[o] = Phaser.Math.Clamp(d[o]! * lit + spec, 0, 255);
-      d[o + 1] = Phaser.Math.Clamp(d[o + 1]! * lit + spec * 0.92, 0, 255);
-      d[o + 2] = Phaser.Math.Clamp(d[o + 2]! * lit + spec * 0.78, 0, 255);
+      d[o] = clamp(d[o]! * lit + spec, 0, 255);
+      d[o + 1] = clamp(d[o + 1]! * lit + spec * 0.92, 0, 255);
+      d[o + 2] = clamp(d[o + 2]! * lit + spec * 0.78, 0, 255);
     }
   }
   g.putImageData(img, 0, 0);
@@ -936,7 +993,7 @@ export function paintHeightMap(height: Float32Array): HTMLCanvasElement {
   for (let y = 0; y < TEX; y++) {
     for (let x = 0; x < TEX; x++) {
       const i = y * TEX + x;
-      const v = Phaser.Math.Clamp(height[i]!, 0, 1) * 255;
+      const v = clamp(height[i]!, 0, 1) * 255;
       const o = i * 4;
       d[o] = v;
       d[o + 1] = v;
@@ -1049,8 +1106,8 @@ function placeForces(
 }
 
 function isWaterAt(biome: Uint8Array, x: number, y: number): boolean {
-  const tx = Phaser.Math.Clamp(Math.floor((x / WORLD) * TEX), 0, TEX - 1);
-  const ty = Phaser.Math.Clamp(Math.floor((y / WORLD) * TEX), 0, TEX - 1);
+  const tx = clamp(Math.floor((x / WORLD) * TEX), 0, TEX - 1);
+  const ty = clamp(Math.floor((y / WORLD) * TEX), 0, TEX - 1);
   const b = biome[ty * TEX + tx]!;
   return b === BIOME_ID.water || b === BIOME_ID.river;
 }

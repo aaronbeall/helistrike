@@ -23,6 +23,8 @@ import { SpriteConfigTool } from "./spriteConfig";
 import { preloadArt, prepareArt, extractBiomeTiles, gunLayout, rotorLayout, shadowAlpha, shadowKey, shadowOff, spriteUvPos, tankLayout, FX_VARIANTS } from "./sprites";
 import {
   generateWorld,
+  generateWorldAsync,
+  worldFromGen,
   groundSlope,
   groundZ,
   screenLift,
@@ -125,31 +127,99 @@ export class MenuScene extends Phaser.Scene {
 }
 
 export class LoadScene extends Phaser.Scene {
+  private body!: Phaser.GameObjects.Image;
+  private rotor!: Phaser.GameObjects.Image;
+  private rotorDisc!: Phaser.GameObjects.Image;
+  private heliY = 0;
+  private rotorAng = 0;
+  private rotorSpd = 4;
+  private loadU = 0.02;
+
   constructor() {
     super("load");
   }
   create(): void {
     const { width: w, height: h } = this.scale;
     this.cameras.main.setBackgroundColor("#1c1812");
+    this.heliY = h * 0.34;
+    const hx = w / 2;
+    const zs = 0.925;
+    this.body = this.add
+      .image(hx, this.heliY, "heli_body")
+      .setOrigin(rotorLayout.player.x, rotorLayout.player.y)
+      .setScale(zs);
+    this.rotorDisc = this.add.image(hx, this.heliY, "heli_rotor").setOrigin(0.5, 0.5).setAlpha(0);
+    this.rotor = this.add.image(hx, this.heliY, "heli_rotor").setOrigin(0.5, 0.5);
+    const rotorScale = (124 / this.rotor.width) * 1.08 * zs;
+    this.rotor.setScale(rotorScale);
+    this.rotorDisc.setScale(rotorScale * 1.04);
     this.add
-      .text(w / 2, h * 0.46, "SURVEYING THEATER", {
+      .text(w / 2, h * 0.48, "SURVEYING THEATER", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "18px",
         color: "#e8b84a",
       })
       .setOrigin(0.5);
-    this.add
-      .text(w / 2, h * 0.54, "procedural relief  ·  river carve  ·  force laydown", {
+    const sub = this.add
+      .text(w / 2, h * 0.54, "procedural relief", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "13px",
         color: "#8a8470",
       })
       .setOrigin(0.5);
-    this.time.delayedCall(40, () => {
+    const barW = 320;
+    const barH = 8;
+    const barX = w / 2 - barW / 2;
+    const barY = h * 0.6;
+    const bar = this.add.graphics();
+    const drawBar = (t: number, label: string) => {
+      const u = Phaser.Math.Clamp(t, 0, 1);
+      bar.clear();
+      bar.fillStyle(0x12100c, 1);
+      bar.fillRect(barX, barY, barW, barH);
+      bar.fillStyle(0xe8b84a, 1);
+      bar.fillRect(barX, barY, barW * u, barH);
+      bar.lineStyle(1, 0x3a3428, 1);
+      bar.strokeRect(barX - 0.5, barY - 0.5, barW + 1, barH + 1);
+      bar.lineStyle(1, 0x5c5344, 0.55);
+      for (let i = 1; i < 10; i++) {
+        const x = barX + (barW * i) / 10;
+        const long = i === 5;
+        bar.lineBetween(x, barY - (long ? 4 : 2), x, barY + barH + (long ? 4 : 2));
+      }
+      this.loadU = u;
+      sub.setText(`${label.toUpperCase()}  ·  ${Math.round(u * 100)}%`);
+    };
+    drawBar(0.02, "relief");
+    this.time.delayedCall(16, () => {
       const seed = (Date.now() ^ (Math.random() * 1e9)) >>> 0;
-      const world = generateWorld(seed, extractBiomeTiles(this.textures));
-      this.scene.start("mission", { world });
+      const tiles = extractBiomeTiles(this.textures);
+      const go = (world: WorldData) => {
+        drawBar(1, "ready");
+        this.time.delayedCall(240, () => this.scene.start("mission", { world }));
+      };
+      generateWorldAsync(seed, tiles, (t, label) => drawBar(t, label))
+        .then(go)
+        .catch(() => {
+          go(worldFromGen(generateWorld(seed, tiles, (t, label) => drawBar(t, label))));
+        });
     });
+  }
+
+  update(_t: number, dt: number): void {
+    const dts = dt / 1000;
+    const targetSpd = 4 + this.loadU * 30;
+    this.rotorSpd = Phaser.Math.Linear(this.rotorSpd, targetSpd, 1 - Math.pow(0.14, dts));
+    this.rotorAng += this.rotorSpd * dts;
+    this.rotor.setRotation(this.rotorAng);
+    this.rotorDisc.setRotation(this.rotorAng + Math.PI / 8);
+    const disc = Phaser.Math.Clamp((this.rotorSpd - 10) / 22, 0, 1);
+    this.rotor.setAlpha(1 - disc * 0.38);
+    this.rotorDisc.setAlpha(disc * 0.32);
+    const bob = Math.sin(_t / 420) * 1.6;
+    this.body.y = this.heliY + bob;
+    this.rotor.y = this.heliY + bob;
+    this.rotorDisc.y = this.heliY + bob;
   }
 }
 
@@ -293,7 +363,7 @@ export class MissionScene extends Phaser.Scene {
     this.sparks = [];
     this.ammo = WPN_LIST.map((w) => w.ammo);
     if (!data.world) {
-      this.world = generateWorld((Date.now() ^ (Math.random() * 1e9)) >>> 0, extractBiomeTiles(this.textures));
+      this.world = worldFromGen(generateWorld((Date.now() ^ (Math.random() * 1e9)) >>> 0, extractBiomeTiles(this.textures)));
     } else this.world = data.world;
   }
 
