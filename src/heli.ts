@@ -10,7 +10,7 @@ export interface Stick {
 
 export const CRUISE_Z = 46;
 export const MAX_Z = 118;
-export const LOW_Z = 12;
+export const LOW_Z = 4;
 export const HELI_HEIGHT = 14;
 
 export type Phase = "grounded" | "spool" | "liftoff" | "flight" | "dead";
@@ -132,14 +132,40 @@ export class Heli {
     this.y = Phaser.Math.Clamp(this.y, 40, 5560);
 
     const gnd = groundZ(world, this.x, this.y);
-    if (this.phase === "flight") {
-      const agl = spaceDown ? MAX_Z : shiftDown ? LOW_Z : CRUISE_Z;
-      const want = gnd + agl;
-      const follow = 1 - Math.exp(-(spaceDown || shiftDown ? 9 : 3.2) * dt);
-      const next = Phaser.Math.Linear(this.z, want, follow);
-      this.vz = dt > 0.0001 ? (next - this.z) / dt : 0;
-      this.z = next;
-      if (this.z < gnd + 8) this.z = gnd + 8;
+    if (airborne && this.phase === "flight") {
+      const minZ = gnd + LOW_Z;
+      const maxZ = gnd + MAX_Z;
+      const restZ = gnd + CRUISE_Z;
+      const zIn = (spaceDown ? 1 : 0) + (shiftDown ? -1 : 0);
+      let az = zIn * 520;
+      if (zIn === 0) {
+        az += Phaser.Math.Clamp((restZ - this.z) * 0.55, -42, 42);
+      }
+      const ceilPad = 26;
+      const floorPad = 14;
+      const toCeil = maxZ - this.z;
+      const toFloor = this.z - minZ;
+      if (toCeil < ceilPad) {
+        const u = Phaser.Math.Clamp(1 - toCeil / ceilPad, 0, 1);
+        az -= u * u * 780;
+        if (this.vz > 0) this.vz *= Math.pow(1 / (1 + 8 * u * dt), 1);
+      }
+      if (toFloor < floorPad) {
+        const u = Phaser.Math.Clamp(1 - toFloor / floorPad, 0, 1);
+        az += u * u * 780;
+        if (this.vz < 0) this.vz *= Math.pow(1 / (1 + 8 * u * dt), 1);
+      }
+      this.vz += az * dt;
+      this.vz *= Math.pow(1 / (1 + drag * dt), 1);
+      if (Math.abs(this.vz) > max) this.vz = Math.sign(this.vz) * max;
+      this.z += this.vz * dt;
+      if (this.z < minZ) {
+        this.z = minZ;
+        if (this.vz < 0) this.vz *= 0.2;
+      } else if (this.z > maxZ) {
+        this.z = maxZ;
+        if (this.vz > 0) this.vz *= 0.2;
+      }
     }
 
     const localFwd = this.vx * ca + this.vy * sa;
