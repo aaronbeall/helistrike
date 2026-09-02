@@ -182,8 +182,10 @@ export class MissionScene extends Phaser.Scene {
   lockGfx!: Phaser.GameObjects.Graphics;
   towWireGfx!: Phaser.GameObjects.Graphics;
   lockTxt!: Phaser.GameObjects.Text;
+  lockInbdTxt!: Phaser.GameObjects.Text;
   lockArrowGfx!: Phaser.GameObjects.Graphics;
   lockHudTxt!: Phaser.GameObjects.Text;
+  lockInbdHudTxt!: Phaser.GameObjects.Text;
   unitG!: Phaser.GameObjects.Group;
   shotG!: Phaser.GameObjects.Group;
   fragG!: Phaser.GameObjects.Group;
@@ -356,12 +358,33 @@ export class MissionScene extends Phaser.Scene {
       .setDepth(Layer.FIELD)
       .setVisible(false)
       .setStroke("#1c100c", 3);
+    this.lockInbdTxt = this.add
+      .text(0, 0, "FIRE", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "12px",
+        color: "#ffb020",
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(Layer.FIELD)
+      .setVisible(false)
+      .setStroke("#1c100c", 3);
     this.lockArrowGfx = this.add.graphics().setScrollFactor(0).setDepth(Layer.HUD + 2);
     this.lockHudTxt = this.add
       .text(0, 0, "LOCK", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "12px",
         color: "#ff3a22",
+      })
+      .setOrigin(0.5, 0.5)
+      .setScrollFactor(0)
+      .setDepth(Layer.HUD + 3)
+      .setVisible(false)
+      .setStroke("#1c100c", 3);
+    this.lockInbdHudTxt = this.add
+      .text(0, 0, "FIRE", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "12px",
+        color: "#ffb020",
       })
       .setOrigin(0.5, 0.5)
       .setScrollFactor(0)
@@ -2879,15 +2902,67 @@ export class MissionScene extends Phaser.Scene {
     return (radius(u.kind) + 10) * scale * zScale(u.z);
   }
 
-  drawLockBox(u: Unit, scale: number, width: number, alpha: number): { x: number; y: number; half: number; depth: number } {
+  drawLockBox(
+    u: Unit,
+    scale: number,
+    width: number,
+    alpha: number,
+    color = 0xff3a22
+  ): { x: number; y: number; half: number; depth: number } {
     const g = this.lockGfx;
     const x = u.x;
     const y = u.y - screenLift(u.z);
     const half = this.lockBoxHalf(u, scale);
     const depth = worldDepth(u.z, 8);
-    g.lineStyle(width, 0xff3a22, alpha);
+    g.lineStyle(width, color, alpha);
     g.strokeRect(x - half, y - half, half * 2, half * 2);
     return { x, y, half, depth };
+  }
+
+  drawLockDiamond(
+    u: Unit,
+    scale: number,
+    width: number,
+    alpha: number,
+    color: number
+  ): { x: number; y: number; half: number; depth: number } {
+    const g = this.lockGfx;
+    const x = u.x;
+    const y = u.y - screenLift(u.z);
+    const half = this.lockBoxHalf(u, scale);
+    const depth = worldDepth(u.z, 8);
+    g.lineStyle(width, color, alpha);
+    g.beginPath();
+    g.moveTo(x, y - half);
+    g.lineTo(x + half, y);
+    g.lineTo(x, y + half);
+    g.lineTo(x - half, y);
+    g.closePath();
+    g.strokePath();
+    const inner = half * 0.62;
+    g.lineStyle(Math.max(1, width * 0.7), color, alpha * 0.7);
+    g.beginPath();
+    g.moveTo(x, y - inner);
+    g.lineTo(x + inner, y);
+    g.lineTo(x, y + inner);
+    g.lineTo(x - inner, y);
+    g.closePath();
+    g.strokePath();
+    return { x, y, half, depth };
+  }
+
+  inboundHellfireTargets(): Unit[] {
+    const seen = new Set<number>();
+    const out: Unit[] = [];
+    for (const s of this.shots) {
+      if (s.kind !== "hellfire" || s.from !== "player" || s.targetId == null) continue;
+      if (seen.has(s.targetId)) continue;
+      const u = this.unitById(s.targetId);
+      if (!u) continue;
+      seen.add(s.targetId);
+      out.push(u);
+    }
+    return out;
   }
 
   updateLock(): void {
@@ -2897,68 +2972,89 @@ export class MissionScene extends Phaser.Scene {
     this.lockSpr.setVisible(false);
     this.lockArrowGfx.clear();
     this.lockHudTxt.setVisible(false);
+    this.lockInbdHudTxt.setVisible(false);
+    this.lockTxt.setVisible(false);
+    this.lockInbdTxt.setVisible(false);
 
     const hellfire = WPN_LIST[h.weapon]!.id === "hellfire";
-    if (!hellfire) {
+    const inbound = this.inboundHellfireTargets();
+    const locked = hellfire && h.hellfireLock ? this.unitById(h.hellfireLock.id) : undefined;
+    const seeking = hellfire && h.hellfireSeek ? this.unitById(h.hellfireSeek.id) : undefined;
+    if (!locked && !seeking && inbound.length === 0) {
       g.setVisible(false);
-      this.lockTxt.setVisible(false);
-      return;
-    }
-
-    const locked = h.hellfireLock ? this.unitById(h.hellfireLock.id) : undefined;
-    const seeking = h.hellfireSeek ? this.unitById(h.hellfireSeek.id) : undefined;
-    if (!locked && !seeking) {
-      g.setVisible(false);
-      this.lockTxt.setVisible(false);
       return;
     }
 
     g.setVisible(true);
     let lockDepth = Layer.FIELD;
+    const inboundIds = new Set(inbound.map((u) => u.id));
+    let inbdLabeled = false;
+
+    for (const u of inbound) {
+      const vis = this.unitOnHud(u);
+      if (vis.on) {
+        const box = this.drawLockDiamond(u, 1.18, 2.1, 0.92, 0xffb020);
+        lockDepth = Math.max(lockDepth, box.depth);
+        if (!inbdLabeled) {
+          inbdLabeled = true;
+          this.lockInbdTxt
+            .setVisible(true)
+            .setPosition(box.x, box.y - box.half - 4)
+            .setDepth(box.depth)
+            .setAlpha(0.95)
+            .setScale(zScale(u.z));
+        }
+      } else {
+        this.drawLockOffscreen(vis.sx, vis.sy, 0xffb020, this.lockInbdHudTxt, 0.95);
+      }
+    }
+
     if (seeking) {
       const vis = this.unitOnHud(seeking);
       if (vis.on) {
         const t = Math.min(1, h.hellfireSeek!.t / HELLFIRE_LOCK_T);
         const scale = 2 - t;
         const box = this.drawLockBox(seeking, scale, 1.6, 0.72 + t * 0.22);
-        g.setDepth(box.depth);
-        lockDepth = box.depth;
+        lockDepth = Math.max(lockDepth, box.depth);
       }
     }
-    if (locked) {
+    if (locked && !inboundIds.has(locked.id)) {
       const vis = this.unitOnHud(locked);
+      const blink = Math.floor(this.time.now / 70) % 2 === 0;
+      const alpha = blink ? 1 : 0.12;
       if (vis.on) {
-        const pulse = 0.82 + 0.18 * Math.sin(this.time.now * 0.0055);
-        const box = this.drawLockBox(locked, 1, 2, pulse);
+        const box = this.drawLockBox(locked, 1, 2.15, alpha);
         lockDepth = Math.max(lockDepth, box.depth);
-        g.setDepth(lockDepth);
         this.lockTxt
           .setVisible(true)
           .setPosition(box.x, box.y - box.half - 4)
           .setDepth(lockDepth)
-          .setAlpha(pulse)
+          .setAlpha(alpha)
           .setScale(zScale(locked.z));
       } else {
-        this.lockTxt.setVisible(false);
-        this.drawLockOffscreen(vis.sx, vis.sy);
+        this.drawLockOffscreen(vis.sx, vis.sy, 0xff3a22, this.lockHudTxt, alpha);
       }
-    } else {
-      this.lockTxt.setVisible(false);
     }
+    g.setDepth(lockDepth);
   }
 
-  drawLockOffscreen(sx: number, sy: number): void {
+  drawLockOffscreen(
+    sx: number,
+    sy: number,
+    color: number,
+    txt: Phaser.GameObjects.Text,
+    alpha: number
+  ): void {
     const g = this.lockArrowGfx;
     const w = this.scale.width;
-    const h = this.scale.height;
+    const hgt = this.scale.height;
     const pad = 36;
     const cx = w / 2;
-    const cy = h / 2;
+    const cy = hgt / 2;
     const ang = Math.atan2(sy - cy, sx - cx);
     const ax = Phaser.Math.Clamp(sx, pad, w - pad);
-    const ay = Phaser.Math.Clamp(sy, pad, h - pad);
-    const pulse = 0.82 + 0.18 * Math.sin(this.time.now * 0.0055);
-    g.fillStyle(0xff3a22, 0.92 * pulse);
+    const ay = Phaser.Math.Clamp(sy, pad, hgt - pad);
+    g.fillStyle(color, 0.92 * alpha);
     g.save();
     g.translateCanvas(ax, ay);
     g.rotateCanvas(ang);
@@ -2967,11 +3063,9 @@ export class MissionScene extends Phaser.Scene {
     const lx = ax - Math.cos(ang) * 34;
     const ly = ay - Math.sin(ang) * 22;
     const lp = this.hudLocal(lx, ly);
-    this.lockHudTxt
-      .setVisible(true)
-      .setPosition(lp.x, lp.y)
-      .setAlpha(pulse)
-      .setRotation(0);
+    txt.setVisible(true).setPosition(lp.x, lp.y).setAlpha(alpha).setRotation(0).setColor(
+      color === 0xffb020 ? "#ffb020" : "#ff3a22"
+    );
   }
 
   worldPointer(): { x: number; y: number } {
@@ -3068,7 +3162,7 @@ export class MissionScene extends Phaser.Scene {
       row.setVisible(this.hvHud.visible);
       row.setText(line.text);
       if (line.done) row.setColor("#6a8a62").setAlpha(0.82);
-      else row.setColor("#f0e6c8").setAlpha(1);
+      else row.setColor("#ff3a22").setAlpha(1);
     }
     this.drawWeaponHud();
   }
@@ -3452,6 +3546,7 @@ export class MissionScene extends Phaser.Scene {
       ...this.hvArrowLabels,
       this.lockArrowGfx,
       this.lockHudTxt,
+      this.lockInbdHudTxt,
     ];
     for (const go of chrome) this.adoptHud(go);
     this.bindHud(this.reticle);
@@ -3725,7 +3820,9 @@ export class MissionScene extends Phaser.Scene {
       this.lockGfx.setVisible(false);
       this.lockGfx.clear();
       this.lockTxt.setVisible(false);
+      this.lockInbdTxt.setVisible(false);
       this.lockHudTxt.setVisible(false);
+      this.lockInbdHudTxt.setVisible(false);
       this.lockArrowGfx.clear();
       this.playerHud.clear();
       this.miniGfx.clear();
