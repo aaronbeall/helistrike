@@ -210,14 +210,17 @@ export function groundSlope(world: WorldData, x: number, y: number): { dx: numbe
 }
 
 function carveRivers(height: Float32Array, biome: Uint8Array, rng: Rng): void {
-  const seen = new Uint8Array(TEX * TEX);
-  for (let r = 0; r < 50; r++) {
+  const channel = new Int32Array(TEX * TEX);
+  const discharge = new Float32Array(TEX * TEX);
+  channel.fill(-1);
+  let made = 0;
+  for (let attempt = 0; attempt < 160 && made < 50; attempt++) {
     let x = rng.int(40, TEX - 41);
     let y = rng.int(40, TEX - 41);
     let best = -1;
-    for (let k = 0; k < 40; k++) {
-      const sx = rng.int(20, TEX - 21);
-      const sy = rng.int(20, TEX - 21);
+    for (let k = 0; k < 50; k++) {
+      const sx = rng.int(24, TEX - 25);
+      const sy = rng.int(24, TEX - 25);
       const h = height[sy * TEX + sx]!;
       if (h > best) {
         best = h;
@@ -225,108 +228,345 @@ function carveRivers(height: Float32Array, biome: Uint8Array, rng: Rng): void {
         y = sy;
       }
     }
-    seen.fill(0);
-    let rad = 0.5;
-    for (let step = 0; step < 8000; step++) {
-      const i = y * TEX + x;
-      seen[i] = 1;
-      stampRiver(biome, x, y, rad);
-      if (x <= 0 || y <= 0 || x >= TEX - 1 || y >= TEX - 1 || height[i]! < 0.33) break;
-      const next = stepRiver(height, x, y, seen);
-      if (!next) break;
-      x = next.x;
-      y = next.y;
-      rad = Math.min(14, rad + 0.0065);
+    if (best < 0.52) continue;
+    const rolled = rollMarble(height, x, y, rng, channel);
+    if (!rolled) continue;
+    const { path, joinAt } = rolled;
+    if (path.length < (joinAt >= 0 ? 24 : 70)) continue;
+    const jitterEnd = joinAt >= 0 ? joinAt : path.length;
+    jitterPath(path, 1, jitterEnd, rng);
+    if (joinAt >= 0) followChannel(path, channel, path[joinAt]!, path[joinAt]!.spd);
+    accumulateFlow(path, joinAt, discharge);
+    for (const p of path) stampRiver(biome, p.x, p.y, radFromFlow(p.flow));
+    for (const pond of rolled.ponds) {
+      const outlet = pond.spill ?? path[path.length - 1]!;
+      const oi = outlet.y * TEX + outlet.x;
+      for (const c of pond.cells) {
+        biome[c.y * TEX + c.x] = BIOME_ID.river;
+        if (channel[c.y * TEX + c.x]! < 0) channel[c.y * TEX + c.x] = oi;
+      }
     }
+    registerChannel(path, channel);
+    registerDischarge(path, discharge);
+    made++;
   }
 }
 
-const RIVER_REACH = 8;
+type RiverPt = { x: number; y: number; spd: number; flow: number };
 
-function stepRiver(
-  height: Float32Array,
-  x: number,
-  y: number,
-  seen: Uint8Array
-): { x: number; y: number } | null {
-  const h0 = height[y * TEX + x]!;
-  let wx = 0;
-  let wy = 0;
-  for (let oy = -RIVER_REACH; oy <= RIVER_REACH; oy++) {
-    for (let ox = -RIVER_REACH; ox <= RIVER_REACH; ox++) {
-      if (!ox && !oy) continue;
-      if (ox * ox + oy * oy > RIVER_REACH * RIVER_REACH) continue;
-      const xx = x + ox;
-      const yy = y + oy;
+function radFromFlow(flow: number): number {
+  return 0.4 + Math.min(12, 0.16 * Math.sqrt(flow) + 0.0075 * flow);
+}
+
+function accumulateFlow(path: RiverPt[], joinAt: number, discharge: Float32Array): void {
+  let flow = 0.08;
+  for (let i = 0; i < path.length; i++) {
+    const p = path[i]!;
+    if (joinAt >= 0 && i === joinAt) {
+      flow += discharge[p.y * TEX + p.x]!;
+    }
+    if (joinAt >= 0 && i > joinAt) {
+      flow = Math.max(flow, discharge[p.y * TEX + p.x]!);
+      flow += p.spd * 0.22;
+    } else {
+      flow += p.spd;
+    }
+    p.flow = flow;
+  }
+}
+
+function registerDischarge(path: RiverPt[], discharge: Float32Array): void {
+  for (const p of path) {
+    const i = p.y * TEX + p.x;
+    discharge[i] = Math.max(discharge[i]!, p.flow);
+  }
+}
+
+function jitterPath(path: RiverPt[], lo: number, hi: number, rng: Rng): void {
+  const end = Math.min(hi, path.length);
+  for (let i = lo; i < end - 1; i++) {
+    const a = path[i - 1]!;
+    const c = path[i + 1]!;
+    const b = path[i]!;
+    const dx = c.x - a.x;
+    const dy = c.y - a.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const j = rng.range(-2.6, 2.6);
+    b.x = Phaser.Math.Clamp(Math.round(b.x + (-dy / d) * j), 1, TEX - 2);
+    b.y = Phaser.Math.Clamp(Math.round(b.y + (dx / d) * j), 1, TEX - 2);
+  }
+}
+
+function followChannel(path: RiverPt[], channel: Int32Array, from: RiverPt, spd: number): void {
+  let i = from.y * TEX + from.x;
+  let hops = 0;
+  let flow = spd;
+  const seen = new Set<number>();
+  while (i >= 0 && hops++ < 20000) {
+    if (seen.has(i)) break;
+    seen.add(i);
+    const x = i % TEX;
+    const y = (i / TEX) | 0;
+    const last = path[path.length - 1]!;
+    if (last.x !== x || last.y !== y) path.push({ x, y, spd: flow, flow: 0 });
+    const n = channel[i]!;
+    if (n < 0 || n === i) break;
+    i = n;
+  }
+}
+
+function nearbyChannel(channel: Int32Array, ix: number, iy: number): number {
+  for (let oy = -2; oy <= 2; oy++) {
+    for (let ox = -2; ox <= 2; ox++) {
+      const xx = ix + ox;
+      const yy = iy + oy;
       if (xx < 0 || yy < 0 || xx >= TEX || yy >= TEX) continue;
-      if (seen[yy * TEX + xx]) continue;
-      const drop = h0 - height[yy * TEX + xx]!;
-      if (drop <= 0) continue;
-      const dist = Math.hypot(ox, oy);
-      const w = drop / dist;
-      wx += (ox / dist) * w;
-      wy += (oy / dist) * w;
+      const i = yy * TEX + xx;
+      if (channel[i]! >= 0) return i;
     }
   }
-  let dx = 0;
-  let dy = 0;
-  const len = Math.hypot(wx, wy);
-  if (len > 1e-8) {
-    dx = wx / len;
-    dy = wy / len;
-  } else {
-    let bestH = Infinity;
-    let bx = 0;
-    let by = 0;
-    let found = false;
-    for (let oy = -RIVER_REACH; oy <= RIVER_REACH; oy++) {
-      for (let ox = -RIVER_REACH; ox <= RIVER_REACH; ox++) {
-        if (!ox && !oy) continue;
-        if (ox * ox + oy * oy > RIVER_REACH * RIVER_REACH) continue;
-        const xx = x + ox;
-        const yy = y + oy;
-        if (xx < 0 || yy < 0 || xx >= TEX || yy >= TEX) continue;
-        if (seen[yy * TEX + xx]) continue;
-        const h = height[yy * TEX + xx]!;
-        if (h < bestH) {
-          bestH = h;
-          bx = ox;
-          by = oy;
-          found = true;
+  return -1;
+}
+
+function registerChannel(path: RiverPt[], channel: Int32Array): void {
+  for (let k = 0; k < path.length - 1; k++) {
+    const a = path[k]!;
+    const b = path[k + 1]!;
+    const i = a.y * TEX + a.x;
+    if (channel[i]! < 0) channel[i] = b.y * TEX + b.x;
+  }
+}
+
+type Pond = { cells: { x: number; y: number }[]; spill: { x: number; y: number } | null };
+
+function estimateFlow(path: RiverPt[]): number {
+  let f = 0.08;
+  for (const p of path) f += p.spd;
+  return f;
+}
+
+function maxPondArea(flow: number): number {
+  const r = radFromFlow(flow);
+  return Math.round(Phaser.Math.Clamp(28 + r * r * 10, 36, 1400));
+}
+
+function kickDownhill(
+  height: Float32Array,
+  fx: number,
+  fy: number,
+  rng: Rng,
+  mag: number
+): { vx: number; vy: number } {
+  const kick = slopeAccel(height, fx, fy);
+  const klen = Math.hypot(kick.ax, kick.ay);
+  if (klen > 1e-8) return { vx: (kick.ax / klen) * mag, vy: (kick.ay / klen) * mag };
+  const a = rng.range(0, Math.PI * 2);
+  return { vx: Math.cos(a) * mag, vy: Math.sin(a) * mag };
+}
+
+function rollMarble(
+  height: Float32Array,
+  sx: number,
+  sy: number,
+  rng: Rng,
+  channel: Int32Array
+): { path: RiverPt[]; joinAt: number; ponds: Pond[] } | null {
+  const path: RiverPt[] = [{ x: sx, y: sy, spd: 0.2, flow: 0 }];
+  const ponds: Pond[] = [];
+  let fx = sx + 0.5;
+  let fy = sy + 0.5;
+  let { vx, vy } = kickDownhill(height, fx, fy, rng, 0.35);
+  let lastI = sy * TEX + sx;
+  let still = 0;
+  let resumes = 0;
+  const G = 18;
+  const drag = 0.978;
+  const maxSpd = 1.25;
+  for (let step = 0; step < 18000; step++) {
+    const { ax, ay } = slopeAccel(height, fx, fy);
+    vx += ax * G;
+    vy += ay * G;
+    vx *= drag;
+    vy *= drag;
+    let spd = Math.hypot(vx, vy);
+    if (spd > maxSpd) {
+      vx = (vx / spd) * maxSpd;
+      vy = (vy / spd) * maxSpd;
+      spd = maxSpd;
+    }
+    fx += vx;
+    fy += vy;
+    if (fx < 2 || fy < 2 || fx > TEX - 3 || fy > TEX - 3) break;
+    const ix = Phaser.Math.Clamp(Math.round(fx), 0, TEX - 1);
+    const iy = Phaser.Math.Clamp(Math.round(fy), 0, TEX - 1);
+    const i = iy * TEX + ix;
+    if (i !== lastI) {
+      const hit = path.length > 12 ? nearbyChannel(channel, ix, iy) : -1;
+      if (hit >= 0) {
+        path.push({ x: hit % TEX, y: (hit / TEX) | 0, spd, flow: 0 });
+        return { path, joinAt: path.length - 1, ponds };
+      }
+      path.push({ x: ix, y: iy, spd, flow: 0 });
+      lastI = i;
+    }
+    if (sampleH(height, fx, fy) < H_WATER) break;
+    if (spd < 0.045) still++;
+    else still = 0;
+    if (still <= 35) continue;
+    if (path.length < 20 || resumes >= 8) break;
+    const pond = fillBasin(height, ix, iy, maxPondArea(estimateFlow(path)));
+    if (pond.cells.length >= 8) ponds.push(pond);
+    if (!pond.spill) break;
+    resumes++;
+    fx = pond.spill.x + 0.5;
+    fy = pond.spill.y + 0.5;
+    ({ vx, vy } = kickDownhill(height, fx, fy, rng, 0.42));
+    still = 0;
+    lastI = pond.spill.y * TEX + pond.spill.x;
+    path.push({ x: pond.spill.x, y: pond.spill.y, spd: 0.42, flow: 0 });
+  }
+  return { path, joinAt: -1, ponds };
+}
+
+type HeapItem = { h: number; i: number };
+
+function heapPush(heap: HeapItem[], x: HeapItem): void {
+  heap.push(x);
+  let i = heap.length - 1;
+  while (i > 0) {
+    const p = (i - 1) >> 1;
+    if (heap[p]!.h <= heap[i]!.h) break;
+    const t = heap[p]!;
+    heap[p] = heap[i]!;
+    heap[i] = t;
+    i = p;
+  }
+}
+
+function heapPop(heap: HeapItem[]): HeapItem | undefined {
+  const top = heap[0];
+  const last = heap.pop();
+  if (!last || heap.length === 0) return top;
+  heap[0] = last;
+  let i = 0;
+  for (;;) {
+    let s = i;
+    const l = i * 2 + 1;
+    const r = l + 1;
+    if (l < heap.length && heap[l]!.h < heap[s]!.h) s = l;
+    if (r < heap.length && heap[r]!.h < heap[s]!.h) s = r;
+    if (s === i) break;
+    const t = heap[i]!;
+    heap[i] = heap[s]!;
+    heap[s] = t;
+    i = s;
+  }
+  return top;
+}
+
+function fillBasin(
+  height: Float32Array,
+  ox: number,
+  oy: number,
+  maxArea: number
+): Pond {
+  let x = ox;
+  let y = oy;
+  for (let g = 0; g < 80; g++) {
+    let best = height[y * TEX + x]!;
+    let bx = x;
+    let by = y;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 1 || ny < 1 || nx >= TEX - 1 || ny >= TEX - 1) continue;
+        const h = height[ny * TEX + nx]!;
+        if (h < best) {
+          best = h;
+          bx = nx;
+          by = ny;
         }
       }
     }
-    if (!found) return null;
-    const d = Math.hypot(bx, by) || 1;
-    dx = bx / d;
-    dy = by / d;
+    if (bx === x && by === y) break;
+    x = bx;
+    y = by;
   }
-  const pick = (reach: number): { x: number; y: number } | null => {
-    let best = -Infinity;
-    let px = x;
-    let py = y;
-    let hit = false;
-    for (let oy = -reach; oy <= reach; oy++) {
-      for (let ox = -reach; ox <= reach; ox++) {
-        if (!ox && !oy) continue;
-        const dist = Math.hypot(ox, oy);
-        if (dist > reach + 1e-6) continue;
-        const xx = x + ox;
-        const yy = y + oy;
-        if (xx < 0 || yy < 0 || xx >= TEX || yy >= TEX) continue;
-        if (seen[yy * TEX + xx]) continue;
-        const align = (ox * dx + oy * dy) / dist;
-        if (align > best) {
-          best = align;
-          px = xx;
-          py = yy;
-          hit = true;
-        }
-      }
+  const visited = new Set<number>();
+  const heap: HeapItem[] = [];
+  const seed = y * TEX + x;
+  heapPush(heap, { h: height[seed]!, i: seed });
+  visited.add(seed);
+  const cells: { x: number; y: number }[] = [];
+  let water = height[seed]!;
+  let spill: { x: number; y: number } | null = null;
+  while (heap.length) {
+    const cur = heapPop(heap)!;
+    water = Math.max(water, cur.h);
+    cells.push({ x: cur.i % TEX, y: (cur.i / TEX) | 0 });
+    if (cells.length >= maxArea) {
+      spill = null;
+      break;
     }
-    return hit ? { x: px, y: py } : null;
-  };
-  return pick(1) ?? pick(2);
+    const cx = cur.i % TEX;
+    const cy = (cur.i / TEX) | 0;
+    let drained = false;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (nx < 1 || ny < 1 || nx >= TEX - 1 || ny >= TEX - 1) {
+          drained = true;
+          continue;
+        }
+        const ni = ny * TEX + nx;
+        if (visited.has(ni)) continue;
+        const nh = height[ni]!;
+        if (nh < H_WATER) {
+          drained = true;
+          continue;
+        }
+        if (nh < water - 0.002) {
+          spill = { x: nx, y: ny };
+          break;
+        }
+        visited.add(ni);
+        heapPush(heap, { h: nh, i: ni });
+      }
+      if (spill) break;
+    }
+    if (spill) break;
+    if (drained && cells.length > 12) {
+      spill = null;
+      break;
+    }
+  }
+  return { cells, spill };
+}
+
+function slopeAccel(height: Float32Array, fx: number, fy: number): { ax: number; ay: number } {
+  const e = 2.4;
+  const ax = (sampleH(height, fx - e, fy) - sampleH(height, fx + e, fy)) / (2 * e);
+  const ay = (sampleH(height, fx, fy - e) - sampleH(height, fx, fy + e)) / (2 * e);
+  return { ax, ay };
+}
+
+function sampleH(height: Float32Array, x: number, y: number): number {
+  const tx = Phaser.Math.Clamp(x, 0, TEX - 1.001);
+  const ty = Phaser.Math.Clamp(y, 0, TEX - 1.001);
+  const x0 = Math.floor(tx);
+  const y0 = Math.floor(ty);
+  const x1 = Math.min(x0 + 1, TEX - 1);
+  const y1 = Math.min(y0 + 1, TEX - 1);
+  const fx = tx - x0;
+  const fy = ty - y0;
+  const h00 = height[y0 * TEX + x0]!;
+  const h10 = height[y0 * TEX + x1]!;
+  const h01 = height[y1 * TEX + x0]!;
+  const h11 = height[y1 * TEX + x1]!;
+  return Phaser.Math.Linear(Phaser.Math.Linear(h00, h10, fx), Phaser.Math.Linear(h01, h11, fx), fy);
 }
 
 function stampRiver(biome: Uint8Array, x: number, y: number, rad: number): void {

@@ -211,6 +211,7 @@ export class MissionScene extends Phaser.Scene {
   playerHud!: Phaser.GameObjects.Graphics;
   mapLabel!: Phaser.GameObjects.Text;
   mapHvLabels: Phaser.GameObjects.Text[] = [];
+  hvArrowLabels: Phaser.GameObjects.Text[] = [];
   miniGfx!: Phaser.GameObjects.Graphics;
   miniBg!: Phaser.GameObjects.Graphics;
   miniTerrain!: Phaser.GameObjects.Image;
@@ -681,6 +682,21 @@ export class MissionScene extends Phaser.Scene {
 
     this.miniGfx = this.add.graphics().setScrollFactor(0).setDepth(Layer.HUD + 1);
     this.hvGfx = this.add.graphics().setScrollFactor(0).setDepth(Layer.HUD + 2);
+    this.hvArrowLabels = this.world.hv.map(() =>
+      this.add
+        .text(0, 0, "", {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: "11px",
+          color: "#f0e6c8",
+          align: "center",
+        })
+        .setOrigin(0.5, 0.5)
+        .setScrollFactor(0)
+        .setDepth(Layer.HUD + 3)
+        .setStroke("#12100c", 4)
+        .setLineSpacing(-1)
+        .setVisible(false)
+    );
     this.mapGfx = this.add.graphics().setDepth(Layer.FIELD);
     this.mapHvLabels = [];
     this.debugGfx = this.add.graphics().setDepth(Layer.FIELD).setVisible(false);
@@ -1043,60 +1059,53 @@ export class MissionScene extends Phaser.Scene {
     const gnd = groundZ(this.world, x, y);
     const wet = isWater(this.world, x, y);
     const sy = y - screenLift(gnd);
-    this.heliDust.setDepth(worldDepth(gnd, 0.35));
-    const puffs = Math.round(22 * power);
-    for (let i = 0; i < puffs; i++) {
-      const a = (i / puffs) * Math.PI * 2 + range(-0.12, 0.12);
-      const r = range(12, 28 + power * 50);
-      this.heliDust.setEmitterAngle(Phaser.Math.RadToDeg(a) + range(-18, 18));
-      this.heliDust.emitParticleAt(x + Math.cos(a) * r, sy + Math.sin(a) * r * 0.55, 1);
-    }
-    const dustRing = this.add.circle(x, sy, 8, 0xc8b48a, 0.4).setDepth(worldDepth(gnd, 0.25));
+    const ring = this.add.circle(x, sy, 8, 0xd2c09a, 0.62).setDepth(worldDepth(gnd, 0.45));
     this.tweens.add({
-      targets: dustRing,
-      radius: 70 + power * 110,
+      targets: ring,
+      radius: 58 + power * 48,
       alpha: 0,
-      duration: 620,
+      duration: 380,
       ease: "Cubic.Out",
-      onComplete: () => dustRing.destroy(),
+      onComplete: () => ring.destroy(),
     });
     if (wet) return;
-    const n = Math.round(36 * power);
+    const n = Math.round(64 * power);
     const extra = this.sparks.length + n - 360;
     if (extra > 0) this.sparks.splice(0, extra);
     const biome = sampleBiome(this.world, x, y);
     for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2 + range(-0.1, 0.1);
+      const a = (i / n) * Math.PI * 2 + range(-0.12, 0.12);
       const ca = Math.cos(a);
       const sa = Math.sin(a);
-      const r0 = range(6, 22);
-      const spd = range(380, 920) * (0.7 + power * 0.45);
-      const life = range(0.42, 0.82);
+      const spd = range(220, 420) * (0.92 + power * 0.1);
+      const life = range(0.78, 1.25);
       const look = sparkLook("dirt", biome);
-      const spinSign = Math.random() < 0.5 ? -1 : 1;
+      const tint = Phaser.Display.Color.Interpolate.ColorWithColor(
+        Phaser.Display.Color.IntegerToColor(look.tint),
+        Phaser.Display.Color.IntegerToColor(0xd8c9a4),
+        100,
+        42
+      );
       this.sparks.push({
-        x: x + ca * r0,
-        y: y + sa * r0,
-        z: gnd + range(2, 10),
+        x: x + ca * range(2, 12),
+        y: y + sa * range(2, 12),
+        z: gnd + range(3, 14),
         vx: ca * spd,
         vy: sa * spd,
-        vz: range(10, 48),
+        vz: range(24, 90),
         life,
         max: life,
-        scale: range(0.7, 1.15),
+        scale: range(1.15, 1.85),
         bounces: 0,
         kind: "dirt",
         tex: sparkTexKey("dirt"),
         frame: (Math.random() * FX_VARIANTS) | 0,
-        angJit: range(-0.08, 0.08),
-        spin: spinSign * range(0.8, 2.8),
-        tint: look.tint,
-        additive: look.add,
+        angJit: range(-0.04, 0.04),
+        spin: 0,
+        tint: Phaser.Display.Color.GetColor(tint.r, tint.g, tint.b),
+        additive: false,
         heading: a,
-        dart: true,
-        ox: x,
-        oy: y,
-        swirl: spinSign * range(90, 260),
+        shock: true,
       });
     }
   }
@@ -1124,9 +1133,8 @@ export class MissionScene extends Phaser.Scene {
       const dist = Math.hypot(aim.x - h.x, aim.y - h.y);
       bx = h.x + Math.cos(h.gunAngle) * dist;
       by = h.y + Math.sin(h.gunAngle) * dist;
-      const tip = this.gunTip();
-      ox = tip.x;
-      oy = tip.y;
+      ox = this.gun.x;
+      oy = this.gun.y;
     } else {
       const pylon = this.missilePylon();
       const along = Math.max(80, projectAlong(pylon.x, pylon.y, h.angle, aim.x, aim.y));
@@ -1474,12 +1482,13 @@ export class MissionScene extends Phaser.Scene {
       const kind = opt.forceKind ?? pickSparkKind(opt.style, opt.sparkFrac);
       const reverse = opt.style === "object" && Math.random() < 0.5;
       const d = biasedDir(opt.bx, opt.by, opt.bz, opt.tight, reverse);
+      const onUnit = opt.style === "object" && opt.forceKind !== "flame";
       const impact = opt.style !== "muzzle" && opt.forceKind !== "flame";
       const spd =
         range(opt.spdMin, opt.spdMax) *
         (kind === "dirt" && opt.style === "ground" ? 1.25 : 1) *
-        (impact ? 1.32 : 1);
-      const life =
+        (onUnit ? 2.85 : impact ? 1.32 : 1);
+      let life =
         kind === "dirt"
           ? range(0.45, 0.8)
           : kind === "spark"
@@ -1487,10 +1496,11 @@ export class MissionScene extends Phaser.Scene {
             : kind === "splash"
               ? range(0.32, 0.6)
               : range(0.18, 0.4);
+      if (onUnit) life *= kind === "spark" ? 0.38 : 0.5;
       const look = sparkLook(kind, biome, opt.blood);
       const vx = d.x * spd;
       const vy = d.y * spd;
-      const vz = d.z * spd + (kind === "dirt" || kind === "splash" ? 50 : 20);
+      const vz = d.z * spd + (onUnit ? 0 : kind === "dirt" || kind === "splash" ? 50 : 20);
       const sizeMul =
         (opt.scaleMul ?? (opt.style === "muzzle" ? 0.3 : 1)) *
         (kind === "spark" && opt.style === "ground" ? 0.42 : 1) *
@@ -1509,17 +1519,18 @@ export class MissionScene extends Phaser.Scene {
         scale:
           (kind === "dirt" ? range(0.52, 0.8) : kind === "spark" ? range(0.65, 1.15) : range(0.45, 1)) *
           sizeMul,
-        bounces: kind === "flame" ? 1 : kind === "splash" ? 2 : 2 + ((Math.random() * 3) | 0),
+        bounces: onUnit ? 0 : kind === "flame" ? 1 : kind === "splash" ? 2 : 2 + ((Math.random() * 3) | 0),
         kind,
         tex: sparkTexKey(kind),
         frame: (Math.random() * FX_VARIANTS) | 0,
-        angJit: range(-angW, angW),
-        spin: range(-spinW, spinW),
+        angJit: onUnit ? 0 : range(-angW, angW),
+        spin: onUnit ? 0 : range(-spinW, spinW),
         tint: look.tint,
         additive: look.add,
         heading: Math.atan2(vy - screenLift(vz), vx),
         streak: opt.style === "muzzle",
         blood: opt.blood,
+        straight: onUnit,
       });
     }
   }
@@ -1533,7 +1544,9 @@ export class MissionScene extends Phaser.Scene {
       s.x += s.vx * dt;
       s.y += s.vy * dt;
       s.z += s.vz * dt;
-      if (s.kind === "dirt" || s.kind === "spark") s.vz -= Z_GRAVITY * dt;
+      if ((s.kind === "dirt" || s.kind === "spark") && !s.shock && !s.straight) {
+        s.vz -= Z_GRAVITY * dt;
+      }
       if (s.dart && s.ox != null && s.oy != null && s.swirl != null) {
         const dx = s.x - s.ox;
         const dy = s.y - s.oy;
@@ -1549,6 +1562,13 @@ export class MissionScene extends Phaser.Scene {
         s.vx += tx * swirl * dt;
         s.vy += ty * swirl * dt;
         s.vz *= Math.pow(0.4, dt);
+      } else if (s.shock) {
+        s.vx *= Math.pow(0.64, dt);
+        s.vy *= Math.pow(0.64, dt);
+        s.vy += 165 * dt;
+        s.vz -= Z_GRAVITY * 0.42 * dt;
+      } else if (s.straight) {
+        /* keep launch velocity */
       } else if (s.dart) {
         s.vx *= Math.pow(0.72, dt);
         s.vy *= Math.pow(0.72, dt);
@@ -1559,15 +1579,17 @@ export class MissionScene extends Phaser.Scene {
         s.vy *= xyDrag;
         s.vz *= zDrag;
       }
-      if (s.kind === "flame") {
+      if (s.kind === "flame" && !s.straight) {
         s.vy -= 90 * dt;
         s.vz += 170 * dt;
       }
       s.life -= dt;
       const g = groundZ(this.world, s.x, s.y);
-      if (s.z < g) {
+      if (s.z < g && !s.straight) {
         s.z = g;
-        if (s.dart) {
+        if (s.shock) {
+          if (s.vz < 0) s.vz = 0;
+        } else if (s.dart) {
           s.vz = Math.max(2, -s.vz * 0.12);
         } else if (s.bounces > 0 && s.vz < -30) {
           s.bounces--;
@@ -1605,14 +1627,21 @@ export class MissionScene extends Phaser.Scene {
       const flame = s.kind === "flame";
       const streak = flame && s.streak;
       const dart = dirt && s.dart;
+      const shock = dirt && s.shock;
       const grow = 1 - Math.pow(1 - age, 3.4);
       const edge =
         dart && s.ox != null && s.oy != null
           ? Phaser.Math.Clamp((Math.hypot(s.x - s.ox, s.y - s.oy) - 40) / 110, 0, 1)
           : 0;
       const round = dart ? Math.max(edge, Phaser.Math.Clamp(1 - spd / 220, 0, 1)) : 0;
-      const stretch = 1 + spd * (spark ? 0.011 : streak ? 0.0064 : dart ? 0.0052 : 0.0048);
-      const thick = dart
+      const stretch = s.straight
+        ? Math.min(2.15, 1 + spd * 0.00105)
+        : shock
+          ? Math.min(2.8, 1 + spd * 0.0022)
+          : 1 + spd * (spark ? 0.011 : streak ? 0.0064 : dart ? 0.0052 : 0.0048);
+      const thick = shock
+        ? s.scale * (1.05 + 0.95 * age)
+        : dart
         ? s.scale * (0.78 + 0.35 * fade + 0.45 * round)
         : dirt
           ? s.scale * (0.06 + 3.6 * grow)
@@ -1620,7 +1649,9 @@ export class MissionScene extends Phaser.Scene {
       const scrX = s.vx;
       const scrY = s.vy - screenLift(s.vz);
       const heading = Math.atan2(scrY, scrX);
-      const rot = dart
+      const rot = s.straight || shock
+        ? s.heading
+        : dart
         ? heading + s.angJit * 0.08 + age * s.spin * (0.15 + round * 0.7)
         : dirt
           ? s.heading + s.angJit * 0.14
@@ -1629,7 +1660,9 @@ export class MissionScene extends Phaser.Scene {
             : flame
               ? s.angJit + age * s.spin * 0.35
               : heading + s.angJit + age * s.spin * 0.12;
-      const sx = dart
+      const sx = shock
+        ? thick * stretch
+        : dart
         ? thick * (stretch * 1.28 * (1 - round) + (1.02 + 0.18 * grow) * round)
         : dirt
           ? thick * (0.85 + 0.55 * grow)
@@ -1639,7 +1672,9 @@ export class MissionScene extends Phaser.Scene {
               ? thick
               : thick * stretch;
       const late = Math.pow(Phaser.Math.Clamp((age - 0.52) / 0.48, 0, 1), 1.7);
-      const sy = dart
+      const sy = shock
+        ? thick * (0.48 + 0.7 * age)
+        : dart
         ? thick * ((0.58 + 0.16 / Math.max(stretch, 1)) * (1 - round) + (0.95 + 0.12 * grow) * round)
         : dirt
           ? thick * (0.28 + 0.42 * late)
@@ -1652,7 +1687,9 @@ export class MissionScene extends Phaser.Scene {
               : thick / Math.sqrt(stretch);
       const baseA = s.additive ? 0.45 + fade * 0.55 : 0.55 + fade * 0.4;
       const spdFade = Phaser.Math.Clamp(spd / 280, 0, 1);
-      const alpha = dart
+      const alpha = shock
+        ? 0.28 + 0.62 * Math.pow(fade, 0.55)
+        : dart
         ? (0.16 + 0.2 * fade) * (1 - round * 0.25)
         : dirt
           ? baseA * (0.35 + 0.65 * fade)
@@ -1911,6 +1948,7 @@ export class MissionScene extends Phaser.Scene {
   ): void {
     const water = isWater(this.world, x, y);
     const he = kind !== "cannon";
+    const fx = hitSparkFx(dmg);
     if (objectHit && direct?.kind === "soldier") {
       const incoming = Math.hypot(dx, dy, dz) || 1;
       const graze = Phaser.Math.Clamp(Math.hypot(dx, dy) / incoming, 0, 1);
@@ -1932,24 +1970,26 @@ export class MissionScene extends Phaser.Scene {
     } else if (objectHit) {
       this.spawnSparks(x, y, z + 4, {
         style: "object",
-        n: he ? 36 : 18,
-        spdMin: he ? 110 : 90,
-        spdMax: he ? 480 : 340,
+        n: Math.min(56, Math.round((he ? 36 : 18) * fx.n)),
+        spdMin: (he ? 110 : 90) * fx.spd,
+        spdMax: (he ? 480 : 340) * fx.spd,
         bx: dx,
         by: dy,
         bz: dz,
         tight: he ? 0.28 : 0.52,
+        scaleMul: fx.size,
       });
     } else if (water) {
       this.spawnSparks(x, y, z + 3, {
         style: "water",
-        n: 20,
-        spdMin: 50,
-        spdMax: 220,
+        n: Math.min(80, Math.round(20 * fx.n)),
+        spdMin: 50 * fx.spd,
+        spdMax: 220 * fx.spd,
         bx: dx,
         by: dy,
         bz: Math.max(40, dz),
         tight: 0.48,
+        scaleMul: fx.size,
       });
     } else {
       const incoming = Math.hypot(dx, dy, dz) || 1;
@@ -1959,26 +1999,28 @@ export class MissionScene extends Phaser.Scene {
       if (he) {
         this.spawnSparks(x, y, z + 3, {
           style: "ground",
-          n: 62,
-          spdMin: Phaser.Math.Linear(50, 160, acute),
-          spdMax: Phaser.Math.Linear(220, 420, acute),
+          n: Math.min(96, Math.round(62 * fx.n)),
+          spdMin: Phaser.Math.Linear(50, 160, acute) * fx.spd,
+          spdMax: Phaser.Math.Linear(220, 420, acute) * fx.spd,
           bx: dx,
           by: dy,
           bz: Phaser.Math.Linear(110, 40, acute),
           tight: Phaser.Math.Linear(0.1, 0.38, acute),
           sparkFrac: 0.02,
+          scaleMul: fx.size,
         });
       } else {
         this.spawnSparks(x, y, z + 3, {
           style: "ground",
-          n: 26,
-          spdMin: Phaser.Math.Linear(36, 200, acute * acute),
-          spdMax: Phaser.Math.Linear(200, 520, acute * acute),
+          n: Math.min(80, Math.round(26 * fx.n)),
+          spdMin: Phaser.Math.Linear(36, 200, acute * acute) * fx.spd,
+          spdMax: Phaser.Math.Linear(200, 520, acute * acute) * fx.spd,
           bx: dx,
           by: dy,
           bz: Phaser.Math.Linear(90, 22, acute),
           tight: Phaser.Math.Linear(0.28, 0.72, acute),
           sparkFrac: 0.04,
+          scaleMul: fx.size,
         });
       }
     }
@@ -2185,7 +2227,7 @@ export class MissionScene extends Phaser.Scene {
     const building = u.kind === "bunker" || u.kind === "radar" || u.kind === "tower";
     const blast = Math.max(42, radius(u.kind) * 2.4) * (building ? 1.4 : 1);
     this.heFireBurst(u.x, u.y, hz, 0, 0, 1, blast, u.kind === "soldier", building ? 2.25 : 1);
-    if (building) this.emitDustShock(u.x, u.y, 1.55);
+    if (building) this.emitDustShock(u.x, u.y, 1);
     this.smoke.setDepth(worldDepth(u.z, 0.2));
     this.smoke.emitParticleAt(u.x, u.y - screenLift(u.z) + 12, 16);
     this.shake = Math.min(10, this.shake + 3);
@@ -3037,13 +3079,18 @@ export class MissionScene extends Phaser.Scene {
   }
 
   drawHvArrows(): void {
-    if (this.mapBlend > 0.12) return;
     this.hvGfx.clear();
+    if (this.mapBlend > 0.12) {
+      for (const t of this.hvArrowLabels) t.setVisible(false);
+      return;
+    }
     const cam = this.cameras.main;
     const view = cam.worldView;
     const w = this.scale.width;
     const h = this.scale.height;
-    const pad = 36;
+    const pad = 40;
+    const g = this.hvGfx;
+    let used = 0;
     for (const spec of this.world.hv) {
       const u = this.units.find((q) => q.hv === spec.id);
       if (!u || u.dead) continue;
@@ -3055,13 +3102,47 @@ export class MissionScene extends Phaser.Scene {
       const ang = Math.atan2(sy - cy, sx - cx);
       const ax = Phaser.Math.Clamp(sx, pad, w - pad);
       const ay = Phaser.Math.Clamp(sy, pad, h - pad);
-      this.hvGfx.fillStyle(0xff5a3a, 0.9);
-      this.hvGfx.save();
-      this.hvGfx.translateCanvas(ax, ay);
-      this.hvGfx.rotateCanvas(ang);
-      this.hvGfx.fillTriangle(10, 0, -8, -7, -8, 7);
-      this.hvGfx.restore();
+      g.save();
+      g.translateCanvas(ax, ay);
+      g.rotateCanvas(ang);
+      g.fillStyle(0x12100c, 0.62);
+      g.fillTriangle(15, 0, -10, -10, -10, 10);
+      g.fillStyle(0xff5a3a, 0.96);
+      g.fillTriangle(12, 0, -8, -7.5, -8, 7.5);
+      g.lineStyle(1.6, 0xe8b84a, 0.95);
+      g.strokeTriangle(12, 0, -8, -7.5, -8, 7.5);
+      g.lineStyle(1.2, 0xffe08a, 0.88);
+      g.beginPath();
+      g.moveTo(-1.5, -4.2);
+      g.lineTo(6.5, 0);
+      g.lineTo(-1.5, 4.2);
+      g.strokePath();
+      g.restore();
+      const label = this.hvArrowLabels[used++];
+      if (!label) continue;
+      const dist = Math.hypot(u.x - this.heli.x, u.y - this.heli.y) | 0;
+      const inset = 26;
+      let lx = ax - Math.cos(ang) * inset;
+      let ly = ay - Math.sin(ang) * inset;
+      lx = Phaser.Math.Clamp(lx, 52, w - 52);
+      ly = Phaser.Math.Clamp(ly, 22, h - 22);
+      const miniDx = lx - (18 + 88);
+      const miniDy = ly - (h - 18 - 88);
+      if (Math.hypot(miniDx, miniDy) < 108) {
+        const n = Math.hypot(miniDx, miniDy) || 1;
+        lx = 18 + 88 + (miniDx / n) * 112;
+        ly = h - 18 - 88 + (miniDy / n) * 112;
+      }
+      const lp = this.hudLocal(lx, ly);
+      label
+        .setVisible(true)
+        .setText(`${spec.name}\n${dist}m`)
+        .setPosition(lp.x, lp.y)
+        .setOrigin(0.5 + Math.cos(ang) * 0.42, 0.5 + Math.sin(ang) * 0.38)
+        .setColor("#f0e6c8")
+        .setAlpha(0.95);
     }
+    for (let i = used; i < this.hvArrowLabels.length; i++) this.hvArrowLabels[i]!.setVisible(false);
   }
 
   drawDebugHits(): void {
@@ -3282,6 +3363,7 @@ export class MissionScene extends Phaser.Scene {
       this.wpnBar,
       ...this.wpnSlots,
       this.hvGfx,
+      ...this.hvArrowLabels,
       this.lockArrowGfx,
       this.lockHudTxt,
     ];
@@ -3731,6 +3813,15 @@ export class MissionScene extends Phaser.Scene {
         .setDepth(Layer.HUD + 50)
     );
   }
+}
+
+function hitSparkFx(dmg: number): { n: number; spd: number; size: number } {
+  const t = Phaser.Math.Clamp(Math.pow(Math.max(0.5, dmg) / 8, 0.28), 0.7, 1.5);
+  return {
+    n: t,
+    spd: 0.88 + 0.12 * t,
+    size: Phaser.Math.Clamp(0.78 + 0.18 * t, 0.78, 1.08),
+  };
 }
 
 function sparkTexKey(kind: SparkKind): string {

@@ -89,6 +89,8 @@ export interface Spark {
   streak?: boolean;
   dart?: boolean;
   blood?: boolean;
+  shock?: boolean;
+  straight?: boolean;
   ox?: number;
   oy?: number;
   swirl?: number;
