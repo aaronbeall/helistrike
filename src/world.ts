@@ -752,6 +752,96 @@ function biomeSolid(biome: Uint8Array, x: number, y: number, id: number): boolea
   return true;
 }
 
+function shadeTerrainTexel(
+  raw: Float32Array,
+  biome: Uint8Array,
+  seed: number,
+  tiles: (ImageData | null)[] | undefined,
+  bankT: Float32Array | undefined,
+  x: number,
+  y: number
+): [number, number, number] {
+  const i = y * TEX + x;
+  const h = raw[i]!;
+  const b = biome[i]!;
+  const n = fbm(x * 0.08, y * 0.08, seed + 99, 2) * 18 - 9;
+  let r = 0,
+    gch = 0,
+    bl = 0;
+  if (b === BIOME_ID.water) {
+    const deep = clamp((H_WATER - h) * 4, 0, 1);
+    r = 28 + n * 0.3;
+    gch = 72 - deep * 22;
+    bl = 92 - deep * 10;
+  } else if (b === BIOME_ID.river) {
+    r = 48 + n * 0.25;
+    gch = 52 + n * 0.2;
+    bl = 40;
+  } else if (b === BIOME_ID.sand) {
+    const wet = bankT && bankT[i]! >= 0 ? 1 - bankT[i]! : 0;
+    r = 196 + n - wet * 72;
+    gch = 168 + n * 0.6 - wet * 48;
+    bl = 112 - wet * 18;
+  } else if (b === BIOME_ID.forest) {
+    r = 42 + n * 0.4;
+    gch = 78 + h * 20;
+    bl = 44;
+  } else if (b === BIOME_ID.rock) {
+    r = 92 + n;
+    gch = 86 + n;
+    bl = 78;
+  } else if (b === BIOME_ID.peak) {
+    const snow = (h - 0.74) * 8;
+    r = 140 + snow * 80 + n;
+    gch = 138 + snow * 80 + n;
+    bl = 132 + snow * 90;
+  } else {
+    r = 110 + h * 40 + n;
+    gch = 124 + h * 28 + n * 0.5;
+    bl = 62;
+  }
+  const shade = 0.82 + h * 0.35;
+  let rgb: [number, number, number] = [
+    clamp(r * shade, 0, 255),
+    clamp(gch * shade, 0, 255),
+    clamp(bl * shade, 0, 255),
+  ];
+  const tile = tiles?.[b];
+  const riverBed = b === BIOME_ID.river && tile;
+  const bank = !!(bankT && bankT[i]! >= 0);
+  const sandTile = tiles?.[BIOME_ID.sand];
+  if (riverBed) {
+    const tw = tile.width;
+    const th = tile.height;
+    const to = ((y % th) * tw + (x % tw)) * 4;
+    rgb = [
+      overlayChan(rgb[0], tile.data[to]!, 0.7),
+      overlayChan(rgb[1], tile.data[to + 1]!, 0.7),
+      overlayChan(rgb[2], tile.data[to + 2]!, 0.7),
+    ];
+  } else if (bank && sandTile) {
+    const tw = sandTile.width;
+    const th = sandTile.height;
+    const to = ((y % th) * tw + (x % tw)) * 4;
+    const ta = 0.48 + (1 - bankT![i]!) * 0.28;
+    rgb = [
+      overlayChan(rgb[0], sandTile.data[to]!, ta),
+      overlayChan(rgb[1], sandTile.data[to + 1]!, ta),
+      overlayChan(rgb[2], sandTile.data[to + 2]!, ta),
+    ];
+  } else if (tile && biomeSolid(biome, x, y, b)) {
+    const tw = tile.width;
+    const th = tile.height;
+    const to = ((y % th) * tw + (x % tw)) * 4;
+    rgb = [
+      overlayChan(rgb[0], tile.data[to]!, 0.52),
+      overlayChan(rgb[1], tile.data[to + 1]!, 0.52),
+      overlayChan(rgb[2], tile.data[to + 2]!, 0.52),
+    ];
+  }
+  return rgb;
+}
+
 function overlayChan(base: number, tex: number, a: number): number {
   const b = base / 255;
   const t = tex / 255;
@@ -772,85 +862,8 @@ function paintTerrain(
   for (let y = 0; y < TEX; y++) {
     if (y % 150 === 0) onProgress?.(0.82 + (y / TEX) * 0.13, "terrain paint");
     for (let x = 0; x < TEX; x++) {
-      const i = y * TEX + x;
-      const h = raw[i]!;
-      const b = biome[i]!;
-      const n = fbm(x * 0.08, y * 0.08, seed + 99, 2) * 18 - 9;
-      let r = 0,
-        gch = 0,
-        bl = 0;
-      if (b === BIOME_ID.water) {
-        const deep = clamp((H_WATER - h) * 4, 0, 1);
-        r = 28 + n * 0.3;
-        gch = 72 - deep * 22;
-        bl = 92 - deep * 10;
-      } else if (b === BIOME_ID.river) {
-        r = 48 + n * 0.25;
-        gch = 52 + n * 0.2;
-        bl = 40;
-      } else if (b === BIOME_ID.sand) {
-        const wet = bankT && bankT[i]! >= 0 ? 1 - bankT[i]! : 0;
-        r = 196 + n - wet * 72;
-        gch = 168 + n * 0.6 - wet * 48;
-        bl = 112 - wet * 18;
-      } else if (b === BIOME_ID.forest) {
-        r = 42 + n * 0.4;
-        gch = 78 + h * 20;
-        bl = 44;
-      } else if (b === BIOME_ID.rock) {
-        r = 92 + n;
-        gch = 86 + n;
-        bl = 78;
-      } else if (b === BIOME_ID.peak) {
-        const snow = (h - 0.74) * 8;
-        r = 140 + snow * 80 + n;
-        gch = 138 + snow * 80 + n;
-        bl = 132 + snow * 90;
-      } else {
-        r = 110 + h * 40 + n;
-        gch = 124 + h * 28 + n * 0.5;
-        bl = 62;
-      }
-      const shade = 0.82 + h * 0.35;
-      let rgb: [number, number, number] = [
-        clamp(r * shade, 0, 255),
-        clamp(gch * shade, 0, 255),
-        clamp(bl * shade, 0, 255),
-      ];
-      const tile = tiles?.[b];
-      const riverBed = b === BIOME_ID.river && tile;
-      const bank = !!(bankT && bankT[i]! >= 0);
-      const sandTile = tiles?.[BIOME_ID.sand];
-      if (riverBed) {
-        const tw = tile.width;
-        const th = tile.height;
-        const to = ((y % th) * tw + (x % tw)) * 4;
-        rgb = [
-          overlayChan(rgb[0], tile.data[to]!, 0.7),
-          overlayChan(rgb[1], tile.data[to + 1]!, 0.7),
-          overlayChan(rgb[2], tile.data[to + 2]!, 0.7),
-        ];
-      } else if (bank && sandTile) {
-        const tw = sandTile.width;
-        const th = sandTile.height;
-        const to = ((y % th) * tw + (x % tw)) * 4;
-        const ta = 0.48 + (1 - bankT![i]!) * 0.28;
-        rgb = [
-          overlayChan(rgb[0], sandTile.data[to]!, ta),
-          overlayChan(rgb[1], sandTile.data[to + 1]!, ta),
-          overlayChan(rgb[2], sandTile.data[to + 2]!, ta),
-        ];
-      } else if (tile && biomeSolid(biome, x, y, b)) {
-        const tw = tile.width;
-        const th = tile.height;
-        const to = ((y % th) * tw + (x % tw)) * 4;
-        rgb = [
-          overlayChan(rgb[0], tile.data[to]!, 0.52),
-          overlayChan(rgb[1], tile.data[to + 1]!, 0.52),
-          overlayChan(rgb[2], tile.data[to + 2]!, 0.52),
-        ];
-      }
-      const o = i * 4;
+      const rgb = shadeTerrainTexel(raw, biome, seed, tiles, bankT, x, y);
+      const o = (y * TEX + x) * 4;
       d[o] = rgb[0];
       d[o + 1] = rgb[1];
       d[o + 2] = rgb[2];
@@ -860,33 +873,41 @@ function paintTerrain(
   return img;
 }
 
+function lightTerrainPixel(
+  d: Uint8ClampedArray,
+  height: Float32Array,
+  x: number,
+  y: number,
+  stride: number,
+  ox: number,
+  oy: number
+): void {
+  const i = y * TEX + x;
+  const dx = (height[i + 1]! - height[i - 1]!) * 52;
+  const dy = (height[i + TEX]! - height[i - TEX]!) * 52;
+  let nx = -dx;
+  let ny = -dy;
+  let nz = 1;
+  const len = Math.hypot(nx, ny, nz) || 1;
+  nx /= len;
+  ny /= len;
+  nz /= len;
+  const ndot = clamp(nx * -0.64 + ny * -0.44 + nz * 0.62, 0, 1);
+  const lit = 0.38 + Math.pow(ndot, 1.15) * 0.82;
+  const spec = Math.pow(Math.max(0, ndot - 0.48), 1.85) * 72;
+  const o = ((y - oy) * stride + (x - ox)) * 4;
+  d[o] = clamp(d[o]! * lit + spec, 0, 255);
+  d[o + 1] = clamp(d[o + 1]! * lit + spec * 0.92, 0, 255);
+  d[o + 2] = clamp(d[o + 2]! * lit + spec * 0.78, 0, 255);
+}
+
 export function applyTerrainLight(canvas: HTMLCanvasElement, height: Float32Array): void {
   const g = canvas.getContext("2d")!;
   const img = g.getImageData(0, 0, TEX, TEX);
   const d = img.data;
-  const lx = -0.64;
-  const ly = -0.44;
-  const lz = 0.62;
-  const hs = 52;
   for (let y = 1; y < TEX - 1; y++) {
     for (let x = 1; x < TEX - 1; x++) {
-      const i = y * TEX + x;
-      const dx = (height[i + 1]! - height[i - 1]!) * hs;
-      const dy = (height[i + TEX]! - height[i - TEX]!) * hs;
-      let nx = -dx;
-      let ny = -dy;
-      let nz = 1;
-      const len = Math.hypot(nx, ny, nz) || 1;
-      nx /= len;
-      ny /= len;
-      nz /= len;
-      const ndot = clamp(nx * lx + ny * ly + nz * lz, 0, 1);
-      const lit = 0.38 + Math.pow(ndot, 1.15) * 0.82;
-      const spec = Math.pow(Math.max(0, ndot - 0.48), 1.85) * 72;
-      const o = i * 4;
-      d[o] = clamp(d[o]! * lit + spec, 0, 255);
-      d[o + 1] = clamp(d[o + 1]! * lit + spec * 0.92, 0, 255);
-      d[o + 2] = clamp(d[o + 2]! * lit + spec * 0.78, 0, 255);
+      lightTerrainPixel(d, height, x, y, TEX, 0, 0);
     }
   }
   g.putImageData(img, 0, 0);
@@ -1003,6 +1024,161 @@ export function paintHeightMap(height: Float32Array): HTMLCanvasElement {
   }
   g.putImageData(img, 0, 0);
   return c;
+}
+
+export function paintHeightMapRect(
+  canvas: HTMLCanvasElement,
+  height: Float32Array,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number
+): void {
+  const g = canvas.getContext("2d")!;
+  const w = x1 - x0 + 1;
+  const h = y1 - y0 + 1;
+  const img = g.createImageData(w, h);
+  const d = img.data;
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const v = clamp(height[y * TEX + x]!, 0, 1) * 255;
+      const o = ((y - y0) * w + (x - x0)) * 4;
+      d[o] = v;
+      d[o + 1] = v;
+      d[o + 2] = v;
+      d[o + 3] = 255;
+    }
+  }
+  g.putImageData(img, x0, y0);
+}
+
+export type HeightStamp = {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+};
+
+function sampleMask(mask: Float32Array, w: number, h: number, u: number, v: number): number {
+  if (u < 0 || v < 0 || u > 1 || v > 1) return 0;
+  const x = clamp(u, 0, 1) * (w - 1.001);
+  const y = clamp(v, 0, 1) * (h - 1.001);
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const fx = x - x0;
+  const fy = y - y0;
+  const x1 = Math.min(x0 + 1, w - 1);
+  const y1 = Math.min(y0 + 1, h - 1);
+  const a = mask[y0 * w + x0]!;
+  const b = mask[y0 * w + x1]!;
+  const c = mask[y1 * w + x0]!;
+  const d = mask[y1 * w + x1]!;
+  return a * (1 - fx) * (1 - fy) + b * fx * (1 - fy) + c * (1 - fx) * fy + d * fx * fy;
+}
+
+export function stampHeightBrush(
+  height: Float32Array,
+  mask: Float32Array,
+  mw: number,
+  mh: number,
+  wx: number,
+  wy: number,
+  size: number,
+  rot: number,
+  offX: number,
+  offY: number,
+  invert: boolean,
+  strength: number
+): HeightStamp {
+  const tx = wx / SCALE;
+  const ty = wy / SCALE;
+  const rad = Math.max(4, size / SCALE);
+  const c = Math.cos(-rot);
+  const s = Math.sin(-rot);
+  const x0 = clamp(Math.floor(tx - rad - 2), 1, TEX - 2);
+  const y0 = clamp(Math.floor(ty - rad - 2), 1, TEX - 2);
+  const x1 = clamp(Math.ceil(tx + rad + 2), 1, TEX - 2);
+  const y1 = clamp(Math.ceil(ty + rad + 2), 1, TEX - 2);
+  const k = clamp(strength, 0, 1);
+  const target = invert ? 0 : 1;
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const lx = (x + 0.5 - tx) / rad;
+      const ly = (y + 0.5 - ty) / rad;
+      const rx = lx * c - ly * s - offX;
+      const ry = lx * s + ly * c - offY;
+      const u = (rx + 1) * 0.5;
+      const v = (ry + 1) * 0.5;
+      const m = sampleMask(mask, mw, mh, u, v);
+      const a = m * k;
+      if (a < 0.004) continue;
+      const i = y * TEX + x;
+      height[i] = clamp(lerp(height[i]!, target, a), 0, 1);
+    }
+  }
+  return { x0, y0, x1, y1 };
+}
+
+function assignBiomeFromHeight(biome: Uint8Array, height: Float32Array, seed: number, x: number, y: number): void {
+  const i = y * TEX + x;
+  const h = height[i]!;
+  if (biome[i] === BIOME_ID.river && h < H_SAND) return;
+  const m = fbm((x / TEX) * 5.4 + 40, (y / TEX) * 5.4, seed + 17, 4);
+  if (h < H_WATER) biome[i] = BIOME_ID.water;
+  else if (h < H_SAND) biome[i] = BIOME_ID.sand;
+  else if (h > H_PEAK) biome[i] = BIOME_ID.peak;
+  else if (h > H_ROCK) biome[i] = BIOME_ID.rock;
+  else if (m > 0.58 && h < 0.58) biome[i] = BIOME_ID.forest;
+  else biome[i] = BIOME_ID.grass;
+}
+
+export function rebuildWorldPatch(
+  world: WorldData,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  tiles: (ImageData | null)[],
+  restamp?: (g: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number) => void
+): void {
+  x0 = clamp(Math.floor(x0), 1, TEX - 2);
+  y0 = clamp(Math.floor(y0), 1, TEX - 2);
+  x1 = clamp(Math.ceil(x1), 1, TEX - 2);
+  y1 = clamp(Math.ceil(y1), 1, TEX - 2);
+  if (x1 < x0 || y1 < y0) return;
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      assignBiomeFromHeight(world.biome, world.height, world.seed, x, y);
+    }
+  }
+  const w = x1 - x0 + 1;
+  const h = y1 - y0 + 1;
+  const img = new ImageData(w, h);
+  const d = img.data;
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const rgb = shadeTerrainTexel(world.height, world.biome, world.seed, tiles, undefined, x, y);
+      const o = ((y - y0) * w + (x - x0)) * 4;
+      d[o] = rgb[0];
+      d[o + 1] = rgb[1];
+      d[o + 2] = rgb[2];
+      d[o + 3] = 255;
+    }
+  }
+  const g = world.canvas.getContext("2d")!;
+  g.putImageData(img, x0, y0);
+  restamp?.(g, x0, y0, x1, y1);
+  const lit = g.getImageData(x0, y0, w, h);
+  const ly0 = Math.max(1, y0);
+  const ly1 = Math.min(TEX - 2, y1);
+  const lx0 = Math.max(1, x0);
+  const lx1 = Math.min(TEX - 2, x1);
+  for (let y = ly0; y <= ly1; y++) {
+    for (let x = lx0; x <= lx1; x++) {
+      lightTerrainPixel(lit.data, world.height, x, y, w, x0, y0);
+    }
+  }
+  g.putImageData(lit, x0, y0);
 }
 
 function findSpawn(

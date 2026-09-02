@@ -19,6 +19,7 @@ import {
 import { Layer, ZOff, Z_GRAVITY, worldDepth } from "./depth";
 import { range } from "./rng";
 import { CRUISE_AGL, HELI_HEIGHT, Heli, LOW_AGL, MAX_AGL } from "./heli";
+import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
 import { SpriteConfigTool } from "./spriteConfig";
 import { preloadArt, prepareArt, extractBiomeTiles, gunLayout, rotorLayout, shadowAlpha, shadowKey, shadowOff, spriteUvPos, tankLayout, FX_VARIANTS } from "./sprites";
 import {
@@ -32,8 +33,11 @@ import {
   castZ,
   isWater,
   paintHeightMap,
-  sampleBiome,
+  paintHeightMapRect,
+  stampHeightBrush,
+  rebuildWorldPatch,
   applyTerrainLight,
+  sampleBiome,
   SCALE,
   WORLD,
   WRECK_TEX,
@@ -100,7 +104,7 @@ export class MenuScene extends Phaser.Scene {
       .text(
         w / 2,
         h * 0.56,
-        "WASD / ARROWS  thrust & strafe\nMOUSE  turn  ·  CLICK  fire  ·  1-4 / WHEEL  weapons\nSPACE  pop-up  ·  SHIFT  nap-of-earth  ·  M  map\n+ / -  time scale",
+        "WASD / ARROWS  thrust & strafe\nMOUSE  turn  ·  CLICK  fire  ·  1-4 / WHEEL  weapons\nSPACE  pop-up  ·  SHIFT  nap-of-earth  ·  M  map  ·  E  relief\n+ / -  time scale",
         {
           fontFamily: "Share Tech Mono, monospace",
           fontSize: "15px",
@@ -332,6 +336,29 @@ export class MissionScene extends Phaser.Scene {
   debugAi = false;
   aiGfx!: Phaser.GameObjects.Graphics;
   aiLabels: Phaser.GameObjects.Text[] = [];
+  editOpen = false;
+  editBrush = 0;
+  editSize = 110;
+  editRot = 0;
+  editOffX = 0;
+  editOffY = 0;
+  editSpd = 0;
+  editStr = 0.2;
+  editInvert = false;
+  editPx = 0;
+  editPy = 0;
+  editAcc = 0;
+  editUiBlock = false;
+  editWasPaint = false;
+  editDirty: { x0: number; y0: number; x1: number; y1: number } | null = null;
+  editRoot!: Phaser.GameObjects.Container;
+  editReadout!: Phaser.GameObjects.Text;
+  editInkBtn!: Phaser.GameObjects.Text;
+  editChips: Phaser.GameObjects.Image[] = [];
+  editChipFrames: Phaser.GameObjects.Graphics[] = [];
+  editGfx!: Phaser.GameObjects.Graphics;
+  heightMapCanvas!: HTMLCanvasElement;
+  biomeTiles: (ImageData | null)[] = [];
 
   constructor() {
     super("mission");
@@ -358,6 +385,9 @@ export class MissionScene extends Phaser.Scene {
     this.noDamage = false;
     this.infAmmo = false;
     this.debugAi = false;
+    this.editOpen = false;
+    this.editInvert = false;
+    this.editDirty = null;
     this.shots = [];
     this.frags = [];
     this.sparks = [];
@@ -372,7 +402,10 @@ export class MissionScene extends Phaser.Scene {
     if (this.textures.exists("terrain")) this.textures.remove("terrain");
     this.textures.addCanvas("terrain", this.world.canvas);
     if (this.textures.exists("heightmap")) this.textures.remove("heightmap");
-    this.textures.addCanvas("heightmap", paintHeightMap(this.world.height));
+    this.heightMapCanvas = paintHeightMap(this.world.height);
+    this.textures.addCanvas("heightmap", this.heightMapCanvas);
+    this.biomeTiles = extractBiomeTiles(this.textures);
+    this.input.mouse?.disableContextMenu();
     ensureImpactGlow(this.textures);
     this.input.setDefaultCursor("none");
     this.canFire = !this.input.activePointer.isDown;
@@ -679,29 +712,53 @@ export class MissionScene extends Phaser.Scene {
     this.keySpace = this.input.keyboard!.addKey("SPACE");
     this.keyShift = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT);
     this.input.keyboard!.addKey("ONE").on("down", () => {
-      if (this.debugOpen) this.setNoDamage(!this.noDamage);
+      if (this.editOpen) this.setEditBrush(0);
+      else if (this.debugOpen) this.setNoDamage(!this.noDamage);
       else this.heli.weapon = 0;
     });
     this.input.keyboard!.addKey("TWO").on("down", () => {
-      if (this.debugOpen) this.setInfAmmo(!this.infAmmo);
+      if (this.editOpen) this.setEditBrush(1);
+      else if (this.debugOpen) this.setInfAmmo(!this.infAmmo);
       else this.heli.weapon = 1;
     });
     this.input.keyboard!.addKey("THREE").on("down", () => {
-      if (this.debugOpen) this.toggleHeightMap();
+      if (this.editOpen) this.setEditBrush(2);
+      else if (this.debugOpen) this.toggleHeightMap();
       else this.heli.weapon = 2;
     });
     this.input.keyboard!.addKey("FOUR").on("down", () => {
       if (this.debugOpen) this.setDebugAi(!this.debugAi);
       else this.heli.weapon = 3;
     });
+    this.input.keyboard!.addKey("E").on("down", () => this.toggleReliefEditor());
+    this.input.keyboard!.addKey("I").on("down", () => {
+      if (this.editOpen) this.toggleEditInvert();
+    });
     this.input.keyboard!.addKey("M").on("down", () => this.toggleMap());
+    this.input.keyboard!.addKey("Q").on("down", () => {
+      if (this.editOpen) this.nudgeEditRot(-1);
+    });
+    this.input.keyboard!.addKey("COMMA").on("down", () => {
+      if (this.editOpen) this.nudgeEditOff(-1, 0);
+    });
+    this.input.keyboard!.addKey("PERIOD").on("down", () => {
+      if (this.editOpen) this.nudgeEditOff(1, 0);
+    });
+    this.input.keyboard!.addKey("SEMICOLON").on("down", () => {
+      if (this.editOpen) this.nudgeEditOff(0, -1);
+    });
+    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.QUOTES).on("down", () => {
+      if (this.editOpen) this.nudgeEditOff(0, 1);
+    });
     this.input.keyboard!.addKey("K").on("down", () => this.toggleHeightMap());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.FORWARD_SLASH).on("down", () => this.toggleDebugMenu());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ESC).on("down", () => {
-      if (this.debugOpen) this.toggleDebugMenu(false);
+      if (this.editOpen) this.toggleReliefEditor(false);
+      else if (this.debugOpen) this.toggleDebugMenu(false);
     });
     this.input.keyboard!.addKey("R").on("down", () => {
-      if (this.over) this.scene.start("load");
+      if (this.editOpen && !this.over) this.nudgeEditRot(1);
+      else if (this.over) this.scene.start("load");
     });
     const bumpTime = (dir: number) => this.nudgeTimeScale(dir);
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.PLUS).on("down", () => bumpTime(1));
@@ -712,11 +769,21 @@ export class MissionScene extends Phaser.Scene {
     this.spriteCfg = new SpriteConfigTool(this, (key) => this.spriteOrigin(key));
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.F9).on("down", () => this.spriteCfg.toggle());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.BACKTICK).on("down", () => this.spriteCfg.toggle());
-    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.OPEN_BRACKET).on("down", () => this.spriteCfg.cycle(-1));
-    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.CLOSED_BRACKET).on("down", () => this.spriteCfg.cycle(1));
+    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.OPEN_BRACKET).on("down", () => {
+      if (this.spriteCfg?.open) this.spriteCfg.cycle(-1);
+      else if (this.editOpen) this.nudgeEditSize(-1);
+    });
+    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.CLOSED_BRACKET).on("down", () => {
+      if (this.spriteCfg?.open) this.spriteCfg.cycle(1);
+      else if (this.editOpen) this.nudgeEditSize(1);
+    });
     this.input.on("wheel", (_p: Phaser.Input.Pointer, _dx: number, dy: number) => {
       if (this.spriteCfg?.open) {
         this.spriteCfg.cycle(dy > 0 ? 1 : -1);
+        return;
+      }
+      if (this.editOpen) {
+        this.nudgeEditSize(dy > 0 ? -1 : 1);
         return;
       }
       if (this.debugOpen) return;
@@ -996,6 +1063,7 @@ export class MissionScene extends Phaser.Scene {
       this.drawDebugHits();
     }
 
+    if (this.editOpen) this.handleReliefEdit(wallDt);
     this.drawDebugAi();
 
     if (this.mapBlend < 0.001) this.syncLookCam(wallDt);
@@ -1358,7 +1426,7 @@ export class MissionScene extends Phaser.Scene {
 
   handleFire(dt: number): void {
     const h = this.heli;
-    if (h.phase !== "flight" || !this.canFire || this.debugOpen) return;
+    if (h.phase !== "flight" || !this.canFire || this.debugOpen || this.editOpen) return;
     const wpn = WPN_LIST[h.weapon]!.id;
     const ptr = this.worldPointer();
     const down = this.input.activePointer.isDown;
@@ -3570,6 +3638,295 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 
+  toggleReliefEditor(force?: boolean): void {
+    const want = force ?? !this.editOpen;
+    if (!want && !this.editRoot) return;
+    if (want && !this.editRoot) {
+      this.setupReliefEditor();
+      const markHudTree = (obj: Phaser.GameObjects.GameObject) => {
+        this.bindHud(obj);
+        const list = (obj as Phaser.GameObjects.Container).list;
+        if (list) for (const ch of list) markHudTree(ch);
+      };
+      markHudTree(this.editRoot);
+    }
+    this.editOpen = want;
+    this.editRoot.setVisible(this.editOpen);
+    this.editGfx.setVisible(this.editOpen);
+    this.input.setDefaultCursor(this.editOpen ? "crosshair" : "none");
+    if (this.editOpen) {
+      const p = this.worldPointer();
+      this.editPx = p.x;
+      this.editPy = p.y;
+      this.syncReliefHud();
+    } else {
+      this.editGfx.clear();
+      this.editDirty = null;
+    }
+  }
+
+  setEditBrush(i: number): void {
+    this.editBrush = Phaser.Math.Clamp(i, 0, HEIGHT_BRUSHES.length - 1);
+    this.syncReliefHud();
+  }
+
+  nudgeEditSize(dir: number): void {
+    this.editSize = Phaser.Math.Clamp(this.editSize * (dir > 0 ? 1.12 : 0.89), 28, 480);
+    this.syncReliefHud();
+  }
+
+  nudgeEditRot(dir: number): void {
+    this.editRot += dir * 0.14;
+    this.syncReliefHud();
+  }
+
+  nudgeEditOff(dx: number, dy: number): void {
+    this.editOffX = Phaser.Math.Clamp(this.editOffX + dx * 0.06, -0.45, 0.45);
+    this.editOffY = Phaser.Math.Clamp(this.editOffY + dy * 0.06, -0.45, 0.45);
+    this.syncReliefHud();
+  }
+
+  setupReliefEditor(): void {
+    for (const b of bakeHeightBrushes()) {
+      const key = `brush_${b.id}`;
+      if (this.textures.exists(key)) this.textures.remove(key);
+      if (b.canvas) this.textures.addCanvas(key, b.canvas);
+    }
+    this.editGfx = this.add.graphics().setDepth(Layer.FIELD + 20);
+    this.editGfx.setVisible(false);
+    const w = 268;
+    const hgt = 212;
+    const x = this.scale.width - w - 18;
+    const y = this.scale.height - hgt - 18;
+    this.editRoot = this.add.container(x, y);
+    this.editRoot.setDepth(Layer.HUD + 190);
+    this.editRoot.setScrollFactor(0);
+    const panel = this.add.graphics();
+    panel.fillStyle(0x12100c, 0.94);
+    panel.fillRect(0, 0, w, hgt);
+    panel.lineStyle(1.5, 0xe8b84a, 0.9);
+    panel.strokeRect(0.5, 0.5, w - 1, hgt - 1);
+    panel.fillStyle(0xe8b84a, 1);
+    panel.fillRect(0, 0, 4, hgt);
+    const title = this.add.text(16, 8, "RELIEF KIT   E", {
+      fontFamily: "Share Tech Mono, monospace",
+      fontSize: "13px",
+      color: "#e8b84a",
+    });
+    this.editChips = [];
+    this.editChipFrames = [];
+    HEIGHT_BRUSHES.forEach((b, i) => {
+      const cx = 22 + i * 80;
+      const img = this.add.image(cx + 28, 58, `brush_${b.id}`).setDisplaySize(52, 52);
+      img.setInteractive({ useHandCursor: true });
+      img.on("pointerover", () => {
+        this.editUiBlock = true;
+      });
+      img.on("pointerout", () => {
+        this.editUiBlock = false;
+      });
+      img.on("pointerdown", () => this.setEditBrush(i));
+      const frame = this.add.graphics();
+      const lab = this.add.text(cx + 28, 90, b.name, {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "10px",
+        color: "#8a8470",
+      }).setOrigin(0.5, 0);
+      this.editChips.push(img);
+      this.editChipFrames.push(frame);
+      this.editRoot.add([frame, img, lab]);
+    });
+    this.editReadout = this.add.text(16, 112, "", {
+      fontFamily: "Share Tech Mono, monospace",
+      fontSize: "11px",
+      color: "#c8c0a8",
+      lineSpacing: 3,
+    });
+    this.editInkBtn = this.add
+      .text(16, 176, "", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "12px",
+        color: "#e8b84a",
+      })
+      .setInteractive({ useHandCursor: true });
+    this.editInkBtn.on("pointerover", () => {
+      this.editUiBlock = true;
+    });
+    this.editInkBtn.on("pointerout", () => {
+      this.editUiBlock = false;
+    });
+    this.editInkBtn.on("pointerdown", () => this.toggleEditInvert());
+    const hit = this.add.zone(0, 0, w, hgt).setOrigin(0, 0).setInteractive();
+    hit.on("pointerover", () => {
+      this.editUiBlock = true;
+    });
+    hit.on("pointerout", () => {
+      this.editUiBlock = false;
+    });
+    this.editRoot.add([panel, hit, title, this.editReadout, this.editInkBtn]);
+    this.editRoot.sendToBack(panel);
+    this.editRoot.sendToBack(hit);
+    this.editRoot.bringToTop(this.editReadout);
+    this.editRoot.bringToTop(this.editInkBtn);
+    this.editRoot.setVisible(false);
+    this.syncReliefHud();
+  }
+
+  toggleEditInvert(): void {
+    this.editInvert = !this.editInvert;
+    this.syncReliefHud();
+  }
+
+  syncReliefHud(): void {
+    if (!this.editReadout) return;
+    const deg = Math.round((((this.editRot % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)) * (180 / Math.PI));
+    const ink = this.editInvert ? "BLACK" : "WHITE";
+    this.editReadout.setText(
+      `SIZE ${this.editSize | 0}m  [ ] WHEEL\nROT  ${deg}°     Q R\nOFF  ${this.editOffX.toFixed(2)} ${this.editOffY.toFixed(2)}  , . ; '\nLMB STAMP  ·  RMB FLIP  ·  SPD ${this.editStr.toFixed(2)}`
+    );
+    if (this.editInkBtn) {
+      this.editInkBtn.setText(`I  INK  ${ink}`);
+      this.editInkBtn.setColor(this.editInvert ? "#8a9aaa" : "#e8b84a");
+    }
+    for (let i = 0; i < this.editChipFrames.length; i++) {
+      const g = this.editChipFrames[i]!;
+      const img = this.editChips[i]!;
+      g.clear();
+      const on = i === this.editBrush;
+      if (this.editInvert) {
+        g.fillStyle(0xc4b898, 1);
+        g.fillRect(img.x - 28, img.y - 28, 56, 56);
+        img.setTint(0x1c1812);
+      } else {
+        img.clearTint();
+      }
+      g.lineStyle(on ? 2 : 1, on ? 0xe8b84a : 0x3a3428, 1);
+      g.strokeRect(img.x - 28, img.y - 28, 56, 56);
+    }
+  }
+
+  handleReliefEdit(dt: number): void {
+    if (!this.editOpen) {
+      this.editGfx.clear();
+      return;
+    }
+    const p = this.worldPointer();
+    const dist = Math.hypot(p.x - this.editPx, p.y - this.editPy);
+    const inst = dt > 1e-4 ? dist / dt : 0;
+    this.editSpd = Phaser.Math.Linear(this.editSpd, inst, 1 - Math.pow(0.12, dt));
+    const targetStr = 0.07 + Phaser.Math.Clamp(this.editSpd / 480, 0, 1) * 0.38;
+    this.editStr = Phaser.Math.Linear(this.editStr, targetStr, 1 - Math.pow(0.16, dt));
+    const ptr = this.input.activePointer;
+    const invert = this.editInvert !== (ptr.rightButtonDown() && !ptr.leftButtonDown());
+    const paint = (ptr.leftButtonDown() || ptr.rightButtonDown()) && !this.editUiBlock && !this.debugOpen;
+    const just = paint && !this.editWasPaint;
+    this.editWasPaint = paint;
+    if (paint) {
+      const spacing = Math.max(8, this.editSize * 0.2);
+      const stamps: { x: number; y: number }[] = [];
+      if (just) {
+        this.editAcc = 0;
+        stamps.push({ x: p.x, y: p.y });
+      } else {
+        this.editAcc += dist;
+        while (this.editAcc >= spacing) {
+          this.editAcc -= spacing;
+          const t = spacing / Math.max(dist, 1e-4);
+          stamps.push({
+            x: Phaser.Math.Linear(p.x, this.editPx, t),
+            y: Phaser.Math.Linear(p.y, this.editPy, t),
+          });
+        }
+      }
+      const brush = HEIGHT_BRUSHES[this.editBrush]!;
+      for (const s of stamps) {
+        const box = stampHeightBrush(
+          this.world.height,
+          brush.mask,
+          brush.w,
+          brush.h,
+          s.x,
+          s.y,
+          this.editSize,
+          this.editRot,
+          this.editOffX,
+          this.editOffY,
+          invert,
+          this.editStr
+        );
+        this.unionEditDirty(box);
+      }
+    } else {
+      this.editAcc = 0;
+    }
+    this.editPx = p.x;
+    this.editPy = p.y;
+    if (this.editDirty) this.flushEditDirty();
+    this.syncReliefHud();
+    this.drawEditCursor(p.x, p.y, invert);
+  }
+
+  unionEditDirty(box: { x0: number; y0: number; x1: number; y1: number }): void {
+    if (!this.editDirty) this.editDirty = { ...box };
+    else {
+      this.editDirty.x0 = Math.min(this.editDirty.x0, box.x0);
+      this.editDirty.y0 = Math.min(this.editDirty.y0, box.y0);
+      this.editDirty.x1 = Math.max(this.editDirty.x1, box.x1);
+      this.editDirty.y1 = Math.max(this.editDirty.y1, box.y1);
+    }
+  }
+
+  flushEditDirty(): void {
+    const d = this.editDirty;
+    if (!d) return;
+    this.editDirty = null;
+    rebuildWorldPatch(this.world, d.x0, d.y0, d.x1, d.y1, this.biomeTiles, (g, x0, y0, x1, y1) =>
+      this.stampDecorRect(g, x0, y0, x1, y1)
+    );
+    paintHeightMapRect(this.heightMapCanvas, this.world.height, d.x0, d.y0, d.x1, d.y1);
+    (this.textures.get("terrain") as Phaser.Textures.CanvasTexture).refresh();
+    (this.textures.get("heightmap") as Phaser.Textures.CanvasTexture).refresh();
+  }
+
+  stampDecorRect(g: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number): void {
+    const wx0 = x0 * SCALE;
+    const wy0 = y0 * SCALE;
+    const wx1 = (x1 + 1) * SCALE;
+    const wy1 = (y1 + 1) * SCALE;
+    g.imageSmoothingEnabled = true;
+    for (const dec of this.world.decor) {
+      const pad = dec.size * SCALE * 0.5;
+      if (dec.x < wx0 - pad || dec.x > wx1 + pad || dec.y < wy0 - pad || dec.y > wy1 + pad) continue;
+      if (!this.textures.exists(dec.kind)) continue;
+      const img = this.textures.get(dec.kind).getSourceImage() as CanvasImageSource;
+      const s = dec.size;
+      g.save();
+      g.globalAlpha = 0.9;
+      g.translate(dec.x / SCALE, dec.y / SCALE);
+      g.rotate(dec.rot * 0.15);
+      g.drawImage(img, -s / 2, -s / 2, s, s);
+      g.restore();
+    }
+    g.globalAlpha = 1;
+  }
+
+  drawEditCursor(x: number, y: number, invert: boolean): void {
+    const g = this.editGfx;
+    g.clear();
+    const col = invert ? 0x6a9cb8 : 0xe8b84a;
+    g.lineStyle(1.5, col, 0.95);
+    g.save();
+    g.translateCanvas(x, y);
+    g.rotateCanvas(this.editRot);
+    const s = this.editSize;
+    const ox = this.editOffX * s;
+    const oy = this.editOffY * s;
+    g.strokeRect(-s / 2 + ox, -s / 2 + oy, s, s);
+    g.lineBetween(-6, 0, 6, 0);
+    g.lineBetween(0, -6, 0, 6);
+    g.restore();
+  }
+
   nudgeTimeScale(dir: number): void {
     const next = Math.round((this.timeScale + dir * 0.25) * 100) / 100;
     this.timeScale = Phaser.Math.Clamp(next, 0.25, 4);
@@ -3630,6 +3987,7 @@ export class MissionScene extends Phaser.Scene {
     };
     markHudTree(this.spriteCfg.root);
     markHudTree(this.debugRoot);
+    if (this.editRoot) markHudTree(this.editRoot);
     this.children.each((obj) => {
       if (!this.hudSet.has(obj)) this.bindWorld(obj);
     });
@@ -3875,6 +4233,7 @@ export class MissionScene extends Phaser.Scene {
     this.miniTerrain.setVisible(on);
     this.miniWrecks.setVisible(on && !this.showHeightMap);
     this.hudRoot.setVisible(on);
+    if (this.editRoot) this.editRoot.setVisible(this.editOpen && (on || this.mapBlend > 0.12));
     this.hpGfx.setVisible(on);
     if (on) {
       this.reticle.setVisible(true);
