@@ -53,7 +53,9 @@ export function bakeAll(textures: Phaser.Textures.TextureManager): void {
   add(textures, "reed", drawReed());
   add(textures, "dead", drawDeadTree());
   add(textures, "snowrock", drawSnowRock());
-  add(textures, "cannon", drawCannon());
+  add(textures, "cannon", drawTracer("chain"));
+  add(textures, "shell", drawTracer("shell"));
+  add(textures, "tracer_sm", drawTracer("small"));
   add(textures, "rocket", drawRocket());
   add(textures, "hellfire", drawMissile("#c45c1a"));
   add(textures, "tow", drawMissile("#c8b45a"));
@@ -666,12 +668,75 @@ function drawSnowRock(): HTMLCanvasElement {
   return c;
 }
 
-function drawCannon(): HTMLCanvasElement {
-  const c = canvas(10, 10);
+function drawTracer(style: "chain" | "shell" | "small"): HTMLCanvasElement {
+  const cfg = {
+    chain: { w: 64, h: 10, core: [255, 250, 220], mid: [255, 210, 80], rim: [255, 140, 32] },
+    shell: { w: 72, h: 13, core: [255, 252, 236], mid: [255, 188, 64], rim: [255, 110, 24] },
+    small: { w: 36, h: 7, core: [255, 236, 180], mid: [220, 160, 56], rim: [168, 96, 28] },
+  }[style];
+  const { w, h } = cfg;
+  const c = canvas(w, h);
   const g = ctxOf(c);
-  g.fillStyle = "#e8d090";
+  const cy = h / 2;
+  const headX = w * 0.8;
+  const headR = h * 0.28;
+  const tailX = w * 0.05;
+  const rgb = (ch: number[], a: number) => `rgba(${ch[0]},${ch[1]},${ch[2]},${a})`;
+
+  const tear = (scaleX: number, scaleY: number) => {
+    const hx = headX;
+    const hr = headR * scaleY;
+    g.beginPath();
+    g.moveTo(tailX + (1 - scaleX) * (hx - tailX) * 0.15, cy);
+    g.bezierCurveTo(
+      w * 0.3,
+      cy - h * 0.1 * scaleY,
+      hx - hr * 1.35,
+      cy - hr,
+      hx,
+      cy - hr
+    );
+    g.quadraticCurveTo(hx + hr * 1.2 * scaleX, cy, hx, cy + hr);
+    g.bezierCurveTo(
+      hx - hr * 1.35,
+      cy + hr,
+      w * 0.3,
+      cy + h * 0.1 * scaleY,
+      tailX + (1 - scaleX) * (hx - tailX) * 0.15,
+      cy
+    );
+    g.closePath();
+  };
+
+  const along = g.createLinearGradient(tailX, cy, headX + headR, cy);
+  along.addColorStop(0, rgb(cfg.rim, 0));
+  along.addColorStop(0.22, rgb(cfg.rim, 0.22));
+  along.addColorStop(0.55, rgb(cfg.mid, 0.85));
+  along.addColorStop(0.82, rgb(cfg.core, 1));
+  along.addColorStop(1, rgb(cfg.core, 0.15));
+
+  g.save();
+  tear(1.06, 1.12);
+  g.fillStyle = rgb(cfg.rim, 0.28);
+  g.fill();
+  g.restore();
+
+  tear(1, 1);
+  g.fillStyle = along;
+  g.fill();
+
+  const core = g.createRadialGradient(headX, cy, 0, headX, cy, headR * 1.15);
+  core.addColorStop(0, rgb(cfg.core, 1));
+  core.addColorStop(0.45, rgb(cfg.mid, 0.7));
+  core.addColorStop(1, rgb(cfg.rim, 0));
   g.beginPath();
-  g.arc(5, 5, 3, 0, Math.PI * 2);
+  g.arc(headX, cy, headR * 1.05, 0, Math.PI * 2);
+  g.fillStyle = core;
+  g.fill();
+
+  g.fillStyle = rgb([255, 255, 255], style === "small" ? 0.35 : 0.55);
+  g.beginPath();
+  g.ellipse(headX + headR * 0.12, cy - headR * 0.12, headR * 0.28, headR * 0.18, -0.4, 0, Math.PI * 2);
   g.fill();
   return c;
 }

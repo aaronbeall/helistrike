@@ -54,6 +54,7 @@ export interface Shot {
   cruise?: number;
   loft?: number;
   yaw?: number;
+  tracer?: "chain" | "shell" | "small";
 }
 
 export type SparkKind = "flame" | "spark" | "dirt" | "splash";
@@ -78,6 +79,11 @@ export interface Spark {
   additive: boolean;
   heading: number;
   streak?: boolean;
+  dart?: boolean;
+  blood?: boolean;
+  ox?: number;
+  oy?: number;
+  swirl?: number;
 }
 
 export interface Frag {
@@ -96,6 +102,8 @@ export interface Frag {
   bounces: number;
   trailOnly?: boolean;
   trailR: number;
+  scale?: number;
+  trailSoft?: boolean;
   trailFade?: number;
   trailFadeMax?: number;
   linger?: boolean;
@@ -176,17 +184,17 @@ export function hulkOf(kind: UnitKind): string {
   return `hulk_${kind}`;
 }
 
-export const FRAG_KEYS = [
-  "frag_0",
-  "frag_1",
-  "frag_2",
-  "frag_3",
-  "frag_4",
-  "frag_5",
-  "frag_6",
-  "frag_7",
-  "frag_8",
-  "frag_9",
-  "frag_10",
-  "frag_11",
-] as const;
+export type FragCat = "mech" | "struct" | "organic";
+
+export function fragCat(kind: UnitKind): FragCat {
+  if (kind === "soldier") return "organic";
+  if (kind === "tower" || kind === "bunker" || kind === "radar") return "struct";
+  return "mech";
+}
+
+export function fragKeys(kind: UnitKind): string[] {
+  const cat = fragCat(kind);
+  return Array.from({ length: 12 }, (_, i) => `frag_${cat}_${i}`);
+}
+
+export const FRAG_KEYS = fragKeys("tank");

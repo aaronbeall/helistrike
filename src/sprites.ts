@@ -8,6 +8,9 @@ const SRC = {
   rock: "sprites/helistrike-rock.png",
   hulks: "sprites/helistrike-hulks.png",
   debris: "sprites/helistrike-debris.png",
+  debrisMech: "sprites/helistrike-debris-mech.png",
+  debrisStruct: "sprites/helistrike-debris-struct.png",
+  debrisOrganic: "sprites/helistrike-debris-organic.png",
   tankWreck: "sprites/helistrike-tank-wreck-parts.png",
   weapons: "sprites/helistrike-weapons.png",
   blasts: "sprites/helistrike-blasts.png",
@@ -40,6 +43,9 @@ export function preloadArt(scene: Phaser.Scene): void {
   scene.load.image("src_rock", SRC.rock);
   scene.load.image("src_hulks", SRC.hulks);
   scene.load.image("src_debris", SRC.debris);
+  scene.load.image("src_debris_mech", SRC.debrisMech);
+  scene.load.image("src_debris_struct", SRC.debrisStruct);
+  scene.load.image("src_debris_organic", SRC.debrisOrganic);
   scene.load.image("src_tank_wreck", SRC.tankWreck);
   scene.load.image("src_weapons", SRC.weapons);
   scene.load.image("src_blasts", SRC.blasts);
@@ -136,8 +142,12 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   const hulkSizes = [70, 90, 86, 84, 58, 74, 28, 40, 48];
   hulkKeys.forEach((key, i) => put(textures, key, darkenWreck(fit(hulks[i]!, hulkSizes[i]!))));
 
-  const debris = sliceGrid(keyImage(src(textures, "src_debris"), "magenta"), 4, 3);
-  debris.forEach((c, i) => put(textures, `frag_${i}`, darkenWreck(fit(c, 22), 0.7)));
+  putDebrisSheet(textures, "src_debris_mech", "mech");
+  putDebrisSheet(textures, "src_debris_struct", "struct");
+  putDebrisSheet(textures, "src_debris_organic", "organic");
+  if (!textures.exists("frag_mech_0") && textures.exists("src_debris")) {
+    putDebrisSheet(textures, "src_debris", "mech");
+  }
 
   const wpn = sliceGrid(keyImage(src(textures, "src_weapons"), "magenta"), 2, 2);
   put(textures, "heli_gun", fit(wpn[0]!, 46));
@@ -160,6 +170,8 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     "heli_body",
     "enemy_heli",
     "cannon",
+    "shell",
+    "tracer_sm",
     "rocket",
     "hellfire",
     "tow",
@@ -175,7 +187,9 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     "frag_metal",
     "frag_sand",
     "frag_dark",
-    ...Array.from({ length: 12 }, (_, i) => `frag_${i}`),
+    ...["mech", "struct", "organic"].flatMap((cat) =>
+      Array.from({ length: 12 }, (_, i) => `frag_${cat}_${i}`)
+    ),
   ];
   for (const key of shadowSrc) {
     if (textures.exists(key)) bakeShadows(textures, key);
@@ -235,6 +249,16 @@ function put(
 ): void {
   if (textures.exists(key)) textures.remove(key);
   textures.addCanvas(key, c);
+}
+
+function putDebrisSheet(
+  textures: Phaser.Textures.TextureManager,
+  srcKey: string,
+  cat: string
+): void {
+  if (!textures.exists(srcKey)) return;
+  const cells = sliceGrid(keyImage(src(textures, srcKey), "magenta"), 4, 3);
+  cells.forEach((c, i) => put(textures, `frag_${cat}_${i}`, darkenWreck(fit(c, cat === "organic" ? 12 : 22), 0.7)));
 }
 
 function putFxSheet(
