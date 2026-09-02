@@ -347,7 +347,7 @@ function estimateFlow(path: RiverPt[]): number {
 
 function maxPondArea(flow: number): number {
   const r = radFromFlow(flow);
-  return Math.round(Phaser.Math.Clamp(28 + r * r * 10, 36, 1400));
+  return Math.round(Phaser.Math.Clamp(40 + r * r * 15, 56, 2100));
 }
 
 function kickDownhill(

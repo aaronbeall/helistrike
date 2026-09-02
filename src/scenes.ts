@@ -1487,7 +1487,7 @@ export class MissionScene extends Phaser.Scene {
       const spd =
         range(opt.spdMin, opt.spdMax) *
         (kind === "dirt" && opt.style === "ground" ? 1.25 : 1) *
-        (onUnit ? 2.85 : impact ? 1.32 : 1);
+        (onUnit ? 2.42 : impact ? 1.32 : 1);
       let life =
         kind === "dirt"
           ? range(0.45, 0.8)
@@ -1635,7 +1635,7 @@ export class MissionScene extends Phaser.Scene {
           : 0;
       const round = dart ? Math.max(edge, Phaser.Math.Clamp(1 - spd / 220, 0, 1)) : 0;
       const stretch = s.straight
-        ? Math.min(2.15, 1 + spd * 0.00105)
+        ? Math.min(2.55, 1 + spd * 0.00135)
         : shock
           ? Math.min(2.8, 1 + spd * 0.0022)
           : 1 + spd * (spark ? 0.011 : streak ? 0.0064 : dart ? 0.0052 : 0.0048);
@@ -1680,6 +1680,8 @@ export class MissionScene extends Phaser.Scene {
           ? thick * (0.28 + 0.42 * late)
         : streak
           ? thick / Math.pow(stretch, 0.42)
+          : s.straight
+            ? (thick * 0.86) / Math.pow(stretch, 0.18)
           : spark
             ? (thick * 0.7) / Math.pow(stretch, 0.32)
             : flame
@@ -3111,12 +3113,6 @@ export class MissionScene extends Phaser.Scene {
       g.fillTriangle(12, 0, -8, -7.5, -8, 7.5);
       g.lineStyle(1.6, 0xe8b84a, 0.95);
       g.strokeTriangle(12, 0, -8, -7.5, -8, 7.5);
-      g.lineStyle(1.2, 0xffe08a, 0.88);
-      g.beginPath();
-      g.moveTo(-1.5, -4.2);
-      g.lineTo(6.5, 0);
-      g.lineTo(-1.5, 4.2);
-      g.strokePath();
       g.restore();
       const label = this.hvArrowLabels[used++];
       if (!label) continue;
@@ -3819,8 +3815,8 @@ function hitSparkFx(dmg: number): { n: number; spd: number; size: number } {
   const t = Phaser.Math.Clamp(Math.pow(Math.max(0.5, dmg) / 8, 0.28), 0.7, 1.5);
   return {
     n: t,
-    spd: 0.88 + 0.12 * t,
-    size: Phaser.Math.Clamp(0.78 + 0.18 * t, 0.78, 1.08),
+    spd: 0.86 + 0.1 * t,
+    size: Phaser.Math.Clamp(0.74 + 0.34 * t, 0.74, 1.26),
   };
 }
 
