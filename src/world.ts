@@ -210,7 +210,8 @@ export function groundSlope(world: WorldData, x: number, y: number): { dx: numbe
 }
 
 function carveRivers(height: Float32Array, biome: Uint8Array, rng: Rng): void {
-  for (let r = 0; r < 7; r++) {
+  const seen = new Uint8Array(TEX * TEX);
+  for (let r = 0; r < 50; r++) {
     let x = rng.int(40, TEX - 41);
     let y = rng.int(40, TEX - 41);
     let best = -1;
@@ -224,39 +225,120 @@ function carveRivers(height: Float32Array, biome: Uint8Array, rng: Rng): void {
         y = sy;
       }
     }
-    for (let step = 0; step < 1400; step++) {
-      stampRiver(biome, x, y, 1 + (step % 3 === 0 ? 1 : 0));
-      let nx = x;
-      let ny = y;
-      let nh = height[y * TEX + x]!;
-      for (let oy = -1; oy <= 1; oy++) {
-        for (let ox = -1; ox <= 1; ox++) {
-          if (!ox && !oy) continue;
-          const xx = x + ox;
-          const yy = y + oy;
-          if (xx < 1 || yy < 1 || xx >= TEX - 1 || yy >= TEX - 1) continue;
-          const h = height[yy * TEX + xx]!;
-          if (h < nh) {
-            nh = h;
-            nx = xx;
-            ny = yy;
-          }
-        }
-      }
-      if (nx === x && ny === y) {
-        nx += rng.int(-1, 1);
-        ny += rng.int(-1, 1);
-      }
-      x = nx;
-      y = ny;
-      if (height[y * TEX + x]! < 0.33) break;
+    seen.fill(0);
+    let rad = 0.5;
+    for (let step = 0; step < 8000; step++) {
+      const i = y * TEX + x;
+      seen[i] = 1;
+      stampRiver(biome, x, y, rad);
+      if (x <= 0 || y <= 0 || x >= TEX - 1 || y >= TEX - 1 || height[i]! < 0.33) break;
+      const next = stepRiver(height, x, y, seen);
+      if (!next) break;
+      x = next.x;
+      y = next.y;
+      rad = Math.min(14, rad + 0.0065);
     }
   }
 }
 
+const RIVER_REACH = 8;
+
+function stepRiver(
+  height: Float32Array,
+  x: number,
+  y: number,
+  seen: Uint8Array
+): { x: number; y: number } | null {
+  const h0 = height[y * TEX + x]!;
+  let wx = 0;
+  let wy = 0;
+  for (let oy = -RIVER_REACH; oy <= RIVER_REACH; oy++) {
+    for (let ox = -RIVER_REACH; ox <= RIVER_REACH; ox++) {
+      if (!ox && !oy) continue;
+      if (ox * ox + oy * oy > RIVER_REACH * RIVER_REACH) continue;
+      const xx = x + ox;
+      const yy = y + oy;
+      if (xx < 0 || yy < 0 || xx >= TEX || yy >= TEX) continue;
+      if (seen[yy * TEX + xx]) continue;
+      const drop = h0 - height[yy * TEX + xx]!;
+      if (drop <= 0) continue;
+      const dist = Math.hypot(ox, oy);
+      const w = drop / dist;
+      wx += (ox / dist) * w;
+      wy += (oy / dist) * w;
+    }
+  }
+  let dx = 0;
+  let dy = 0;
+  const len = Math.hypot(wx, wy);
+  if (len > 1e-8) {
+    dx = wx / len;
+    dy = wy / len;
+  } else {
+    let bestH = Infinity;
+    let bx = 0;
+    let by = 0;
+    let found = false;
+    for (let oy = -RIVER_REACH; oy <= RIVER_REACH; oy++) {
+      for (let ox = -RIVER_REACH; ox <= RIVER_REACH; ox++) {
+        if (!ox && !oy) continue;
+        if (ox * ox + oy * oy > RIVER_REACH * RIVER_REACH) continue;
+        const xx = x + ox;
+        const yy = y + oy;
+        if (xx < 0 || yy < 0 || xx >= TEX || yy >= TEX) continue;
+        if (seen[yy * TEX + xx]) continue;
+        const h = height[yy * TEX + xx]!;
+        if (h < bestH) {
+          bestH = h;
+          bx = ox;
+          by = oy;
+          found = true;
+        }
+      }
+    }
+    if (!found) return null;
+    const d = Math.hypot(bx, by) || 1;
+    dx = bx / d;
+    dy = by / d;
+  }
+  const pick = (reach: number): { x: number; y: number } | null => {
+    let best = -Infinity;
+    let px = x;
+    let py = y;
+    let hit = false;
+    for (let oy = -reach; oy <= reach; oy++) {
+      for (let ox = -reach; ox <= reach; ox++) {
+        if (!ox && !oy) continue;
+        const dist = Math.hypot(ox, oy);
+        if (dist > reach + 1e-6) continue;
+        const xx = x + ox;
+        const yy = y + oy;
+        if (xx < 0 || yy < 0 || xx >= TEX || yy >= TEX) continue;
+        if (seen[yy * TEX + xx]) continue;
+        const align = (ox * dx + oy * dy) / dist;
+        if (align > best) {
+          best = align;
+          px = xx;
+          py = yy;
+          hit = true;
+        }
+      }
+    }
+    return hit ? { x: px, y: py } : null;
+  };
+  return pick(1) ?? pick(2);
+}
+
 function stampRiver(biome: Uint8Array, x: number, y: number, rad: number): void {
-  for (let oy = -rad; oy <= rad; oy++) {
-    for (let ox = -rad; ox <= rad; ox++) {
+  if (rad <= 1) {
+    if (x >= 0 && y >= 0 && x < TEX && y < TEX) biome[y * TEX + x] = BIOME_ID.river;
+    return;
+  }
+  const ir = Math.ceil(rad);
+  const r2 = rad * rad;
+  for (let oy = -ir; oy <= ir; oy++) {
+    for (let ox = -ir; ox <= ir; ox++) {
+      if (ox * ox + oy * oy > r2) continue;
       const xx = x + ox;
       const yy = y + oy;
       if (xx < 0 || yy < 0 || xx >= TEX || yy >= TEX) continue;
