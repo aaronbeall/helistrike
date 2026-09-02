@@ -34,6 +34,7 @@ export class Heli {
   spool = 0;
   weapon = 0;
   fireCd = 0;
+  immune = false;
   hellfireLock: { id: number } | null = null;
   hellfireSeek: { id: number; t: number } | null = null;
   dmgSites: { i: number; scale: number }[] = [];
@@ -162,6 +163,7 @@ export class Heli {
   }
 
   damage(n: number): void {
+    if (this.immune) return;
     if (this.phase === "dead") return;
     this.health -= n;
     if (this.health <= 0) this.kill();

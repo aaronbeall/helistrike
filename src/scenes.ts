@@ -98,7 +98,7 @@ export class MenuScene extends Phaser.Scene {
       .text(
         w / 2,
         h * 0.56,
-        "WASD / ARROWS  thrust & strafe\nMOUSE  turn  ·  CLICK  fire  ·  1-4 / WHEEL  weapons\nSPACE  pop-up  ·  SHIFT  nap-of-earth  ·  M  map  ·  K  heightmap\n+ / -  time scale",
+        "WASD / ARROWS  thrust & strafe\nMOUSE  turn  ·  CLICK  fire  ·  1-4 / WHEEL  weapons\nSPACE  pop-up  ·  SHIFT  nap-of-earth  ·  M  map\n+ / -  time scale",
         {
           fontFamily: "Share Tech Mono, monospace",
           fontSize: "15px",
@@ -203,6 +203,7 @@ export class MissionScene extends Phaser.Scene {
   dmgFlameScale = 1;
   hud!: Phaser.GameObjects.Text;
   hvHud!: Phaser.GameObjects.Text;
+  hvRows: Phaser.GameObjects.Text[] = [];
   wpnHud!: Phaser.GameObjects.Text;
   wpnBar!: Phaser.GameObjects.Graphics;
   wpnSlots!: Phaser.GameObjects.Text[];
@@ -246,6 +247,14 @@ export class MissionScene extends Phaser.Scene {
   debugGfx!: Phaser.GameObjects.Graphics;
   timeScale = 1;
   spriteCfg!: SpriteConfigTool;
+  debugOpen = false;
+  debugRoot!: Phaser.GameObjects.Container;
+  debugRows: Phaser.GameObjects.Text[] = [];
+  noDamage = false;
+  infAmmo = false;
+  debugAi = false;
+  aiGfx!: Phaser.GameObjects.Graphics;
+  aiLabels: Phaser.GameObjects.Text[] = [];
 
   constructor() {
     super("mission");
@@ -265,6 +274,10 @@ export class MissionScene extends Phaser.Scene {
     this.playLastFrame = false;
     this.debugHit = false;
     this.showHeightMap = false;
+    this.debugOpen = false;
+    this.noDamage = false;
+    this.infAmmo = false;
+    this.debugAi = false;
     this.shots = [];
     this.frags = [];
     this.sparks = [];
@@ -364,6 +377,8 @@ export class MissionScene extends Phaser.Scene {
         hv: s.hv,
         dead: false,
         fireCd: Math.random(),
+        burstLeft: 0,
+        orbit: Math.random() * Math.PI * 2,
         rotor: 0,
         track: 0,
       });
@@ -560,21 +575,27 @@ export class MissionScene extends Phaser.Scene {
     this.keyD = this.input.keyboard!.addKey("D");
     this.keySpace = this.input.keyboard!.addKey("SPACE");
     this.keyShift = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT);
-    this.input.keyboard!.addKey("ONE").on("down", () => (this.heli.weapon = 0));
-    this.input.keyboard!.addKey("TWO").on("down", () => (this.heli.weapon = 1));
-    this.input.keyboard!.addKey("THREE").on("down", () => (this.heli.weapon = 2));
-    this.input.keyboard!.addKey("FOUR").on("down", () => (this.heli.weapon = 3));
+    this.input.keyboard!.addKey("ONE").on("down", () => {
+      if (this.debugOpen) this.setNoDamage(!this.noDamage);
+      else this.heli.weapon = 0;
+    });
+    this.input.keyboard!.addKey("TWO").on("down", () => {
+      if (this.debugOpen) this.setInfAmmo(!this.infAmmo);
+      else this.heli.weapon = 1;
+    });
+    this.input.keyboard!.addKey("THREE").on("down", () => {
+      if (this.debugOpen) this.toggleHeightMap();
+      else this.heli.weapon = 2;
+    });
+    this.input.keyboard!.addKey("FOUR").on("down", () => {
+      if (this.debugOpen) this.setDebugAi(!this.debugAi);
+      else this.heli.weapon = 3;
+    });
     this.input.keyboard!.addKey("M").on("down", () => this.toggleMap());
-    this.input.keyboard!.addKey("K").on("down", () => {
-      this.showHeightMap = !this.showHeightMap;
-      this.debugHit = this.showHeightMap;
-      this.debugGfx.setVisible(this.debugHit);
-      if (!this.debugHit) this.debugGfx.clear();
-      const key = this.showHeightMap ? "heightmap" : "terrain";
-      this.ground.setTexture(key).setDisplaySize(WORLD, WORLD);
-      this.miniTerrain.setTexture(key);
-      this.wreckLayer.setVisible(!this.showHeightMap);
-      this.miniWrecks.setVisible(!this.showHeightMap && this.miniTerrain.visible);
+    this.input.keyboard!.addKey("K").on("down", () => this.toggleHeightMap());
+    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.FORWARD_SLASH).on("down", () => this.toggleDebugMenu());
+    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ESC).on("down", () => {
+      if (this.debugOpen) this.toggleDebugMenu(false);
     });
     this.input.keyboard!.addKey("R").on("down", () => {
       if (this.over) this.scene.start("load");
@@ -595,6 +616,7 @@ export class MissionScene extends Phaser.Scene {
         this.spriteCfg.cycle(dy > 0 ? 1 : -1);
         return;
       }
+      if (this.debugOpen) return;
       if (dy > 0) this.heli.weapon = (this.heli.weapon + 1) % 4;
       else this.heli.weapon = (this.heli.weapon + 3) % 4;
     });
@@ -617,6 +639,18 @@ export class MissionScene extends Phaser.Scene {
       .setOrigin(1, 0)
       .setScrollFactor(0)
       .setDepth(Layer.HUD);
+    this.hvRows = this.world.hv.map((_, i) =>
+      this.add
+        .text(this.scale.width - 16, 12 + 20 + i * 17, "", {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: "13px",
+          color: "#f0e6c8",
+          align: "right",
+        })
+        .setOrigin(1, 0)
+        .setScrollFactor(0)
+        .setDepth(Layer.HUD)
+    );
     this.wpnBar = this.add.graphics().setScrollFactor(0).setDepth(Layer.HUD);
     this.wpnSlots = WPN_LIST.map(() =>
       this.add
@@ -649,6 +683,7 @@ export class MissionScene extends Phaser.Scene {
     this.mapGfx = this.add.graphics().setDepth(Layer.FIELD);
     this.mapHvLabels = [];
     this.debugGfx = this.add.graphics().setDepth(Layer.FIELD).setVisible(false);
+    this.aiGfx = this.add.graphics().setDepth(Layer.FIELD + 8);
     const cx = 18 + 88;
     const cy = this.scale.height - 18 - 88;
     this.miniMask = this.add.graphics().setScrollFactor(0);
@@ -675,6 +710,7 @@ export class MissionScene extends Phaser.Scene {
     this.playViewW = this.scale.width;
     this.playViewH = this.scale.height;
     this.playLastFrame = true;
+    this.setupDebugMenu();
     this.setupHudCam();
   }
 
@@ -706,7 +742,8 @@ export class MissionScene extends Phaser.Scene {
     ox = 0.5,
     oy = 0.5,
     scaleY?: number,
-    frame?: string | number
+    frame?: string | number,
+    tint?: number
   ): void {
     if (!this.textures.exists(key)) return;
     const k = WRECK_TEX / WORLD;
@@ -719,7 +756,10 @@ export class MissionScene extends Phaser.Scene {
       .setAlpha(alpha)
       .setScale(scale * k, sy)
       .setPosition(x * k, y * k);
+    if (tint != null) this.stampBrush.setTint(tint);
+    else this.stampBrush.clearTint();
     this.wreckLayer.draw(this.stampBrush);
+    this.stampBrush.clearTint();
   }
 
   stampLightBlast(x: number, y: number, vx: number, vy: number): void {
@@ -836,6 +876,8 @@ export class MissionScene extends Phaser.Scene {
       this.emitDamageFx();
       this.drawDebugHits();
     }
+
+    this.drawDebugAi();
 
     if (this.mapBlend < 0.001) this.syncLookCam(wallDt);
 
@@ -996,6 +1038,68 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 
+  emitDustShock(x: number, y: number, power = 1): void {
+    const gnd = groundZ(this.world, x, y);
+    const wet = isWater(this.world, x, y);
+    const sy = y - screenLift(gnd);
+    this.heliDust.setDepth(worldDepth(gnd, 0.35));
+    const puffs = Math.round(22 * power);
+    for (let i = 0; i < puffs; i++) {
+      const a = (i / puffs) * Math.PI * 2 + range(-0.12, 0.12);
+      const r = range(12, 28 + power * 50);
+      this.heliDust.setEmitterAngle(Phaser.Math.RadToDeg(a) + range(-18, 18));
+      this.heliDust.emitParticleAt(x + Math.cos(a) * r, sy + Math.sin(a) * r * 0.55, 1);
+    }
+    const dustRing = this.add.circle(x, sy, 8, 0xc8b48a, 0.4).setDepth(worldDepth(gnd, 0.25));
+    this.tweens.add({
+      targets: dustRing,
+      radius: 70 + power * 110,
+      alpha: 0,
+      duration: 620,
+      ease: "Cubic.Out",
+      onComplete: () => dustRing.destroy(),
+    });
+    if (wet) return;
+    const n = Math.round(36 * power);
+    const extra = this.sparks.length + n - 360;
+    if (extra > 0) this.sparks.splice(0, extra);
+    const biome = sampleBiome(this.world, x, y);
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + range(-0.1, 0.1);
+      const ca = Math.cos(a);
+      const sa = Math.sin(a);
+      const r0 = range(6, 22);
+      const spd = range(380, 920) * (0.7 + power * 0.45);
+      const life = range(0.42, 0.82);
+      const look = sparkLook("dirt", biome);
+      const spinSign = Math.random() < 0.5 ? -1 : 1;
+      this.sparks.push({
+        x: x + ca * r0,
+        y: y + sa * r0,
+        z: gnd + range(2, 10),
+        vx: ca * spd,
+        vy: sa * spd,
+        vz: range(10, 48),
+        life,
+        max: life,
+        scale: range(0.7, 1.15),
+        bounces: 0,
+        kind: "dirt",
+        tex: sparkTexKey("dirt"),
+        frame: (Math.random() * FX_VARIANTS) | 0,
+        angJit: range(-0.08, 0.08),
+        spin: spinSign * range(0.8, 2.8),
+        tint: look.tint,
+        additive: look.add,
+        heading: a,
+        dart: true,
+        ox: x,
+        oy: y,
+        swirl: spinSign * range(90, 260),
+      });
+    }
+  }
+
   syncReticles(): void {
     const p = this.input.activePointer;
     this.reticle.setPosition(p.x, p.y);
@@ -1141,7 +1245,7 @@ export class MissionScene extends Phaser.Scene {
 
   handleFire(dt: number): void {
     const h = this.heli;
-    if (h.phase !== "flight" || !this.canFire) return;
+    if (h.phase !== "flight" || !this.canFire || this.debugOpen) return;
     const wpn = WPN_LIST[h.weapon]!.id;
     const ptr = this.worldPointer();
     const down = this.input.activePointer.isDown;
@@ -1181,7 +1285,7 @@ export class MissionScene extends Phaser.Scene {
         angle: ang,
         life: t + (air ? 0.55 : 0.08),
         blast: 18,
-        dmg: 14,
+        dmg: 8,
         tracer: "chain",
       });
       this.spawnSparks(tip.x, tipY, h.z, {
@@ -1199,10 +1303,10 @@ export class MissionScene extends Phaser.Scene {
       this.showMuzzle(tip.x, tip.y, ang, 0.78 * zScale(h.z), 0.1);
     }
 
-    if (wpn === "rocket" && down && h.fireCd <= 0 && this.ammo[1]! > 0) {
+    if (wpn === "rocket" && down && h.fireCd <= 0 && this.hasAmmo(1)) {
       h.fireCd = 0.22;
       const { x: px, y: py } = this.missilePylon();
-      this.ammo[1]!--;
+      this.spendAmmo(1);
       const air = this.hoverAerial(ptr.x, ptr.y);
       const along = projectAlong(px, py, h.angle, air ? air.x : ptr.x, air ? air.y : ptr.y);
       const dist = Math.max(80, along);
@@ -1221,8 +1325,8 @@ export class MissionScene extends Phaser.Scene {
         vz: (tz - h.z) / t,
         angle: h.angle,
         life: t + 0.08,
-        blast: 70,
-        dmg: 55,
+        blast: 140,
+        dmg: 110,
       });
       this.missileMuzzle(px, py, h.z, h.angle);
     }
@@ -1232,12 +1336,12 @@ export class MissionScene extends Phaser.Scene {
       if (
         down &&
         h.fireCd <= 0 &&
-        this.ammo[2]! > 0 &&
+        this.hasAmmo(2) &&
         h.hellfireLock
       ) {
         h.fireCd = 0.55;
         const { x: px, y: py } = this.missilePylon();
-        this.ammo[2]!--;
+        this.spendAmmo(2);
         const kick = 380;
         const side = (this.ammo[2] ?? 0) % 2 === 0 ? 1 : -1;
         this.spawnShot({
@@ -1252,8 +1356,8 @@ export class MissionScene extends Phaser.Scene {
           angle: h.angle,
           life: 4.9,
           targetId: h.hellfireLock.id,
-          blast: 85,
-          dmg: 95,
+          blast: 175,
+          dmg: 185,
           motor: -MISSILE_IGNITE,
           yaw: side * (1.05 + Math.random() * 0.45),
         });
@@ -1261,10 +1365,10 @@ export class MissionScene extends Phaser.Scene {
       }
     }
 
-    if (wpn === "tow" && down && h.fireCd <= 0 && this.ammo[3]! > 0) {
+    if (wpn === "tow" && down && h.fireCd <= 0 && this.hasAmmo(3)) {
       h.fireCd = 1.1;
       const { x: px, y: py } = this.missilePylon();
-      this.ammo[3]!--;
+      this.spendAmmo(3);
       const side = (this.ammo[3] ?? 0) % 2 === 0 ? 1 : -1;
       this.spawnShot({
         kind: "tow",
@@ -1277,8 +1381,8 @@ export class MissionScene extends Phaser.Scene {
         vz: h.vz,
         angle: h.angle,
         life: 5.2,
-        blast: 80,
-        dmg: 88,
+        blast: 160,
+        dmg: 170,
         guided: true,
         motor: -MISSILE_IGNITE,
         cruise: 300,
@@ -1922,7 +2026,17 @@ export class MissionScene extends Phaser.Scene {
     this.stampWreck(this.textures.exists(key) ? key : "blast_0", px, py, ang, sx, alpha, 0.5, 0.5, sy);
   }
 
-  heFireBurst(x: number, y: number, z: number, dx: number, dy: number, dz: number, blast: number, soft = false): void {
+  heFireBurst(
+    x: number,
+    y: number,
+    z: number,
+    dx: number,
+    dy: number,
+    dz: number,
+    blast: number,
+    soft = false,
+    waveMul = 1
+  ): void {
     const sy = y - screenLift(z);
     const mul = soft ? 0.32 : 1;
     this.spawnSparks(x, y, z + 10, {
@@ -1942,18 +2056,19 @@ export class MissionScene extends Phaser.Scene {
     const flash = this.add.circle(x, sy, soft ? 5 : 12, 0xffe8a0, 0.8).setDepth(worldDepth(z, 2.8)).setBlendMode(Phaser.BlendModes.ADD);
     this.tweens.add({
       targets: flash,
-      radius: blast * (soft ? 0.4 : 0.85),
+      radius: blast * (soft ? 0.4 : 0.85) * waveMul,
       alpha: 0,
       duration: 220,
       onComplete: () => flash.destroy(),
     });
     this.spawnBlastTrails(x, y, z, dx, dy, dz, soft);
+    const wave = (soft ? 0.45 : 1) * waveMul;
     const ring = this.add.circle(x, sy, 6, 0xff9a40, 0.85).setDepth(worldDepth(z, 2)).setBlendMode(Phaser.BlendModes.ADD);
     this.tweens.add({
       targets: ring,
-      radius: blast * (soft ? 0.45 : 1),
+      radius: blast * wave,
       alpha: 0,
-      duration: 380,
+      duration: waveMul > 1 ? 560 : 380,
       onComplete: () => ring.destroy(),
     });
   }
@@ -2005,16 +2120,60 @@ export class MissionScene extends Phaser.Scene {
     return Math.max(4, Math.max(src.width, src.height) * 0.18);
   }
 
+  stampSoldierBlood(u: Unit, ox: number, oy: number, ang: number): void {
+    if (!this.textures.exists("dirt") || isWater(this.world, u.x, u.y)) return;
+    const blood = [0xe22a22, 0xc41a18, 0xaa1410, 0xd42820][(Math.random() * 4) | 0]!;
+    const sc = range(0.95, 1.55);
+    this.stampWreck(
+      "dirt",
+      u.x + ox,
+      u.y + oy,
+      ang,
+      sc * range(0.9, 1.35),
+      range(0.7, 0.94),
+      0.5,
+      0.5,
+      sc * range(0.55, 0.95),
+      (Math.random() * FX_VARIANTS) | 0,
+      blood
+    );
+  }
+
   hurt(u: Unit, dmg: number): void {
     u.health -= dmg;
-    if (u.health <= 0) this.destroyUnit(u);
+    if (u.health <= 0) {
+      this.destroyUnit(u);
+      return;
+    }
+    if (u.kind === "soldier" && u.health > 1) {
+      u.aware = true;
+      this.rollSoldierMood(u, true);
+    }
+  }
+
+  rollSoldierMood(u: Unit, flee: boolean): void {
+    if (u.health <= 1 && u.health < u.max) {
+      u.aiMood = undefined;
+      return;
+    }
+    if (flee || u.health < u.max) {
+      u.aiMood = "flee";
+      u.moodT = 2.8 + Math.random() * 1.8;
+      u.burstLeft = 0;
+    } else {
+      u.aiMood = "kite";
+      u.moodT = 10 + Math.random() * 8;
+    }
   }
 
   destroyUnit(u: Unit): void {
     if (u.dead) return;
     u.dead = true;
     const hz = u.z + heightOf(u.kind) * 0.5;
-    this.heFireBurst(u.x, u.y, hz, 0, 0, 1, Math.max(42, radius(u.kind) * 2.4), u.kind === "soldier");
+    const building = u.kind === "bunker" || u.kind === "radar" || u.kind === "tower";
+    const blast = Math.max(42, radius(u.kind) * 2.4) * (building ? 1.4 : 1);
+    this.heFireBurst(u.x, u.y, hz, 0, 0, 1, blast, u.kind === "soldier", building ? 2.25 : 1);
+    if (building) this.emitDustShock(u.x, u.y, 1.55);
     this.smoke.setDepth(worldDepth(u.z, 0.2));
     this.smoke.emitParticleAt(u.x, u.y - screenLift(u.z) + 12, 16);
     this.shake = Math.min(10, this.shake + 3);
@@ -2205,6 +2364,13 @@ export class MissionScene extends Phaser.Scene {
           u.vx += Math.cos(ang) * 80 * dt;
           u.vy += Math.sin(ang) * 80 * dt;
           u.angle = ang;
+          u.aiState = "CHASE";
+          u.aiTx = h.x;
+          u.aiTy = h.y;
+        } else {
+          u.aiState = "HOLD";
+          u.aiTx = undefined;
+          u.aiTy = undefined;
         }
         u.vx *= 0.98;
         u.vy *= 0.98;
@@ -2218,11 +2384,18 @@ export class MissionScene extends Phaser.Scene {
           u.angle += dt * 0.15;
           u.x += Math.cos(u.angle) * 18 * dt;
           u.y += Math.sin(u.angle) * 18 * dt;
+          u.aiState = "PATROL";
+          u.aiTx = u.x + Math.cos(u.angle) * 80;
+          u.aiTy = u.y + Math.sin(u.angle) * 80;
         }
-        if (u.kind === "tank" && dist < 900 && dist > 120) {
-          const want = Math.atan2(dy, dx);
-          u.angle = Phaser.Math.Angle.RotateTo(u.angle, want, 0.32 * dt);
-          const step = 28 * dt;
+        if (u.kind === "tank" && dist < 980) {
+          u.orbit += 0.24 * dt;
+          const ring = 350 + (u.id % 5) * 28;
+          const ox = h.x + Math.cos(u.orbit) * ring;
+          const oy = h.y + Math.sin(u.orbit) * ring;
+          const want = Math.atan2(oy - u.y, ox - u.x);
+          u.angle = Phaser.Math.Angle.RotateTo(u.angle, want, 0.55 * dt);
+          const step = 30 * dt;
           u.x += Math.cos(u.angle) * step;
           u.y += Math.sin(u.angle) * step;
           u.track += step;
@@ -2230,16 +2403,98 @@ export class MissionScene extends Phaser.Scene {
             u.track = 0;
             this.stampWreck("track", u.x, u.y, u.angle + Math.PI / 2, 1, 0.4);
           }
+          u.aiState = "ORBIT";
+          u.aiTx = ox;
+          u.aiTy = oy;
+        } else if (u.kind === "tank") {
+          u.aiState = "IDLE";
+          u.aiTx = undefined;
+          u.aiTy = undefined;
         }
-        if (u.kind === "soldier" && dist < 360) {
-          u.angle = Phaser.Math.Angle.RotateTo(u.angle, Math.atan2(dy, dx), 12 * dt);
+        if (u.kind === "soldier") {
+          if (u.health > 1 && u.health < u.max) u.health = Math.max(1, u.health - u.max * 0.05 * dt);
+          const seeR = 400;
+          const screenR = this.scale.width / Math.max(this.cameras.main.zoom, 0.001);
+          const wounded = u.health < u.max;
+          const downed = wounded && u.health <= 1;
+          if (downed) u.aiMood = undefined;
+          else if (wounded && u.aiMood !== "flee") this.rollSoldierMood(u, true);
+          if (!u.aware && dist < seeR && dist > 36 && h.phase === "flight") {
+            u.aware = true;
+            this.rollSoldierMood(u, wounded || Math.random() < 0.4);
+          }
+          if (u.aiMood) {
+            u.moodT = (u.moodT ?? 0) - dt;
+            if ((u.moodT ?? 0) <= 0) {
+              if (wounded || (dist < seeR && dist > 36)) this.rollSoldierMood(u, wounded || u.aiMood === "kite");
+              else {
+                u.aware = false;
+                u.aiMood = undefined;
+              }
+            }
+          } else if (!wounded && (dist >= seeR || dist <= 36)) {
+            u.aware = false;
+          }
+          const fleeing = !downed && u.aiMood === "flee";
+          const kiting = !downed && u.aiMood === "kite" && dist < seeR && dist > 36;
+          if (downed) {
+            u.angle = Phaser.Math.Angle.RotateTo(u.angle, Math.atan2(dy, dx), 10 * dt);
+            u.aiState = (u.burstLeft ?? 0) > 0 ? "BURST" : "DOWN";
+            u.aiTx = h.x;
+            u.aiTy = h.y;
+            if (u.track < -8) u.track = 0;
+            u.track += dt;
+            if (u.track > 0) {
+              this.stampSoldierBlood(u, range(-4.5, 4.5), range(-4.5, 4.5), range(0, Math.PI * 2));
+              u.track = -range(1.5, 3.4);
+            }
+          } else if (fleeing || kiting) {
+            u.orbit += (fleeing ? 0.35 : 0.55) * dt;
+            const away = Math.atan2(-dy, -dx);
+            const ring = fleeing ? screenR : 250;
+            const weave = fleeing ? 0.35 : 0.7;
+            const ox = h.x + Math.cos(away + Math.sin(u.orbit) * weave) * ring;
+            const oy = h.y + Math.sin(away + Math.sin(u.orbit) * weave) * ring;
+            const want = Math.atan2(oy - u.y, ox - u.x);
+            const face = fleeing ? want : Math.atan2(dy, dx);
+            u.angle = Phaser.Math.Angle.RotateTo(u.angle, face, 12 * dt);
+            const limp = fleeing && wounded;
+            const gaitHz = limp ? 0.0044 : fleeing ? 0.0128 : 0.0075;
+            const walk = Math.sin(this.time.now * gaitHz + u.id * 2.1);
+            const gait = 0.22 + 0.78 * Math.pow(0.5 + 0.5 * walk, 1.45);
+            const step = (limp ? 22 : fleeing ? 78 : 58) * gait * dt;
+            u.x += Math.cos(want) * step;
+            u.y += Math.sin(want) * step;
+            if (limp) {
+              u.track += step;
+              if (u.track > 0) {
+                const side = walk > 0 ? 1 : -1;
+                const px = -Math.sin(want);
+                const py = Math.cos(want);
+                this.stampSoldierBlood(
+                  u,
+                  px * range(2.2, 5.5) * side,
+                  py * range(2.2, 5.5) * side,
+                  want + range(-0.35, 0.35)
+                );
+                u.track = -range(22, 48);
+              }
+            }
+            u.aiState = fleeing ? "FLEE" : (u.burstLeft ?? 0) > 0 ? "BURST" : "KITE";
+            u.aiTx = ox;
+            u.aiTy = oy;
+          } else {
+            u.aiState = (u.burstLeft ?? 0) > 0 ? "BURST" : "IDLE";
+            u.aiTx = undefined;
+            u.aiTy = undefined;
+          }
         }
         u.z = groundZ(this.world, u.x, u.y);
       }
       if (u.kind === "tank") {
         u.turret = Phaser.Math.Angle.RotateTo(u.turret, Math.atan2(dy, dx), 1.65 * dt);
       }
-      const range =
+      const atkRange =
         u.kind === "soldier"
           ? 280
           : u.kind === "tank"
@@ -2251,8 +2506,31 @@ export class MissionScene extends Phaser.Scene {
                 : u.kind === "boat"
                   ? 480
                   : 0;
-      if (range && dist < range && dist > 40 && u.fireCd <= 0 && h.phase === "flight") {
-        u.fireCd = u.kind === "soldier" ? 0.9 : u.kind === "tower" ? 0.45 : 0.7;
+      const inRange = !!(atkRange && dist < atkRange && dist > 40 && h.phase === "flight");
+      if (u.kind === "tower" || u.kind === "bunker" || u.kind === "radar") {
+        u.aiState = inRange ? "ENGAGE" : "IDLE";
+        u.aiTx = inRange ? h.x + h.vx * 0.15 : undefined;
+        u.aiTy = inRange ? h.y + h.vy * 0.15 : undefined;
+      } else if (u.kind === "boat" && inRange) {
+        u.aiState = "ENGAGE";
+        u.aiTx = h.x + h.vx * 0.15;
+        u.aiTy = h.y + h.vy * 0.15;
+      }
+      const soldierDown = u.kind === "soldier" && u.health <= 1 && u.health < u.max;
+      const continueBurst =
+        u.kind === "soldier" &&
+        (u.burstLeft ?? 0) > 0 &&
+        h.phase === "flight" &&
+        (soldierDown || u.aiMood !== "flee");
+      const soldierFlee = u.kind === "soldier" && u.aiMood === "flee" && !soldierDown;
+      if (u.fireCd <= 0 && !soldierFlee && (inRange || continueBurst)) {
+        if (u.kind === "soldier") {
+          if (!u.burstLeft) u.burstLeft = 3;
+          u.burstLeft--;
+          u.fireCd = u.burstLeft > 0 ? 0.075 : 1.05;
+        } else {
+          u.fireCd = u.kind === "tower" ? 0.45 : 0.7;
+        }
         const lead = 0.15;
         const tx = h.x + h.vx * lead;
         const ty = h.y + h.vy * lead;
@@ -2260,19 +2538,21 @@ export class MissionScene extends Phaser.Scene {
         const muzzleZ = u.z + heightOf(u.kind) * 0.7 + ZOff.shot;
         const tgtZ = h.z + HELI_HEIGHT * 0.5;
         const small = u.kind === "soldier";
+        const jitter = small ? (Math.random() - 0.5) * 0.05 : 0;
+        const aim = Math.atan2(ty - u.y, tx - u.x) + jitter;
         this.spawnShot({
           kind: "cannon",
           from: "enemy",
           x: u.x,
           y: u.y,
           z: muzzleZ,
-          vx: (tx - u.x) / t,
-          vy: (ty - u.y) / t,
+          vx: Math.cos(aim) * (dist / t),
+          vy: Math.sin(aim) * (dist / t),
           vz: (tgtZ - muzzleZ) / t,
-          angle: u.kind === "tank" ? u.turret : u.kind === "soldier" ? u.angle : Math.atan2(ty - u.y, tx - u.x),
+          angle: u.kind === "tank" ? u.turret : u.kind === "soldier" ? u.angle + jitter : aim,
           life: t + 0.12,
-          blast: small ? 7 : 16,
-          dmg: small ? 3 : u.kind === "tower" ? 12 : 8,
+          blast: small ? 5 : 16,
+          dmg: small ? 1 : u.kind === "tower" ? 12 : 8,
           tracer: small ? "small" : "shell",
         });
       }
@@ -2614,7 +2894,7 @@ export class MissionScene extends Phaser.Scene {
     const h = this.heli;
     const w = WPN_LIST[h.weapon]!;
     const ammo = this.ammo[h.weapon]!;
-    const ammoS = Number.isFinite(ammo) ? String(ammo) : "∞";
+    const ammoS = this.infAmmo && Number.isFinite(ammo) ? "∞" : Number.isFinite(ammo) ? String(ammo) : "∞";
     const phase =
       h.phase === "grounded" || h.phase === "spool"
         ? "SPOOLING ROTORS"
@@ -2631,10 +2911,19 @@ export class MissionScene extends Phaser.Scene {
 
     const lines = this.world.hv.map((spec) => this.hvLine(spec));
     const left = lines.filter((l) => !l.done).length;
-    this.hvHud.setText(
-      `HV TARGETS  ${this.world.hv.length - left}/${this.world.hv.length}\n` +
-        lines.map((l) => l.text).join("\n")
-    );
+    this.hvHud.setColor("#e8b84a").setText(`HV TARGETS  ${this.world.hv.length - left}/${this.world.hv.length}`);
+    for (let i = 0; i < this.hvRows.length; i++) {
+      const row = this.hvRows[i]!;
+      const line = lines[i];
+      if (!line) {
+        row.setVisible(false);
+        continue;
+      }
+      row.setVisible(this.hvHud.visible);
+      row.setText(line.text);
+      if (line.done) row.setColor("#6a8a62").setAlpha(0.82);
+      else row.setColor("#f0e6c8").setAlpha(1);
+    }
     this.drawWeaponHud();
   }
 
@@ -2652,7 +2941,7 @@ export class MissionScene extends Phaser.Scene {
     for (let i = 0; i < n; i++) {
       const wp = WPN_LIST[i]!;
       const a = this.ammo[i]!;
-      const empty = Number.isFinite(a) && a <= 0;
+      const empty = !this.infAmmo && Number.isFinite(a) && a <= 0;
       const sel = i === h.weapon;
       const x = x0 + i * (slotW + gap);
       if (sel) {
@@ -2667,7 +2956,7 @@ export class MissionScene extends Phaser.Scene {
         g.fillStyle(0x12100c, 0.55);
         g.fillRoundedRect(x, y, slotW, slotH, 3);
       }
-      const ammoS = empty ? "X" : Number.isFinite(a) ? String(a | 0) : "∞";
+      const ammoS = empty ? "X" : this.infAmmo || !Number.isFinite(a) ? "∞" : String(a | 0);
       const t = this.wpnSlots[i]!;
       const lp = this.hudLocal(x + slotW / 2, y + slotH / 2);
       t.setPosition(lp.x, lp.y).setText(`${i + 1}  ${wp.name}  ${ammoS}`);
@@ -2791,12 +3080,151 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 
+  drawDebugAi(): void {
+    this.aiGfx.clear();
+    if (!this.debugAi) {
+      for (const t of this.aiLabels) t.setVisible(false);
+      return;
+    }
+    const live = this.units.filter((u) => !u.dead);
+    while (this.aiLabels.length < live.length) {
+      this.aiLabels.push(
+        this.add
+          .text(0, 0, "", {
+            fontFamily: "Share Tech Mono, monospace",
+            fontSize: "11px",
+            color: "#ffe08a",
+          })
+          .setOrigin(0.5, 1)
+          .setDepth(Layer.FIELD + 9)
+          .setStroke("#12100c", 3)
+      );
+    }
+    for (const t of this.aiLabels) t.setVisible(false);
+    this.aiGfx.lineStyle(1.4, 0x5ec8ff, 0.85);
+    live.forEach((u, i) => {
+      const lift = screenLift(u.z);
+      const ux = u.x;
+      const uy = u.y - lift;
+      if (u.aiTx != null && u.aiTy != null) {
+        const ty = u.aiTy - screenLift(groundZ(this.world, u.aiTx, u.aiTy));
+        this.aiGfx.lineBetween(ux, uy, u.aiTx, ty);
+        this.aiGfx.fillStyle(0x5ec8ff, 0.95);
+        this.aiGfx.fillCircle(u.aiTx, ty, 3.2);
+      }
+      const label = this.aiLabels[i]!;
+      label.setVisible(true);
+      label.setPosition(ux, uy - 18);
+      label.setText(u.aiState ?? "—");
+    });
+  }
+
   toggleMap(): void {
     if (this.over) return;
     this.mapWant = !this.mapWant;
     this.mapLabel
       .setVisible(true)
       .setText(this.mapWant ? "THEATER MAP   HV sites marked   M close" : "RETURNING");
+  }
+
+  hasAmmo(slot: number): boolean {
+    if (this.infAmmo) return true;
+    return (this.ammo[slot] ?? 0) > 0;
+  }
+
+  spendAmmo(slot: number): void {
+    if (this.infAmmo) return;
+    this.ammo[slot]!--;
+  }
+
+  setNoDamage(on: boolean): void {
+    this.noDamage = on;
+    this.heli.immune = on;
+    this.syncDebugMenu();
+  }
+
+  setInfAmmo(on: boolean): void {
+    this.infAmmo = on;
+    this.syncDebugMenu();
+  }
+
+  setDebugAi(on: boolean): void {
+    this.debugAi = on;
+    if (!on) {
+      this.aiGfx.clear();
+      for (const t of this.aiLabels) t.setVisible(false);
+    }
+    this.syncDebugMenu();
+  }
+
+  toggleHeightMap(): void {
+    this.showHeightMap = !this.showHeightMap;
+    this.debugHit = this.showHeightMap;
+    this.debugGfx.setVisible(this.debugHit);
+    if (!this.debugHit) this.debugGfx.clear();
+    const key = this.showHeightMap ? "heightmap" : "terrain";
+    this.ground.setTexture(key).setDisplaySize(WORLD, WORLD);
+    this.miniTerrain.setTexture(key);
+    this.wreckLayer.setVisible(!this.showHeightMap);
+    this.miniWrecks.setVisible(!this.showHeightMap && this.miniTerrain.visible);
+    this.syncDebugMenu();
+  }
+
+  toggleDebugMenu(force?: boolean): void {
+    this.debugOpen = force ?? !this.debugOpen;
+    this.debugRoot.setVisible(this.debugOpen);
+    if (this.debugOpen) this.syncDebugMenu();
+  }
+
+  setupDebugMenu(): void {
+    const x = 22;
+    const y = 86;
+    const w = 280;
+    const rowH = 26;
+    const labels = ["NO DAMAGE", "INFINITE AMMO", "HEIGHT MAP   K", "DEBUG AI"];
+    this.debugRoot = this.add.container(x, y);
+    this.debugRoot.setDepth(Layer.HUD + 180);
+    this.debugRoot.setScrollFactor(0);
+    const panel = this.add.graphics();
+    panel.fillStyle(0x12100c, 0.92);
+    panel.fillRoundedRect(0, 0, w, 48 + labels.length * rowH, 3);
+    panel.lineStyle(1.5, 0xe8b84a, 0.85);
+    panel.strokeRoundedRect(0, 0, w, 48 + labels.length * rowH, 3);
+    const title = this.add.text(12, 10, "/  DEBUG", {
+      fontFamily: "Share Tech Mono, monospace",
+      fontSize: "13px",
+      color: "#e8b84a",
+    });
+    this.debugRows = labels.map((label, i) => {
+      const t = this.add
+        .text(12, 38 + i * rowH, "", {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: "13px",
+          color: "#f0e6c8",
+        })
+        .setInteractive({ useHandCursor: true });
+      t.on("pointerdown", () => {
+        if (i === 0) this.setNoDamage(!this.noDamage);
+        else if (i === 1) this.setInfAmmo(!this.infAmmo);
+        else if (i === 2) this.toggleHeightMap();
+        else this.setDebugAi(!this.debugAi);
+      });
+      return t;
+    });
+    this.debugRoot.add([panel, title, ...this.debugRows]);
+    this.debugRoot.setVisible(false);
+    this.syncDebugMenu();
+  }
+
+  syncDebugMenu(): void {
+    if (!this.debugRows.length) return;
+    const flags = [this.noDamage, this.infAmmo, this.showHeightMap, this.debugAi];
+    const names = ["NO DAMAGE", "INFINITE AMMO", "HEIGHT MAP   K", "DEBUG AI"];
+    for (let i = 0; i < this.debugRows.length; i++) {
+      const on = flags[i]!;
+      this.debugRows[i]!.setText(`${i + 1}  ${names[i]!}            ${on ? "ON" : "OFF"}`);
+      this.debugRows[i]!.setColor(on ? "#e8b84a" : "#8a8470");
+    }
   }
 
   nudgeTimeScale(dir: number): void {
@@ -2837,6 +3265,7 @@ export class MissionScene extends Phaser.Scene {
       this.miniGfx,
       this.hud,
       this.hvHud,
+      ...this.hvRows,
       this.playerHud,
       this.wpnBar,
       ...this.wpnSlots,
@@ -2855,6 +3284,7 @@ export class MissionScene extends Phaser.Scene {
       if (list) for (const ch of list) markHudTree(ch);
     };
     markHudTree(this.spriteCfg.root);
+    markHudTree(this.debugRoot);
     this.children.each((obj) => {
       if (!this.hudSet.has(obj)) this.bindWorld(obj);
     });
@@ -3066,6 +3496,7 @@ export class MissionScene extends Phaser.Scene {
   setHudVisible(on: boolean): void {
     this.hud.setVisible(on);
     this.hvHud.setVisible(on);
+    for (const t of this.hvRows) t.setVisible(on);
     this.wpnHud.setVisible(on);
     this.wpnBar.setVisible(on);
     for (const t of this.wpnSlots) t.setVisible(on);

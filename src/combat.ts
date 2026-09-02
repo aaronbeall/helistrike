@@ -31,6 +31,14 @@ export interface Unit {
   hv?: string;
   dead: boolean;
   fireCd: number;
+  burstLeft?: number;
+  orbit: number;
+  aware?: boolean;
+  aiMood?: "kite" | "flee";
+  moodT?: number;
+  aiState?: string;
+  aiTx?: number;
+  aiTy?: number;
   rotor: number;
   track: number;
 }
