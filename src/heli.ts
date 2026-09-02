@@ -134,7 +134,7 @@ export class Heli {
     if (this.phase === "flight") {
       const agl = spaceDown ? MAX_Z : shiftDown ? LOW_Z : CRUISE_Z;
       const want = gnd + agl;
-      const follow = spaceDown || shiftDown ? 1 - Math.pow(0.14, dt) : 1 - Math.pow(0.08, dt);
+      const follow = 1 - Math.exp(-(spaceDown || shiftDown ? 9 : 3.2) * dt);
       const next = Phaser.Math.Linear(this.z, want, follow);
       this.vz = dt > 0.0001 ? (next - this.z) / dt : 0;
       this.z = next;

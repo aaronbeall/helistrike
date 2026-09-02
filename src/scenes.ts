@@ -17,7 +17,7 @@ import {
   type Wpn,
 } from "./combat";
 import { Layer, ZOff, Z_GRAVITY, worldDepth } from "./depth";
-import { CRUISE_Z, HELI_HEIGHT, Heli, MAX_Z } from "./heli";
+import { CRUISE_Z, HELI_HEIGHT, Heli, LOW_Z, MAX_Z } from "./heli";
 import { SpriteConfigTool } from "./spriteConfig";
 import { preloadArt, prepareArt, extractBiomeTiles, gunLayout, rotorLayout, shadowAlpha, shadowKey, shadowOff, spriteUvPos, tankLayout, FX_VARIANTS } from "./sprites";
 import {
@@ -40,7 +40,7 @@ import {
 } from "./world";
 
 const MISSILE_IGNITE = 0.525;
-const HELLFIRE_LOCK_T = 1;
+const HELLFIRE_LOCK_T = 0.5;
 const HELLFIRE_SEEK_DELAY = 0.42;
 
 const DMG_FLAME_UV: { u: number; v: number }[] = [
@@ -180,6 +180,8 @@ export class MissionScene extends Phaser.Scene {
   lockSpr!: Phaser.GameObjects.Image;
   lockGfx!: Phaser.GameObjects.Graphics;
   lockTxt!: Phaser.GameObjects.Text;
+  lockArrowGfx!: Phaser.GameObjects.Graphics;
+  lockHudTxt!: Phaser.GameObjects.Text;
   unitG!: Phaser.GameObjects.Group;
   shotG!: Phaser.GameObjects.Group;
   fragG!: Phaser.GameObjects.Group;
@@ -211,6 +213,14 @@ export class MissionScene extends Phaser.Scene {
   miniBg!: Phaser.GameObjects.Graphics;
   miniTerrain!: Phaser.GameObjects.Image;
   miniWrecks!: Phaser.GameObjects.Image;
+  miniMask!: Phaser.GameObjects.Graphics;
+  mapGfx!: Phaser.GameObjects.Graphics;
+  hudCam!: Phaser.Cameras.Scene2D.Camera;
+  hudRoot!: Phaser.GameObjects.Container;
+  hudSet = new Set<Phaser.GameObjects.GameObject>();
+  hudParS = 1;
+  hudParX = 0;
+  hudParY = 0;
   hvGfx!: Phaser.GameObjects.Graphics;
   over = false;
   win = false;
@@ -219,6 +229,7 @@ export class MissionScene extends Phaser.Scene {
   mapView = false;
   mapWant = false;
   mapBlend = 0;
+  camZoom = 2.55;
   camFollow = true;
   playLastFrame = false;
   playScrollX = 0;
@@ -315,6 +326,18 @@ export class MissionScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 1)
       .setDepth(Layer.FIELD)
+      .setVisible(false)
+      .setStroke("#1c100c", 3);
+    this.lockArrowGfx = this.add.graphics().setScrollFactor(0).setDepth(Layer.HUD + 2);
+    this.lockHudTxt = this.add
+      .text(0, 0, "LOCK", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "12px",
+        color: "#ff3a22",
+      })
+      .setOrigin(0.5, 0.5)
+      .setScrollFactor(0)
+      .setDepth(Layer.HUD + 3)
       .setVisible(false)
       .setStroke("#1c100c", 3);
 
@@ -618,28 +641,30 @@ export class MissionScene extends Phaser.Scene {
 
     this.miniGfx = this.add.graphics().setScrollFactor(0).setDepth(Layer.HUD + 1);
     this.hvGfx = this.add.graphics().setScrollFactor(0).setDepth(Layer.HUD + 2);
+    this.mapGfx = this.add.graphics().setDepth(Layer.FIELD);
     this.mapHvLabels = [];
     this.debugGfx = this.add.graphics().setDepth(Layer.FIELD).setVisible(false);
     const cx = 18 + 88;
     const cy = this.scale.height - 18 - 88;
-    const maskG = this.add.graphics().setScrollFactor(0);
-    maskG.fillStyle(0xffffff);
-    maskG.fillCircle(cx, cy, 88);
+    this.miniMask = this.add.graphics().setScrollFactor(0);
+    this.miniMask.fillStyle(0xffffff);
+    this.miniMask.fillCircle(cx, cy, 88);
     this.miniBg = this.add.graphics().setScrollFactor(0).setDepth(Layer.HUD - 1);
     this.miniBg.fillStyle(0x12100c, 1);
     this.miniBg.fillCircle(cx, cy, 90);
     this.miniTerrain = this.add.image(cx, cy, "terrain").setScrollFactor(0).setDepth(Layer.HUD);
-    this.miniTerrain.setMask(maskG.createGeometryMask());
+    this.miniTerrain.setMask(this.miniMask.createGeometryMask());
     if (this.textures.exists("wrecks")) this.textures.remove("wrecks");
     this.wreckLayer.saveTexture("wrecks");
     this.miniWrecks = this.add.image(cx, cy, "wrecks").setScrollFactor(0).setDepth(Layer.HUD);
-    this.miniWrecks.setMask(maskG.createGeometryMask());
-    maskG.setVisible(false);
+    this.miniWrecks.setMask(this.miniMask.createGeometryMask());
+    this.miniMask.setVisible(false);
 
     this.cameras.main.centerOn(this.heli.x, this.heli.y);
     this.cameras.main.startFollow(this.body, true, 0.12, 0.12);
     this.cameras.main.setDeadzone(80, 80);
     this.cameras.main.setZoom(this.playZoom());
+    this.camZoom = this.playZoom();
     this.playScrollX = this.heli.x - this.scale.width / 2;
     this.playScrollY = this.heli.y - this.scale.height / 2;
     this.playViewX = this.playScrollX;
@@ -647,6 +672,7 @@ export class MissionScene extends Phaser.Scene {
     this.playViewW = this.scale.width;
     this.playViewH = this.scale.height;
     this.playLastFrame = true;
+    this.setupHudCam();
   }
 
   stampDecor(): void {
@@ -808,10 +834,12 @@ export class MissionScene extends Phaser.Scene {
     }
 
     const mapOn = this.mapBlend > 0.12;
+    this.syncHudParallax(wallDt);
     this.setHudVisible(!mapOn);
     if (mapOn) {
       this.drawMapOverlay();
     } else {
+      this.mapGfx.clear();
       this.hideMapHvLabels();
       this.drawHud();
       this.drawMinimap();
@@ -1060,7 +1088,7 @@ export class MissionScene extends Phaser.Scene {
     const rowH = tickH + 5;
     const colW = tickGap * 4 + 9;
     const ox = cx + 44;
-    const oy = cy - (tickH * 0.5);
+    const oy = cy - 30;
     g.lineStyle(1.35, 0xe8b84a, 0.92);
     for (let i = 0; i < groupCount; i++) {
       const ticks = Phaser.Math.Clamp(n - i * 5, 0, 5);
@@ -1221,7 +1249,6 @@ export class MissionScene extends Phaser.Scene {
           blast: 85,
           dmg: 95,
           motor: -MISSILE_IGNITE,
-          cruise: 420,
           yaw: side * (1.05 + Math.random() * 0.45),
         });
         this.missileMuzzle(px, py, h.z, h.angle);
@@ -1547,9 +1574,9 @@ export class MissionScene extends Phaser.Scene {
       const hellfireHome = lit && s.kind === "hellfire" && s.targetId != null;
       if (hellfireHome) {
         const cur = Math.hypot(s.vx, s.vy, s.vz);
-        const ramp = s.motor != null ? Phaser.Math.Clamp(s.motor / 0.22, 0, 1) : 1;
-        const k = ramp * ramp * (3 - 2 * ramp);
-        const spd = Phaser.Math.Linear(Math.max(cur, 70), s.cruise ?? 420, k);
+        const burn = s.motor ?? 0;
+        const accel = 520 + Phaser.Math.Clamp(burn, 0, 1.4) * 260;
+        const spd = cur + accel * dt;
         const seeking = (s.loft ?? 0) <= 0;
         if (seeking) {
           const u = this.units.find((q) => q.id === s.targetId && !q.dead);
@@ -2393,7 +2420,7 @@ export class MissionScene extends Phaser.Scene {
 
     if (WPN_LIST[h.weapon]!.id !== "hellfire") return;
 
-    const tgt = this.nearestUnit(ptr.x, ptr.y, 160);
+    const tgt = this.hellfirePickTarget(ptr.x, ptr.y, 160);
     if (!tgt || (h.hellfireLock && tgt.id === h.hellfireLock.id)) {
       h.hellfireSeek = null;
       return;
@@ -2429,12 +2456,18 @@ export class MissionScene extends Phaser.Scene {
     const g = this.lockGfx;
     g.clear();
     this.lockSpr.setVisible(false);
+    this.lockArrowGfx.clear();
+    this.lockHudTxt.setVisible(false);
+
+    const hellfire = WPN_LIST[h.weapon]!.id === "hellfire";
+    if (!hellfire) {
+      g.setVisible(false);
+      this.lockTxt.setVisible(false);
+      return;
+    }
 
     const locked = h.hellfireLock ? this.unitById(h.hellfireLock.id) : undefined;
-    const seeking =
-      WPN_LIST[h.weapon]!.id === "hellfire" && h.hellfireSeek
-        ? this.unitById(h.hellfireSeek.id)
-        : undefined;
+    const seeking = h.hellfireSeek ? this.unitById(h.hellfireSeek.id) : undefined;
     if (!locked && !seeking) {
       g.setVisible(false);
       this.lockTxt.setVisible(false);
@@ -2444,32 +2477,95 @@ export class MissionScene extends Phaser.Scene {
     g.setVisible(true);
     let lockDepth = Layer.FIELD;
     if (seeking) {
-      const t = Math.min(1, h.hellfireSeek!.t / HELLFIRE_LOCK_T);
-      const scale = 2 - t;
-      const box = this.drawLockBox(seeking, scale, 1.6, 0.72 + t * 0.22);
-      g.setDepth(box.depth);
-      lockDepth = box.depth;
+      const vis = this.unitOnHud(seeking);
+      if (vis.on) {
+        const t = Math.min(1, h.hellfireSeek!.t / HELLFIRE_LOCK_T);
+        const scale = 2 - t;
+        const box = this.drawLockBox(seeking, scale, 1.6, 0.72 + t * 0.22);
+        g.setDepth(box.depth);
+        lockDepth = box.depth;
+      }
     }
     if (locked) {
-      const pulse = 0.82 + 0.18 * Math.sin(this.time.now * 0.0055);
-      const box = this.drawLockBox(locked, 1, 2, pulse);
-      lockDepth = Math.max(lockDepth, box.depth);
-      g.setDepth(lockDepth);
-      this.lockTxt
-        .setVisible(true)
-        .setPosition(box.x, box.y - box.half - 4)
-        .setDepth(lockDepth)
-        .setAlpha(pulse)
-        .setScale(zScale(locked.z));
+      const vis = this.unitOnHud(locked);
+      if (vis.on) {
+        const pulse = 0.82 + 0.18 * Math.sin(this.time.now * 0.0055);
+        const box = this.drawLockBox(locked, 1, 2, pulse);
+        lockDepth = Math.max(lockDepth, box.depth);
+        g.setDepth(lockDepth);
+        this.lockTxt
+          .setVisible(true)
+          .setPosition(box.x, box.y - box.half - 4)
+          .setDepth(lockDepth)
+          .setAlpha(pulse)
+          .setScale(zScale(locked.z));
+      } else {
+        this.lockTxt.setVisible(false);
+        this.drawLockOffscreen(vis.sx, vis.sy);
+      }
     } else {
       this.lockTxt.setVisible(false);
     }
+  }
+
+  drawLockOffscreen(sx: number, sy: number): void {
+    const g = this.lockArrowGfx;
+    const w = this.scale.width;
+    const h = this.scale.height;
+    const pad = 36;
+    const cx = w / 2;
+    const cy = h / 2;
+    const ang = Math.atan2(sy - cy, sx - cx);
+    const ax = Phaser.Math.Clamp(sx, pad, w - pad);
+    const ay = Phaser.Math.Clamp(sy, pad, h - pad);
+    const pulse = 0.82 + 0.18 * Math.sin(this.time.now * 0.0055);
+    g.fillStyle(0xff3a22, 0.92 * pulse);
+    g.save();
+    g.translateCanvas(ax, ay);
+    g.rotateCanvas(ang);
+    g.fillTriangle(12, 0, -8, -3.6, -8, 3.6);
+    g.restore();
+    const lx = ax - Math.cos(ang) * 34;
+    const ly = ay - Math.sin(ang) * 22;
+    const lp = this.hudLocal(lx, ly);
+    this.lockHudTxt
+      .setVisible(true)
+      .setPosition(lp.x, lp.y)
+      .setAlpha(pulse)
+      .setRotation(0);
   }
 
   worldPointer(): { x: number; y: number } {
     const p = this.input.activePointer;
     const pt = this.cameras.main.getWorldPoint(p.x, p.y);
     return { x: pt.x, y: pt.y };
+  }
+
+  hellfirePickTarget(x: number, y: number, max: number): Unit | undefined {
+    let best: Unit | undefined;
+    let bestScore = Infinity;
+    for (const u of this.units) {
+      if (u.dead) continue;
+      const d = Math.hypot(u.x - x, u.y - y);
+      if (d > max) continue;
+      const score = d / (1 + u.max / 24);
+      if (score < bestScore) {
+        bestScore = score;
+        best = u;
+      }
+    }
+    return best;
+  }
+
+  unitOnHud(u: Unit, pad = 36): { on: boolean; sx: number; sy: number } {
+    const cam = this.cameras.main;
+    const view = cam.worldView;
+    const w = this.scale.width;
+    const h = this.scale.height;
+    const sx = ((u.x - view.x) / view.width) * w;
+    const sy = ((u.y - screenLift(u.z) - view.y) / view.height) * h;
+    const on = sx > pad && sx < w - pad && sy > pad && sy < h - pad;
+    return { on, sx, sy };
   }
 
   nearestUnit(x: number, y: number, max: number): Unit | undefined {
@@ -2560,7 +2656,8 @@ export class MissionScene extends Phaser.Scene {
       }
       const ammoS = empty ? "X" : Number.isFinite(a) ? String(a | 0) : "∞";
       const t = this.wpnSlots[i]!;
-      t.setPosition(x + slotW / 2, y + slotH / 2).setText(`${i + 1}  ${wp.name}  ${ammoS}`);
+      const lp = this.hudLocal(x + slotW / 2, y + slotH / 2);
+      t.setPosition(lp.x, lp.y).setText(`${i + 1}  ${wp.name}  ${ammoS}`);
       if (sel) {
         t.setColor("#1c1812").setStroke("#1c1812", 0).setFontSize("16px");
       } else if (empty) {
@@ -2594,10 +2691,8 @@ export class MissionScene extends Phaser.Scene {
     const span = 1700;
     const s = (mapR * 2) / span;
     this.miniTerrain.setDisplaySize(WORLD * s, WORLD * s);
-    this.miniTerrain.setPosition(
-      cx - (this.heli.x - WORLD / 2) * s,
-      cy - (this.heli.y - WORLD / 2) * s
-    );
+    const tp = this.hudLocal(cx - (this.heli.x - WORLD / 2) * s, cy - (this.heli.y - WORLD / 2) * s);
+    this.miniTerrain.setPosition(tp.x, tp.y);
     this.miniWrecks.setDisplaySize(WORLD * s, WORLD * s);
     this.miniWrecks.setPosition(this.miniTerrain.x, this.miniTerrain.y);
     this.miniGfx.clear();
@@ -2629,7 +2724,6 @@ export class MissionScene extends Phaser.Scene {
 
   drawHvArrows(): void {
     if (this.mapBlend > 0.12) return;
-    this.hvGfx.setScrollFactor(0);
     this.hvGfx.clear();
     const cam = this.cameras.main;
     const view = cam.worldView;
@@ -2710,13 +2804,133 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 
+  setupHudCam(): void {
+    const w = this.scale.width;
+    const h = this.scale.height;
+    this.hudCam = this.cameras.add(0, 0, w, h);
+    this.hudCam.setName("hud");
+    this.hudCam.transparent = true;
+    this.hudCam.setScroll(0, 0);
+    this.hudCam.setZoom(1);
+    this.hudRoot = this.add.container(w / 2, h / 2);
+    this.hudRoot.setDepth(Layer.HUD + 100);
+    this.hudRoot.setScrollFactor(0);
+    this.bindHud(this.hudRoot);
+    this.bindHud(this.miniMask);
+    const chrome: Phaser.GameObjects.GameObject[] = [
+      this.miniBg,
+      this.miniTerrain,
+      this.miniWrecks,
+      this.miniGfx,
+      this.hud,
+      this.hvHud,
+      this.playerHud,
+      this.wpnBar,
+      ...this.wpnSlots,
+      this.hvGfx,
+      this.lockArrowGfx,
+      this.lockHudTxt,
+    ];
+    for (const go of chrome) this.adoptHud(go);
+    this.bindHud(this.reticle);
+    this.bindHud(this.reticleMark);
+    this.bindHud(this.sight);
+    this.bindHud(this.mapLabel);
+    const markHudTree = (obj: Phaser.GameObjects.GameObject) => {
+      this.bindHud(obj);
+      const list = (obj as Phaser.GameObjects.Container).list;
+      if (list) for (const ch of list) markHudTree(ch);
+    };
+    markHudTree(this.spriteCfg.root);
+    this.children.each((obj) => {
+      if (!this.hudSet.has(obj)) this.bindWorld(obj);
+    });
+    this.events.on("addedtoscene", (obj: Phaser.GameObjects.GameObject) => {
+      if (this.hudSet.has(obj)) return;
+      this.bindWorld(obj);
+    });
+  }
+
+  bindHud(go: Phaser.GameObjects.GameObject): void {
+    this.hudSet.add(go);
+    go.setScrollFactor(0);
+    go.cameraFilter = this.cameras.main.id;
+  }
+
+  adoptHud(go: Phaser.GameObjects.GameObject & { x: number; y: number }): void {
+    this.bindHud(go);
+    const lp = this.hudLocal(go.x, go.y);
+    this.hudRoot.add(go);
+    go.setPosition(lp.x, lp.y);
+  }
+
+  bindWorld(go: Phaser.GameObjects.GameObject): void {
+    if (this.hudSet.has(go)) return;
+    go.cameraFilter |= this.hudCam.id;
+  }
+
+  hudLocal(x: number, y: number): { x: number; y: number } {
+    return { x: x - this.scale.width / 2, y: y - this.scale.height / 2 };
+  }
+
+  syncHudParallax(dt: number): void {
+    const w = this.scale.width;
+    const h = this.scale.height;
+    let wantS = 1;
+    let wantX = 0;
+    let wantY = 0;
+    if (this.mapBlend < 0.12 && !this.over && this.heli.phase !== "dead") {
+      const heli = this.heli;
+      const spdN = Phaser.Math.Clamp(Math.hypot(heli.vx, heli.vy) / 320, 0, 1);
+      const altN = Phaser.Math.Clamp(castZ(this.world, heli.x, heli.y, heli.z) / MAX_Z, 0, 1);
+      wantS = Phaser.Math.Clamp(1 - spdN * 0.07 - altN * 0.08, 0.86, 1);
+      wantX = -heli.roll * 24;
+      wantY = -heli.pitch * 20;
+    }
+    const k = 1 - Math.exp(-5.5 * dt);
+    this.hudParS = Phaser.Math.Linear(this.hudParS, wantS, k);
+    this.hudParX = Phaser.Math.Linear(this.hudParX, wantX, k);
+    this.hudParY = Phaser.Math.Linear(this.hudParY, wantY, k);
+    this.hudRoot.setPosition(w / 2 + this.hudParX, h / 2 + this.hudParY);
+    this.hudRoot.setScale(this.hudParS);
+    this.syncMiniMask();
+  }
+
+  syncMiniMask(): void {
+    const cx = 18 + 88;
+    const cy = this.scale.height - 18 - 88;
+    const clip = this.hudLocal(cx, cy);
+    const hs = this.hudRoot.scaleX;
+    this.miniMask.setPosition(0, 0);
+    this.miniMask.clear();
+    this.miniMask.fillStyle(0xffffff, 1);
+    this.miniMask.fillCircle(this.hudRoot.x + clip.x * hs, this.hudRoot.y + clip.y * hs, 88 * hs);
+  }
+
   playZoom(): number {
     const h = this.heli;
-    const spdN = Phaser.Math.Clamp(Math.hypot(h.vx, h.vy) / 340, 0, 1);
-    const zNorm = Phaser.Math.Clamp(castZ(this.world, h.x, h.y, h.z) / MAX_Z, 0, 1);
-    const flight = Phaser.Math.Linear(1.05, 0.7, spdN * 0.75 + zNorm * 0.25);
     const spool = Phaser.Math.Easing.Sine.In(Phaser.Math.Clamp(h.rotorSpd / 32, 0, 1));
-    return Phaser.Math.Linear(2.55, flight, spool);
+    if (h.phase !== "flight" && h.phase !== "liftoff") {
+      return Phaser.Math.Linear(2.55, 1.02, spool);
+    }
+    const napeZ = 1.28;
+    const cruiseZ = 1.02;
+    const popZ = 0.78;
+    let altZoom: number;
+    if (this.keySpace?.isDown) altZoom = popZ;
+    else if (this.keyShift?.isDown) altZoom = napeZ;
+    else {
+      const agl = castZ(this.world, h.x, h.y, h.z);
+      if (agl <= CRUISE_Z) {
+        const t = Phaser.Math.Clamp((agl - LOW_Z) / Math.max(1, CRUISE_Z - LOW_Z), 0, 1);
+        altZoom = Phaser.Math.Linear(napeZ, cruiseZ, t);
+      } else {
+        const t = Phaser.Math.Clamp((agl - CRUISE_Z) / Math.max(1, MAX_Z - CRUISE_Z), 0, 1);
+        altZoom = Phaser.Math.Linear(cruiseZ, popZ, t);
+      }
+    }
+    const spdN = Phaser.Math.Clamp(Math.hypot(h.vx, h.vy) / 340, 0, 1);
+    return altZoom * (1 - spdN * 0.06);
   }
 
   theaterZoom(): number {
@@ -2787,7 +3001,9 @@ export class MissionScene extends Phaser.Scene {
 
     const ease = Phaser.Math.Easing.Sine.InOut(this.mapBlend);
     const cam = this.cameras.main;
-    this.cameras.main.setZoom(Phaser.Math.Linear(this.playZoom(), this.theaterZoom(), ease));
+    const k = 1 - Math.exp(-5.2 * dt);
+    this.camZoom = Phaser.Math.Linear(this.camZoom, this.playZoom(), k);
+    cam.setZoom(Phaser.Math.Linear(this.camZoom, this.theaterZoom(), ease));
 
     if (this.mapBlend > 0.001) {
       if (this.camFollow) {
@@ -2830,6 +3046,7 @@ export class MissionScene extends Phaser.Scene {
     this.miniBg.setVisible(on);
     this.miniTerrain.setVisible(on);
     this.miniWrecks.setVisible(on && !this.showHeightMap);
+    this.hudRoot.setVisible(on);
     this.hpGfx.setVisible(on);
     if (on) {
       this.reticle.setVisible(true);
@@ -2845,15 +3062,16 @@ export class MissionScene extends Phaser.Scene {
       this.lockGfx.setVisible(false);
       this.lockGfx.clear();
       this.lockTxt.setVisible(false);
+      this.lockHudTxt.setVisible(false);
+      this.lockArrowGfx.clear();
       this.playerHud.clear();
       this.miniGfx.clear();
     }
   }
 
   drawMapOverlay(): void {
-    this.hvGfx.clear();
-    this.hvGfx.setScrollFactor(1);
-    const g = this.hvGfx;
+    this.mapGfx.clear();
+    const g = this.mapGfx;
     const z = Math.max(this.cameras.main.zoom, 0.001);
     const u = (px: number) => px / z;
     const w = this.scale.width;
@@ -3029,16 +3247,18 @@ export class MissionScene extends Phaser.Scene {
     this.over = true;
     this.win = win;
     const msg = win ? "MISSION COMPLETE" : "BIRD DOWN";
-    this.add
-      .text(this.scale.width / 2, this.scale.height / 2, `${msg}\nR  RESTART`, {
-        fontFamily: "Black Ops One, Impact, sans-serif",
-        fontSize: "42px",
-        color: win ? "#e8b84a" : "#ff6a3a",
-        align: "center",
-      })
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setDepth(Layer.HUD + 50);
+    this.bindHud(
+      this.add
+        .text(this.scale.width / 2, this.scale.height / 2, `${msg}\nR  RESTART`, {
+          fontFamily: "Black Ops One, Impact, sans-serif",
+          fontSize: "42px",
+          color: win ? "#e8b84a" : "#ff6a3a",
+          align: "center",
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(Layer.HUD + 50)
+    );
   }
 }
 
