@@ -83,6 +83,13 @@ const H_WATER = 0.34;
 const H_SAND = 0.4;
 const H_ROCK = 0.62;
 const H_PEAK = 0.72;
+/** Bank width as a multiple of local river half-width (2 = full river width each side). */
+export const RIVER_BANK_MUL = 4.4;
+export const RIVER_BANK_MIN = 6.5;
+/** How much bank width wanders (0 = smooth, 1 = wild). */
+export const RIVER_BANK_WOBBLE = 0.62;
+/** Extra height jitter on the ramp. */
+export const RIVER_BANK_ROUGH = 0.038;
 const HEIGHT_BANDS: { lo: number; hi: number; k: number }[] = [
   { lo: 0, hi: H_WATER, k: 2.7 },
   { lo: H_WATER, hi: H_SAND, k: 2.35 },
@@ -113,7 +120,8 @@ export function generateWorld(seed: number, tiles?: (ImageData | null)[]): World
     }
   }
 
-  carveRivers(height, biome, rng);
+  const riverRad = new Float32Array(TEX * TEX);
+  carveRivers(height, biome, rng, riverRad);
 
   for (let i = 0; i < TEX * TEX; i++) {
     if (biome[i] === BIOME_ID.river) continue;
@@ -127,13 +135,28 @@ export function generateWorld(seed: number, tiles?: (ImageData | null)[]): World
     else biome[i] = BIOME_ID.grass;
   }
 
+  const bankT = stampRiverBanks(biome, riverRad, seed);
+
   const raw = new Float32Array(height);
+  const bed = H_WATER - 0.02;
   for (let i = 0; i < height.length; i++) {
     height[i] = remapBand(height[i]!);
-    if (biome[i] === BIOME_ID.river) height[i] = Math.min(height[i]!, H_WATER - 0.02);
+    if (biome[i] === BIOME_ID.river) {
+      height[i] = Math.min(height[i]!, bed);
+    } else if (bankT[i]! >= 0) {
+      const t = bankT[i]!;
+      const x = i % TEX;
+      const y = (i / TEX) | 0;
+      const n1 = fbm(x * 0.09, y * 0.09, seed + 61, 4);
+      const n2 = fbm(x * 0.28, y * 0.28, seed + 77, 3);
+      let s = t * t * (3 - 2 * t);
+      s = Phaser.Math.Clamp(s + (n1 - 0.5) * 0.42, 0, 1);
+      height[i] = Phaser.Math.Linear(bed, height[i]!, s);
+      height[i] += (n2 - 0.5) * RIVER_BANK_ROUGH * (1 - Math.abs(t * 2 - 1));
+    }
   }
 
-  const canvas = paintTerrain(raw, biome, seed, tiles);
+  const canvas = paintTerrain(raw, biome, seed, tiles, bankT);
   const { spawnX, spawnY } = findSpawn(height, biome, rng);
   const { hv, spawns } = placeForces(height, biome, rng, spawnX, spawnY);
   const decor = placeDecor(biome, rng);
@@ -214,7 +237,7 @@ export function groundSlope(world: WorldData, x: number, y: number): { dx: numbe
   };
 }
 
-function carveRivers(height: Float32Array, biome: Uint8Array, rng: Rng): void {
+function carveRivers(height: Float32Array, biome: Uint8Array, rng: Rng, riverRad: Float32Array): void {
   const channel = new Int32Array(TEX * TEX);
   const discharge = new Float32Array(TEX * TEX);
   channel.fill(-1);
@@ -242,13 +265,15 @@ function carveRivers(height: Float32Array, biome: Uint8Array, rng: Rng): void {
     jitterPath(path, 1, jitterEnd, rng);
     if (joinAt >= 0) followChannel(path, channel, path[joinAt]!, path[joinAt]!.spd);
     accumulateFlow(path, joinAt, discharge);
-    for (const p of path) stampRiver(biome, p.x, p.y, radFromFlow(p.flow));
+    for (const p of path) stampRiver(biome, riverRad, p.x, p.y, radFromFlow(p.flow));
     for (const pond of rolled.ponds) {
       const outlet = pond.spill ?? path[path.length - 1]!;
       const oi = outlet.y * TEX + outlet.x;
       for (const c of pond.cells) {
-        biome[c.y * TEX + c.x] = BIOME_ID.river;
-        if (channel[c.y * TEX + c.x]! < 0) channel[c.y * TEX + c.x] = oi;
+        const i = c.y * TEX + c.x;
+        biome[i] = BIOME_ID.river;
+        riverRad[i] = Math.max(riverRad[i]!, 2.5);
+        if (channel[i]! < 0) channel[i] = oi;
       }
     }
     registerChannel(path, channel);
@@ -574,22 +599,66 @@ function sampleH(height: Float32Array, x: number, y: number): number {
   return Phaser.Math.Linear(Phaser.Math.Linear(h00, h10, fx), Phaser.Math.Linear(h01, h11, fx), fy);
 }
 
-function stampRiver(biome: Uint8Array, x: number, y: number, rad: number): void {
-  if (rad <= 1) {
-    if (x >= 0 && y >= 0 && x < TEX && y < TEX) biome[y * TEX + x] = BIOME_ID.river;
-    return;
-  }
-  const ir = Math.ceil(rad);
-  const r2 = rad * rad;
+function stampRiver(biome: Uint8Array, riverRad: Float32Array, x: number, y: number, rad: number): void {
+  const r = Math.max(rad, 0.5);
+  const ir = Math.ceil(r);
+  const r2 = r * r;
   for (let oy = -ir; oy <= ir; oy++) {
     for (let ox = -ir; ox <= ir; ox++) {
       if (ox * ox + oy * oy > r2) continue;
       const xx = x + ox;
       const yy = y + oy;
       if (xx < 0 || yy < 0 || xx >= TEX || yy >= TEX) continue;
-      biome[yy * TEX + xx] = BIOME_ID.river;
+      const i = yy * TEX + xx;
+      biome[i] = BIOME_ID.river;
+      if (r > riverRad[i]!) riverRad[i] = r;
     }
   }
+}
+
+function stampRiverBanks(biome: Uint8Array, riverRad: Float32Array, seed: number): Float32Array {
+  const dist = new Float32Array(TEX * TEX);
+  const wid = new Float32Array(TEX * TEX);
+  dist.fill(1e9);
+  const reach = 1 + RIVER_BANK_WOBBLE + 0.2;
+  for (let y = 0; y < TEX; y++) {
+    for (let x = 0; x < TEX; x++) {
+      const i = y * TEX + x;
+      if (biome[i] !== BIOME_ID.river) continue;
+      const base = Math.max(riverRad[i]! * RIVER_BANK_MUL, RIVER_BANK_MIN);
+      const ir = Math.ceil(base * reach);
+      for (let oy = -ir; oy <= ir; oy++) {
+        for (let ox = -ir; ox <= ir; ox++) {
+          const d = Math.hypot(ox, oy);
+          if (d < 0.001 || d > base * reach) continue;
+          const xx = x + ox;
+          const yy = y + oy;
+          if (xx < 0 || yy < 0 || xx >= TEX || yy >= TEX) continue;
+          const j = yy * TEX + xx;
+          const b = biome[j]!;
+          if (b === BIOME_ID.river || b === BIOME_ID.water || b === BIOME_ID.peak) continue;
+          if (d < dist[j]!) {
+            dist[j] = d;
+            wid[j] = base;
+          }
+        }
+      }
+    }
+  }
+  const tOut = new Float32Array(TEX * TEX);
+  tOut.fill(-1);
+  for (let i = 0; i < tOut.length; i++) {
+    if (dist[i]! >= 1e8) continue;
+    const x = i % TEX;
+    const y = (i / TEX) | 0;
+    const wob = fbm(x * 0.065, y * 0.065, seed + 41, 4);
+    const scallop = fbm(x * 0.17 + 8, y * 0.17, seed + 53, 3);
+    const localW = wid[i]! * (1 + (wob * 2 - 1) * RIVER_BANK_WOBBLE + (scallop - 0.5) * 0.4);
+    if (dist[i]! > localW) continue;
+    tOut[i] = dist[i]! / Math.max(localW, 1e-6);
+    biome[i] = BIOME_ID.sand;
+  }
+  return tOut;
 }
 
 function terrace(t: number, k: number): number {
@@ -634,7 +703,8 @@ function paintTerrain(
   raw: Float32Array,
   biome: Uint8Array,
   seed: number,
-  tiles?: (ImageData | null)[]
+  tiles?: (ImageData | null)[],
+  bankT?: Float32Array
 ): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = TEX;
@@ -657,13 +727,14 @@ function paintTerrain(
         gch = 72 - deep * 22;
         bl = 92 - deep * 10;
       } else if (b === BIOME_ID.river) {
-        r = 36;
-        gch = 86;
-        bl = 96;
+        r = 48 + n * 0.25;
+        gch = 52 + n * 0.2;
+        bl = 40;
       } else if (b === BIOME_ID.sand) {
-        r = 196 + n;
-        gch = 168 + n * 0.6;
-        bl = 112;
+        const wet = bankT && bankT[i]! >= 0 ? 1 - bankT[i]! : 0;
+        r = 196 + n - wet * 72;
+        gch = 168 + n * 0.6 - wet * 48;
+        bl = 112 - wet * 18;
       } else if (b === BIOME_ID.forest) {
         r = 42 + n * 0.4;
         gch = 78 + h * 20;
@@ -689,15 +760,36 @@ function paintTerrain(
         Phaser.Math.Clamp(bl * shade, 0, 255),
       ];
       const tile = tiles?.[b];
-      if (tile && biomeSolid(biome, x, y, b)) {
+      const riverBed = b === BIOME_ID.river && tile;
+      const bank = !!(bankT && bankT[i]! >= 0);
+      const sandTile = tiles?.[BIOME_ID.sand];
+      if (riverBed) {
         const tw = tile.width;
         const th = tile.height;
         const to = ((y % th) * tw + (x % tw)) * 4;
-        const ta = 0.52;
         rgb = [
-          overlayChan(rgb[0], tile.data[to]!, ta),
-          overlayChan(rgb[1], tile.data[to + 1]!, ta),
-          overlayChan(rgb[2], tile.data[to + 2]!, ta),
+          overlayChan(rgb[0], tile.data[to]!, 0.7),
+          overlayChan(rgb[1], tile.data[to + 1]!, 0.7),
+          overlayChan(rgb[2], tile.data[to + 2]!, 0.7),
+        ];
+      } else if (bank && sandTile) {
+        const tw = sandTile.width;
+        const th = sandTile.height;
+        const to = ((y % th) * tw + (x % tw)) * 4;
+        const ta = 0.48 + (1 - bankT![i]!) * 0.28;
+        rgb = [
+          overlayChan(rgb[0], sandTile.data[to]!, ta),
+          overlayChan(rgb[1], sandTile.data[to + 1]!, ta),
+          overlayChan(rgb[2], sandTile.data[to + 2]!, ta),
+        ];
+      } else if (tile && biomeSolid(biome, x, y, b)) {
+        const tw = tile.width;
+        const th = tile.height;
+        const to = ((y % th) * tw + (x % tw)) * 4;
+        rgb = [
+          overlayChan(rgb[0], tile.data[to]!, 0.52),
+          overlayChan(rgb[1], tile.data[to + 1]!, 0.52),
+          overlayChan(rgb[2], tile.data[to + 2]!, 0.52),
         ];
       }
       const o = i * 4;

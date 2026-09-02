@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { groundZ, type WorldData } from "./world";
+import { groundZ, WORLD, type WorldData } from "./world";
 
 export interface Stick {
   up: boolean;
@@ -137,8 +137,8 @@ export class Heli {
     }
     this.x += this.vx * dt;
     this.y += this.vy * dt;
-    this.x = Phaser.Math.Clamp(this.x, 40, 5560);
-    this.y = Phaser.Math.Clamp(this.y, 40, 5560);
+    this.x = Phaser.Math.Clamp(this.x, 40, WORLD - 40);
+    this.y = Phaser.Math.Clamp(this.y, 40, WORLD - 40);
 
     const gnd = groundZ(world, this.x, this.y);
     this.gndSmooth += (gnd - this.gndSmooth) * (1 - Math.exp(-GND_FOLLOW * dt));
