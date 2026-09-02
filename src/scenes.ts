@@ -180,6 +180,7 @@ export class MissionScene extends Phaser.Scene {
   sight!: Phaser.GameObjects.Graphics;
   lockSpr!: Phaser.GameObjects.Image;
   lockGfx!: Phaser.GameObjects.Graphics;
+  towWireGfx!: Phaser.GameObjects.Graphics;
   lockTxt!: Phaser.GameObjects.Text;
   lockArrowGfx!: Phaser.GameObjects.Graphics;
   lockHudTxt!: Phaser.GameObjects.Text;
@@ -236,6 +237,9 @@ export class MissionScene extends Phaser.Scene {
   camFollow = false;
   lookCamX = 0;
   lookCamY = 0;
+  towLookHold = 0;
+  towLookX = 0;
+  towLookY = 0;
   playLastFrame = false;
   playScrollX = 0;
   playScrollY = 0;
@@ -272,6 +276,9 @@ export class MissionScene extends Phaser.Scene {
     this.camFollow = false;
     this.lookCamX = 0;
     this.lookCamY = 0;
+    this.towLookHold = 0;
+    this.towLookX = 0;
+    this.towLookY = 0;
     this.playLastFrame = false;
     this.debugHit = false;
     this.showHeightMap = false;
@@ -338,6 +345,7 @@ export class MissionScene extends Phaser.Scene {
     this.sight = this.add.graphics().setDepth(Layer.HUD).setScrollFactor(0);
     this.lockSpr = this.add.image(0, 0, "lock").setDepth(Layer.FIELD).setVisible(false);
     this.lockGfx = this.add.graphics().setDepth(Layer.FIELD).setVisible(false);
+    this.towWireGfx = this.add.graphics().setDepth(Layer.WORLD);
     this.lockTxt = this.add
       .text(0, 0, "LOCK", {
         fontFamily: "Share Tech Mono, monospace",
@@ -856,6 +864,7 @@ export class MissionScene extends Phaser.Scene {
     if (this.over) {
       this.drawMinimap();
       this.drawPlayerHud();
+      this.towWireGfx.clear();
       return;
     }
     this.syncPlayView();
@@ -903,6 +912,7 @@ export class MissionScene extends Phaser.Scene {
     this.setHudVisible(!mapOn);
     if (mapOn) {
       this.drawMapOverlay();
+      this.towWireGfx.clear();
     } else {
       this.mapGfx.clear();
       this.hideMapHvLabels();
@@ -910,6 +920,7 @@ export class MissionScene extends Phaser.Scene {
       this.drawMinimap();
       this.drawHvArrows();
       this.drawPlayerHud();
+      this.drawTowWires();
     }
 
     if (this.shake > 0 && this.mapBlend < 0.12) {
@@ -1388,6 +1399,8 @@ export class MissionScene extends Phaser.Scene {
         motor: -MISSILE_IGNITE,
         cruise: 300,
         yaw: side * (0.42 + Math.random() * 0.22),
+        wireSide: -side,
+        wire: [],
       });
       this.missileMuzzle(px, py, h.z, h.angle);
     }
@@ -1828,6 +1841,7 @@ export class MissionScene extends Phaser.Scene {
         }
       }
       s.life -= dt;
+      if (s.kind === "tow" && s.from === "player") this.simulateTowWire(s, dt);
       const g1 = groundZ(this.world, s.x, s.y);
       const a0 = z0 - g0;
       const a1 = s.z - g1;
@@ -1868,6 +1882,11 @@ export class MissionScene extends Phaser.Scene {
         }
       }
       if (hit) {
+        if (s.kind === "tow" && s.from === "player") {
+          this.towLookX = s.x;
+          this.towLookY = s.y;
+          this.towLookHold = 0.9;
+        }
         this.explode(s.x, s.y, s.z, s.blast, s.dmg, victim, s.vx, s.vy, s.vz, !!victim || hitPlayer, s.kind);
         continue;
       }
@@ -1933,6 +1952,77 @@ export class MissionScene extends Phaser.Scene {
         this.fragSmoke.emitParticleAt(tx, ty + 5, 1);
       }
     }
+  }
+
+  drawTowWires(): void {
+    const g = this.towWireGfx;
+    g.clear();
+    if (this.heli.phase === "dead") return;
+    let zMin = this.heli.z;
+    for (const s of this.shots) {
+      if (s.kind !== "tow" || s.from !== "player") continue;
+      const pts = s.wire ?? [];
+      if (pts.length === 0) continue;
+      zMin = Math.min(zMin, s.z, ...pts.map((p) => p.z));
+      if (pts.length < 2) continue;
+      const stroke = (color: number, alpha: number, width: number, dy: number) => {
+        g.lineStyle(width, color, alpha);
+        g.beginPath();
+        g.moveTo(pts[0]!.x, pts[0]!.y - screenLift(pts[0]!.z) + dy);
+        for (let i = 1; i < pts.length; i++) {
+          const p = pts[i]!;
+          g.lineTo(p.x, p.y - screenLift(p.z) + dy);
+        }
+        g.strokePath();
+      };
+      stroke(0x3a382e, 0.55, 1.35, 0);
+      stroke(0xe8e0c8, 0.88, 0.85, -0.55);
+    }
+    g.setDepth(worldDepth(zMin, ZOff.shot - 0.8));
+  }
+
+  simulateTowWire(s: Shot, dt: number): void {
+    const player = this.towWing(s.wireSide ?? 1);
+    const missile = { x: s.x, y: s.y, z: s.z };
+    if (!s.wire) s.wire = [];
+    const trail = s.wire;
+    if (trail.length === 0) {
+      trail.push({ ...missile });
+      return;
+    }
+    const last = trail[trail.length - 1]!;
+    if (Math.hypot(missile.x - last.x, missile.y - last.y, missile.z - last.z) > 12) {
+      trail.push({ ...missile });
+    }
+    const n = trail.length;
+    for (let i = 0; i < n; i++) {
+      const t = n <= 1 ? 1 : i / (n - 1);
+      const p = trail[i]!;
+      const tx = player.x + (missile.x - player.x) * t;
+      const ty = player.y + (missile.y - player.y) * t;
+      const tz = player.z + (missile.z - player.z) * t;
+      const rate = 8 * Math.pow(1 - t, 1.35);
+      const a = rate <= 0 ? 0 : 1 - Math.exp(-rate * dt);
+      p.x += (tx - p.x) * a;
+      p.y += (ty - p.y) * a;
+      p.z += (tz - p.z) * a;
+    }
+    s.wireTrim = (s.wireTrim ?? 0) + dt;
+    const trimEvery = 0.08;
+    while ((s.wireTrim ?? 0) >= trimEvery && trail.length > 2) {
+      trail.shift();
+      s.wireTrim = (s.wireTrim ?? 0) - trimEvery;
+    }
+  }
+
+  towWing(side: number): { x: number; y: number; z: number } {
+    const h = this.heli;
+    const span = 24;
+    return {
+      x: h.x + Math.cos(h.angle + Math.PI / 2) * span * side,
+      y: h.y + Math.sin(h.angle + Math.PI / 2) * span * side,
+      z: h.z + ZOff.shot,
+    };
   }
 
   explode(
@@ -3579,7 +3669,29 @@ export class MissionScene extends Phaser.Scene {
       ox *= max / len;
       oy *= max / len;
     }
-    const k = 1 - Math.exp(-(heavy ? 6.5 : 10) * dt);
+    let rate = heavy ? 6.5 : 10;
+    let tow: Shot | undefined;
+    for (let i = this.shots.length - 1; i >= 0; i--) {
+      const s = this.shots[i]!;
+      if (s.kind === "tow" && s.from === "player") {
+        tow = s;
+        break;
+      }
+    }
+    if (tow) {
+      this.towLookX = tow.x;
+      this.towLookY = tow.y;
+      this.towLookHold = 0;
+      ox += (tow.x - this.body.x) * 0.82;
+      oy += (tow.y - this.body.y) * 0.82;
+      rate = 5.4;
+    } else if (this.towLookHold > 0) {
+      this.towLookHold = Math.max(0, this.towLookHold - dt);
+      ox += (this.towLookX - this.body.x) * 0.82;
+      oy += (this.towLookY - this.body.y) * 0.82;
+      rate = 5.4;
+    }
+    const k = 1 - Math.exp(-rate * dt);
     this.lookCamX = Phaser.Math.Linear(this.lookCamX, ox, k);
     this.lookCamY = Phaser.Math.Linear(this.lookCamY, oy, k);
     cam.centerOn(this.body.x + this.lookCamX, this.body.y + this.lookCamY);

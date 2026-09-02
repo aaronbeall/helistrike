@@ -63,6 +63,9 @@ export interface Shot {
   loft?: number;
   yaw?: number;
   tracer?: "chain" | "shell" | "small";
+  wire?: { x: number; y: number; z: number }[];
+  wireSide?: number;
+  wireTrim?: number;
 }
 
 export type SparkKind = "flame" | "spark" | "dirt" | "splash";
