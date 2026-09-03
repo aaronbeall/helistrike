@@ -1055,8 +1055,11 @@ export class MissionScene extends Phaser.Scene {
       .setPosition(x * k, y * k);
     if (tint != null) {
       this.stampBrush.setTintFill(tint);
-      this.stampBrush.setBlendMode(Phaser.BlendModes.MULTIPLY);
-    } else this.stampBrush.clearTint();
+      this.stampBrush.setBlendMode(Phaser.BlendModes.NORMAL);
+    } else {
+      this.stampBrush.clearTint();
+      this.stampBrush.setBlendMode(Phaser.BlendModes.NORMAL);
+    }
     this.wreckLayer.draw(this.stampBrush);
     this.stampBrush.clearTint();
     this.stampBrush.setBlendMode(Phaser.BlendModes.NORMAL);
@@ -2994,25 +2997,36 @@ export class MissionScene extends Phaser.Scene {
     if (dist < 1400 && h.phase === "flight") {
       const want = Math.atan2(dy, dx);
       const err = Math.abs(Phaser.Math.Angle.Wrap(want - u.angle));
-      const turn = err > 0.5 ? 5.4 : 3.6;
+      const turn = err > 1.0 ? 5.2 : err > 0.4 ? 3.8 : 2.8;
       u.angle = Phaser.Math.Angle.RotateTo(u.angle, want, turn * dt);
-      const lock = 0.2;
-      const align = Phaser.Math.Clamp(1 - err / lock, 0, 1);
-      const go = align * align;
-      if (go > 0) {
-        u.vx += Math.cos(u.angle) * Phaser.Math.Linear(80, 680, go) * dt;
-        u.vy += Math.sin(u.angle) * Phaser.Math.Linear(80, 680, go) * dt;
+
+      const facing = err < 0.16;
+      if (facing) {
+        const fx = Math.cos(u.angle);
+        const fy = Math.sin(u.angle);
+        const along = u.vx * fx + u.vy * fy;
+        const lx = u.vx - fx * along;
+        const ly = u.vy - fy * along;
+        const sideKeep = Math.pow(0.25, dt);
+        u.vx = fx * along + lx * sideKeep;
+        u.vy = fy * along + ly * sideKeep;
+        u.vx += fx * 620 * dt;
+        u.vy += fy * 620 * dt;
+        u.vx *= Math.pow(0.94, dt);
+        u.vy *= Math.pow(0.94, dt);
+        const maxSpd = 540;
+        const s = Math.hypot(u.vx, u.vy);
+        if (s > maxSpd) {
+          u.vx *= maxSpd / s;
+          u.vy *= maxSpd / s;
+        }
+        u.aiState = "CHARGE";
+      } else {
+        // Coast: no thrust, mild drag so it overshoots then slows while turning
+        u.vx *= Math.pow(0.52, dt);
+        u.vy *= Math.pow(0.52, dt);
+        u.aiState = "TURN";
       }
-      const damp = go > 0 ? Phaser.Math.Linear(0.42, 0.9, go) : 0.08;
-      u.vx *= Math.pow(damp, dt);
-      u.vy *= Math.pow(damp, dt);
-      const maxSpd = go > 0 ? Phaser.Math.Linear(160, 640, go) : 70;
-      const s = Math.hypot(u.vx, u.vy);
-      if (s > maxSpd) {
-        u.vx *= maxSpd / s;
-        u.vy *= maxSpd / s;
-      }
-      u.aiState = go > 0 ? "KAMIKAZE" : "LOCK";
       u.aiTx = h.x;
       u.aiTy = h.y;
       if (dist < 26) {
@@ -3581,7 +3595,13 @@ export class MissionScene extends Phaser.Scene {
           guided: false,
           homePlayer: home,
           motor: home ? -0.06 : undefined,
-          scale: troopRocket ? (u.kind === "rpg" ? 0.42 : 0.48) : undefined,
+          scale: troopRocket
+            ? u.kind === "rpg"
+              ? 0.42
+              : 0.48
+            : u.kind === "gunner" || u.kind === "mounted_mg"
+              ? 0.28
+              : undefined,
         });
       }
       if (u.kind === "heli" && dist < 700 && dist > 80 && h.phase === "flight") {
@@ -3856,9 +3876,9 @@ export class MissionScene extends Phaser.Scene {
               : "tow";
       const rot = s.kind === "cannon" ? s.angle : s.angle + Math.PI / 2;
       const ox = s.kind === "cannon" ? 0.84 : 0.5;
-      const vis = s.kind === "cannon" ? 1 : (s.scale ?? 1);
+      const vis = s.scale ?? 1;
       const sc =
-        s.kind === "cannon"
+        (s.kind === "cannon"
           ? s.tracer === "aa"
             ? 0.95
             : s.tracer === "small"
@@ -3866,7 +3886,7 @@ export class MissionScene extends Phaser.Scene {
               : s.tracer === "shell"
                 ? 0.72
                 : 0.58
-          : vis;
+          : 1) * vis;
       sh.setVisible(true).setOrigin(ox, 0.5);
       this.applyCastShadow(sh, s.x, s.y, s.z, key, rot, sc);
       im.setVisible(true)

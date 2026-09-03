@@ -596,10 +596,19 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     ["building_tower_aa_hulk", 48],
     ["building_tower_sam_hulk", 48],
   ]);
-  putGrid(textures, "src_rotors_hulk", 2, 1, [
-    ["enemy_heli_rotor_hulk", 108],
-    ["enemy_drone_rotor_hulk", 14],
-  ]);
+  const rotorHulks = splitRotorSheet(keyPixels(src(textures, "src_rotors_hulk"), "magenta"));
+  put(textures, "heli_rotor_hulk", fit(squareCenter(rotorHulks[0]!), 108));
+  put(textures, "enemy_heli_rotor_hulk", fit(squareCenter(rotorHulks[1]!), 108));
+  if (textures.exists("enemy_drone_rotor")) {
+    const droneRotor = textures.get("enemy_drone_rotor").getSourceImage() as CanvasImageSource;
+    const dc = document.createElement("canvas");
+    const dw = (droneRotor as HTMLCanvasElement).width || (droneRotor as HTMLImageElement).width;
+    const dh = (droneRotor as HTMLCanvasElement).height || (droneRotor as HTMLImageElement).height;
+    dc.width = dw;
+    dc.height = dh;
+    dc.getContext("2d")!.drawImage(droneRotor, 0, 0);
+    put(textures, "enemy_drone_rotor_hulk", darkenWreck(fit(dc, 14)));
+  }
 
   for (const d of DOODAD_ART) {
     const srcKey = `src_doodad_${d.key}`;
