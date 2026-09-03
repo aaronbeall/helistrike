@@ -1,11 +1,15 @@
 export const SPRITE_ORIGIN: Record<string, { x: number; y: number }> = {
   building_tower: { x: 0.499, y: 0.466 },
   building_tower_gun: { x: 0.495, y: 0.729 },
-  enemy_battleship_gun: { x: 0.502, y: 0.694 },
+  enemy_battleship_gun: { x: 0.5, y: 0.68 },
+  enemy_battleship_gun_aa: { x: 0.5, y: 0.72 },
+  enemy_battleship_gun_sam: { x: 0.5, y: 0.7 },
+  building_tower_aa: { x: 0.5, y: 0.78 },
+  building_tower_sam: { x: 0.5, y: 0.78 },
+  enemy_heli_gun: { x: 0.5, y: 0.72 },
+  enemy_heli_heavy_gun: { x: 0.5, y: 0.72 },
   enemy_boat_gun: { x: 0.488, y: 0.744 },
   enemy_drone: { x: 0.501, y: 0.448 },
-  enemy_heli_gun: { x: 0.499, y: 0.654 },
-  enemy_heli_heavy_gun: { x: 0.497, y: 0.684 },
   enemy_heli_small: { x: 0.493, y: 0.426 },
   enemy_lav_gun: { x: 0.496, y: 0.629 },
   enemy_ptboat_gun: { x: 0.496, y: 0.722 },
@@ -14,6 +18,8 @@ export const SPRITE_ORIGIN: Record<string, { x: number; y: number }> = {
   enemy_troop_rpg: { x: 0.462, y: 0.627 },
   enemy_troop_soldier: { x: 0.449, y: 0.647 },
   enemy_troop_stinger: { x: 0.452, y: 0.647 },
+  enemy_motorcycle: { x: 0.5, y: 0.48 },
+  enemy_troop_mounted_mg: { x: 0.5, y: 0.72 },
 };
 
 function bareKey(key: string): string {
@@ -41,10 +47,17 @@ function asUvList(v: Uv | readonly Uv[] | undefined): Uv[] {
 /** Barrel tips: flashes and projectiles emit here (texture UV). SAM has two tubes. */
 export const SPRITE_MUZZLE: Record<string, Uv | readonly Uv[]> = {
   building_tower_gun: { x: 0.52, y: 0.039 },
-  enemy_battleship_gun: { x: 0.493, y: 0.034 },
+  enemy_battleship_gun: [
+    { x: 0.32, y: 0.06 },
+    { x: 0.68, y: 0.06 },
+  ],
+  enemy_battleship_gun_aa: { x: 0.5, y: 0.05 },
+  enemy_battleship_gun_sam: { x: 0.5, y: 0.12 },
+  building_tower_aa: { x: 0.5, y: 0.05 },
+  building_tower_sam: { x: 0.5, y: 0.12 },
+  enemy_heli_gun: { x: 0.5, y: 0.08 },
+  enemy_heli_heavy_gun: { x: 0.5, y: 0.08 },
   enemy_boat_gun: { x: 0.499, y: 0.039 },
-  enemy_heli_gun: { x: 0.499, y: 0.039 },
-  enemy_heli_heavy_gun: { x: 0.499, y: 0.039 },
   enemy_lav_gun: { x: 0.499, y: 0.039 },
   enemy_ptboat_gun: { x: 0.496, y: 0.068 },
   enemy_sam_gun: [
@@ -56,6 +69,7 @@ export const SPRITE_MUZZLE: Record<string, Uv | readonly Uv[]> = {
   enemy_troop_rpg: { x: 0.78, y: 0.124 },
   enemy_troop_soldier: { x: 0.656, y: 0.012 },
   enemy_troop_stinger: { x: 0.742, y: 0.073 },
+  enemy_troop_mounted_mg: { x: 0.5, y: 0.06 },
   enemy_heli_small: { x: 0.498, y: 0.22 },
 };
 
@@ -85,18 +99,30 @@ export const SPRITE_MOUNT = {
   building_lookout: { x: 0.49, y: 0.397 },
   building_radar: { x: 0.511, y: 0.639 },
   enemy_battleship: [
-    { x: 0.494, y: 0.238 },
-    { x: 0.496, y: 0.587 },
-    { x: 0.494, y: 0.684 },
-    { x: 0.494, y: 0.784 },
+    { x: 0.503, y: 0.229 },
+    { x: 0.503, y: 0.599 },
+    { x: 0.497, y: 0.7 },
+    { x: 0.503, y: 0.808 },
+  ],
+  enemy_boat: { x: 0.493, y: 0.729 },
+  enemy_drone: [
+    { x: 0.111, y: 0.126 },
+    { x: 0.887, y: 0.124 },
+    { x: 0.101, y: 0.884 },
+    { x: 0.874, y: 0.875 },
+  ],
+  enemy_heli: { x: 0.503, y: 0.142 },
+  enemy_heli_pylon: [
+    { x: 0.16, y: 0.52 },
+    { x: 0.84, y: 0.52 },
   ],
   enemy_heli_heavy_rotor: [
-    { x: 0.498, y: 0.245 },
-    { x: 0.498, y: 0.726 },
+    { x: 0.505, y: 0.226 },
+    { x: 0.508, y: 0.761 },
   ],
   enemy_heli_heavy_gun: [
-    { x: 0.365, y: 0.52 },
-    { x: 0.633, y: 0.513 },
+    { x: 0.1, y: 0.541 },
+    { x: 0.906, y: 0.54 },
   ],
   enemy_lav: { x: 0.502, y: 0.434 },
   enemy_pickup: { x: 0.495, y: 0.801 },

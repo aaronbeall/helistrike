@@ -7,7 +7,7 @@ const SRC = {
   tankParts: "sprites/helistrike-tank-parts.png",
   units: "sprites/helistrike-units.png",
   rock: "sprites/helistrike-rock.png",
-  hulks: "sprites/helistrike-hulks.png",
+  hulk: "sprites/helistrike-hulk.png",
   debris: "sprites/helistrike-debris.png",
   debrisMech: "sprites/helistrike-debris-mech.png",
   debrisStruct: "sprites/helistrike-debris-struct.png",
@@ -22,12 +22,23 @@ const SRC = {
   troops: "sprites/helistrike-troops.png",
   buildings: "sprites/helistrike-buildings.png",
   airShip: "sprites/helistrike-air-ship.png",
-  hulksSplit: "sprites/helistrike-hulks-split.png",
-  hulksVehicles: "sprites/helistrike-hulks-vehicles.png",
-  hulksBuildings: "sprites/helistrike-hulks-buildings.png",
-  hulksAir: "sprites/helistrike-hulks-air.png",
-  hulksTroops: "sprites/helistrike-hulks-troops.png",
-  hulksGuns: "sprites/helistrike-hulks-guns.png",
+  splitHulk: "sprites/helistrike-split-parts-hulk.png",
+  vehiclesHulk: "sprites/helistrike-vehicles-hulk.png",
+  buildingsHulk: "sprites/helistrike-buildings-hulk.png",
+  airShipHulk: "sprites/helistrike-air-ship-hulk.png",
+  troopsHulk: "sprites/helistrike-troops-hulk.png",
+  gunsHulk: "sprites/helistrike-guns-hulk.png",
+  gunsExtra: "sprites/helistrike-guns-extra.png",
+  towerGuns: "sprites/helistrike-tower-guns.png",
+  gunsExtraHulk: "sprites/helistrike-guns-extra-hulk.png",
+  towerGunsHulk: "sprites/helistrike-tower-guns-hulk.png",
+  rotorsHulk: "sprites/helistrike-rotors-hulk.png",
+  motoMg: "sprites/helistrike-moto-mg.png",
+  motoMgHulk: "sprites/helistrike-moto-mg-hulk.png",
+  radar: "sprites/helistrike-radar.png",
+  radarDish: "sprites/helistrike-radar-dish.png",
+  radarDishHulk: "sprites/helistrike-radar-dish-hulk.png",
+  radarHulk: "sprites/helistrike-radar-hulk.png",
 } as const;
 
 export const BIOME_TILE_NAMES = ["water", "sand", "grass", "forest", "rock", "peak"] as const;
@@ -54,7 +65,7 @@ export function preloadArt(scene: Phaser.Scene): void {
   scene.load.image("src_tank_parts", SRC.tankParts);
   scene.load.image("src_units", SRC.units);
   scene.load.image("src_rock", SRC.rock);
-  scene.load.image("src_hulks", SRC.hulks);
+  scene.load.image("src_hulk", SRC.hulk);
   scene.load.image("src_debris", SRC.debris);
   scene.load.image("src_debris_mech", SRC.debrisMech);
   scene.load.image("src_debris_struct", SRC.debrisStruct);
@@ -69,12 +80,23 @@ export function preloadArt(scene: Phaser.Scene): void {
   scene.load.image("src_troops", SRC.troops);
   scene.load.image("src_buildings", SRC.buildings);
   scene.load.image("src_air_ship", SRC.airShip);
-  scene.load.image("src_hulks_split", SRC.hulksSplit);
-  scene.load.image("src_hulks_vehicles", SRC.hulksVehicles);
-  scene.load.image("src_hulks_buildings", SRC.hulksBuildings);
-  scene.load.image("src_hulks_air", SRC.hulksAir);
-  scene.load.image("src_hulks_troops", SRC.hulksTroops);
-  scene.load.image("src_hulks_guns", SRC.hulksGuns);
+  scene.load.image("src_split_hulk", SRC.splitHulk);
+  scene.load.image("src_vehicles_hulk", SRC.vehiclesHulk);
+  scene.load.image("src_buildings_hulk", SRC.buildingsHulk);
+  scene.load.image("src_air_ship_hulk", SRC.airShipHulk);
+  scene.load.image("src_troops_hulk", SRC.troopsHulk);
+  scene.load.image("src_guns_hulk", SRC.gunsHulk);
+  scene.load.image("src_guns_extra", SRC.gunsExtra);
+  scene.load.image("src_tower_guns", SRC.towerGuns);
+  scene.load.image("src_guns_extra_hulk", SRC.gunsExtraHulk);
+  scene.load.image("src_tower_guns_hulk", SRC.towerGunsHulk);
+  scene.load.image("src_rotors_hulk", SRC.rotorsHulk);
+  scene.load.image("src_moto_mg", SRC.motoMg);
+  scene.load.image("src_moto_mg_hulk", SRC.motoMgHulk);
+  scene.load.image("src_radar", SRC.radar);
+  scene.load.image("src_radar_dish", SRC.radarDish);
+  scene.load.image("src_radar_dish_hulk", SRC.radarDishHulk);
+  scene.load.image("src_radar_hulk", SRC.radarHulk);
   for (const name of BIOME_TILE_NAMES) {
     scene.load.image(`src_biome_${name}`, `sprites/helistrike-biome-${name}.png`);
   }
@@ -104,6 +126,227 @@ export const gunLayout = {
   origin: { x: 0.5, y: 0.7 },
   mount: { x: 0.497, y: 0.174 },
 };
+
+export type HudWirePoint = { u: number; v: number };
+
+export type HeliHudWireBake = {
+  w: number;
+  h: number;
+  pivot: { x: number; y: number };
+  srcW: number;
+  srcH: number;
+  cropX: number;
+  cropY: number;
+};
+
+/** Map a full heli_body UV into cropped HUD wireframe UV space. */
+export function heliHudWireUv(bake: HeliHudWireBake, u: number, v: number): { u: number; v: number } {
+  return {
+    u: (u * bake.srcW - bake.cropX) / bake.w,
+    v: (v * bake.srcH - bake.cropY) / bake.h,
+  };
+}
+
+/** Soft red screen-edge vignette, baked once and stretched to the viewport. */
+export function bakeHurtVignetteTexture(scene: Phaser.Scene, outKey = "hurt_vignette"): void {
+  const tw = 320;
+  const th = 180;
+  const canvas = document.createElement("canvas");
+  canvas.width = tw;
+  canvas.height = th;
+  const ctx = canvas.getContext("2d")!;
+  const img = ctx.createImageData(tw, th);
+  const d = img.data;
+  const fall = Math.min(tw, th) * 0.48;
+  for (let y = 0; y < th; y++) {
+    for (let x = 0; x < tw; x++) {
+      const dx = Math.min(x, tw - 1 - x);
+      const dy = Math.min(y, th - 1 - y);
+      const dist = Math.min(dx, dy);
+      let edge = 1 - dist / fall;
+      if (edge < 0) edge = 0;
+      else {
+        edge = edge * edge * (3 - 2 * edge);
+        edge = Math.pow(edge, 1.35);
+      }
+      const a = Math.min(255, Math.round((0.12 + edge * 0.88) * 255));
+      if (a < 2) continue;
+      const i = (y * tw + x) * 4;
+      d[i] = 255;
+      d[i + 1] = 255;
+      d[i + 2] = 255;
+      d[i + 3] = a;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  if (scene.textures.exists(outKey)) scene.textures.remove(outKey);
+  scene.textures.addCanvas(outKey, canvas);
+}
+
+/** Sobel edge points from a sprite alpha channel, in normalized UV space. */
+export function extractHeliHudWireframe(tex: Phaser.Textures.Texture, step = 2): HudWirePoint[] {
+  const src = tex.getSourceImage() as HTMLCanvasElement | HTMLImageElement;
+  const w = src.width;
+  const h = src.height;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(src as CanvasImageSource, 0, 0);
+  const data = ctx.getImageData(0, 0, w, h).data;
+  const at = (x: number, y: number) => {
+    if (x < 0 || y < 0 || x >= w || y >= h) return 0;
+    return data[(y * w + x) * 4 + 3]!;
+  };
+  const pts: HudWirePoint[] = [];
+  for (let y = 1; y < h - 1; y += step) {
+    for (let x = 1; x < w - 1; x += step) {
+      const a = at(x, y);
+      if (a < 48) continue;
+      const gx =
+        -at(x - 1, y - 1) -
+        2 * at(x - 1, y) -
+        at(x - 1, y + 1) +
+        at(x + 1, y - 1) +
+        2 * at(x + 1, y) +
+        at(x + 1, y + 1);
+      const gy =
+        -at(x - 1, y - 1) -
+        2 * at(x, y - 1) -
+        at(x + 1, y - 1) +
+        at(x - 1, y + 1) +
+        2 * at(x, y + 1) +
+        at(x + 1, y + 1);
+      if (Math.hypot(gx, gy) > 80) pts.push({ u: x / w, v: y / h });
+    }
+  }
+  return pts;
+}
+
+function stampHudWireDots(
+  ctx: CanvasRenderingContext2D,
+  points: HudWirePoint[],
+  srcW: number,
+  srcH: number,
+  cropX: number,
+  cropY: number,
+  radius: number,
+  ox = 0,
+  oy = 0
+): void {
+  for (const p of points) {
+    ctx.beginPath();
+    ctx.arc(p.u * srcW - cropX + ox, p.v * srcH - cropY + oy, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function bakeHudWireShadowCanvas(
+  points: HudWirePoint[],
+  srcW: number,
+  srcH: number,
+  cropX: number,
+  cropY: number,
+  cw: number,
+  ch: number
+): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = cw;
+  canvas.height = ch;
+  const ctx = canvas.getContext("2d")!;
+  const offX = 2;
+  const offY = 3;
+  ctx.fillStyle = "#ffffff";
+  ctx.filter = "blur(2.6px)";
+  stampHudWireDots(ctx, points, srcW, srcH, cropX, cropY, 1.7, offX, offY);
+  ctx.filter = "none";
+  stampHudWireDots(ctx, points, srcW, srcH, cropX, cropY, 1.05, offX, offY);
+  const pix = ctx.getImageData(0, 0, cw, ch);
+  const d = pix.data;
+  for (let p = 0; p < d.length; p += 4) {
+    const a = d[p + 3]!;
+    if (a < 6) continue;
+    d[p] = 10;
+    d[p + 1] = 8;
+    d[p + 2] = 5;
+    d[p + 3] = Math.min(150, Math.round(a * 0.7));
+  }
+  ctx.putImageData(pix, 0, 0);
+  return canvas;
+}
+
+function bakeHudWireCanvas(
+  points: HudWirePoint[],
+  srcW: number,
+  srcH: number,
+  cropX: number,
+  cropY: number,
+  cw: number,
+  ch: number
+): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = cw;
+  canvas.height = ch;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "#ffffff";
+  stampHudWireDots(ctx, points, srcW, srcH, cropX, cropY, 1.4);
+  return canvas;
+}
+
+/** Bake a white-on-transparent wireframe texture from the player heli body sprite. */
+export function bakeHeliHudWireTexture(
+  scene: Phaser.Scene,
+  bodyKey = "heli_body",
+  outKey = "heli_hud_wire",
+  shadowKey = "heli_hud_wire_sh"
+): HeliHudWireBake | null {
+  if (!scene.textures.exists(bodyKey)) return null;
+  const tex = scene.textures.get(bodyKey);
+  const src = tex.getSourceImage() as HTMLCanvasElement | HTMLImageElement;
+  const w = src.width;
+  const h = src.height;
+  const points = extractHeliHudWireframe(tex, 2);
+  if (!points.length) return null;
+
+  let minX = w;
+  let minY = h;
+  let maxX = 0;
+  let maxY = 0;
+  for (const p of points) {
+    const px = p.u * w;
+    const py = p.v * h;
+    if (px < minX) minX = px;
+    if (py < minY) minY = py;
+    if (px > maxX) maxX = px;
+    if (py > maxY) maxY = py;
+  }
+  const pad = 6;
+  minX = Math.max(0, Math.floor(minX - pad));
+  minY = Math.max(0, Math.floor(minY - pad));
+  maxX = Math.min(w, Math.ceil(maxX + pad));
+  maxY = Math.min(h, Math.ceil(maxY + pad));
+  const cw = Math.max(1, maxX - minX);
+  const ch = Math.max(1, maxY - minY);
+
+  if (scene.textures.exists(outKey)) scene.textures.remove(outKey);
+  scene.textures.addCanvas(outKey, bakeHudWireCanvas(points, w, h, minX, minY, cw, ch));
+  if (scene.textures.exists(shadowKey)) scene.textures.remove(shadowKey);
+  scene.textures.addCanvas(shadowKey, bakeHudWireShadowCanvas(points, w, h, minX, minY, cw, ch));
+
+  const bodyPivot = spritePivot(bodyKey);
+  return {
+    w: cw,
+    h: ch,
+    pivot: {
+      x: Math.max(0, Math.min(1, (bodyPivot.x * w - minX) / cw)),
+      y: Math.max(0, Math.min(1, (bodyPivot.y * h - minY) / ch)),
+    },
+    srcW: w,
+    srcH: h,
+    cropX: minX,
+    cropY: minY,
+  };
+}
 
 export function spritePivot(key: string): { x: number; y: number } {
   const k = key.replace(/__(woodland|desert|urban|snow)$/, "");
@@ -218,28 +461,51 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   });
 
   putGrid(textures, "src_split", 3, 2, [
-    ["enemy_boat", 78],
+    ["enemy_boat", 92],
     ["building_tower", 58],
-    ["building_radar", 88],
+    ["_", 88],
     ["enemy_boat_gun", 36],
     ["building_tower_gun", 52],
-    ["building_radar_disk", 64],
+    ["_", 64],
   ]);
+  putGrid(textures, "src_radar", 2, 1, [
+    ["building_radar", 96],
+    ["_", 72],
+  ]);
+  if (textures.exists("src_radar_dish")) {
+    put(textures, "building_radar_disk", fit(clipRadarDish(keyPixels(src(textures, "src_radar_dish"), "magenta")), 72));
+  }
   putGrid(textures, "src_vehicles", 3, 2, [
     ["enemy_pickup", 58],
     ["enemy_truck", 68],
     ["enemy_tanker", 70],
     ["enemy_lav", 56],
     ["enemy_sam", 68],
-    ["enemy_ptboat", 64],
+    ["enemy_ptboat", 50],
+  ]);
+  putGrid(textures, "src_moto_mg", 2, 1, [
+    ["enemy_motorcycle", 46],
+    ["enemy_troop_mounted_mg", 36],
   ]);
   putGrid(textures, "src_guns", 3, 2, [
     ["enemy_lav_gun", 40],
     ["enemy_sam_gun", 48],
     ["enemy_ptboat_gun", 32],
-    ["enemy_battleship_gun", 48],
+  ]);
+  putGrid(textures, "src_guns_extra", 3, 3, [
+    ["enemy_battleship_gun", 52],
+    ["enemy_battleship_gun_aa", 44],
+    ["enemy_battleship_gun_sam", 48],
+    ["_", 52],
+    ["_", 52],
+    ["enemy_heli_gun", 36],
     ["enemy_heli_heavy_gun", 48],
-    ["enemy_heli_gun", 32],
+    ["enemy_drone_rotor", 14],
+    ["_", 8],
+  ]);
+  putGrid(textures, "src_tower_guns", 2, 1, [
+    ["building_tower_aa", 48],
+    ["building_tower_sam", 48],
   ]);
   putGrid(textures, "src_troops", 3, 2, [
     ["enemy_troop_rpg", 26],
@@ -256,40 +522,53 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     ["building_lookout", 52],
   ]);
   putGrid(textures, "src_air_ship", 2, 2, [
-    ["enemy_drone", 40],
+    ["enemy_drone", 20],
     ["enemy_heli_small", 62],
     ["enemy_heli_heavy", 128],
     ["enemy_battleship", 280],
   ]);
-  putHulkGrid(textures, "src_hulks_split", 3, 2, [
-    ["enemy_boat_hulk", 74],
+  grayShiftTexture(textures, "enemy_battleship");
+  putHulkGrid(textures, "src_split_hulk", 3, 2, [
+    ["enemy_boat_hulk", 88],
     ["building_tower_hulk", 58],
-    ["building_radar_hulk", 84],
+    ["_", 84],
     ["enemy_boat_gun_hulk", 36],
     ["building_tower_gun_hulk", 52],
-    ["building_radar_disk_hulk", 64],
+    ["_", 64],
   ]);
-  putHulkGrid(textures, "src_hulks_vehicles", 3, 2, [
+  putHulkGrid(textures, "src_radar_hulk", 2, 1, [
+    ["building_radar_hulk", 92],
+    ["_", 64],
+  ]);
+  if (textures.exists("src_radar_dish_hulk")) {
+    put(textures, "building_radar_disk_hulk", darkenWreck(fit(clipRadarDish(keyPixels(src(textures, "src_radar_dish_hulk"), "magenta")), 64)));
+  }
+  putHulkGrid(textures, "src_vehicles_hulk", 3, 2, [
     ["enemy_pickup_hulk", 58],
     ["enemy_truck_hulk", 68],
     ["enemy_tanker_hulk", 70],
     ["enemy_lav_hulk", 56],
     ["enemy_sam_hulk", 68],
-    ["enemy_ptboat_hulk", 64],
+    ["enemy_ptboat_hulk", 50],
   ]);
-  putHulkGrid(textures, "src_hulks_buildings", 2, 2, [
+  putHulkGrid(textures, "src_moto_mg_hulk", 2, 1, [
+    ["enemy_motorcycle_hulk", 46],
+    ["enemy_troop_mounted_mg_hulk", 36],
+  ]);
+  putHulkGrid(textures, "src_buildings_hulk", 2, 2, [
     ["building_barn_hulk", 86],
     ["building_tent_hulk", 64],
     ["building_fob_hulk", 96],
     ["building_lookout_hulk", 52],
   ]);
-  putHulkGrid(textures, "src_hulks_air", 2, 2, [
-    ["enemy_drone_hulk", 40],
+  putHulkGrid(textures, "src_air_ship_hulk", 2, 2, [
+    ["enemy_drone_hulk", 20],
     ["enemy_heli_small_hulk", 62],
     ["enemy_heli_heavy_hulk", 128],
     ["enemy_battleship_hulk", 280],
   ]);
-  putHulkGrid(textures, "src_hulks_troops", 3, 2, [
+  grayShiftTexture(textures, "enemy_battleship_hulk");
+  putHulkGrid(textures, "src_troops_hulk", 3, 2, [
     ["enemy_troop_rpg_hulk", 28],
     ["enemy_troop_gunner_hulk", 28],
     ["enemy_troop_stinger_hulk", 28],
@@ -297,13 +576,29 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     ["enemy_troop_officer_hulk", 28],
     ["enemy_troop_soldier_hulk", 28],
   ]);
-  putHulkGrid(textures, "src_hulks_guns", 3, 2, [
+  putHulkGrid(textures, "src_guns_hulk", 3, 2, [
     ["enemy_lav_gun_hulk", 40],
     ["enemy_sam_gun_hulk", 48],
     ["enemy_ptboat_gun_hulk", 32],
-    ["enemy_battleship_gun_hulk", 48],
+  ]);
+  putHulkGrid(textures, "src_guns_extra_hulk", 3, 3, [
+    ["enemy_battleship_gun_hulk", 52],
+    ["enemy_battleship_gun_aa_hulk", 44],
+    ["enemy_battleship_gun_sam_hulk", 48],
+    ["_", 52],
+    ["_", 52],
+    ["enemy_heli_gun_hulk", 36],
     ["enemy_heli_heavy_gun_hulk", 48],
-    ["enemy_heli_gun_hulk", 32],
+    ["_", 14],
+    ["_", 8],
+  ]);
+  putHulkGrid(textures, "src_tower_guns_hulk", 2, 1, [
+    ["building_tower_aa_hulk", 48],
+    ["building_tower_sam_hulk", 48],
+  ]);
+  putGrid(textures, "src_rotors_hulk", 2, 1, [
+    ["enemy_heli_rotor_hulk", 108],
+    ["enemy_drone_rotor_hulk", 14],
   ]);
 
   for (const d of DOODAD_ART) {
@@ -312,7 +607,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     put(textures, `doodad_${d.key}`, fit(keyDoodad(src(textures, srcKey)), d.size));
   }
 
-  const hulks = sliceGrid(keyImage(src(textures, "src_hulks"), "magenta"), 3, 3);
+  const hulks = sliceGrid(keyImage(src(textures, "src_hulk"), "magenta"), 3, 3);
   const hulkKeys = [
     "enemy_tank_hulk",
     "enemy_heli_hulk",
@@ -380,6 +675,8 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     "building_radar",
     "enemy_troop_soldier",
     "enemy_pickup",
+    "enemy_motorcycle",
+    "enemy_troop_mounted_mg",
     "enemy_truck",
     "enemy_tanker",
     "enemy_lav",
@@ -404,9 +701,14 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     "enemy_lav_gun",
     "enemy_sam_gun",
     "enemy_battleship_gun",
+    "enemy_battleship_gun_aa",
+    "enemy_battleship_gun_sam",
     "enemy_heli_heavy_gun",
     "enemy_ptboat_gun",
     "enemy_heli_gun",
+    "building_tower_aa",
+    "building_tower_sam",
+    "enemy_drone_rotor",
     "tracer_aa",
     "fx_frag_metal",
     "fx_frag_sand",
@@ -487,7 +789,7 @@ function putGrid(
   const cells = sliceGrid(keyPixels(src(textures, srcKey), "magenta"), cols, rows);
   entries.forEach(([key, size], i) => {
     const cell = cells[i];
-    if (!cell) return;
+    if (!cell || !key || key.startsWith("_")) return;
     put(textures, key, fit(cell, size));
   });
 }
@@ -503,7 +805,7 @@ function putHulkGrid(
   const cells = sliceGrid(keyPixels(src(textures, srcKey), "magenta"), cols, rows);
   entries.forEach(([key, size], i) => {
     const cell = cells[i];
-    if (!cell) return;
+    if (!cell || !key || key.startsWith("_")) return;
     put(textures, key, darkenWreck(fit(cell, size)));
   });
 }
@@ -634,6 +936,42 @@ function keyDoodad(img: HTMLImageElement): HTMLCanvasElement {
   }
   g.putImageData(pix, 0, 0);
   return trim(c);
+}
+
+/** Keep the circular dish only — drop any pedestal/yoke hanging below. */
+function clipRadarDish(c: HTMLCanvasElement): HTMLCanvasElement {
+  const g = c.getContext("2d")!;
+  const pix = g.getImageData(0, 0, c.width, c.height);
+  const d = pix.data;
+  const w = c.width;
+  const h = c.height;
+  let minX = w;
+  let minY = h;
+  let maxX = 0;
+  let maxY = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (d[(y * w + x) * 4 + 3]! < 24) continue;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+  }
+  if (maxX <= minX || maxY <= minY) return c;
+  const r = ((maxX - minX) * 0.5) * 0.98;
+  const cx = (minX + maxX) * 0.5;
+  const cy = minY + r;
+  const size = Math.ceil(r * 2 + 4);
+  const out = document.createElement("canvas");
+  out.width = size;
+  out.height = size;
+  const og = out.getContext("2d")!;
+  og.beginPath();
+  og.arc(size / 2, size / 2, r, 0, Math.PI * 2);
+  og.clip();
+  og.drawImage(c, size / 2 - cx, size / 2 - cy);
+  return out;
 }
 
 function keyPixels(img: HTMLImageElement, mode: "magenta" | "studio"): HTMLCanvasElement {
@@ -816,6 +1154,35 @@ function fit(src: HTMLCanvasElement, max: number): HTMLCanvasElement {
   g.imageSmoothingQuality = "high";
   g.drawImage(src, 0, 0, c.width, c.height);
   return c;
+}
+
+function grayShiftTexture(textures: Phaser.Textures.TextureManager, key: string): void {
+  if (!textures.exists(key)) return;
+  const img = textures.get(key).getSourceImage() as CanvasImageSource & { width: number; height: number };
+  put(textures, key, toNavalGray(copyToCanvas(img, img.width, img.height)));
+}
+
+/** Shift warm desert tan toward the cool gunmetal of the naval gun sprites. */
+function toNavalGray(src: HTMLCanvasElement): HTMLCanvasElement {
+  const g = src.getContext("2d")!;
+  const pix = g.getImageData(0, 0, src.width, src.height);
+  const d = pix.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const a = d[i + 3]!;
+    if (a < 8) continue;
+    const r = d[i]!;
+    const gc = d[i + 1]!;
+    const b = d[i + 2]!;
+    const warm = r - b;
+    if (warm < 8 && gc - b < 10) continue;
+    const lum = (r * 0.3 + gc * 0.59 + b * 0.11) / 255;
+    const steel = lum * 0.72;
+    d[i] = Math.round(steel * 255 * 0.9);
+    d[i + 1] = Math.round(steel * 255 * 0.96);
+    d[i + 2] = Math.round(steel * 255 * 1.08);
+  }
+  g.putImageData(pix, 0, 0);
+  return src;
 }
 
 function darkenWreck(src: HTMLCanvasElement, mul = 0.55): HTMLCanvasElement {

@@ -1,4 +1,4 @@
-import { specOf, type FragCat, type TracerStyle, type UnitKind } from "./roster";
+import { specOf, type FragCat, type TracerStyle, type UnitKind, type PartMount } from "./roster";
 import type { CamoKind } from "./camo";
 
 export type { FragCat, UnitKind } from "./roster";
@@ -43,6 +43,12 @@ export interface Unit {
   muzzleTip: number;
   pinId?: number;
   camo?: CamoKind;
+  strike?: number;
+  parts?: PartMount[];
+  missileCd?: number;
+  missileSide?: number;
+  killDx?: number;
+  killDy?: number;
 }
 
 export interface Shot {
@@ -60,11 +66,13 @@ export interface Shot {
   blast: number;
   dmg: number;
   guided?: boolean;
+  homePlayer?: boolean;
   motor?: number;
   cruise?: number;
   loft?: number;
   yaw?: number;
   tracer?: TracerStyle;
+  scale?: number;
   wire?: { x: number; y: number; z: number }[];
   wireSide?: number;
   wireTrim?: number;

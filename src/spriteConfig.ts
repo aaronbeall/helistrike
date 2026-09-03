@@ -482,7 +482,6 @@ function rigMarks(key: string): { mounts: RigMount[]; muzzles: { x: number; y: n
     addMount(mounts, rotorLayout.player, "rotor", "rotor");
   }
   if (k === "enemy_heli") addMount(mounts, rotorLayout.enemy, "rotor", "rotor");
-  if (k === "enemy_tank") addMount(mounts, tankLayout.mountOrigin, "gun", "gun");
   for (const sp of allSpecs()) {
     const tex = sp.texture.replace(/__(woodland|desert|urban|snow)$/, "");
     if (tex === k) {

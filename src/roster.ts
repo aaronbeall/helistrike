@@ -11,12 +11,14 @@ export type UnitKind =
   | "pickup"
   | "truck"
   | "tanker"
+  | "motorcycle"
   | "lav"
   | "sam"
   | "ptboat"
   | "battleship"
   | "rpg"
   | "gunner"
+  | "mounted_mg"
   | "stinger"
   | "mechanic"
   | "officer"
@@ -40,7 +42,7 @@ export type MoveKind =
   | "heli"
   | "drone";
 
-export type TrackKind = "tread" | "tire" | "dual" | "wide";
+export type TrackKind = "tread" | "tire" | "dual" | "wide" | "mono";
 
 export interface DriveSpec {
   maxSpd: number;
@@ -60,6 +62,7 @@ export interface PartMount {
   muzzle?: { x: number; y: number };
   muzzles?: { x: number; y: number }[];
   scale?: number;
+  weapon?: WeaponSpec;
 }
 
 export interface WeaponSpec {
@@ -106,7 +109,8 @@ const gun = (
   tex: string,
   originY = 0.22,
   mount = { x: 0.5, y: 0.48 },
-  hulk?: string
+  hulk?: string,
+  weapon?: WeaponSpec
 ): PartMount => {
   const muzzles = lookupSpriteMuzzles(tex);
   return {
@@ -116,6 +120,7 @@ const gun = (
     mount,
     muzzle: muzzles[0] ?? { x: 0.5, y: 0.08 },
     muzzles: muzzles.length ? muzzles : undefined,
+    weapon,
   };
 };
 
@@ -146,6 +151,70 @@ const small = (over: Partial<WeaponSpec> = {}): WeaponSpec => ({
   ...over,
 });
 
+const WPN_ARTY = shell({ fireCd: 1.35, range: 860, speed: 480, dmg: 16, blast: 22, muzzleLen: 32 });
+const WPN_AA = small({
+  fireCd: 3.1,
+  range: 680,
+  speed: 820,
+  dmg: 1,
+  blast: 3,
+  burst: 28,
+  burstGap: 0.035,
+  tracer: "aa",
+  muzzleLen: 18,
+  jitter: 0.04,
+});
+const WPN_SAM = {
+  fireCd: 2.8,
+  range: 820,
+  speed: 300,
+  dmg: 18,
+  blast: 22,
+  tracer: "shell" as const,
+  shot: "hellfire" as const,
+  jitter: 0.02,
+  muzzleLen: 16,
+};
+
+type GunVar = "arty" | "aa" | "sam";
+
+function pickGunVar(): GunVar {
+  const r = Math.random();
+  if (r < 0.34) return "arty";
+  if (r < 0.67) return "aa";
+  return "sam";
+}
+
+function shipGun(v: GunVar, mount: { x: number; y: number }): PartMount {
+  if (v === "aa") return gun("enemy_battleship_gun_aa", 0.72, mount, undefined, WPN_AA);
+  if (v === "sam") return gun("enemy_battleship_gun_sam", 0.7, mount, undefined, WPN_SAM);
+  return gun("enemy_battleship_gun", 0.8, mount, undefined, WPN_ARTY);
+}
+
+function towerGun(v: GunVar): PartMount {
+  if (v === "aa") return gun("building_tower_aa", 0.78, { x: 0.5, y: 0.5 }, undefined, WPN_AA);
+  if (v === "sam") return gun("building_tower_sam", 0.72, { x: 0.5, y: 0.5 }, undefined, WPN_SAM);
+  return gun("building_tower_gun", 0.8, { x: 0.5, y: 0.5 }, undefined, shell({ fireCd: 0.5, range: 700, speed: 920, dmg: 12, blast: 10, tracer: "aa", muzzleLen: 24 }));
+}
+
+export function rollParts(kind: UnitKind): PartMount[] | undefined {
+  if (kind === "tower") return [towerGun(pickGunVar())];
+  if (kind === "battleship") {
+    const m = SPRITE_MOUNT.enemy_battleship;
+    return [
+      shipGun("arty", { ...m[0]! }),
+      shipGun("aa", { ...m[1]! }),
+      shipGun("sam", { ...m[2]! }),
+      shipGun("arty", { ...m[3]! }),
+    ];
+  }
+  return undefined;
+}
+
+export function gunsOf(u: { kind: UnitKind; parts?: PartMount[] }): PartMount[] {
+  return u.parts ?? SPECS[u.kind].guns;
+}
+
 const SPECS: Record<UnitKind, UnitSpec> = {
   tank: {
     health: 90,
@@ -158,11 +227,11 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     move: "tank",
     throwGuns: true,
     weapon: shell({ fireCd: 2.05, range: 520, muzzleLen: 28 }),
-    guns: [gun("enemy_tank_gun", 0.78, { x: 0.5, y: 0.4 }, "enemy_tank_gun_hulk")],
+    guns: [gun("enemy_tank_gun", 0.78, { ...SPRITE_MOUNT.enemy_tank }, "enemy_tank_gun_hulk")],
     rotors: [],
   },
   soldier: {
-    health: 18,
+    health: 8,
     radius: 10,
     height: 9,
     texture: "enemy_troop_soldier",
@@ -188,13 +257,13 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     move: "heli",
     aerial: true,
     noCrater: true,
-    weapon: shell({ fireCd: 0.85, range: 640, speed: 520, muzzleLen: 18 }),
-    guns: [gun("enemy_heli_gun", 0.72, { x: 0.5, y: 0.62 })],
-    rotors: [{ tex: "enemy_heli_rotor", origin: { x: 0.5, y: 0.5 }, mount: { x: 0.497, y: 0.411 }, scale: 1 }],
+    weapon: shell({ fireCd: 1.4, range: 640, speed: 520, dmg: 3, blast: 8, muzzleLen: 18, burst: 3, burstGap: 0.13 }),
+    guns: [gun("enemy_heli_gun", 0.72, { ...SPRITE_MOUNT.enemy_heli })],
+    rotors: [{ tex: "enemy_heli_rotor", hulk: "enemy_heli_rotor_hulk", origin: { x: 0.5, y: 0.5 }, mount: { x: 0.497, y: 0.411 }, scale: 1 }],
   },
   boat: {
     health: 70,
-    radius: 24,
+    radius: 28,
     height: 16,
     texture: "enemy_boat",
     hulk: "enemy_boat_hulk",
@@ -205,7 +274,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     noCrater: true,
     throwGuns: true,
     weapon: shell({ fireCd: 1.15, range: 480, muzzleLen: 20 }),
-    guns: [gun("enemy_boat_gun", 0.74, { x: 0.62, y: 0.5 })],
+    guns: [gun("enemy_boat_gun", 0.74, { ...SPRITE_MOUNT.enemy_boat })],
     rotors: [],
   },
   tower: {
@@ -251,7 +320,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     spawnYaw: (45 * Math.PI) / 180,
     guns: [],
     rotors: [],
-    dish: { tex: "building_radar_disk", origin: { x: 0.5, y: 0.55 }, mount: { ...SPRITE_MOUNT.building_radar }, scale: 1 },
+    dish: { tex: "building_radar_disk", origin: { x: 0.5, y: 0.5 }, mount: { ...SPRITE_MOUNT.building_radar }, scale: 1 },
   },
   pickup: {
     health: 42,
@@ -283,6 +352,18 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     height: 16,
     texture: "enemy_tanker",
     hulk: "enemy_tanker_hulk",
+    frag: "mech",
+    rotOff: Math.PI / 2,
+    move: "vehicle",
+    guns: [],
+    rotors: [],
+  },
+  motorcycle: {
+    health: 22,
+    radius: 12,
+    height: 10,
+    texture: "enemy_motorcycle",
+    hulk: "enemy_motorcycle_hulk",
     frag: "mech",
     rotOff: Math.PI / 2,
     move: "vehicle",
@@ -328,7 +409,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
   },
   ptboat: {
     health: 48,
-    radius: 18,
+    radius: 14,
     height: 12,
     texture: "enemy_ptboat",
     hulk: "enemy_ptboat_hulk",
@@ -338,7 +419,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     water: true,
     noCrater: true,
     throwGuns: true,
-    weapon: shell({ fireCd: 0.7, range: 420, speed: 560, dmg: 5, blast: 10, muzzleLen: 16 }),
+    weapon: small({ fireCd: 0.85, range: 420, speed: 560, dmg: 3, blast: 6, muzzleLen: 16, burst: 3, burstGap: 0.09 }),
     guns: [gun("enemy_ptboat_gun", 0.74, { ...SPRITE_MOUNT.enemy_ptboat })],
     rotors: [],
   },
@@ -350,16 +431,24 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "enemy_battleship_hulk",
     frag: "mech",
     rotOff: Math.PI / 2,
-    move: "boat",
+    move: "static",
     water: true,
     noCrater: true,
     throwGuns: true,
-    weapon: shell({ fireCd: 1.35, range: 860, speed: 480, dmg: 16, blast: 22, muzzleLen: 32 }),
-    guns: SPRITE_MOUNT.enemy_battleship.map((m) => gun("enemy_battleship_gun", 0.8, { ...m })),
+    weapon: WPN_ARTY,
+    guns: (() => {
+      const m = SPRITE_MOUNT.enemy_battleship;
+      return [
+        shipGun("arty", { ...m[0]! }),
+        shipGun("aa", { ...m[1]! }),
+        shipGun("sam", { ...m[2]! }),
+        shipGun("arty", { ...m[3]! }),
+      ];
+    })(),
     rotors: [],
   },
   rpg: {
-    health: 20,
+    health: 9,
     radius: 10,
     height: 9,
     texture: "enemy_troop_rpg",
@@ -384,7 +473,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     rotors: [],
   },
   gunner: {
-    health: 22,
+    health: 10,
     radius: 11,
     height: 9,
     texture: "enemy_troop_gunner",
@@ -398,8 +487,23 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     guns: [],
     rotors: [],
   },
+  mounted_mg: {
+    health: 12,
+    radius: 12,
+    height: 12,
+    texture: "enemy_troop_mounted_mg",
+    hulk: "enemy_troop_mounted_mg_hulk",
+    frag: "organic",
+    rotOff: Math.PI / 2,
+    move: "static",
+    organic: true,
+    fixedAim: true,
+    weapon: small({ fireCd: 0.7, range: 420, speed: 520, dmg: 2, blast: 6, burst: 8, burstGap: 0.05, muzzleLen: 16, tracer: "aa" }),
+    guns: [],
+    rotors: [],
+  },
   stinger: {
-    health: 20,
+    health: 9,
     radius: 10,
     height: 9,
     texture: "enemy_troop_stinger",
@@ -417,14 +521,14 @@ const SPECS: Record<UnitKind, UnitSpec> = {
       blast: 18,
       tracer: "shell",
       shot: "hellfire",
-      jitter: 0.03,
+      jitter: 0.02,
       muzzleLen: 12,
     },
     guns: [],
     rotors: [],
   },
   mechanic: {
-    health: 16,
+    health: 7,
     radius: 10,
     height: 9,
     texture: "enemy_troop_mechanic",
@@ -437,7 +541,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     rotors: [],
   },
   officer: {
-    health: 28,
+    health: 11,
     radius: 10,
     height: 9,
     texture: "enemy_troop_officer",
@@ -508,8 +612,8 @@ const SPECS: Record<UnitKind, UnitSpec> = {
   },
   drone: {
     health: 22,
-    radius: 12,
-    height: 8,
+    radius: 6,
+    height: 6,
     flyZ: 36,
     texture: "enemy_drone",
     hulk: "enemy_drone_hulk",
@@ -519,7 +623,13 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     aerial: true,
     noCrater: true,
     guns: [],
-    rotors: [],
+    rotors: SPRITE_MOUNT.enemy_drone.map((m) => ({
+      tex: "enemy_drone_rotor",
+      hulk: "enemy_drone_rotor_hulk",
+      origin: { x: 0.5, y: 0.5 },
+      mount: { ...m },
+      scale: 1,
+    })),
   },
   heli_small: {
     health: 48,
@@ -534,9 +644,9 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     aerial: true,
     noCrater: true,
     fixedAim: true,
-    weapon: shell({ fireCd: 0.7, range: 520, speed: 560, dmg: 5, blast: 10, tracer: "small", muzzleLen: 14 }),
+    weapon: shell({ fireCd: 1.15, range: 480, speed: 560, dmg: 5, blast: 10, tracer: "small", muzzleLen: 14, burst: 3, burstGap: 0.12 }),
     guns: [],
-    rotors: [{ tex: "enemy_heli_rotor", origin: { x: 0.5, y: 0.5 }, mount: { x: 0.5, y: 0.42 }, scale: 0.62 }],
+    rotors: [{ tex: "enemy_heli_rotor", hulk: "enemy_heli_rotor_hulk", origin: { x: 0.5, y: 0.5 }, mount: { x: 0.5, y: 0.42 }, scale: 0.62 }],
   },
   heli_heavy: {
     health: 160,
@@ -555,6 +665,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     guns: SPRITE_MOUNT.enemy_heli_heavy_gun.map((m) => gun("enemy_heli_heavy_gun", 0.78, { ...m })),
     rotors: SPRITE_MOUNT.enemy_heli_heavy_rotor.map((m) => ({
       tex: "enemy_heli_rotor",
+      hulk: "enemy_heli_rotor_hulk",
       origin: { x: 0.5, y: 0.5 },
       mount: { ...m },
       scale: 1.25,
@@ -573,10 +684,32 @@ export function spawnAngle(kind: UnitKind): number {
   return -sp.rotOff + (Math.random() * 2 - 1) * sp.spawnYaw;
 }
 
-const LOOKOUT_TROOPS: UnitKind[] = ["soldier", "rpg", "gunner", "stinger"];
+const TROOP_WEIGHTS: [UnitKind, number][] = [
+  ["soldier", 40],
+  ["rpg", 22],
+  ["gunner", 14],
+  ["mechanic", 10],
+  ["stinger", 7],
+  ["mounted_mg", 4],
+  ["officer", 2],
+];
+
+export function pickTroop(rand = Math.random): UnitKind {
+  const r = rand() * TROOP_WEIGHTS.reduce((s, [, w]) => s + w, 0);
+  let acc = 0;
+  for (const [kind, w] of TROOP_WEIGHTS) {
+    acc += w;
+    if (r < acc) return kind;
+  }
+  return "soldier";
+}
 
 export function pickLookoutTroop(): UnitKind {
-  return LOOKOUT_TROOPS[(Math.random() * LOOKOUT_TROOPS.length) | 0]!;
+  return pickTroop();
+}
+
+export function pickPickupTroop(): UnitKind {
+  return pickTroop();
 }
 
 export function allSpecs(): UnitSpec[] {
@@ -623,12 +756,14 @@ const KIND_LABEL: Record<UnitKind, string> = {
   pickup: "PICKUP",
   truck: "TRUCK",
   tanker: "TANKER",
+  motorcycle: "MOTORCYCLE",
   lav: "LAV",
   sam: "SAM",
   ptboat: "PT BOAT",
   battleship: "BATTLESHIP",
   rpg: "RPG",
   gunner: "GUNNER",
+  mounted_mg: "MOUNTED MG",
   stinger: "STINGER",
   mechanic: "MECHANIC",
   officer: "OFFICER",
@@ -655,6 +790,8 @@ export function driveOf(kind: UnitKind): DriveSpec {
       return { maxSpd: 24, accel: 12, brake: 18, turn: 0.55, track: "dual", trackGap: 16, trackScale: 1 };
     case "pickup":
       return { maxSpd: 92, accel: 48, brake: 40, turn: 1.55, track: "tire", trackGap: 13, trackScale: 0.78 };
+    case "motorcycle":
+      return { maxSpd: 138, accel: 72, brake: 48, turn: 2.35, track: "mono", trackGap: 16, trackScale: 0.7 };
     case "truck":
       return { maxSpd: 68, accel: 28, brake: 26, turn: 0.85, track: "dual", trackGap: 15, trackScale: 0.95 };
     case "tanker":
@@ -670,9 +807,20 @@ export const ROSTER_TEX: string[] = [
       s.texture,
       s.hulk,
       ...s.guns.flatMap((g) => [g.tex, g.hulk ?? ""]),
-      ...s.rotors.map((r) => r.tex),
+      ...s.rotors.flatMap((r) => [r.tex, r.hulk ?? ""]),
       s.dish?.tex ?? "",
     ])
   ),
   "tracer_aa",
+  "enemy_battleship_gun_aa",
+  "enemy_battleship_gun_sam",
+  "enemy_battleship_gun_aa_hulk",
+  "enemy_battleship_gun_sam_hulk",
+  "building_tower_aa",
+  "building_tower_sam",
+  "building_tower_aa_hulk",
+  "building_tower_sam_hulk",
+  "enemy_drone_rotor",
+  "enemy_drone_rotor_hulk",
+  "enemy_heli_rotor_hulk",
 ].filter(Boolean);

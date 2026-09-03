@@ -74,6 +74,7 @@ export function bakeAll(textures: Phaser.Textures.TextureManager): void {
   add(textures, "track_tire", drawTrack("tire"));
   add(textures, "track_dual", drawTrack("dual"));
   add(textures, "track_wide", drawTrack("wide"));
+  add(textures, "track_mono", drawTrack("mono"));
   add(textures, "fx_flame", drawFlame());
   add(textures, "fx_blast_0", drawBlast(0));
   add(textures, "fx_blast_1", drawBlast(1));
@@ -180,7 +181,7 @@ function drawGun(): HTMLCanvasElement {
   return c;
 }
 
-function drawTrack(kind: "tread" | "tire" | "dual" | "wide" = "tread"): HTMLCanvasElement {
+function drawTrack(kind: "tread" | "tire" | "dual" | "wide" | "mono" = "tread"): HTMLCanvasElement {
   const c = canvas(32, 22);
   const g = ctxOf(c);
   const dirt = (a: number) => `rgba(32,26,16,${a})`;
@@ -204,6 +205,13 @@ function drawTrack(kind: "tread" | "tire" | "dual" | "wide" = "tread"): HTMLCanv
       g.fillRect(5, y, 3.2, 1.1);
       g.fillRect(24, y, 3.2, 1.1);
     }
+    return c;
+  }
+  if (kind === "mono") {
+    g.fillStyle = dirt(0.48);
+    g.fillRect(14, 2, 4.2, 18);
+    g.fillStyle = dirt(0.24);
+    for (let y = 4; y < 19; y += 5) g.fillRect(14, y, 4.2, 1.15);
     return c;
   }
   if (kind === "dual") {
@@ -677,7 +685,7 @@ function drawTracer(style: "chain" | "shell" | "small" | "aa"): HTMLCanvasElemen
     chain: { w: 64, h: 10, core: [255, 250, 220], mid: [255, 210, 80], rim: [255, 140, 32] },
     shell: { w: 72, h: 13, core: [255, 252, 236], mid: [255, 188, 64], rim: [255, 110, 24] },
     small: { w: 36, h: 7, core: [255, 236, 180], mid: [220, 160, 56], rim: [168, 96, 28] },
-    aa: { w: 110, h: 6, core: [255, 255, 250], mid: [200, 230, 255], rim: [80, 160, 255] },
+    aa: { w: 110, h: 6, core: [255, 250, 210], mid: [255, 170, 48], rim: [255, 90, 20] },
   }[style];
   const { w, h } = cfg;
   const c = canvas(w, h);
@@ -1303,22 +1311,147 @@ function drawHeliHeavy(): HTMLCanvasElement {
 }
 
 function drawMinigun(): HTMLCanvasElement {
-  const c = canvas(22, 40);
+  return drawHeliChinGun(true);
+}
+
+function drawHeliChinGun(heavy = false): HTMLCanvasElement {
+  const c = canvas(heavy ? 26 : 22, heavy ? 52 : 46);
   const g = ctxOf(c);
-  g.translate(11, 12);
-  g.fillStyle = "#3a3c34";
+  g.translate(c.width / 2, heavy ? 12 : 10);
+  g.fillStyle = "#2e322e";
   g.beginPath();
-  g.arc(0, 0, 6, 0, Math.PI * 2);
+  g.ellipse(0, 0, heavy ? 7 : 5.5, heavy ? 6 : 4.5, 0, 0, Math.PI * 2);
   g.fill();
-  g.fillStyle = "#2a2e28";
-  g.fillRect(-2.2, 2, 1.4, 22);
-  g.fillRect(-0.6, 2, 1.4, 22);
-  g.fillRect(1, 2, 1.4, 22);
+  g.fillStyle = "#4a4e48";
+  roundRect(g, heavy ? -3 : -2.2, 2, heavy ? 6 : 4.4, heavy ? 34 : 30, 1.6);
+  g.fill();
+  if (heavy) {
+    g.fillStyle = "#3a3e38";
+    roundRect(g, -5.2, 6, 3.2, 26, 1);
+    g.fill();
+    roundRect(g, 2, 6, 3.2, 26, 1);
+    g.fill();
+  }
+  g.fillStyle = "#1a1c18";
+  g.fillRect(heavy ? -2 : -1.4, heavy ? 34 : 30, heavy ? 4 : 2.8, 5);
   return c;
 }
 
 function drawHeliGunEnemy(): HTMLCanvasElement {
-  return drawGunBarrel(22, 5, "#3a3228");
+  return drawHeliChinGun(false);
+}
+
+function drawShipArty(): HTMLCanvasElement {
+  const c = canvas(36, 52);
+  const g = ctxOf(c);
+  g.translate(18, 22);
+  g.fillStyle = "#3a464c";
+  g.beginPath();
+  g.ellipse(0, 2, 14, 11, 0, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = "#2a3438";
+  g.beginPath();
+  g.ellipse(0, 2, 9, 7, 0, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = "#4a585e";
+  g.fillRect(-8.5, -18, 5.2, 28);
+  g.fillRect(3.3, -18, 5.2, 28);
+  g.fillStyle = "#1a2226";
+  g.fillRect(-7.6, -22, 3.4, 5);
+  g.fillRect(4.2, -22, 3.4, 5);
+  return c;
+}
+
+function drawShipGatling(): HTMLCanvasElement {
+  const c = canvas(28, 44);
+  const g = ctxOf(c);
+  g.translate(14, 16);
+  g.fillStyle = "#3a4448";
+  g.beginPath();
+  g.arc(0, 2, 8, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = "#2a3236";
+  for (const x of [-4.2, -1.4, 1.4, 4.2]) g.fillRect(x, -16, 2.2, 24);
+  g.fillStyle = "#5a6468";
+  g.fillRect(-6, 6, 12, 5);
+  return c;
+}
+
+function drawShipSamPod(): HTMLCanvasElement {
+  const c = canvas(30, 40);
+  const g = ctxOf(c);
+  g.translate(15, 16);
+  g.fillStyle = "#3a4448";
+  roundRect(g, -11, -8, 22, 20, 2);
+  g.fill();
+  g.fillStyle = "#2a3236";
+  roundRect(g, -9, -14, 18, 10, 1.5);
+  g.fill();
+  g.fillStyle = "#1a2226";
+  for (let i = 0; i < 4; i++) {
+    g.beginPath();
+    g.arc(-5.4 + (i % 2) * 10.8, -10 + ((i / 2) | 0) * 6, 2.4, 0, Math.PI * 2);
+    g.fill();
+  }
+  g.fillStyle = "#5a6468";
+  g.fillRect(-8, 10, 16, 4);
+  return c;
+}
+
+function drawTowerAa(): HTMLCanvasElement {
+  const c = canvas(24, 46);
+  const g = ctxOf(c);
+  g.translate(12, 14);
+  g.fillStyle = "#4a5248";
+  g.beginPath();
+  g.arc(0, 0, 7, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = "#2a2e28";
+  g.fillRect(-5, -18, 3.2, 26);
+  g.fillRect(1.8, -18, 3.2, 26);
+  g.fillStyle = "#1a1c18";
+  g.fillRect(-4.4, -22, 2, 5);
+  g.fillRect(2.4, -22, 2, 5);
+  return c;
+}
+
+function drawTowerSam(): HTMLCanvasElement {
+  const c = canvas(28, 42);
+  const g = ctxOf(c);
+  g.translate(14, 18);
+  g.fillStyle = "#4a5248";
+  roundRect(g, -10, -6, 20, 16, 2);
+  g.fill();
+  g.fillStyle = "#2e3228";
+  g.save();
+  g.rotate(-0.12);
+  roundRect(g, -7, -16, 6, 18, 1);
+  g.fill();
+  roundRect(g, 1, -16, 6, 18, 1);
+  g.fill();
+  g.restore();
+  g.fillStyle = "#1a1c18";
+  g.beginPath();
+  g.arc(-4, -16, 2.2, 0, Math.PI * 2);
+  g.fill();
+  g.beginPath();
+  g.arc(4, -16, 2.2, 0, Math.PI * 2);
+  g.fill();
+  return c;
+}
+
+function drawDroneRotor(): HTMLCanvasElement {
+  const c = canvas(5, 5);
+  const g = ctxOf(c);
+  g.translate(2.5, 2.5);
+  g.fillStyle = "#2a2c28";
+  g.fillRect(-2.4, -0.45, 4.8, 0.9);
+  g.fillRect(-0.45, -2.4, 0.9, 4.8);
+  g.fillStyle = "#4a4c46";
+  g.beginPath();
+  g.arc(0, 0, 0.9, 0, Math.PI * 2);
+  g.fill();
+  return c;
 }
 
 export function bakeRosterArt(textures: Phaser.Textures.TextureManager): void {
@@ -1331,9 +1464,13 @@ export function bakeRosterArt(textures: Phaser.Textures.TextureManager): void {
     ["building_tower", drawTower()],
     ["building_radar", drawRadar()],
     ["building_tower_gun", drawGunBarrel(26, 4.5)],
+    ["building_tower_aa", drawTowerAa()],
+    ["building_tower_sam", drawTowerSam()],
     ["enemy_boat_gun", drawGunBarrel(22, 5)],
     ["enemy_ptboat_gun", drawGunBarrel(18, 4)],
-    ["enemy_battleship_gun", drawGunBarrel(30, 6, "#4a5248")],
+    ["enemy_battleship_gun", drawShipArty()],
+    ["enemy_battleship_gun_aa", drawShipGatling()],
+    ["enemy_battleship_gun_sam", drawShipSamPod()],
     ["enemy_lav_gun", drawGunBarrel(20, 4.2)],
     ["enemy_sam_gun", drawSamGun()],
     ["building_radar_disk", drawRadarDisk()],
@@ -1354,6 +1491,7 @@ export function bakeRosterArt(textures: Phaser.Textures.TextureManager): void {
     ["building_fob", drawFob()],
     ["building_lookout", drawLookout()],
     ["enemy_drone", drawDrone()],
+    ["enemy_drone_rotor", drawDroneRotor()],
     ["enemy_heli_small", drawHeliSmall()],
     ["enemy_heli_heavy", drawHeliHeavy()],
     ["enemy_heli_heavy_gun", drawMinigun()],
@@ -1362,8 +1500,15 @@ export function bakeRosterArt(textures: Phaser.Textures.TextureManager): void {
   ];
   for (const [key, c] of live) fill(key, c);
   for (const [key, c] of live) {
-    if (key === "tracer_aa" || key.endsWith("_rotor") || key === "building_radar_disk") continue;
-    fill(`${key}_hulk`, scorch(c));
+    if (key === "tracer_aa" || key === "building_radar_disk") continue;
+    const hulk = `${key}_hulk`;
+    if (!textures.exists(hulk)) add(textures, hulk, scorch(c));
+  }
+  if (textures.exists("enemy_heli_rotor") && !textures.exists("enemy_heli_rotor_hulk")) {
+    const img = textures.get("enemy_heli_rotor").getSourceImage() as CanvasImageSource;
+    const rc = canvas((img as HTMLImageElement).width || 64, (img as HTMLImageElement).height || 64);
+    rc.getContext("2d")!.drawImage(img, 0, 0);
+    add(textures, "enemy_heli_rotor_hulk", scorch(rc));
   }
   const shadowKeys = [
     "enemy_boat",
@@ -1397,6 +1542,11 @@ export function bakeRosterArt(textures: Phaser.Textures.TextureManager): void {
     "enemy_heli_heavy",
     "enemy_heli_heavy_gun",
     "enemy_heli_gun",
+    "enemy_battleship_gun_aa",
+    "enemy_battleship_gun_sam",
+    "building_tower_aa",
+    "building_tower_sam",
+    "enemy_drone_rotor",
     "tracer_aa",
     "shell",
     "tracer_sm",

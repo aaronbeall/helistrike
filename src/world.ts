@@ -1,6 +1,6 @@
 import { fbm } from "./noise";
 import { Rng } from "./rng";
-import type { UnitKind } from "./roster";
+import { pickTroop, type UnitKind } from "./roster";
 
 export const WORLD = 5600;
 export const TEX = 1800;
@@ -1293,32 +1293,27 @@ function pickGarrison(rng: Rng): UnitKind {
   if (r < 0.2) return "lav";
   if (r < 0.26) return "sam";
   if (r < 0.34) return "pickup";
-  if (r < 0.4) return "truck";
-  if (r < 0.44) return "tanker";
-  if (r < 0.5) return "tower";
-  if (r < 0.54) return "lookout";
-  if (r < 0.62) return "rpg";
-  if (r < 0.7) return "gunner";
-  if (r < 0.76) return "stinger";
-  if (r < 0.82) return "mechanic";
-  if (r < 0.86) return "officer";
-  return "soldier";
+  if (r < 0.4) return "motorcycle";
+  if (r < 0.46) return "truck";
+  if (r < 0.5) return "tanker";
+  if (r < 0.54) return "tower";
+  if (r < 0.58) return "lookout";
+  return pickTroop(() => rng.next());
 }
 
 function pickPatrol(rng: Rng): UnitKind {
   const r = rng.next();
-  if (r < 0.18) return "tank";
-  if (r < 0.26) return "lav";
-  if (r < 0.34) return "pickup";
-  if (r < 0.4) return "truck";
-  if (r < 0.46) return "tanker";
-  if (r < 0.52) return pickAir(rng);
-  if (r < 0.58) return "rpg";
-  if (r < 0.64) return "gunner";
-  if (r < 0.7) return "stinger";
-  if (r < 0.76) return "tent";
-  if (r < 0.8) return "barn";
-  return "soldier";
+  if (r < 0.16) return "tank";
+  if (r < 0.24) return "lav";
+  if (r < 0.32) return "pickup";
+  if (r < 0.4) return "motorcycle";
+  if (r < 0.46) return "truck";
+  if (r < 0.5) return "tanker";
+  if (r < 0.56) return pickAir(rng);
+  if (r < 0.8) return pickTroop(() => rng.next());
+  if (r < 0.86) return "tent";
+  if (r < 0.9) return "barn";
+  return pickTroop(() => rng.next());
 }
 
 function pickAir(rng: Rng): UnitKind {
