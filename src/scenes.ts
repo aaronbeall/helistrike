@@ -335,6 +335,12 @@ export class MissionScene extends Phaser.Scene {
   playerCrashStarted = false;
   playerCrashLanded = false;
   playerCrashEndT = 0;
+  /** Camera post-FX (toggle with F). */
+  fxBloom?: Phaser.FX.Bloom;
+  fxBarrel?: Phaser.FX.Barrel;
+  fxOn = true;
+  fxBarrelPulse = 0;
+  fxHud!: Phaser.GameObjects.Text;
   hud!: Phaser.GameObjects.Text;
   hvHud!: Phaser.GameObjects.Text;
   hvRows: Phaser.GameObjects.Text[] = [];
@@ -448,6 +454,8 @@ export class MissionScene extends Phaser.Scene {
     this.towLookY = 0;
     this.playLastFrame = false;
     this.debugHit = false;
+    this.fxOn = true;
+    this.fxBarrelPulse = 0;
     this.showHeightMap = false;
     this.debugOpen = false;
     this.debugSpawnOpen = false;
@@ -485,6 +493,7 @@ export class MissionScene extends Phaser.Scene {
     this.physics.world.setBounds(0, 0, WORLD, WORLD);
     this.cameras.main.setBounds(0, 0, WORLD, WORLD);
     this.cameras.main.setBackgroundColor("#2a2418");
+    this.setupTestPostFx();
 
     this.ground = this.add.image(WORLD / 2, WORLD / 2, "terrain");
     this.ground.setDisplaySize(WORLD, WORLD).setDepth(Layer.TERRAIN);
@@ -897,6 +906,7 @@ export class MissionScene extends Phaser.Scene {
     this.spriteCfg = new SpriteConfigTool(this, (key) => this.spriteOrigin(key));
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.F9).on("down", () => this.spriteCfg.toggle());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.BACKTICK).on("down", () => this.spriteCfg.toggle());
+    this.input.keyboard!.addKey("F").on("down", () => this.toggleTestFx());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.OPEN_BRACKET).on("down", () => {
       if (this.debugSpawnOpen) this.nudgeDebugSpawn(-1);
       else if (this.spriteCfg?.open) this.spriteCfg.cycle(-1);
@@ -942,6 +952,16 @@ export class MissionScene extends Phaser.Scene {
       })
       .setScrollFactor(0)
       .setDepth(Layer.HUD);
+    this.fxHud = this.add
+      .text(16, this.scale.height - 18, "", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "12px",
+        color: "#8a8470",
+      })
+      .setOrigin(0, 1)
+      .setScrollFactor(0)
+      .setDepth(Layer.HUD + 5);
+    this.syncTestFxHud();
     this.hvHud = this.add
       .text(this.scale.width - 16, 12, "", {
         fontFamily: "Share Tech Mono, monospace",
@@ -1285,6 +1305,7 @@ export class MissionScene extends Phaser.Scene {
       this.cameras.main.shake(80, this.shake * 0.002);
       this.shake *= 0.85;
     }
+    this.tickTestPostFx(wallDt);
 
     const hvLeft = this.world.hv.filter((h) =>
       this.units.some((u) => u.hv === h.id && !u.dead)
@@ -2881,6 +2902,12 @@ export class MissionScene extends Phaser.Scene {
     const building = !!sp.building;
     const boom = Phaser.Math.Clamp((radius(u.kind) - 6) / 86, 0.16, 1);
     const blast = Math.max(42, radius(u.kind) * 2.4) * (building ? 1.4 : 1);
+    const near = Math.hypot(u.x - this.heli.x, u.y - this.heli.y);
+    if (building) {
+      const killPulse =
+        Phaser.Math.Clamp(1.2 - near / 1100, 0.18, 0.62) * Phaser.Math.Linear(0.55, 1.15, boom);
+      this.pulseTestBarrel(killPulse);
+    }
     this.heFireBurst(u.x, u.y, hz, 0, 0, 1, blast, !!sp.organic, building ? 2.25 : 1, boom);
     if (building) this.emitDustShock(u.x, u.y, 1);
     this.smoke.setDepth(worldDepth(u.z, 0.2));
@@ -5174,6 +5201,57 @@ export class MissionScene extends Phaser.Scene {
     if (!this.debugOpen) this.debugSpawnOpen = false;
     this.debugRoot.setVisible(this.debugOpen);
     if (this.debugOpen) this.syncDebugMenu();
+  }
+
+  setupTestPostFx(): void {
+    const cam = this.cameras.main;
+    this.fxBloom = cam.postFX.addBloom(0xffe6b0, 1.1, 1.1, 1.0, 0.85, 3);
+    this.fxBarrel = cam.postFX.addBarrel(1);
+    this.applyTestFxActive();
+  }
+
+  toggleTestFx(): void {
+    this.fxOn = !this.fxOn;
+    if (!this.fxOn) {
+      this.fxBarrelPulse = 0;
+      if (this.fxBarrel) this.fxBarrel.amount = 1;
+    }
+    this.applyTestFxActive();
+    this.syncTestFxHud();
+  }
+
+  applyTestFxActive(): void {
+    // setActive alone is unreliable on some builds — also zero strength / identity barrel.
+    if (this.fxBloom) {
+      this.fxBloom.setActive(this.fxOn);
+      this.fxBloom.strength = this.fxOn ? 0.85 : 0;
+      this.fxBloom.blurStrength = this.fxOn ? 1.0 : 0;
+    }
+    if (this.fxBarrel) {
+      this.fxBarrel.setActive(this.fxOn);
+      if (!this.fxOn) this.fxBarrel.amount = 1;
+    }
+  }
+
+  pulseTestBarrel(amount: number): void {
+    if (!this.fxBarrel || !this.fxOn) return;
+    this.fxBarrelPulse = Math.max(this.fxBarrelPulse, Phaser.Math.Clamp(amount, 0, 0.7));
+  }
+
+  tickTestPostFx(dt: number): void {
+    if (!this.fxOn || !this.fxBarrel) return;
+    if (this.fxBarrelPulse > 0.002) {
+      this.fxBarrel.amount = 1 + this.fxBarrelPulse;
+      this.fxBarrelPulse *= Math.pow(0.04, dt);
+    } else {
+      this.fxBarrel.amount = 1;
+      this.fxBarrelPulse = 0;
+    }
+  }
+
+  syncTestFxHud(): void {
+    if (!this.fxHud) return;
+    this.fxHud.setText(`FX  F  ${this.fxOn ? "ON" : "off"}`);
   }
 
   setupDebugMenu(): void {
