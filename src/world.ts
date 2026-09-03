@@ -1,5 +1,6 @@
 import { fbm } from "./noise";
 import { Rng } from "./rng";
+import type { UnitKind } from "./roster";
 
 export const WORLD = 5600;
 export const TEX = 1800;
@@ -8,7 +9,7 @@ export const WRECK_TEX = 4096;
 
 export type Biome = "water" | "river" | "sand" | "grass" | "forest" | "rock" | "peak";
 
-export type HvKind = "bunker" | "radar" | "tower";
+export type HvKind = "bunker" | "radar" | "tower" | "fob" | "lookout" | "officer";
 
 export interface HvSpec {
   id: string;
@@ -19,14 +20,7 @@ export interface HvSpec {
 }
 
 export interface Spawn {
-  kind:
-    | "tank"
-    | "soldier"
-    | "heli"
-    | "boat"
-    | "tower"
-    | "bunker"
-    | "radar";
+  kind: UnitKind;
   x: number;
   y: number;
   hv?: string;
@@ -45,6 +39,10 @@ export type DecorKind =
   | "reed"
   | "dead"
   | "snowrock";
+
+export function doodadTex(kind: DecorKind): string {
+  return `doodad_${kind}`;
+}
 
 export interface Decor {
   kind: DecorKind;
@@ -1208,13 +1206,22 @@ function placeForces(
 ): { hv: HvSpec[]; spawns: Spawn[] } {
   const hv: HvSpec[] = [];
   const spawns: Spawn[] = [];
-  const names = [
+  const names: [HvKind, string][] = [
     ["bunker", "Command Bunker"],
     ["radar", "Radar Site"],
     ["tower", "AA Battery"],
+    ["fob", "Forward Base"],
+    ["lookout", "Lookout Post"],
+    ["officer", "Field Officer"],
     ["bunker", "Ammo Dump"],
     ["radar", "Forward HQ"],
-  ] as const;
+  ];
+  for (let i = names.length - 1; i > 0; i--) {
+    const j = rng.int(0, i);
+    const tmp = names[i]!;
+    names[i] = names[j]!;
+    names[j] = tmp;
+  }
 
   const used: { x: number; y: number }[] = [{ x: spawnX, y: spawnY }];
   const count = 4;
@@ -1246,22 +1253,25 @@ function placeForces(
       const gx = x + Math.cos(a) * d;
       const gy = y + Math.sin(a) * d;
       if (isWaterAt(biome, gx, gy)) continue;
+      spawns.push({ kind: pickGarrison(rng), x: gx, y: gy });
+    }
+    if (rng.chance(0.55)) {
       spawns.push({
-        kind: rng.chance(0.35) ? "tank" : rng.chance(0.2) ? "tower" : "soldier",
-        x: gx,
-        y: gy,
+        kind: rng.chance(0.5) ? "tent" : "barn",
+        x: x + rng.range(-90, 90),
+        y: y + rng.range(-90, 90),
       });
     }
     if (rng.chance(0.7)) {
       spawns.push({
-        kind: "heli",
+        kind: pickAir(rng),
         x: x + rng.range(-200, 200),
         y: y + rng.range(-200, 200),
       });
     }
   }
 
-  for (let i = 0; i < 18; i++) {
+  for (let i = 0; i < 22; i++) {
     const tx = rng.int(60, TEX - 61);
     const ty = rng.int(60, TEX - 61);
     const b = biome[ty * TEX + tx]!;
@@ -1269,16 +1279,61 @@ function placeForces(
     const y = (ty + 0.5) * SCALE;
     if (Math.hypot(x - spawnX, y - spawnY) < 400) continue;
     if (b === BIOME_ID.water || b === BIOME_ID.river) {
-      spawns.push({ kind: "boat", x, y });
+      spawns.push({ kind: pickWater(rng), x, y });
     } else if (b !== BIOME_ID.peak) {
-      spawns.push({
-        kind: rng.chance(0.4) ? "tank" : rng.chance(0.15) ? "heli" : "soldier",
-        x,
-        y,
-      });
+      spawns.push({ kind: pickPatrol(rng), x, y });
     }
   }
   return { hv, spawns };
+}
+
+function pickGarrison(rng: Rng): UnitKind {
+  const r = rng.next();
+  if (r < 0.12) return "tank";
+  if (r < 0.2) return "lav";
+  if (r < 0.26) return "sam";
+  if (r < 0.34) return "pickup";
+  if (r < 0.4) return "truck";
+  if (r < 0.44) return "tanker";
+  if (r < 0.5) return "tower";
+  if (r < 0.54) return "lookout";
+  if (r < 0.62) return "rpg";
+  if (r < 0.7) return "gunner";
+  if (r < 0.76) return "stinger";
+  if (r < 0.82) return "mechanic";
+  if (r < 0.86) return "officer";
+  return "soldier";
+}
+
+function pickPatrol(rng: Rng): UnitKind {
+  const r = rng.next();
+  if (r < 0.18) return "tank";
+  if (r < 0.26) return "lav";
+  if (r < 0.34) return "pickup";
+  if (r < 0.4) return "truck";
+  if (r < 0.46) return "tanker";
+  if (r < 0.52) return pickAir(rng);
+  if (r < 0.58) return "rpg";
+  if (r < 0.64) return "gunner";
+  if (r < 0.7) return "stinger";
+  if (r < 0.76) return "tent";
+  if (r < 0.8) return "barn";
+  return "soldier";
+}
+
+function pickAir(rng: Rng): UnitKind {
+  const r = rng.next();
+  if (r < 0.28) return "drone";
+  if (r < 0.5) return "heli_small";
+  if (r < 0.68) return "heli_heavy";
+  return "heli";
+}
+
+function pickWater(rng: Rng): UnitKind {
+  const r = rng.next();
+  if (r < 0.18) return "battleship";
+  if (r < 0.55) return "ptboat";
+  return "boat";
 }
 
 function isWaterAt(biome: Uint8Array, x: number, y: number): boolean {

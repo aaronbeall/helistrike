@@ -1,5 +1,6 @@
 import Phaser from "phaser";
-import { bakeAll } from "./bake";
+import { bakeAll, bakeRosterArt } from "./bake";
+import { bakeCamo, camoForBiome, resolveSkin } from "./camo";
 import {
   fragKeys,
   heightOf,
@@ -19,9 +20,16 @@ import {
 import { Layer, ZOff, Z_GRAVITY, worldDepth } from "./depth";
 import { range } from "./rng";
 import { CRUISE_AGL, HELI_HEIGHT, Heli, LOW_AGL, MAX_AGL } from "./heli";
+import { isAerial, isGroundVehicle, isOrganic, isWaterCraft, specOf, driveOf, spawnAngle, pickLookoutTroop, labelOf, allKinds } from "./roster";
+import { lookupSpriteMuzzles, SPRITE_MOUNT } from "./spriteOrigin";
+
+/** Overlay guns are drawn barrel-up (same as hulls). World aim 0 is +X, so +90°. */
+function gunWorldRot(_tex: string, aim: number): number {
+  return aim + Math.PI / 2;
+}
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
 import { SpriteConfigTool } from "./spriteConfig";
-import { preloadArt, prepareArt, extractBiomeTiles, gunLayout, rotorLayout, shadowAlpha, shadowKey, shadowOff, spriteUvPos, tankLayout, FX_VARIANTS } from "./sprites";
+import { preloadArt, prepareArt, extractBiomeTiles, gunLayout, rotorLayout, shadowAlpha, shadowKey, shadowOff, spriteUvPos, tankLayout, FX_VARIANTS, nameGameTexture, nameGeneratedTextures, spritePivot } from "./sprites";
 import {
   generateWorld,
   generateWorldAsync,
@@ -41,6 +49,7 @@ import {
   SCALE,
   WORLD,
   WRECK_TEX,
+  doodadTex,
   type HvSpec,
   type WorldData,
   type Biome,
@@ -75,6 +84,8 @@ export class BootScene extends Phaser.Scene {
     } catch {
       /* keep baked placeholders */
     }
+    bakeRosterArt(this.textures);
+    bakeCamo(this.textures);
     this.scene.start("menu");
   }
 }
@@ -92,14 +103,16 @@ export class MenuScene extends Phaser.Scene {
         fontSize: "72px",
         color: "#e8b84a",
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setName("menu_title");
     this.add
       .text(w / 2, h * 0.4, "TOP-DOWN GUNSHIP  ·  GULF THEATER", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "16px",
         color: "#8a8470",
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setName("menu_sub");
     this.add
       .text(
         w / 2,
@@ -113,7 +126,8 @@ export class MenuScene extends Phaser.Scene {
           lineSpacing: 8,
         }
       )
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setName("menu_controls");
     const go = this.add
       .text(w / 2, h * 0.78, "[  START MISSION  ]", {
         fontFamily: "Share Tech Mono, monospace",
@@ -123,10 +137,12 @@ export class MenuScene extends Phaser.Scene {
         padding: { x: 18, y: 10 },
       })
       .setOrigin(0.5)
-      .setInteractive({ useHandCursor: true });
+      .setInteractive({ useHandCursor: true })
+      .setName("menu_start");
     go.on("pointerdown", () => this.scene.start("load"));
     this.input.keyboard?.once("keydown-ENTER", () => this.scene.start("load"));
     this.input.keyboard?.once("keydown-SPACE", () => this.scene.start("load"));
+    nameGeneratedTextures(this);
   }
 }
 
@@ -163,14 +179,16 @@ export class LoadScene extends Phaser.Scene {
         fontSize: "18px",
         color: "#e8b84a",
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setName("load_title");
     const sub = this.add
       .text(w / 2, h * 0.54, "procedural relief", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "13px",
         color: "#8a8470",
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setName("load_stage");
     const barW = 320;
     const barH = 8;
     const barX = w / 2 - barW / 2;
@@ -195,6 +213,7 @@ export class LoadScene extends Phaser.Scene {
       sub.setText(`${label.toUpperCase()}  ·  ${Math.round(u * 100)}%`);
     };
     drawBar(0.02, "relief");
+    nameGeneratedTextures(this);
     this.time.delayedCall(16, () => {
       const seed = (Date.now() ^ (Math.random() * 1e9)) >>> 0;
       const tiles = extractBiomeTiles(this.textures);
@@ -330,7 +349,13 @@ export class MissionScene extends Phaser.Scene {
   spriteCfg!: SpriteConfigTool;
   debugOpen = false;
   debugRoot!: Phaser.GameObjects.Container;
+  debugPanel!: Phaser.GameObjects.Graphics;
   debugRows: Phaser.GameObjects.Text[] = [];
+  debugTitle!: Phaser.GameObjects.Text;
+  debugSpawnOpen = false;
+  debugSpawnIdx = 0;
+  debugSpawnRows: Phaser.GameObjects.Text[] = [];
+  debugSpawnHint!: Phaser.GameObjects.Text;
   noDamage = false;
   infAmmo = false;
   debugAi = false;
@@ -382,6 +407,7 @@ export class MissionScene extends Phaser.Scene {
     this.debugHit = false;
     this.showHeightMap = false;
     this.debugOpen = false;
+    this.debugSpawnOpen = false;
     this.noDamage = false;
     this.infAmmo = false;
     this.debugAi = false;
@@ -420,10 +446,11 @@ export class MissionScene extends Phaser.Scene {
     this.ground = this.add.image(WORLD / 2, WORLD / 2, "terrain");
     this.ground.setDisplaySize(WORLD, WORLD).setDepth(Layer.TERRAIN);
     this.wreckLayer = this.add.renderTexture(0, 0, WRECK_TEX, WRECK_TEX);
+    nameGameTexture(this, this.wreckLayer, "wreck_layer");
     this.wreckLayer.setOrigin(0, 0).setPosition(0, 0);
     this.wreckLayer.setDisplaySize(WORLD, WORLD).setDepth(Layer.WRECK);
     this.wreckLayer.clear();
-    this.stampBrush = this.make.image({ key: "blast_0" }, false);
+    this.stampBrush = this.make.image({ key: "fx_blast_0" }, false);
 
     this.unitG = this.add.group();
     this.shotG = this.add.group();
@@ -437,7 +464,7 @@ export class MissionScene extends Phaser.Scene {
     this.body = this.add.image(0, 0, "heli_body").setDepth(Layer.WORLD).setOrigin(rotorLayout.player.x, rotorLayout.player.y);
     this.rotor = this.add.image(0, 0, "heli_rotor").setDepth(Layer.WORLD).setOrigin(0.5, 0.5);
     this.muzzle = this.add
-      .image(0, 0, "muzzle")
+      .image(0, 0, "fx_muzzle")
       .setDepth(Layer.WORLD)
       .setVisible(false)
       .setOrigin(0.14, 0.5)
@@ -498,15 +525,16 @@ export class MissionScene extends Phaser.Scene {
     this.units = [];
     for (const s of this.world.spawns) {
       const st = stats(s.kind);
+      const sp = specOf(s.kind);
       this.units.push({
         id: nextId(),
         kind: s.kind,
         x: s.x,
         y: s.y,
-        z: s.kind === "heli" ? groundZ(this.world, s.x, s.y) + CRUISE_AGL : groundZ(this.world, s.x, s.y),
+        z: sp.aerial ? groundZ(this.world, s.x, s.y) + CRUISE_AGL : groundZ(this.world, s.x, s.y),
         vx: 0,
         vy: 0,
-        angle: Math.random() * Math.PI * 2,
+        angle: spawnAngle(s.kind),
         turret: Math.random() * Math.PI * 2,
         health: st.health,
         max: st.health,
@@ -517,12 +545,24 @@ export class MissionScene extends Phaser.Scene {
         orbit: Math.random() * Math.PI * 2,
         rotor: 0,
         track: 0,
+        turrets: sp.guns.map(() => Math.random() * Math.PI * 2),
+        muzzleT: 0,
+        muzzleGun: 0,
+        muzzleTip: 0,
+        camo: camoForBiome(sampleBiome(this.world, s.x, s.y)),
       });
     }
+    const posted: Unit[] = [];
+    for (const look of this.units) {
+      if (look.kind !== "lookout") continue;
+      const at = this.lookoutPost(look);
+      posted.push(this.makeUnit(pickLookoutTroop(), at.x, at.y, look.id));
+    }
+    this.units.push(...posted);
 
     const fxFrames = { frames: [0, 1, 2, 3], cycle: false as const };
     const fxSpin = { min: -80, max: 80 };
-    this.smoke = this.add.particles(0, 0, "smoke", {
+    this.smoke = this.add.particles(0, 0, "fx_smoke", {
       lifespan: 900,
       speed: { min: 10, max: 70 },
       scale: { start: 0.6, end: 2.4 },
@@ -533,7 +573,7 @@ export class MissionScene extends Phaser.Scene {
       rotate: fxSpin,
     });
     this.smoke.setDepth(Layer.WORLD);
-    this.tracer = this.add.particles(0, 0, "spark", {
+    this.tracer = this.add.particles(0, 0, "fx_spark", {
       lifespan: 160,
       speed: { min: 40, max: 140 },
       scaleX: { start: 1.7, end: 0 },
@@ -548,7 +588,7 @@ export class MissionScene extends Phaser.Scene {
       },
     });
     this.tracer.setDepth(Layer.WORLD);
-    this.flame = this.add.particles(0, 0, "flame", {
+    this.flame = this.add.particles(0, 0, "fx_flame", {
       lifespan: 480,
       speed: { min: 8, max: 40 },
       scale: {
@@ -571,7 +611,7 @@ export class MissionScene extends Phaser.Scene {
       rotate: fxSpin,
     });
     this.flame.setDepth(Layer.WORLD);
-    this.hurtSmoke = this.add.particles(0, 0, "smoke", {
+    this.hurtSmoke = this.add.particles(0, 0, "fx_smoke", {
       lifespan: { min: 2400, max: 4200 },
       speed: { min: 3, max: 16 },
       angle: { min: -125, max: -55 },
@@ -591,7 +631,7 @@ export class MissionScene extends Phaser.Scene {
       if (q.s0 == null) q.s0 = Math.pow(Math.random(), 0.65);
       return q.s0;
     };
-    this.burn = this.add.particles(0, 0, "flame", {
+    this.burn = this.add.particles(0, 0, "fx_flame", {
       lifespan: { min: 240, max: 420 },
       speed: { min: 2, max: 14 },
       scale: {
@@ -607,7 +647,7 @@ export class MissionScene extends Phaser.Scene {
       rotate: fxSpin,
     });
     this.burn.setDepth(Layer.WORLD);
-    this.blastBurn = this.add.particles(0, 0, "flame", {
+    this.blastBurn = this.add.particles(0, 0, "fx_flame", {
       lifespan: { min: 240, max: 420 },
       speed: { min: 2, max: 14 },
       scale: {
@@ -623,7 +663,7 @@ export class MissionScene extends Phaser.Scene {
       rotate: fxSpin,
     });
     this.blastBurn.setDepth(Layer.WORLD);
-    this.blastFire = this.add.particles(0, 0, "flame", {
+    this.blastFire = this.add.particles(0, 0, "fx_flame", {
       lifespan: { min: 180, max: 320 },
       speed: { min: 180, max: 480 },
       scale: { start: 1.15, end: 0.18 },
@@ -635,7 +675,7 @@ export class MissionScene extends Phaser.Scene {
       rotate: fxSpin,
     });
     this.blastFire.setDepth(Layer.WORLD);
-    this.ember = this.add.particles(0, 0, "flame", {
+    this.ember = this.add.particles(0, 0, "fx_flame", {
       lifespan: { min: 180, max: 320 },
       speed: { min: 1, max: 10 },
       scale: {
@@ -651,7 +691,7 @@ export class MissionScene extends Phaser.Scene {
       rotate: fxSpin,
     });
     this.ember.setDepth(Layer.WORLD);
-    this.fragSmoke = this.add.particles(0, 0, "smoke", {
+    this.fragSmoke = this.add.particles(0, 0, "fx_smoke", {
       lifespan: 520,
       speed: { min: 8, max: 36 },
       scale: { start: 0.35, end: 1.4 },
@@ -662,7 +702,7 @@ export class MissionScene extends Phaser.Scene {
       rotate: fxSpin,
     });
     this.fragSmoke.setDepth(Layer.WORLD);
-    this.lingerSmoke = this.add.particles(0, 0, "smoke", {
+    this.lingerSmoke = this.add.particles(0, 0, "fx_smoke", {
       lifespan: { min: 2200, max: 4000 },
       speed: { min: 4, max: 18 },
       angle: { min: -128, max: -52 },
@@ -676,7 +716,7 @@ export class MissionScene extends Phaser.Scene {
       rotate: { min: -80, max: 80 },
     });
     this.lingerSmoke.setDepth(Layer.WORLD);
-    this.heliDust = this.add.particles(0, 0, "smoke", {
+    this.heliDust = this.add.particles(0, 0, "fx_smoke", {
       lifespan: { min: 900, max: 1600 },
       speed: { min: 240, max: 460 },
       scale: { start: 0.48, end: 2.1 },
@@ -713,22 +753,29 @@ export class MissionScene extends Phaser.Scene {
     this.keyShift = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT);
     this.input.keyboard!.addKey("ONE").on("down", () => {
       if (this.editOpen) this.setEditBrush(0);
+      else if (this.debugSpawnOpen) return;
       else if (this.debugOpen) this.setNoDamage(!this.noDamage);
       else this.heli.weapon = 0;
     });
     this.input.keyboard!.addKey("TWO").on("down", () => {
       if (this.editOpen) this.setEditBrush(1);
+      else if (this.debugSpawnOpen) return;
       else if (this.debugOpen) this.setInfAmmo(!this.infAmmo);
       else this.heli.weapon = 1;
     });
     this.input.keyboard!.addKey("THREE").on("down", () => {
       if (this.editOpen) this.setEditBrush(2);
+      else if (this.debugSpawnOpen) return;
       else if (this.debugOpen) this.toggleHeightMap();
       else this.heli.weapon = 2;
     });
     this.input.keyboard!.addKey("FOUR").on("down", () => {
+      if (this.debugSpawnOpen) return;
       if (this.debugOpen) this.setDebugAi(!this.debugAi);
       else this.heli.weapon = 3;
+    });
+    this.input.keyboard!.addKey("FIVE").on("down", () => {
+      if (this.debugOpen && !this.debugSpawnOpen) this.openDebugSpawn();
     });
     this.input.keyboard!.addKey("E").on("down", () => this.toggleReliefEditor());
     this.input.keyboard!.addKey("I").on("down", () => {
@@ -753,7 +800,8 @@ export class MissionScene extends Phaser.Scene {
     this.input.keyboard!.addKey("K").on("down", () => this.toggleHeightMap());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.FORWARD_SLASH).on("down", () => this.toggleDebugMenu());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ESC).on("down", () => {
-      if (this.editOpen) this.toggleReliefEditor(false);
+      if (this.debugSpawnOpen) this.closeDebugSpawn();
+      else if (this.editOpen) this.toggleReliefEditor(false);
       else if (this.debugOpen) this.toggleDebugMenu(false);
     });
     this.input.keyboard!.addKey("R").on("down", () => {
@@ -770,14 +818,29 @@ export class MissionScene extends Phaser.Scene {
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.F9).on("down", () => this.spriteCfg.toggle());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.BACKTICK).on("down", () => this.spriteCfg.toggle());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.OPEN_BRACKET).on("down", () => {
-      if (this.spriteCfg?.open) this.spriteCfg.cycle(-1);
+      if (this.debugSpawnOpen) this.nudgeDebugSpawn(-1);
+      else if (this.spriteCfg?.open) this.spriteCfg.cycle(-1);
       else if (this.editOpen) this.nudgeEditSize(-1);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.CLOSED_BRACKET).on("down", () => {
-      if (this.spriteCfg?.open) this.spriteCfg.cycle(1);
+      if (this.debugSpawnOpen) this.nudgeDebugSpawn(1);
+      else if (this.spriteCfg?.open) this.spriteCfg.cycle(1);
       else if (this.editOpen) this.nudgeEditSize(1);
     });
+    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.UP).on("down", () => {
+      if (this.debugSpawnOpen) this.nudgeDebugSpawn(-1);
+    });
+    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN).on("down", () => {
+      if (this.debugSpawnOpen) this.nudgeDebugSpawn(1);
+    });
+    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER).on("down", () => {
+      if (this.debugSpawnOpen) this.debugSpawnSelected();
+    });
     this.input.on("wheel", (_p: Phaser.Input.Pointer, _dx: number, dy: number) => {
+      if (this.debugSpawnOpen) {
+        this.nudgeDebugSpawn(dy > 0 ? 1 : -1);
+        return;
+      }
       if (this.spriteCfg?.open) {
         this.spriteCfg.cycle(dy > 0 ? 1 : -1);
         return;
@@ -897,14 +960,28 @@ export class MissionScene extends Phaser.Scene {
     this.playLastFrame = true;
     this.setupDebugMenu();
     this.setupHudCam();
+    this.lockTxt.setName("hud_lock");
+    this.lockInbdTxt.setName("hud_fire");
+    this.lockHudTxt.setName("hud_lock_offscreen");
+    this.lockInbdHudTxt.setName("hud_fire_offscreen");
+    this.hud.setName("hud_status");
+    this.hvHud.setName("hud_hv");
+    this.hvRows.forEach((t, i) => t.setName(`hv_row_${i}`));
+    this.wpnSlots.forEach((t, i) => t.setName(`wpn_slot_${i}`));
+    this.wpnHud.setName("hud_wpn");
+    this.mapLabel.setName("map_label");
+    this.hvArrowLabels.forEach((t, i) => t.setName(`hv_arrow_${i}`));
+    nameGeneratedTextures(this);
   }
 
   stampDecor(): void {
     const g = this.world.canvas.getContext("2d")!;
     g.imageSmoothingEnabled = true;
     for (const d of this.world.decor) {
-      if (!this.textures.exists(d.kind)) continue;
-      const img = this.textures.get(d.kind).getSourceImage() as CanvasImageSource;
+      const tex = doodadTex(d.kind);
+      const skin = resolveSkin(this.textures, tex, camoForBiome(sampleBiome(this.world, d.x, d.y)));
+      if (!this.textures.exists(skin)) continue;
+      const img = this.textures.get(skin).getSourceImage() as CanvasImageSource;
       const s = d.size;
       g.save();
       g.globalAlpha = 0.9;
@@ -933,6 +1010,7 @@ export class MissionScene extends Phaser.Scene {
     if (!this.textures.exists(key)) return;
     const k = WRECK_TEX / WORLD;
     const sy = (scaleY ?? scale) * k;
+    this.stampBrush.setCrop();
     if (frame != null) this.stampBrush.setTexture(key, frame);
     else this.stampBrush.setTexture(key);
     this.stampBrush
@@ -949,14 +1027,14 @@ export class MissionScene extends Phaser.Scene {
 
   stampLightBlast(x: number, y: number, vx: number, vy: number): void {
     if (isWater(this.world, x, y)) return;
-    const key = `blast_${(Math.random() * 4) | 0}`;
-    if (!this.textures.exists(key) && !this.textures.exists("blast_0")) return;
+    const key = `fx_blast_${(Math.random() * 4) | 0}`;
+    if (!this.textures.exists(key) && !this.textures.exists("fx_blast_0")) return;
     const spd = Math.hypot(vx, vy);
     const ang = spd > 10 ? Math.atan2(vy, vx) : Math.random() * Math.PI * 2;
     const sc = range(0.065, 0.145);
     const stretch = 1 + Math.min(0.7, spd * 0.0024);
     this.stampWreck(
-      this.textures.exists(key) ? key : "blast_0",
+      this.textures.exists(key) ? key : "fx_blast_0",
       x + range(-2.5, 2.5),
       y + range(-2.5, 2.5),
       ang + range(-0.25, 0.25),
@@ -969,7 +1047,7 @@ export class MissionScene extends Phaser.Scene {
   }
 
   stampDirtSmears(x: number, y: number, vx: number, vy: number): void {
-    if (isWater(this.world, x, y) || !this.textures.exists("dirt")) return;
+    if (isWater(this.world, x, y) || !this.textures.exists("fx_dirt")) return;
     const n = 3 + ((Math.random() * 3) | 0);
     const spd = Math.hypot(vx, vy);
     const ang = spd > 12 ? Math.atan2(vy, vx) : Math.random() * Math.PI * 2;
@@ -986,7 +1064,7 @@ export class MissionScene extends Phaser.Scene {
       const stretch = range(0.75, 1.65) + Math.min(0.5, spd * 0.0018);
       const thin = range(0.2, 0.38);
       this.stampWreck(
-        "dirt",
+        "fx_dirt",
         x + ux * along + px * side,
         y + uy * along + py * side,
         ang + range(-0.19, 0.19),
@@ -1001,10 +1079,7 @@ export class MissionScene extends Phaser.Scene {
   }
 
   fragStampOrigin(key: string): { x: number; y: number } {
-    const turret = key.includes("turret");
-    if (!turret) return { x: 0.5, y: 0.5 };
-    if (key.includes("hulk")) return { ...tankLayout.hulkTurretOrigin };
-    return { ...tankLayout.turretOrigin };
+    return spritePivot(key);
   }
 
   update(_t: number, dms: number): void {
@@ -1097,14 +1172,70 @@ export class MissionScene extends Phaser.Scene {
   }
 
   spriteOrigin(key: string): { x: number; y: number } {
-    if (key === "heli_body") return { x: this.body.originX, y: this.body.originY };
     if (key === "heli_rotor") return { x: this.rotor.originX, y: this.rotor.originY };
-    if (key === "heli_gun") return { x: this.gun.originX, y: this.gun.originY };
-    if (key === "enemy_heli") return { ...rotorLayout.enemy };
-    if (key === "tank_turret") return { ...tankLayout.turretOrigin };
-    if (key === "tank_hull") return { x: 0.5, y: 0.5 };
-    if (key === "hulk_tank_turret") return { ...tankLayout.hulkTurretOrigin };
-    return { x: 0.5, y: 0.5 };
+    return spritePivot(key);
+  }
+
+  makeUnit(kind: Unit["kind"], x: number, y: number, pinId?: number): Unit {
+    const st = stats(kind);
+    const sp = specOf(kind);
+    return {
+      id: nextId(),
+      kind,
+      x,
+      y,
+      z: sp.aerial ? groundZ(this.world, x, y) + CRUISE_AGL : groundZ(this.world, x, y),
+      vx: 0,
+      vy: 0,
+      angle: spawnAngle(kind),
+      turret: Math.random() * Math.PI * 2,
+      health: st.health,
+      max: st.health,
+      dead: false,
+      fireCd: Math.random(),
+      burstLeft: 0,
+      orbit: Math.random() * Math.PI * 2,
+      rotor: 0,
+      track: 0,
+      turrets: sp.guns.map(() => Math.random() * Math.PI * 2),
+      muzzleT: 0,
+      muzzleGun: 0,
+      muzzleTip: 0,
+      pinId,
+      camo: camoForBiome(sampleBiome(this.world, x, y)),
+    };
+  }
+
+  lookoutPost(look: Unit): { x: number; y: number } {
+    const mount = SPRITE_MOUNT.building_lookout;
+    const pivot = spritePivot("building_lookout");
+    const rot = look.angle + specOf("lookout").rotOff;
+    const img = this.textures.exists("building_lookout")
+      ? (this.textures.get("building_lookout").getSourceImage() as { width: number; height: number })
+      : { width: 52, height: 52 };
+    const zs = zScale(look.z);
+    const mx = (mount.x - pivot.x) * img.width * zs;
+    const my = (mount.y - pivot.y) * img.height * zs;
+    return {
+      x: look.x + mx * Math.cos(rot) - my * Math.sin(rot),
+      y: look.y + mx * Math.sin(rot) + my * Math.cos(rot),
+    };
+  }
+
+  leashPinned(u: Unit): void {
+    if (u.pinId == null) return;
+    const post = this.units.find((p) => p.id === u.pinId);
+    if (!post || post.dead) {
+      u.pinId = undefined;
+      return;
+    }
+    const r = radius(post.kind);
+    const dx = u.x - post.x;
+    const dy = u.y - post.y;
+    const d = Math.hypot(dx, dy);
+    if (d <= r || d < 0.001) return;
+    u.x = post.x + (dx / d) * r;
+    u.y = post.y + (dy / d) * r;
   }
 
   applyCastShadow(
@@ -1787,7 +1918,7 @@ export class MissionScene extends Phaser.Scene {
 
   syncSparkSprites(): void {
     while (this.sparkG.getLength() < this.sparks.length) {
-      this.sparkG.add(this.add.image(0, 0, "spark").setScale(0.7));
+      this.sparkG.add(this.add.image(0, 0, "fx_spark").setScale(0.7));
     }
     const kids = this.sparkG.getChildren() as Phaser.GameObjects.Image[];
     for (const k of kids) k.setVisible(false);
@@ -2202,7 +2333,7 @@ export class MissionScene extends Phaser.Scene {
     const water = isWater(this.world, x, y);
     const he = kind !== "cannon";
     const fx = hitSparkFx(dmg);
-    if (objectHit && direct?.kind === "soldier") {
+    if (objectHit && direct && isOrganic(direct.kind)) {
       const incoming = Math.hypot(dx, dy, dz) || 1;
       const graze = Phaser.Math.Clamp(Math.hypot(dx, dy) / incoming, 0, 1);
       const distN = Phaser.Math.Clamp(Math.hypot(x - this.heli.x, y - this.heli.y) / 780, 0, 1);
@@ -2281,9 +2412,9 @@ export class MissionScene extends Phaser.Scene {
     if (he) this.heFireBurst(x, y, z, dx, dy, dz, blast);
     if (!water && !objectHit) {
       if (he) {
-        const key = `blast_${(Math.random() * 4) | 0}`;
+        const key = `fx_blast_${(Math.random() * 4) | 0}`;
         const sc = (blast / 72) * range(0.55, 1.05);
-        this.stampWreck(this.textures.exists(key) ? key : "blast_0", x, y, Math.random() * Math.PI * 2, sc, 1);
+        this.stampWreck(this.textures.exists(key) ? key : "fx_blast_0", x, y, Math.random() * Math.PI * 2, sc, 1);
       } else {
         this.stampCannonScar(x, y, dx, dy, dz);
       }
@@ -2322,13 +2453,13 @@ export class MissionScene extends Phaser.Scene {
     const j = Phaser.Math.Linear(5, 14, graze);
     const px = x + range(-j * 0.5, j * 0.5);
     const py = y + range(-j * 0.5, j * 0.5);
-    const key = `blast_${(Math.random() * 4) | 0}`;
+    const key = `fx_blast_${(Math.random() * 4) | 0}`;
     const base = range(0.12, 0.23);
     const stretch = graze * graze * range(0.75, 1.25);
     const sx = base * Phaser.Math.Linear(1, 2.55, stretch) * range(0.82, 1.18);
     const sy = base * Phaser.Math.Linear(1, 0.36, graze) * range(0.82, 1.18);
     const alpha = Phaser.Math.Linear(0.72, 0.22, graze) * range(0.78, 1.06);
-    this.stampWreck(this.textures.exists(key) ? key : "blast_0", px, py, ang, sx, alpha, 0.5, 0.5, sy);
+    this.stampWreck(this.textures.exists(key) ? key : "fx_blast_0", px, py, ang, sx, alpha, 0.5, 0.5, sy);
   }
 
   heFireBurst(
@@ -2406,7 +2537,7 @@ export class MissionScene extends Phaser.Scene {
         angle: 0,
         spin: 0,
         life: range(1.6, 3),
-        key: "frag_metal",
+        key: "fx_frag_metal",
         settled: false,
         gravity: true,
         bounces: Math.random() < 0.4 ? 1 : 0,
@@ -2428,11 +2559,11 @@ export class MissionScene extends Phaser.Scene {
   }
 
   stampSoldierBlood(u: Unit, ox: number, oy: number, ang: number): void {
-    if (!this.textures.exists("dirt") || isWater(this.world, u.x, u.y)) return;
+    if (!this.textures.exists("fx_dirt") || isWater(this.world, u.x, u.y)) return;
     const blood = [0xe22a22, 0xc41a18, 0xaa1410, 0xd42820][(Math.random() * 4) | 0]!;
     const sc = range(0.95, 1.55);
     this.stampWreck(
-      "dirt",
+      "fx_dirt",
       u.x + ox,
       u.y + oy,
       ang,
@@ -2452,7 +2583,7 @@ export class MissionScene extends Phaser.Scene {
       this.destroyUnit(u);
       return;
     }
-    if (u.kind === "soldier" && u.health > 1) {
+    if (isOrganic(u.kind) && specOf(u.kind).weapon && u.health > 1) {
       u.aware = true;
       this.rollSoldierMood(u, true);
     }
@@ -2476,29 +2607,35 @@ export class MissionScene extends Phaser.Scene {
   destroyUnit(u: Unit): void {
     if (u.dead) return;
     u.dead = true;
+    if (u.kind === "lookout") {
+      for (const crew of this.units) {
+        if (!crew.dead && crew.pinId === u.id) this.destroyUnit(crew);
+      }
+    }
     const hz = u.z + heightOf(u.kind) * 0.5;
-    const building = u.kind === "bunker" || u.kind === "radar" || u.kind === "tower";
+    const sp = specOf(u.kind);
+    const building = !!sp.building;
     const blast = Math.max(42, radius(u.kind) * 2.4) * (building ? 1.4 : 1);
-    this.heFireBurst(u.x, u.y, hz, 0, 0, 1, blast, u.kind === "soldier", building ? 2.25 : 1);
+    this.heFireBurst(u.x, u.y, hz, 0, 0, 1, blast, !!sp.organic, building ? 2.25 : 1);
     if (building) this.emitDustShock(u.x, u.y, 1);
     this.smoke.setDepth(worldDepth(u.z, 0.2));
     this.smoke.emitParticleAt(u.x, u.y - screenLift(u.z) + 12, 16);
     this.shake = Math.min(10, this.shake + 3);
-    const n = u.kind === "soldier" ? 4 : u.kind === "bunker" || u.kind === "radar" ? 16 : 10;
+    const n = sp.organic ? 4 : building ? 16 : 10;
     const keys = fragKeys(u.kind);
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
-      const sp = range(55, 255);
+      const spd = range(55, 255);
       const key = this.textures.exists(keys[i % keys.length]!)
         ? keys[i % keys.length]!
-        : "frag_metal";
-      const organic = u.kind === "soldier";
+        : "fx_frag_metal";
+      const organic = !!sp.organic;
       this.frags.push({
         x: u.x,
         y: u.y,
         z: u.z + range(8, 22),
-        vx: Math.cos(a) * sp,
-        vy: Math.sin(a) * sp,
+        vx: Math.cos(a) * spd,
+        vy: Math.sin(a) * spd,
         vz: range(170, 330),
         angle: a,
         spin: range(-5, 5),
@@ -2512,37 +2649,51 @@ export class MissionScene extends Phaser.Scene {
         trailSoft: organic,
       });
     }
-    if (u.kind !== "heli" && u.kind !== "boat") {
-      const key = `blast_${(Math.random() * 4) | 0}`;
+    if (!sp.noCrater) {
+      const key = `fx_blast_${(Math.random() * 4) | 0}`;
       let sc = (radius(u.kind) / 20) * range(0.72, 1.42);
       if (u.kind === "tank") sc *= 1.25;
-      this.stampWreck(this.textures.exists(key) ? key : "blast_0", u.x, u.y, Math.random() * Math.PI * 2, sc, 1);
+      this.stampWreck(this.textures.exists(key) ? key : "fx_blast_0", u.x, u.y, Math.random() * Math.PI * 2, sc, 1);
     }
-    if (u.kind === "tank") {
-      const hullKey = this.textures.exists("hulk_tank_hull") ? "hulk_tank_hull" : hulkOf("tank");
-      this.stampWreck(hullKey, u.x, u.y, u.angle + Math.PI / 2, 1, 0.95);
-      const a = Math.random() * Math.PI * 2;
-      const throwSp = range(90, 200);
-      const turretKey = this.textures.exists("hulk_tank_turret") ? "hulk_tank_turret" : "tank_turret";
-      this.frags.push({
-        x: u.x,
-        y: u.y,
-        z: u.z + 18,
-        vx: Math.cos(a) * throwSp,
-        vy: Math.sin(a) * throwSp,
-        vz: range(190, 270),
-        angle: u.turret + Math.PI / 2,
-        spin: range(-5, 5),
-        life: 5,
-        key: turretKey,
-        settled: false,
-        gravity: true,
-        bounces: Math.random() < 1 / 3 ? 2 + ((Math.random() * 2) | 0) : 0,
-        trailR: this.texTrailR(turretKey),
+    if (sp.throwGuns && sp.guns.length) {
+      const hullKey = resolveSkin(this.textures, sp.hulk, u.camo);
+      const hp = spritePivot(hullKey);
+      this.stampWreck(hullKey, u.x, u.y, u.angle + Math.PI / 2, 1, 0.95, hp.x, hp.y);
+      sp.guns.forEach((g, gi) => {
+        const a = Math.random() * Math.PI * 2;
+        const throwSp = range(90, 200);
+        const turretKey = this.textures.exists(g.hulk ?? "") ? g.hulk! : g.tex;
+        const ang = (u.turrets[gi] ?? u.turret) + Math.PI / 2;
+        this.frags.push({
+          x: u.x,
+          y: u.y,
+          z: u.z + 18,
+          vx: Math.cos(a) * throwSp,
+          vy: Math.sin(a) * throwSp,
+          vz: range(190, 270),
+          angle: ang,
+          spin: range(-5, 5),
+          life: 5,
+          key: turretKey,
+          settled: false,
+          gravity: true,
+          bounces: Math.random() < 1 / 3 ? 2 + ((Math.random() * 2) | 0) : 0,
+          trailR: this.texTrailR(turretKey),
+        });
       });
     } else {
-      const hulkKey = this.textures.exists(hulkOf(u.kind)) ? hulkOf(u.kind) : "hulk_crater";
-      this.stampWreck(hulkKey, u.x, u.y, u.angle + Math.PI / 2, 1, 0.95);
+      const hulkKey = resolveSkin(this.textures, hulkOf(u.kind), u.camo);
+      const hp = spritePivot(hulkKey);
+      this.stampWreck(
+        this.textures.exists(hulkKey) ? hulkKey : "hulk_crater",
+        u.x,
+        u.y,
+        u.angle + Math.PI / 2,
+        1,
+        0.95,
+        hp.x,
+        hp.y
+      );
     }
   }
 
@@ -2656,6 +2807,86 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 
+  driveGroundVehicle(u: Unit, dt: number, h: Heli, dist: number): void {
+    const d = driveOf(u.kind);
+    const combat = specOf(u.kind).move === "tank";
+    let drive = false;
+    let wantX = u.x;
+    let wantY = u.y;
+    if (combat) {
+      if (dist < 980 && h.phase === "flight") {
+        u.orbit += 0.24 * dt;
+        const ring = 350 + (u.id % 5) * 28;
+        wantX = h.x + Math.cos(u.orbit) * ring;
+        wantY = h.y + Math.sin(u.orbit) * ring;
+        drive = true;
+        u.aiState = "ORBIT";
+        u.aiTx = wantX;
+        u.aiTy = wantY;
+      } else {
+        u.aiState = "IDLE";
+        u.aiTx = undefined;
+        u.aiTy = undefined;
+      }
+    } else if (dist < 520 && h.phase === "flight") {
+      u.aware = true;
+      const away = Math.atan2(u.y - h.y, u.x - h.x);
+      wantX = u.x + Math.cos(away) * 240;
+      wantY = u.y + Math.sin(away) * 240;
+      drive = true;
+      u.aiState = "FLEE";
+      u.aiTx = wantX;
+      u.aiTy = wantY;
+    } else {
+      u.aware = false;
+      u.aiState = Math.hypot(u.vx, u.vy) > 8 ? "COAST" : "IDLE";
+      u.aiTx = undefined;
+      u.aiTy = undefined;
+    }
+    const want = Math.atan2(wantY - u.y, wantX - u.x);
+    const spd = Math.hypot(u.vx, u.vy);
+    const slow = 1 - Math.min(1, spd / Math.max(d.maxSpd, 1));
+    if (drive) u.angle = Phaser.Math.Angle.RotateTo(u.angle, want, d.turn * (0.45 + 0.55 * slow) * dt);
+    const nx = Math.cos(u.angle);
+    const ny = Math.sin(u.angle);
+    const align = drive ? Math.cos(Phaser.Math.Angle.Wrap(want - u.angle)) : 1;
+    let a = -d.brake;
+    if (drive && align > 0.2) a = d.accel * Phaser.Math.Clamp(align, 0.25, 1);
+    else if (drive) a = -d.brake * 0.65;
+    let vx = u.vx + nx * a * dt;
+    let vy = u.vy + ny * a * dt;
+    let fwd = vx * nx + vy * ny;
+    if (fwd < 0) fwd *= 0.35;
+    vx = nx * fwd;
+    vy = ny * fwd;
+    const s = Math.hypot(vx, vy);
+    if (s > d.maxSpd) {
+      vx *= d.maxSpd / s;
+      vy *= d.maxSpd / s;
+    }
+    u.vx = vx;
+    u.vy = vy;
+    u.x += vx * dt;
+    u.y += vy * dt;
+    const step = s * dt;
+    if (s > 6 && !isWater(this.world, u.x, u.y)) {
+      u.track += step;
+      if (u.track > d.trackGap) {
+        u.track -= d.trackGap;
+        const key = `track_${d.track}`;
+        const back = specOf(u.kind).radius * 0.72;
+        this.stampWreck(
+          this.textures.exists(key) ? key : "track",
+          u.x - Math.cos(u.angle) * back,
+          u.y - Math.sin(u.angle) * back,
+          u.angle + Math.PI / 2,
+          d.trackScale * 1.25,
+          0.7
+        );
+      }
+    }
+  }
+
   updateUnits(dt: number): void {
     const h = this.heli;
     for (const u of this.units) {
@@ -2664,17 +2895,41 @@ export class MissionScene extends Phaser.Scene {
       const dx = h.x - u.x;
       const dy = h.y - u.y;
       const dist = Math.hypot(dx, dy);
-      if (u.kind === "heli") {
-        u.rotor += 28 * dt;
-        if (dist > 180 && dist < 1400) {
-          const ang = Math.atan2(dy, dx);
-          u.vx += Math.cos(ang) * 80 * dt;
-          u.vy += Math.sin(ang) * 80 * dt;
-          u.angle = ang;
+      const sp = specOf(u.kind);
+      u.muzzleT = Math.max(0, u.muzzleT - dt);
+      if (sp.dish) u.rotor += 0.55 * dt;
+      if (sp.rotors.length) u.rotor += (u.kind === "drone" ? 42 : 28) * dt;
+      if (sp.move === "heli" || sp.move === "drone") {
+        if (sp.move === "drone") {
+          if (dist < 1400 && h.phase === "flight") {
+            const want = Math.atan2(dy, dx);
+            u.angle = Phaser.Math.Angle.RotateTo(u.angle, want, 2.8 * dt);
+            u.vx += Math.cos(u.angle) * 140 * dt;
+            u.vy += Math.sin(u.angle) * 140 * dt;
+            u.aiState = "KAMIKAZE";
+            u.aiTx = h.x;
+            u.aiTy = h.y;
+            if (dist < 36) {
+              this.heli.damage(22);
+              this.destroyUnit(u);
+              continue;
+            }
+          }
+        } else if (dist > 180 && dist < 1400) {
+          const want = Math.atan2(dy, dx);
+          const yaw = u.kind === "heli_heavy" ? 1.15 : u.kind === "heli_small" ? 2.2 : 1.7;
+          u.angle = Phaser.Math.Angle.RotateTo(u.angle, want, yaw * dt);
+          const thrust = u.kind === "heli_heavy" ? 55 : 80;
+          u.vx += Math.cos(u.angle) * thrust * dt;
+          u.vy += Math.sin(u.angle) * thrust * dt;
           u.aiState = "CHASE";
           u.aiTx = h.x;
           u.aiTy = h.y;
         } else {
+          if (dist < 1400 && h.phase === "flight") {
+            const yaw = u.kind === "heli_heavy" ? 1.15 : u.kind === "heli_small" ? 2.2 : 1.7;
+            u.angle = Phaser.Math.Angle.RotateTo(u.angle, Math.atan2(dy, dx), yaw * dt);
+          }
           u.aiState = "HOLD";
           u.aiTx = undefined;
           u.aiTy = undefined;
@@ -2687,53 +2942,40 @@ export class MissionScene extends Phaser.Scene {
         const want = g + CRUISE_AGL + 10 + Math.sin(this.time.now * 0.002 + u.id) * 6;
         u.z = Phaser.Math.Linear(u.z, want, 1 - Math.pow(0.1, dt));
       } else {
-        if (u.kind === "boat" && isWater(this.world, u.x, u.y)) {
-          u.angle += dt * 0.15;
-          u.x += Math.cos(u.angle) * 18 * dt;
-          u.y += Math.sin(u.angle) * 18 * dt;
+        if (sp.move === "boat" && isWater(this.world, u.x, u.y)) {
+          const spd = u.kind === "battleship" ? 10 : u.kind === "ptboat" ? 32 : 18;
+          u.angle += dt * (u.kind === "battleship" ? 0.06 : 0.15);
+          u.x += Math.cos(u.angle) * spd * dt;
+          u.y += Math.sin(u.angle) * spd * dt;
           u.aiState = "PATROL";
           u.aiTx = u.x + Math.cos(u.angle) * 80;
           u.aiTy = u.y + Math.sin(u.angle) * 80;
         }
-        if (u.kind === "tank" && dist < 980) {
-          u.orbit += 0.24 * dt;
-          const ring = 350 + (u.id % 5) * 28;
-          const ox = h.x + Math.cos(u.orbit) * ring;
-          const oy = h.y + Math.sin(u.orbit) * ring;
-          const want = Math.atan2(oy - u.y, ox - u.x);
-          u.angle = Phaser.Math.Angle.RotateTo(u.angle, want, 0.55 * dt);
-          const step = 30 * dt;
-          u.x += Math.cos(u.angle) * step;
-          u.y += Math.sin(u.angle) * step;
-          u.track += step;
-          if (u.track > 16) {
-            u.track = 0;
-            this.stampWreck("track", u.x, u.y, u.angle + Math.PI / 2, 1, 0.4);
-          }
-          u.aiState = "ORBIT";
-          u.aiTx = ox;
-          u.aiTy = oy;
-        } else if (u.kind === "tank") {
-          u.aiState = "IDLE";
-          u.aiTx = undefined;
-          u.aiTy = undefined;
+        if (isGroundVehicle(u.kind)) {
+          this.driveGroundVehicle(u, dt, h, dist);
         }
-        if (u.kind === "soldier") {
-          if (u.health > 1 && u.health < u.max) u.health = Math.max(1, u.health - u.max * 0.05 * dt);
+        if (sp.move === "inf" || sp.move === "flee") {
+          const canShoot = !!sp.weapon;
+          if (sp.organic && u.health > 1 && u.health < u.max) u.health = Math.max(1, u.health - u.max * 0.05 * dt);
           const seeR = 400;
           const screenR = this.scale.width / Math.max(this.cameras.main.zoom, 0.001);
           const wounded = u.health < u.max;
-          const downed = wounded && u.health <= 1;
+          const downed = sp.organic && wounded && u.health <= 1;
           if (downed) u.aiMood = undefined;
           else if (wounded && u.aiMood !== "flee") this.rollSoldierMood(u, true);
+          else if (sp.move === "flee" && !u.aware && dist < seeR && h.phase === "flight") {
+            u.aware = true;
+            u.aiMood = "flee";
+            u.moodT = 4;
+          }
           if (!u.aware && dist < seeR && dist > 36 && h.phase === "flight") {
             u.aware = true;
-            this.rollSoldierMood(u, wounded || Math.random() < 0.4);
+            this.rollSoldierMood(u, wounded || !canShoot || Math.random() < 0.4);
           }
           if (u.aiMood) {
             u.moodT = (u.moodT ?? 0) - dt;
             if ((u.moodT ?? 0) <= 0) {
-              if (wounded || (dist < seeR && dist > 36)) this.rollSoldierMood(u, wounded || u.aiMood === "kite");
+              if (wounded || (dist < seeR && dist > 36)) this.rollSoldierMood(u, wounded || !canShoot || u.aiMood === "kite");
               else {
                 u.aware = false;
                 u.aiMood = undefined;
@@ -2743,9 +2985,9 @@ export class MissionScene extends Phaser.Scene {
             u.aware = false;
           }
           const fleeing = !downed && u.aiMood === "flee";
-          const kiting = !downed && u.aiMood === "kite" && dist < seeR && dist > 36;
+          const kiting = canShoot && !downed && u.aiMood === "kite" && dist < seeR && dist > 36;
           if (downed) {
-            u.angle = Phaser.Math.Angle.RotateTo(u.angle, Math.atan2(dy, dx), 10 * dt);
+            u.angle = Phaser.Math.Angle.RotateTo(u.angle, Math.atan2(dy, dx), 1.8 * dt);
             u.aiState = (u.burstLeft ?? 0) > 0 ? "BURST" : "DOWN";
             u.aiTx = h.x;
             u.aiTy = h.y;
@@ -2764,12 +3006,13 @@ export class MissionScene extends Phaser.Scene {
             const oy = h.y + Math.sin(away + Math.sin(u.orbit) * weave) * ring;
             const want = Math.atan2(oy - u.y, ox - u.x);
             const face = fleeing ? want : Math.atan2(dy, dx);
-            u.angle = Phaser.Math.Angle.RotateTo(u.angle, face, 12 * dt);
-            const limp = fleeing && wounded;
+            u.angle = Phaser.Math.Angle.RotateTo(u.angle, face, (fleeing ? 2.4 : 2.1) * dt);
+            const limp = fleeing && wounded && sp.organic;
             const gaitHz = limp ? 0.0044 : fleeing ? 0.0128 : 0.0075;
             const walk = Math.sin(this.time.now * gaitHz + u.id * 2.1);
             const gait = 0.22 + 0.78 * Math.pow(0.5 + 0.5 * walk, 1.45);
-            const step = (limp ? 22 : fleeing ? 78 : 58) * gait * dt;
+            const base = sp.move === "flee" && !sp.organic ? (u.kind === "officer" ? 36 : 90) : fleeing ? 78 : 58;
+            const step = (limp ? 22 : base) * gait * dt;
             u.x += Math.cos(want) * step;
             u.y += Math.sin(want) * step;
             if (limp) {
@@ -2796,71 +3039,92 @@ export class MissionScene extends Phaser.Scene {
             u.aiTy = undefined;
           }
         }
+        this.leashPinned(u);
         u.z = groundZ(this.world, u.x, u.y);
       }
-      if (u.kind === "tank") {
-        u.turret = Phaser.Math.Angle.RotateTo(u.turret, Math.atan2(dy, dx), 1.65 * dt);
+      const aim = Math.atan2(dy, dx);
+      if (sp.guns.length && !sp.fixedAim) {
+        for (let gi = 0; gi < sp.guns.length; gi++) {
+          const cur = u.turrets[gi] ?? u.turret;
+          u.turrets[gi] = Phaser.Math.Angle.RotateTo(cur, aim, 1.65 * dt);
+        }
+        u.turret = u.turrets[0] ?? aim;
       }
-      const atkRange =
-        u.kind === "soldier"
-          ? 280
-          : u.kind === "tank"
-            ? 520
-            : u.kind === "tower"
-              ? 700
-              : u.kind === "heli"
-                ? 640
-                : u.kind === "boat"
-                  ? 480
-                  : 0;
+      const wpn = sp.weapon;
+      const atkRange = wpn?.range ?? 0;
       const inRange = !!(atkRange && dist < atkRange && dist > 40 && h.phase === "flight");
-      if (u.kind === "tower" || u.kind === "bunker" || u.kind === "radar") {
-        u.aiState = inRange ? "ENGAGE" : "IDLE";
-        u.aiTx = inRange ? h.x + h.vx * 0.15 : undefined;
-        u.aiTy = inRange ? h.y + h.vy * 0.15 : undefined;
-      } else if (u.kind === "boat" && inRange) {
+      if (sp.fixedAim && wpn && inRange) {
+        const fleeing = sp.move === "inf" && u.aiMood === "flee" && !(sp.organic && u.health <= 1);
+        if (!fleeing) {
+          const turn = sp.move === "heli" ? (u.kind === "heli_heavy" ? 1.15 : u.kind === "heli_small" ? 2.2 : 1.7) : 2.2;
+          u.angle = Phaser.Math.Angle.RotateTo(u.angle, aim, turn * dt);
+        }
+      }
+      if (sp.building || sp.move === "static") {
+        u.aiState = inRange ? "ENGAGE" : u.aiState ?? "IDLE";
+        if (inRange) {
+          u.aiTx = h.x + h.vx * 0.15;
+          u.aiTy = h.y + h.vy * 0.15;
+        }
+      } else if (isWaterCraft(u.kind) && inRange) {
         u.aiState = "ENGAGE";
         u.aiTx = h.x + h.vx * 0.15;
         u.aiTy = h.y + h.vy * 0.15;
       }
-      const soldierDown = u.kind === "soldier" && u.health <= 1 && u.health < u.max;
+      const inf = sp.move === "inf";
+      const soldierDown = inf && u.health <= 1 && u.health < u.max;
       const continueBurst =
-        u.kind === "soldier" &&
-        (u.burstLeft ?? 0) > 0 &&
-        h.phase === "flight" &&
-        (soldierDown || u.aiMood !== "flee");
-      const soldierFlee = u.kind === "soldier" && u.aiMood === "flee" && !soldierDown;
-      if (u.fireCd <= 0 && !soldierFlee && (inRange || continueBurst)) {
-        if (u.kind === "soldier") {
-          if (!u.burstLeft) u.burstLeft = 3;
+        inf && (u.burstLeft ?? 0) > 0 && h.phase === "flight" && (soldierDown || u.aiMood !== "flee");
+      const soldierFlee = inf && u.aiMood === "flee" && !soldierDown;
+      const facingOk =
+        !sp.fixedAim || Math.abs(Phaser.Math.Angle.Wrap(aim - u.angle)) < 0.42;
+      if (wpn && u.fireCd <= 0 && !soldierFlee && facingOk && (inRange || continueBurst)) {
+        const burstN = wpn.burst ?? 0;
+        if (burstN) {
+          if (!u.burstLeft) u.burstLeft = burstN;
           u.burstLeft--;
-          u.fireCd = u.burstLeft > 0 ? 0.075 : 1.05;
+          u.fireCd = u.burstLeft > 0 ? (wpn.burstGap ?? 0.075) : wpn.fireCd;
         } else {
-          u.fireCd = u.kind === "tower" ? 0.45 : 0.7;
+          u.fireCd = wpn.fireCd;
         }
         const lead = 0.15;
         const tx = h.x + h.vx * lead;
         const ty = h.y + h.vy * lead;
-        const t = dist / 420;
+        const jitter = (Math.random() - 0.5) * (wpn.jitter ?? 0);
+        const gunI = sp.guns.length ? u.id % sp.guns.length : 0;
+        if (sp.guns.length > 1) u.muzzleGun = (u.muzzleGun + 1) % sp.guns.length;
+        else u.muzzleGun = gunI;
+        const muzzle = this.enemyMuzzle(u, u.muzzleGun);
+        const tips = sp.guns[u.muzzleGun]?.muzzles?.length || lookupSpriteMuzzles(textureOf(u.kind)).length;
+        if (tips > 1) u.muzzleTip = (u.muzzleTip + 1) % tips;
+        const t = dist / wpn.speed;
         const muzzleZ = u.z + heightOf(u.kind) * 0.7 + ZOff.shot;
         const tgtZ = h.z + HELI_HEIGHT * 0.5;
-        const small = u.kind === "soldier";
-        const jitter = small ? (Math.random() - 0.5) * 0.05 : 0;
-        const aim = Math.atan2(ty - u.y, tx - u.x) + jitter;
+        const shotAim = Math.atan2(ty - muzzle.y, tx - muzzle.x) + jitter;
+        const fireAng = sp.fixedAim ? u.angle + jitter : shotAim;
+        const gunAng = sp.fixedAim
+          ? u.angle + jitter
+          : sp.guns.length
+            ? (u.turrets[u.muzzleGun] ?? u.turret)
+            : inf
+              ? u.angle + jitter
+              : shotAim;
+        u.muzzleT = 0.07;
         this.spawnShot({
-          kind: "cannon",
+          kind: wpn.shot,
           from: "enemy",
-          x: u.x,
-          y: u.y,
+          x: muzzle.x,
+          y: muzzle.y,
           z: muzzleZ,
-          vx: Math.cos(aim) * (dist / t),
-          vy: Math.sin(aim) * (dist / t),
+          vx: Math.cos(fireAng) * wpn.speed,
+          vy: Math.sin(fireAng) * wpn.speed,
           vz: (tgtZ - muzzleZ) / t,
-          angle: u.kind === "tank" ? u.turret : u.kind === "soldier" ? u.angle + jitter : aim,
+          angle: gunAng,
           life: t + 0.12,
-          blast: small ? 5 : 16,
-          dmg: small ? 1 : u.kind === "tower" ? 12 : 8,
-          tracer: small ? "small" : "shell",
+          blast: wpn.blast,
+          dmg: wpn.dmg,
+          tracer: wpn.tracer,
+          guided: false,
         });
       }
     }
@@ -2869,62 +3133,163 @@ export class MissionScene extends Phaser.Scene {
 
   syncUnitSprites(): void {
     const live = this.units.filter((u) => !u.dead);
-    while (this.unitG.getLength() < live.length * 3) {
+    const SLOTS = 9;
+    while (this.unitG.getLength() < live.length * SLOTS) {
       this.unitG.add(this.add.image(0, 0, "shadow"));
-      this.unitG.add(this.add.image(0, 0, "tank_hull"));
-      this.unitG.add(this.add.image(0, 0, "enemy_rotor"));
+      this.unitG.add(this.add.image(0, 0, "enemy_tank"));
+      for (let p = 0; p < 6; p++) this.unitG.add(this.add.image(0, 0, "enemy_heli_rotor"));
+      const mz = this.add.image(0, 0, "fx_muzzle");
+      mz.setBlendMode(Phaser.BlendModes.ADD);
+      this.unitG.add(mz);
     }
     const kids = this.unitG.getChildren() as Phaser.GameObjects.Image[];
     for (let i = 0; i < kids.length; i++) kids[i]!.setVisible(false);
     live.forEach((u, i) => {
-      const sh = kids[i * 3]!;
-      const im = kids[i * 3 + 1]!;
-      const extra = kids[i * 3 + 2]!;
-      const tex = textureOf(u.kind);
-      const rot = u.kind === "soldier" ? u.angle + Math.PI / 4 : u.angle + Math.PI / 2;
+      const sp = specOf(u.kind);
+      const sh = kids[i * SLOTS]!;
+      const im = kids[i * SLOTS + 1]!;
+      const parts = kids.slice(i * SLOTS + 2, i * SLOTS + 8);
+      const flash = kids[i * SLOTS + 8]!;
+      const tex = resolveSkin(this.textures, textureOf(u.kind), u.camo);
+      const rot = u.angle + sp.rotOff;
       const lift = screenLift(u.z);
       const zs = zScale(u.z);
-      const heliOx = u.kind === "heli" ? rotorLayout.enemy.x : 0.5;
-      const heliOy = u.kind === "heli" ? rotorLayout.enemy.y : 0.5;
-      sh.setVisible(true).setOrigin(heliOx, heliOy);
-      this.applyCastShadow(sh, u.x, u.y, u.z, tex, rot, u.kind === "heli" ? 1 : 0.92);
+      const pivot = spritePivot(textureOf(u.kind));
+      const ox = pivot.x;
+      const oy = pivot.y;
+      const zBias = u.pinId != null ? ZOff.posted : 0;
+      sh.setVisible(true).setOrigin(ox, oy);
+      this.applyCastShadow(sh, u.x, u.y, u.z, tex, rot, sp.aerial ? 1 : 0.92);
       im.setVisible(true)
         .setTexture(tex)
-        .setOrigin(heliOx, heliOy)
+        .setOrigin(ox, oy)
         .setPosition(u.x, u.y - lift)
         .setRotation(rot)
-        .setDepth(worldDepth(u.z, ZOff.body));
-      if (u.kind !== "heli") {
+        .setDepth(worldDepth(u.z, ZOff.body + zBias));
+      if (!sp.aerial) {
         const sl = groundSlope(this.world, u.x, u.y);
         im.setScale(
           (1 + Phaser.Math.Clamp(Math.abs(sl.dx), 0, 0.4) * 0.22) * zs,
           (1 - Phaser.Math.Clamp(sl.dy, -0.45, 0.45) * 0.2) * zs
         );
       } else im.setScale(zs);
-      if (u.kind === "heli") {
-        extra
+      let pi = 0;
+      const gunDepth = sp.move === "heli" ? ZOff.gun : ZOff.turret;
+      const place = (
+        part: Phaser.GameObjects.Image,
+        texKey: string,
+        origin: { x: number; y: number },
+        mount: { x: number; y: number },
+        worldRot: number,
+        depth: number,
+        sc = 1
+      ) => {
+        if (!this.textures.exists(texKey)) return;
+        const mx = (mount.x - ox) * im.displayWidth;
+        const my = (mount.y - oy) * im.displayHeight;
+        part
           .setVisible(true)
-          .setTexture("enemy_rotor")
-          .setOrigin(0.5, 0.5)
-          .setPosition(im.x, im.y)
-          .setRotation(u.rotor)
-          .setScale((108 / extra.width) * zs)
-          .setAlpha(1)
-          .setDepth(worldDepth(u.z, ZOff.rotor));
-      } else if (u.kind === "tank") {
-        const mx = (tankLayout.mountOrigin.x - 0.5) * im.displayWidth;
-        const my = (tankLayout.mountOrigin.y - 0.5) * im.displayHeight;
-        extra
-          .setVisible(true)
-          .setTexture("tank_turret")
-          .setOrigin(tankLayout.turretOrigin.x, tankLayout.turretOrigin.y)
+          .setTexture(texKey)
+          .setOrigin(origin.x, origin.y)
           .setPosition(im.x + mx * Math.cos(rot) - my * Math.sin(rot), im.y + mx * Math.sin(rot) + my * Math.cos(rot))
-          .setRotation(u.turret + Math.PI / 2)
+          .setRotation(worldRot)
           .setAlpha(1)
-          .setScale(im.scaleX, im.scaleY)
-          .setDepth(worldDepth(u.z, ZOff.turret));
+          .setScale(im.scaleX * sc, im.scaleY * sc)
+          .setDepth(worldDepth(u.z, depth + zBias));
+      };
+      sp.guns.forEach((g, gi) => {
+        const part = parts[pi++];
+        if (!part) return;
+        const gorig =
+          g.tex === "enemy_tank_gun"
+            ? tankLayout.turretOrigin
+            : g.origin;
+        const gmount = g.tex === "enemy_tank_gun" ? tankLayout.mountOrigin : g.mount;
+        place(
+          part,
+          resolveSkin(this.textures, g.tex, u.camo),
+          gorig,
+          gmount,
+          gunWorldRot(g.tex, sp.fixedAim ? u.angle : (u.turrets[gi] ?? u.turret)),
+          gunDepth
+        );
+      });
+      sp.rotors.forEach((r, ri) => {
+        const part = parts[pi++];
+        if (!part) return;
+        place(part, r.tex, r.origin, r.mount, ri % 2 ? -u.rotor : u.rotor, ZOff.rotor, r.scale ?? 1);
+        if (r.tex.includes("rotor")) part.setScale(((r.scale ?? 1) * 108) / Math.max(part.width, 1) * zs);
+      });
+      if (sp.dish) {
+        const part = parts[pi++];
+        if (part) place(part, sp.dish.tex, sp.dish.origin, sp.dish.mount, u.rotor, ZOff.turret, sp.dish.scale ?? 1);
+      }
+      if (u.muzzleT > 0 && (sp.weapon || sp.guns.length)) {
+        const tip = this.enemyMuzzle(u, u.muzzleGun);
+        const ang = sp.fixedAim || !sp.guns.length ? u.angle : u.turrets[u.muzzleGun] ?? u.turret;
+        flash
+          .setVisible(true)
+          .setTexture("fx_muzzle")
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setOrigin(0.15, 0.5)
+          .setPosition(tip.x, tip.y - lift)
+          .setRotation(ang)
+          .setScale((sp.organic ? 0.7 : 1.15) * zs)
+          .setAlpha(Phaser.Math.Clamp(u.muzzleT / 0.07, 0, 1))
+          .setDepth(worldDepth(u.z, gunDepth + 0.4 + zBias));
       }
     });
+  }
+
+  enemyMuzzle(u: Unit, gunI = 0): { x: number; y: number } {
+    const sp = specOf(u.kind);
+    const wpn = sp.weapon;
+    const gun = sp.guns[gunI];
+    const zs = zScale(u.z);
+    const hullRot = u.angle + sp.rotOff;
+    const hullPivot = spritePivot(textureOf(u.kind));
+    const hullImg = this.textures.get(resolveSkin(this.textures, textureOf(u.kind), u.camo)).getSourceImage() as {
+      width: number;
+      height: number;
+    };
+    const atUv = (
+      origin: { x: number; y: number },
+      uv: { x: number; y: number },
+      tw: number,
+      th: number,
+      x: number,
+      y: number,
+      rot: number
+    ) => {
+      const lx = (uv.x - origin.x) * tw * zs;
+      const ly = (uv.y - origin.y) * th * zs;
+      return { x: x + lx * Math.cos(rot) - ly * Math.sin(rot), y: y + lx * Math.sin(rot) + ly * Math.cos(rot) };
+    };
+    if (!gun || !wpn) {
+      const bodyTips = lookupSpriteMuzzles(textureOf(u.kind));
+      if (bodyTips.length) {
+        const muz = bodyTips[u.muzzleTip % bodyTips.length]!;
+        return atUv(hullPivot, muz, hullImg.width, hullImg.height, u.x, u.y, hullRot);
+      }
+      const len = wpn?.muzzleLen ?? 10;
+      const a = u.angle;
+      return { x: u.x + Math.cos(a) * len, y: u.y + Math.sin(a) * len };
+    }
+    const origin = gun.tex === "enemy_tank_gun" ? tankLayout.turretOrigin : gun.origin;
+    const mount = gun.tex === "enemy_tank_gun" ? tankLayout.mountOrigin : gun.mount;
+    const dw = hullImg.width * zs;
+    const dh = hullImg.height * zs;
+    const mx = (mount.x - hullPivot.x) * dw;
+    const my = (mount.y - hullPivot.y) * dh;
+    const hx = u.x + mx * Math.cos(hullRot) - my * Math.sin(hullRot);
+    const hy = u.y + mx * Math.sin(hullRot) + my * Math.cos(hullRot);
+    const gtex = this.textures.exists(gun.tex)
+      ? (this.textures.get(gun.tex).getSourceImage() as { width: number; height: number })
+      : { width: 24, height: 48 };
+    const tips = gun.muzzles?.length ? gun.muzzles : [gun.muzzle ?? { x: 0.5, y: 0.08 }];
+    const muz = tips[u.muzzleTip % tips.length]!;
+    const ga = gunWorldRot(gun.tex, sp.fixedAim ? u.angle : u.turrets[gunI] ?? u.turret);
+    return atUv(origin, muz, gtex.width, gtex.height, hx, hy, ga);
   }
 
   syncShotSprites(): void {
@@ -2939,11 +3304,13 @@ export class MissionScene extends Phaser.Scene {
       const im = kids[i * 2 + 1]!;
       const key =
         s.kind === "cannon"
-          ? s.tracer === "small"
-            ? "tracer_sm"
-            : s.tracer === "shell"
-              ? "shell"
-              : "cannon"
+          ? s.tracer === "aa"
+            ? "tracer_aa"
+            : s.tracer === "small"
+              ? "tracer_sm"
+              : s.tracer === "shell"
+                ? "shell"
+                : "cannon"
           : s.kind === "rocket"
             ? "rocket"
             : s.kind === "hellfire"
@@ -2953,11 +3320,13 @@ export class MissionScene extends Phaser.Scene {
       const ox = s.kind === "cannon" ? 0.84 : 0.5;
       const sc =
         s.kind === "cannon"
-          ? s.tracer === "small"
-            ? 0.38
-            : s.tracer === "shell"
-              ? 0.72
-              : 0.58
+          ? s.tracer === "aa"
+            ? 0.95
+            : s.tracer === "small"
+              ? 0.38
+              : s.tracer === "shell"
+                ? 0.72
+                : 0.58
           : 1;
       sh.setVisible(true).setOrigin(ox, 0.5);
       this.applyCastShadow(sh, s.x, s.y, s.z, key, rot, sc);
@@ -2975,7 +3344,7 @@ export class MissionScene extends Phaser.Scene {
     const vis = this.frags.filter((f) => !f.trailOnly);
     while (this.fragG.getLength() < vis.length * 2) {
       this.fragG.add(this.add.image(0, 0, "shadow"));
-      this.fragG.add(this.add.image(0, 0, "frag_metal"));
+      this.fragG.add(this.add.image(0, 0, "fx_frag_metal"));
     }
     const kids = this.fragG.getChildren() as Phaser.GameObjects.Image[];
     for (const k of kids) k.setVisible(false);
@@ -2983,17 +3352,7 @@ export class MissionScene extends Phaser.Scene {
       const sh = kids[i * 2]!;
       const im = kids[i * 2 + 1]!;
       const z = f.z || 0;
-      const turret = f.key.includes("turret");
-      const ox = turret
-        ? f.key.includes("hulk")
-          ? tankLayout.hulkTurretOrigin.x
-          : tankLayout.turretOrigin.x
-        : 0.5;
-      const oy = turret
-        ? f.key.includes("hulk")
-          ? tankLayout.hulkTurretOrigin.y
-          : tankLayout.turretOrigin.y
-        : 0.5;
+      const { x: ox, y: oy } = spritePivot(f.key);
       const sc = (f.scale ?? 1) * zScale(z);
       sh.setVisible(true).setOrigin(ox, oy);
       this.applyCastShadow(sh, f.x, f.y, z, f.key, f.angle, f.scale ?? 1);
@@ -3258,7 +3617,7 @@ export class MissionScene extends Phaser.Scene {
     let bd = 58;
     for (const u of this.units) {
       if (u.dead) continue;
-      if (castZ(this.world, u.x, u.y, u.z) < 16 && u.kind !== "heli") continue;
+      if (castZ(this.world, u.x, u.y, u.z) < 16 && !isAerial(u.kind)) continue;
       const d = Math.hypot(u.x - x, u.y - y);
       if (d < bd) {
         bd = d;
@@ -3266,6 +3625,29 @@ export class MissionScene extends Phaser.Scene {
       }
     }
     return best;
+  }
+
+  reticleUnit(x: number, y: number): Unit | undefined {
+    let best: Unit | undefined;
+    let bd = Infinity;
+    for (const u of this.units) {
+      if (u.dead) continue;
+      const d = Math.hypot(u.x - x, u.y - screenLift(u.z) - y);
+      const hit = radius(u.kind) + 12;
+      if (d <= hit && d < bd) {
+        bd = d;
+        best = u;
+      }
+    }
+    return best;
+  }
+
+  unitHudName(u: Unit): string {
+    if (u.hv) {
+      const site = this.world.hv.find((h) => h.id === u.hv);
+      if (site) return site.name.toUpperCase();
+    }
+    return labelOf(u.kind);
   }
 
   drawHud(): void {
@@ -3283,8 +3665,10 @@ export class MissionScene extends Phaser.Scene {
             : "AIRBORNE";
     const ptr = this.worldPointer();
     const elv = groundZ(this.world, ptr.x, ptr.y) | 0;
+    const over = this.reticleUnit(ptr.x, ptr.y);
+    const overLine = over ? `\n${this.unitHudName(over)}` : "";
     this.hud.setText(
-      `ALT ${castZ(this.world, h.x, h.y, h.z) | 0}   ELV ${elv}   SPD ${Math.hypot(h.vx, h.vy) | 0}   TIME ${this.timeScale.toFixed(2)}×\n${phase}\nWPN ${w.name}  ${ammoS}`
+      `ALT ${castZ(this.world, h.x, h.y, h.z) | 0}   ELV ${elv}   SPD ${Math.hypot(h.vx, h.vy) | 0}   TIME ${this.timeScale.toFixed(2)}×\n${phase}\nWPN ${w.name}  ${ammoS}${overLine}`
     );
 
     const lines = this.world.hv.map((spec) => this.hvLine(spec));
@@ -3409,7 +3793,6 @@ export class MissionScene extends Phaser.Scene {
       return;
     }
     const cam = this.cameras.main;
-    const view = cam.worldView;
     const w = this.scale.width;
     const h = this.scale.height;
     const pad = 40;
@@ -3418,14 +3801,22 @@ export class MissionScene extends Phaser.Scene {
     for (const spec of this.world.hv) {
       const u = this.units.find((q) => q.hv === spec.id);
       if (!u || u.dead) continue;
-      const sx = ((u.x - view.x) / view.width) * w;
-      const sy = ((u.y - view.y) / view.height) * h;
-      if (sx > pad && sx < w - pad && sy > pad && sy < h - pad) continue;
-      const cx = w / 2;
-      const cy = h / 2;
-      const ang = Math.atan2(sy - cy, sx - cx);
-      const ax = Phaser.Math.Clamp(sx, pad, w - pad);
-      const ay = Phaser.Math.Clamp(sy, pad, h - pad);
+      const vis = this.unitOnHud(u, pad);
+      let ax: number;
+      let ay: number;
+      let ang: number;
+      if (vis.on) {
+        const above = (radius(u.kind) + heightOf(u.kind) * 0.35) * cam.zoom + 18;
+        ax = vis.sx;
+        ay = Math.max(pad, vis.sy - above);
+        ang = Math.PI / 2;
+      } else {
+        const cx = w / 2;
+        const cy = h / 2;
+        ang = Math.atan2(vis.sy - cy, vis.sx - cx);
+        ax = Phaser.Math.Clamp(vis.sx, pad, w - pad);
+        ay = Phaser.Math.Clamp(vis.sy, pad, h - pad);
+      }
       g.save();
       g.translateCanvas(ax, ay);
       g.rotateCanvas(ang);
@@ -3439,24 +3830,35 @@ export class MissionScene extends Phaser.Scene {
       const label = this.hvArrowLabels[used++];
       if (!label) continue;
       const dist = Math.hypot(u.x - this.heli.x, u.y - this.heli.y) | 0;
-      const inset = 26;
-      let lx = ax - Math.cos(ang) * inset;
-      let ly = ay - Math.sin(ang) * inset;
-      lx = Phaser.Math.Clamp(lx, 52, w - 52);
-      ly = Phaser.Math.Clamp(ly, 22, h - 22);
-      const miniDx = lx - (18 + 88);
-      const miniDy = ly - (h - 18 - 88);
-      if (Math.hypot(miniDx, miniDy) < 108) {
-        const n = Math.hypot(miniDx, miniDy) || 1;
-        lx = 18 + 88 + (miniDx / n) * 112;
-        ly = h - 18 - 88 + (miniDy / n) * 112;
+      let lx: number;
+      let ly: number;
+      let ox: number;
+      let oy: number;
+      if (vis.on) {
+        lx = ax;
+        ly = ay - 12;
+        ox = 0.5;
+        oy = 1;
+      } else {
+        const inset = 26;
+        lx = Phaser.Math.Clamp(ax - Math.cos(ang) * inset, 52, w - 52);
+        ly = Phaser.Math.Clamp(ay - Math.sin(ang) * inset, 22, h - 22);
+        const miniDx = lx - (18 + 88);
+        const miniDy = ly - (h - 18 - 88);
+        if (Math.hypot(miniDx, miniDy) < 108) {
+          const n = Math.hypot(miniDx, miniDy) || 1;
+          lx = 18 + 88 + (miniDx / n) * 112;
+          ly = h - 18 - 88 + (miniDy / n) * 112;
+        }
+        ox = 0.5 + Math.cos(ang) * 0.42;
+        oy = 0.5 + Math.sin(ang) * 0.38;
       }
       const lp = this.hudLocal(lx, ly);
       label
         .setVisible(true)
         .setText(`${spec.name}\n${dist}m`)
         .setPosition(lp.x, lp.y)
-        .setOrigin(0.5 + Math.cos(ang) * 0.42, 0.5 + Math.sin(ang) * 0.38)
+        .setOrigin(ox, oy)
         .setColor("#f0e6c8")
         .setAlpha(0.95);
     }
@@ -3499,17 +3901,19 @@ export class MissionScene extends Phaser.Scene {
     }
     const live = this.units.filter((u) => !u.dead);
     while (this.aiLabels.length < live.length) {
-      this.aiLabels.push(
-        this.add
-          .text(0, 0, "", {
-            fontFamily: "Share Tech Mono, monospace",
-            fontSize: "11px",
-            color: "#ffe08a",
-          })
-          .setOrigin(0.5, 1)
-          .setDepth(Layer.FIELD + 9)
-          .setStroke("#12100c", 3)
-      );
+      const key = `ai_label_${this.aiLabels.length}`;
+      const t = this.add
+        .text(0, 0, "", {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: "11px",
+          color: "#ffe08a",
+        })
+        .setOrigin(0.5, 1)
+        .setDepth(Layer.FIELD + 9)
+        .setStroke("#12100c", 3)
+        .setName(key);
+      nameGameTexture(this, t, key);
+      this.aiLabels.push(t);
     }
     for (const t of this.aiLabels) t.setVisible(false);
     this.aiGfx.lineStyle(1.4, 0x5ec8ff, 0.85);
@@ -3583,6 +3987,7 @@ export class MissionScene extends Phaser.Scene {
 
   toggleDebugMenu(force?: boolean): void {
     this.debugOpen = force ?? !this.debugOpen;
+    if (!this.debugOpen) this.debugSpawnOpen = false;
     this.debugRoot.setVisible(this.debugOpen);
     if (this.debugOpen) this.syncDebugMenu();
   }
@@ -3592,20 +3997,16 @@ export class MissionScene extends Phaser.Scene {
     const y = 86;
     const w = 280;
     const rowH = 26;
-    const labels = ["NO DAMAGE", "INFINITE AMMO", "HEIGHT MAP   K", "DEBUG AI"];
+    const labels = ["NO DAMAGE", "INFINITE AMMO", "HEIGHT MAP   K", "DEBUG AI", "SPAWN"];
     this.debugRoot = this.add.container(x, y);
     this.debugRoot.setDepth(Layer.HUD + 180);
     this.debugRoot.setScrollFactor(0);
-    const panel = this.add.graphics();
-    panel.fillStyle(0x12100c, 0.92);
-    panel.fillRoundedRect(0, 0, w, 48 + labels.length * rowH, 3);
-    panel.lineStyle(1.5, 0xe8b84a, 0.85);
-    panel.strokeRoundedRect(0, 0, w, 48 + labels.length * rowH, 3);
-    const title = this.add.text(12, 10, "/  DEBUG", {
+    this.debugPanel = this.add.graphics();
+    this.debugTitle = this.add.text(12, 10, "/  DEBUG", {
       fontFamily: "Share Tech Mono, monospace",
       fontSize: "13px",
       color: "#e8b84a",
-    });
+    }).setName("debug_title");
     this.debugRows = labels.map((label, i) => {
       const t = this.add
         .text(12, 38 + i * rowH, "", {
@@ -3613,28 +4014,133 @@ export class MissionScene extends Phaser.Scene {
           fontSize: "13px",
           color: "#f0e6c8",
         })
-        .setInteractive({ useHandCursor: true });
+        .setInteractive({ useHandCursor: true })
+        .setName(`debug_row_${i}`);
       t.on("pointerdown", () => {
+        if (this.debugSpawnOpen) return;
         if (i === 0) this.setNoDamage(!this.noDamage);
         else if (i === 1) this.setInfAmmo(!this.infAmmo);
         else if (i === 2) this.toggleHeightMap();
-        else this.setDebugAi(!this.debugAi);
+        else if (i === 3) this.setDebugAi(!this.debugAi);
+        else this.openDebugSpawn();
       });
       return t;
     });
-    this.debugRoot.add([panel, title, ...this.debugRows]);
+    this.debugSpawnHint = this.add
+      .text(12, 10, "", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "12px",
+        color: "#e8b84a",
+      })
+      .setVisible(false)
+      .setName("debug_spawn_hint");
+    const kinds = allKinds();
+    this.debugSpawnRows = kinds.map((kind, i) => {
+      const t = this.add
+        .text(12, 34 + i * 18, "", {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: "13px",
+          color: "#f0e6c8",
+        })
+        .setInteractive({ useHandCursor: true })
+        .setVisible(false)
+        .setName(`debug_spawn_${kind}`);
+      t.on("pointerdown", () => {
+        if (!this.debugSpawnOpen) return;
+        this.debugSpawnIdx = i;
+        this.debugSpawnSelected();
+      });
+      return t;
+    });
+    this.debugRoot.add([this.debugPanel, this.debugTitle, ...this.debugRows, this.debugSpawnHint, ...this.debugSpawnRows]);
     this.debugRoot.setVisible(false);
     this.syncDebugMenu();
   }
 
   syncDebugMenu(): void {
     if (!this.debugRows.length) return;
+    const w = 280;
+    const rowH = 26;
+    if (this.debugSpawnOpen) {
+      const kinds = allKinds();
+      const n = kinds.length;
+      const hgt = 36 + n * 18 + 10;
+      this.debugPanel.clear();
+      this.debugPanel.fillStyle(0x12100c, 0.92);
+      this.debugPanel.fillRoundedRect(0, 0, w, hgt, 3);
+      this.debugPanel.lineStyle(1.5, 0xe8b84a, 0.85);
+      this.debugPanel.strokeRoundedRect(0, 0, w, hgt, 3);
+      for (const t of this.debugRows) t.setVisible(false);
+      this.debugTitle.setVisible(false);
+      this.debugSpawnHint
+        .setVisible(true)
+        .setText("SPAWN   ↑↓  ENTER place   ESC back");
+      for (let i = 0; i < this.debugSpawnRows.length; i++) {
+        const row = this.debugSpawnRows[i]!;
+        const kind = kinds[i]!;
+        const sel = i === this.debugSpawnIdx;
+        row
+          .setVisible(true)
+          .setText(`${sel ? "▸" : " "}  ${labelOf(kind)}`)
+          .setColor(sel ? "#e8b84a" : "#c8c0a8");
+      }
+      return;
+    }
+    const hgt = 48 + this.debugRows.length * rowH;
+    this.debugPanel.clear();
+    this.debugPanel.fillStyle(0x12100c, 0.92);
+    this.debugPanel.fillRoundedRect(0, 0, w, hgt, 3);
+    this.debugPanel.lineStyle(1.5, 0xe8b84a, 0.85);
+    this.debugPanel.strokeRoundedRect(0, 0, w, hgt, 3);
+    this.debugTitle.setVisible(true);
+    this.debugSpawnHint.setVisible(false);
+    for (const t of this.debugSpawnRows) t.setVisible(false);
     const flags = [this.noDamage, this.infAmmo, this.showHeightMap, this.debugAi];
-    const names = ["NO DAMAGE", "INFINITE AMMO", "HEIGHT MAP   K", "DEBUG AI"];
+    const names = ["NO DAMAGE", "INFINITE AMMO", "HEIGHT MAP   K", "DEBUG AI", "SPAWN"];
     for (let i = 0; i < this.debugRows.length; i++) {
-      const on = flags[i]!;
-      this.debugRows[i]!.setText(`${i + 1}  ${names[i]!}            ${on ? "ON" : "OFF"}`);
-      this.debugRows[i]!.setColor(on ? "#e8b84a" : "#8a8470");
+      const row = this.debugRows[i]!;
+      row.setVisible(true);
+      if (i < 4) {
+        const on = flags[i]!;
+        row.setText(`${i + 1}  ${names[i]!}            ${on ? "ON" : "OFF"}`);
+        row.setColor(on ? "#e8b84a" : "#8a8470");
+      } else {
+        row.setText("5  SPAWN…");
+        row.setColor("#f0e6c8");
+      }
+    }
+  }
+
+  openDebugSpawn(): void {
+    this.debugSpawnOpen = true;
+    this.syncDebugMenu();
+  }
+
+  closeDebugSpawn(): void {
+    this.debugSpawnOpen = false;
+    this.syncDebugMenu();
+  }
+
+  nudgeDebugSpawn(dir: number): void {
+    const n = allKinds().length;
+    if (!n) return;
+    this.debugSpawnIdx = (this.debugSpawnIdx + dir + n) % n;
+    this.syncDebugMenu();
+  }
+
+  debugSpawnSelected(): void {
+    const kind = allKinds()[this.debugSpawnIdx];
+    if (!kind) return;
+    const h = this.heli;
+    const a = h.angle + (Math.random() - 0.5) * 0.5;
+    const d = 120 + Math.random() * 50;
+    const x = h.x + Math.cos(a) * d;
+    const y = h.y + Math.sin(a) * d;
+    const u = this.makeUnit(kind, x, y);
+    this.units.push(u);
+    if (kind === "lookout") {
+      const at = this.lookoutPost(u);
+      this.units.push(this.makeUnit(pickLookoutTroop(), at.x, at.y, u.id));
     }
   }
 
@@ -3712,7 +4218,7 @@ export class MissionScene extends Phaser.Scene {
       fontFamily: "Share Tech Mono, monospace",
       fontSize: "13px",
       color: "#e8b84a",
-    });
+    }).setName("edit_title");
     this.editChips = [];
     this.editChipFrames = [];
     HEIGHT_BRUSHES.forEach((b, i) => {
@@ -3731,7 +4237,7 @@ export class MissionScene extends Phaser.Scene {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "10px",
         color: "#8a8470",
-      }).setOrigin(0.5, 0);
+      }).setOrigin(0.5, 0).setName(`edit_brush_${b.id}`);
       this.editChips.push(img);
       this.editChipFrames.push(frame);
       this.editRoot.add([frame, img, lab]);
@@ -3741,14 +4247,15 @@ export class MissionScene extends Phaser.Scene {
       fontSize: "11px",
       color: "#c8c0a8",
       lineSpacing: 3,
-    });
+    }).setName("edit_readout");
     this.editInkBtn = this.add
       .text(16, 176, "", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "12px",
         color: "#e8b84a",
       })
-      .setInteractive({ useHandCursor: true });
+      .setInteractive({ useHandCursor: true })
+      .setName("edit_ink");
     this.editInkBtn.on("pointerover", () => {
       this.editUiBlock = true;
     });
@@ -3770,6 +4277,7 @@ export class MissionScene extends Phaser.Scene {
     this.editRoot.bringToTop(this.editInkBtn);
     this.editRoot.setVisible(false);
     this.syncReliefHud();
+    nameGeneratedTextures(this);
   }
 
   toggleEditInvert(): void {
@@ -3897,8 +4405,9 @@ export class MissionScene extends Phaser.Scene {
     for (const dec of this.world.decor) {
       const pad = dec.size * SCALE * 0.5;
       if (dec.x < wx0 - pad || dec.x > wx1 + pad || dec.y < wy0 - pad || dec.y > wy1 + pad) continue;
-      if (!this.textures.exists(dec.kind)) continue;
-      const img = this.textures.get(dec.kind).getSourceImage() as CanvasImageSource;
+      const skin = resolveSkin(this.textures, doodadTex(dec.kind), camoForBiome(sampleBiome(this.world, dec.x, dec.y)));
+      if (!this.textures.exists(skin)) continue;
+      const img = this.textures.get(skin).getSourceImage() as CanvasImageSource;
       const s = dec.size;
       g.save();
       g.globalAlpha = 0.9;
@@ -4182,9 +4691,16 @@ export class MissionScene extends Phaser.Scene {
     const p = this.input.activePointer;
     const z = Math.max(cam.zoom, 0.001);
     const wpn = WPN_LIST[this.heli.weapon]!.id;
-    const heavy = wpn === "hellfire" || wpn === "tow";
-    const pull = heavy ? 0.55 : 0.2;
-    const max = heavy ? 210 : 88;
+    const look =
+      wpn === "hellfire"
+        ? { pull: 0.86, max: 360, rate: 5.2 }
+        : wpn === "rocket"
+          ? { pull: 0.42, max: 160, rate: 7.4 }
+          : wpn === "tow"
+            ? { pull: 0.55, max: 210, rate: 6.5 }
+            : { pull: 0.2, max: 88, rate: 10 };
+    const pull = look.pull;
+    const max = look.max;
     let ox = ((p.x - this.scale.width / 2) / z) * pull;
     let oy = ((p.y - this.scale.height / 2) / z) * pull;
     const len = Math.hypot(ox, oy);
@@ -4192,7 +4708,7 @@ export class MissionScene extends Phaser.Scene {
       ox *= max / len;
       oy *= max / len;
     }
-    let rate = heavy ? 6.5 : 10;
+    let rate = look.rate;
     let tow: Shot | undefined;
     for (let i = this.shots.length - 1; i >= 0; i--) {
       const s = this.shots[i]!;
@@ -4309,18 +4825,20 @@ export class MissionScene extends Phaser.Scene {
 
   syncMapHvLabels(u: (px: number) => number): void {
     while (this.mapHvLabels.length < this.world.hv.length) {
-      this.mapHvLabels.push(
-        this.add
-          .text(0, 0, "", {
-            fontFamily: "Share Tech Mono, monospace",
-            fontSize: "12px",
-            color: "#ffe08a",
-            align: "left",
-          })
-          .setOrigin(0, 0.5)
-          .setDepth(Layer.HUD + 3)
-          .setStroke("#12100c", 4)
-      );
+      const key = `map_hv_${this.mapHvLabels.length}`;
+      const t = this.add
+        .text(0, 0, "", {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: "12px",
+          color: "#ffe08a",
+          align: "left",
+        })
+        .setOrigin(0, 0.5)
+        .setDepth(Layer.HUD + 3)
+        .setStroke("#12100c", 4)
+        .setName(key);
+      nameGameTexture(this, t, key);
+      this.mapHvLabels.push(t);
     }
     const fs = Math.max(11, u(13));
     for (let i = 0; i < this.mapHvLabels.length; i++) {
@@ -4356,7 +4874,7 @@ export class MissionScene extends Phaser.Scene {
     for (const u of this.units) {
       if (u.dead || u.health >= u.max - 0.5) continue;
       const zs = zScale(u.z);
-      const w = (u.kind === "soldier" ? 16 : 32) * zs;
+      const w = (isOrganic(u.kind) ? 16 : 32) * zs;
       const ratio = Phaser.Math.Clamp(u.health / u.max, 0, 1);
       const x = u.x - w / 2;
       const y = u.y - screenLift(u.z) - heightOf(u.kind) * 0.35 * zs - 14 * zs;
@@ -4447,7 +4965,9 @@ export class MissionScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setScrollFactor(0)
         .setDepth(Layer.HUD + 50)
+        .setName("hud_end")
     );
+    nameGeneratedTextures(this);
   }
 }
 
@@ -4461,7 +4981,7 @@ function hitSparkFx(dmg: number): { n: number; spd: number; size: number } {
 }
 
 function sparkTexKey(kind: SparkKind): string {
-  return kind === "dirt" ? "dirt" : kind === "splash" ? "splash" : kind === "flame" ? "flame" : "spark";
+  return `fx_${kind}`;
 }
 
 function pickSparkKind(style: "muzzle" | "ground" | "water" | "object", sparkFrac = 0.18): SparkKind {

@@ -1,4 +1,5 @@
 import type Phaser from "phaser";
+import { lookupSpriteOrigin, SPRITE_MOUNT } from "./spriteOrigin";
 
 const SRC = {
   heli: "sprites/helistrike-heli-player-nrotor.png",
@@ -15,6 +16,18 @@ const SRC = {
   weapons: "sprites/helistrike-weapons.png",
   blasts: "sprites/helistrike-blasts.png",
   rotors: "sprites/helistrike-rotors.png",
+  split: "sprites/helistrike-split-parts.png",
+  vehicles: "sprites/helistrike-vehicles.png",
+  guns: "sprites/helistrike-guns.png",
+  troops: "sprites/helistrike-troops.png",
+  buildings: "sprites/helistrike-buildings.png",
+  airShip: "sprites/helistrike-air-ship.png",
+  hulksSplit: "sprites/helistrike-hulks-split.png",
+  hulksVehicles: "sprites/helistrike-hulks-vehicles.png",
+  hulksBuildings: "sprites/helistrike-hulks-buildings.png",
+  hulksAir: "sprites/helistrike-hulks-air.png",
+  hulksTroops: "sprites/helistrike-hulks-troops.png",
+  hulksGuns: "sprites/helistrike-hulks-guns.png",
 } as const;
 
 export const BIOME_TILE_NAMES = ["water", "sand", "grass", "forest", "rock", "peak"] as const;
@@ -50,6 +63,18 @@ export function preloadArt(scene: Phaser.Scene): void {
   scene.load.image("src_weapons", SRC.weapons);
   scene.load.image("src_blasts", SRC.blasts);
   scene.load.image("src_rotors", SRC.rotors);
+  scene.load.image("src_split", SRC.split);
+  scene.load.image("src_vehicles", SRC.vehicles);
+  scene.load.image("src_guns", SRC.guns);
+  scene.load.image("src_troops", SRC.troops);
+  scene.load.image("src_buildings", SRC.buildings);
+  scene.load.image("src_air_ship", SRC.airShip);
+  scene.load.image("src_hulks_split", SRC.hulksSplit);
+  scene.load.image("src_hulks_vehicles", SRC.hulksVehicles);
+  scene.load.image("src_hulks_buildings", SRC.hulksBuildings);
+  scene.load.image("src_hulks_air", SRC.hulksAir);
+  scene.load.image("src_hulks_troops", SRC.hulksTroops);
+  scene.load.image("src_hulks_guns", SRC.hulksGuns);
   for (const name of BIOME_TILE_NAMES) {
     scene.load.image(`src_biome_${name}`, `sprites/helistrike-biome-${name}.png`);
   }
@@ -66,7 +91,7 @@ export function preloadArt(scene: Phaser.Scene): void {
 
 export const tankLayout = {
   turretOrigin: { x: 0.5, y: 0.78 },
-  mountOrigin: { x: 0.5, y: 0.4 },
+  mountOrigin: { ...SPRITE_MOUNT.enemy_tank },
   hulkTurretOrigin: { x: 0.5, y: 0.78 },
 };
 
@@ -79,6 +104,74 @@ export const gunLayout = {
   origin: { x: 0.5, y: 0.7 },
   mount: { x: 0.497, y: 0.174 },
 };
+
+export function spritePivot(key: string): { x: number; y: number } {
+  const k = key.replace(/__(woodland|desert|urban|snow)$/, "");
+  if (k === "heli_body") return { ...rotorLayout.player };
+  if (k === "heli_gun") return { ...gunLayout.origin };
+  if (k === "enemy_heli") return { ...rotorLayout.enemy };
+  if (k === "enemy_tank_gun") return { ...tankLayout.turretOrigin };
+  if (k === "enemy_tank_gun_hulk") return { ...tankLayout.hulkTurretOrigin };
+  return lookupSpriteOrigin(k) ?? { x: 0.5, y: 0.5 };
+}
+
+const UUID_TEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isUuidTexture(key: string): boolean {
+  return UUID_TEX.test(key);
+}
+
+export function nameTexture(textures: Phaser.Textures.TextureManager, currentKey: string, newKey: string): void {
+  if (!currentKey || currentKey === newKey || !textures.exists(currentKey)) return;
+  if (textures.exists(newKey) && newKey !== currentKey) textures.remove(newKey);
+  textures.renameTexture(currentKey, newKey);
+}
+
+export function nameGameTexture(scene: Phaser.Scene, obj: { texture?: Phaser.Textures.Texture; name?: string }, key: string): void {
+  const cur = obj.texture?.key;
+  if (!cur) return;
+  nameTexture(scene.textures, cur, key);
+  if ("name" in obj) obj.name = key;
+}
+
+/** Rename leftover Phaser UUID canvas/dynamic textures from named game objects. */
+export function nameGeneratedTextures(scene: Phaser.Scene): void {
+  const used = new Set<string>();
+  const visit = (child: Phaser.GameObjects.GameObject): void => {
+    const any = child as Phaser.GameObjects.GameObject & { texture?: Phaser.Textures.Texture };
+    const cur = any.texture?.key;
+    if (cur && isUuidTexture(cur) && !used.has(cur)) {
+      used.add(cur);
+      const base = (any.name && !isUuidTexture(any.name) ? any.name : fallbackGenName(any)).replace(/\s+/g, "_");
+      let key = base;
+      let n = 2;
+      while (scene.textures.exists(key) && scene.textures.get(key) !== any.texture) {
+        key = `${base}_${n++}`;
+      }
+      nameTexture(scene.textures, cur, key);
+    }
+    const nest = (child as Phaser.GameObjects.Container).list;
+    if (Array.isArray(nest)) for (const ch of nest) visit(ch);
+  };
+  for (const child of scene.children.list) visit(child);
+  const tex = scene.textures as Phaser.Textures.TextureManager & { getTextureKeys?: () => string[] };
+  const raw = tex.getTextureKeys ? tex.getTextureKeys() : Object.keys(tex.list);
+  let n = 1;
+  for (const k of raw) {
+    if (!isUuidTexture(k) || k.startsWith("__") || !scene.textures.exists(k)) continue;
+    let key = `gen_canvas_${n++}`;
+    while (scene.textures.exists(key)) key = `gen_canvas_${n++}`;
+    nameTexture(scene.textures, k, key);
+  }
+}
+
+function fallbackGenName(obj: Phaser.GameObjects.GameObject): string {
+  const t = obj.type.replace(/\s+/g, "").toLowerCase();
+  if (t === "text") return "hud_text";
+  if (t === "rendertexture") return "wreck_layer";
+  if (t === "dynamictexture") return "dynamic_tex";
+  return `gen_${t}`;
+}
 
 export function spriteUvPos(
   spr: { x: number; y: number; rotation: number; displayWidth: number; displayHeight: number; originX: number; originY: number },
@@ -99,53 +192,155 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   put(textures, "enemy_heli", enemy);
   const rotors = splitRotorSheet(keyPixels(src(textures, "src_rotors"), "magenta"));
   put(textures, "heli_rotor", squareCenter(rotors[0]!));
-  put(textures, "enemy_rotor", squareCenter(rotors[1]!));
-  put(textures, "rock", fit(keyImage(src(textures, "src_rock"), "magenta"), 36));
+  put(textures, "enemy_heli_rotor", squareCenter(rotors[1]!));
+  put(textures, "doodad_rock", fit(keyImage(src(textures, "src_rock"), "magenta"), 36));
 
   const parts = sliceGrid(keyImage(src(textures, "src_tank_parts"), "magenta"), 2, 1);
   const hull = fit(parts[0]!, 72);
   const turret = fit(parts[1]!, 56);
-  put(textures, "tank_hull", hull);
-  put(textures, "tank_turret", turret);
-  tankLayout.mountOrigin = darkMountOrigin(hull);
+  put(textures, "enemy_tank", hull);
+  put(textures, "enemy_tank_gun", turret);
   tankLayout.turretOrigin = cupolaOrigin(turret);
   const wreck = sliceGrid(keyImage(src(textures, "src_tank_wreck"), "magenta"), 2, 1);
-  put(textures, "hulk_tank_hull", darkenWreck(fit(wreck[0]!, 70)));
+  put(textures, "enemy_tank_hulk", darkenWreck(fit(wreck[0]!, 70)));
   const hulkTurret = darkenWreck(fit(wreck[1]!, 70));
-  put(textures, "hulk_tank_turret", hulkTurret);
+  put(textures, "enemy_tank_gun_hulk", hulkTurret);
   tankLayout.hulkTurretOrigin = cupolaOrigin(hulkTurret);
 
   const sheet = keyPixels(src(textures, "src_units"), "magenta");
   const cells = sliceGrid(sheet, 3, 2);
   const keys = ["boat", "tower", "bunker", "radar", "soldier", "tree"] as const;
   const sizes = [78, 58, 92, 88, 26, 42];
-  keys.forEach((key, i) => put(textures, key, fit(cells[i]!, sizes[i]!)));
+  keys.forEach((key, i) => {
+    if (key === "boat" || key === "tower" || key === "radar" || key === "soldier") return;
+    const texKey = key === "tree" ? "doodad_tree" : key === "bunker" ? "building_bunker" : `enemy_${key}`;
+    put(textures, texKey, fit(cells[i]!, sizes[i]!));
+  });
+
+  putGrid(textures, "src_split", 3, 2, [
+    ["enemy_boat", 78],
+    ["building_tower", 58],
+    ["building_radar", 88],
+    ["enemy_boat_gun", 36],
+    ["building_tower_gun", 52],
+    ["building_radar_disk", 64],
+  ]);
+  putGrid(textures, "src_vehicles", 3, 2, [
+    ["enemy_pickup", 58],
+    ["enemy_truck", 68],
+    ["enemy_tanker", 70],
+    ["enemy_lav", 56],
+    ["enemy_sam", 68],
+    ["enemy_ptboat", 64],
+  ]);
+  putGrid(textures, "src_guns", 3, 2, [
+    ["enemy_lav_gun", 40],
+    ["enemy_sam_gun", 48],
+    ["enemy_ptboat_gun", 32],
+    ["enemy_battleship_gun", 48],
+    ["enemy_heli_heavy_gun", 48],
+    ["enemy_heli_gun", 32],
+  ]);
+  putGrid(textures, "src_troops", 3, 2, [
+    ["enemy_troop_rpg", 26],
+    ["enemy_troop_gunner", 26],
+    ["enemy_troop_stinger", 26],
+    ["enemy_troop_mechanic", 26],
+    ["enemy_troop_officer", 26],
+    ["enemy_troop_soldier", 26],
+  ]);
+  putGrid(textures, "src_buildings", 2, 2, [
+    ["building_barn", 86],
+    ["building_tent", 64],
+    ["building_fob", 96],
+    ["building_lookout", 52],
+  ]);
+  putGrid(textures, "src_air_ship", 2, 2, [
+    ["enemy_drone", 40],
+    ["enemy_heli_small", 62],
+    ["enemy_heli_heavy", 128],
+    ["enemy_battleship", 280],
+  ]);
+  putHulkGrid(textures, "src_hulks_split", 3, 2, [
+    ["enemy_boat_hulk", 74],
+    ["building_tower_hulk", 58],
+    ["building_radar_hulk", 84],
+    ["enemy_boat_gun_hulk", 36],
+    ["building_tower_gun_hulk", 52],
+    ["building_radar_disk_hulk", 64],
+  ]);
+  putHulkGrid(textures, "src_hulks_vehicles", 3, 2, [
+    ["enemy_pickup_hulk", 58],
+    ["enemy_truck_hulk", 68],
+    ["enemy_tanker_hulk", 70],
+    ["enemy_lav_hulk", 56],
+    ["enemy_sam_hulk", 68],
+    ["enemy_ptboat_hulk", 64],
+  ]);
+  putHulkGrid(textures, "src_hulks_buildings", 2, 2, [
+    ["building_barn_hulk", 86],
+    ["building_tent_hulk", 64],
+    ["building_fob_hulk", 96],
+    ["building_lookout_hulk", 52],
+  ]);
+  putHulkGrid(textures, "src_hulks_air", 2, 2, [
+    ["enemy_drone_hulk", 40],
+    ["enemy_heli_small_hulk", 62],
+    ["enemy_heli_heavy_hulk", 128],
+    ["enemy_battleship_hulk", 280],
+  ]);
+  putHulkGrid(textures, "src_hulks_troops", 3, 2, [
+    ["enemy_troop_rpg_hulk", 28],
+    ["enemy_troop_gunner_hulk", 28],
+    ["enemy_troop_stinger_hulk", 28],
+    ["enemy_troop_mechanic_hulk", 28],
+    ["enemy_troop_officer_hulk", 28],
+    ["enemy_troop_soldier_hulk", 28],
+  ]);
+  putHulkGrid(textures, "src_hulks_guns", 3, 2, [
+    ["enemy_lav_gun_hulk", 40],
+    ["enemy_sam_gun_hulk", 48],
+    ["enemy_ptboat_gun_hulk", 32],
+    ["enemy_battleship_gun_hulk", 48],
+    ["enemy_heli_heavy_gun_hulk", 48],
+    ["enemy_heli_gun_hulk", 32],
+  ]);
 
   for (const d of DOODAD_ART) {
     const srcKey = `src_doodad_${d.key}`;
     if (!textures.exists(srcKey)) continue;
-    put(textures, d.key, fit(keyDoodad(src(textures, srcKey)), d.size));
+    put(textures, `doodad_${d.key}`, fit(keyDoodad(src(textures, srcKey)), d.size));
   }
 
   const hulks = sliceGrid(keyImage(src(textures, "src_hulks"), "magenta"), 3, 3);
   const hulkKeys = [
-    "hulk_tank",
-    "hulk_heli",
-    "hulk_bunker",
-    "hulk_radar",
-    "hulk_tower",
-    "hulk_boat",
-    "hulk_soldier",
-    "hulk_tree",
+    "enemy_tank_hulk",
+    "enemy_heli_hulk",
+    "building_bunker_hulk",
+    "building_radar_hulk",
+    "building_tower_hulk",
+    "enemy_boat_hulk",
+    "enemy_troop_soldier_hulk",
+    "doodad_tree_hulk",
     "hulk_crater",
   ] as const;
   const hulkSizes = [70, 90, 86, 84, 58, 74, 28, 40, 48];
-  hulkKeys.forEach((key, i) => put(textures, key, darkenWreck(fit(hulks[i]!, hulkSizes[i]!))));
+  hulkKeys.forEach((key, i) => {
+    if (
+      key === "building_radar_hulk" ||
+      key === "building_tower_hulk" ||
+      key === "enemy_boat_hulk" ||
+      key === "enemy_tank_hulk" ||
+      key === "enemy_troop_soldier_hulk"
+    )
+      return;
+    put(textures, key, darkenWreck(fit(hulks[i]!, hulkSizes[i]!)));
+  });
 
   putDebrisSheet(textures, "src_debris_mech", "mech");
   putDebrisSheet(textures, "src_debris_struct", "struct");
   putDebrisSheet(textures, "src_debris_organic", "organic");
-  if (!textures.exists("frag_mech_0") && textures.exists("src_debris")) {
+  if (!textures.exists("fx_frag_mech_0") && textures.exists("src_debris")) {
     putDebrisSheet(textures, "src_debris", "mech");
   }
 
@@ -157,7 +352,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
 
   const blastSrc = src(textures, "src_blasts");
   const blasts = sliceGrid(matteMagenta(copyToCanvas(blastSrc, blastSrc.width, blastSrc.height)), 2, 2);
-  blasts.forEach((c, i) => put(textures, `blast_${i}`, fit(c, 88)));
+  blasts.forEach((c, i) => put(textures, `fx_blast_${i}`, fit(c, 88)));
 
   putFxSheet(textures, "spark", 22);
   putFxSheet(textures, "flame", 28);
@@ -175,20 +370,49 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     "rocket",
     "hellfire",
     "tow",
-    "tank_hull",
-    "tank_turret",
-    "hulk_tank_turret",
-    "hulk_tank_hull",
-    "boat",
-    "tower",
-    "bunker",
-    "radar",
-    "soldier",
-    "frag_metal",
-    "frag_sand",
-    "frag_dark",
+    "enemy_tank",
+    "enemy_tank_gun",
+    "enemy_tank_gun_hulk",
+    "enemy_tank_hulk",
+    "enemy_boat",
+    "building_tower",
+    "building_bunker",
+    "building_radar",
+    "enemy_troop_soldier",
+    "enemy_pickup",
+    "enemy_truck",
+    "enemy_tanker",
+    "enemy_lav",
+    "enemy_sam",
+    "enemy_ptboat",
+    "enemy_battleship",
+    "enemy_troop_rpg",
+    "enemy_troop_gunner",
+    "enemy_troop_stinger",
+    "enemy_troop_mechanic",
+    "enemy_troop_officer",
+    "building_barn",
+    "building_tent",
+    "building_fob",
+    "building_lookout",
+    "enemy_drone",
+    "enemy_heli_small",
+    "enemy_heli_heavy",
+    "building_tower_gun",
+    "enemy_boat_gun",
+    "building_radar_disk",
+    "enemy_lav_gun",
+    "enemy_sam_gun",
+    "enemy_battleship_gun",
+    "enemy_heli_heavy_gun",
+    "enemy_ptboat_gun",
+    "enemy_heli_gun",
+    "tracer_aa",
+    "fx_frag_metal",
+    "fx_frag_sand",
+    "fx_frag_dark",
     ...["mech", "struct", "organic"].flatMap((cat) =>
-      Array.from({ length: 12 }, (_, i) => `frag_${cat}_${i}`)
+      Array.from({ length: 12 }, (_, i) => `fx_frag_${cat}_${i}`)
     ),
   ];
   for (const key of shadowSrc) {
@@ -226,7 +450,8 @@ export function extractBiomeTiles(textures: Phaser.Textures.TextureManager): (Im
 
 export function shadowKey(base: string, z: number): string {
   const lvl = z < 22 ? 0 : z < 52 ? 1 : z < 88 ? 2 : 3;
-  return `${base}_sh${lvl}`;
+  const bare = base.replace(/__(woodland|desert|urban|snow)$/, "");
+  return `${bare}_sh${lvl}`;
 }
 
 export function shadowOff(z: number): { x: number; y: number } {
@@ -251,24 +476,60 @@ function put(
   textures.addCanvas(key, c);
 }
 
+function putGrid(
+  textures: Phaser.Textures.TextureManager,
+  srcKey: string,
+  cols: number,
+  rows: number,
+  entries: [string, number][]
+): void {
+  if (!textures.exists(srcKey)) return;
+  const cells = sliceGrid(keyPixels(src(textures, srcKey), "magenta"), cols, rows);
+  entries.forEach(([key, size], i) => {
+    const cell = cells[i];
+    if (!cell) return;
+    put(textures, key, fit(cell, size));
+  });
+}
+
+function putHulkGrid(
+  textures: Phaser.Textures.TextureManager,
+  srcKey: string,
+  cols: number,
+  rows: number,
+  entries: [string, number][]
+): void {
+  if (!textures.exists(srcKey)) return;
+  const cells = sliceGrid(keyPixels(src(textures, srcKey), "magenta"), cols, rows);
+  entries.forEach(([key, size], i) => {
+    const cell = cells[i];
+    if (!cell) return;
+    put(textures, key, darkenWreck(fit(cell, size)));
+  });
+}
+
 function putDebrisSheet(
   textures: Phaser.Textures.TextureManager,
   srcKey: string,
   cat: string
 ): void {
   if (!textures.exists(srcKey)) return;
-  const cells = sliceGrid(keyImage(src(textures, srcKey), "magenta"), 4, 3);
-  cells.forEach((c, i) => put(textures, `frag_${cat}_${i}`, darkenWreck(fit(c, cat === "organic" ? 12 : 22), 0.7)));
+  const cells = sliceGrid(keyPixels(src(textures, srcKey), "magenta"), 4, 3);
+  cells.forEach((c, i) => {
+    if (!c.width || !c.height) return;
+    put(textures, `fx_frag_${cat}_${i}`, darkenWreck(fit(c, cat === "organic" ? 12 : 22), 0.7));
+  });
 }
 
 function putFxSheet(
   textures: Phaser.Textures.TextureManager,
-  destKey: string,
+  kind: string,
   size: number
 ): void {
+  const destKey = `fx_${kind}`;
   const cells: HTMLCanvasElement[] = [];
   for (let i = 0; i < FX_VARIANTS; i++) {
-    const srcKey = `src_fx_${destKey}_${i}`;
+    const srcKey = `src_fx_${kind}_${i}`;
     if (!textures.exists(srcKey)) continue;
     const img = src(textures, srcKey);
     cells.push(fit(trim(fxKnockBlack(copyToCanvas(img, img.width, img.height)), 2), size));
@@ -390,10 +651,15 @@ function keyPixels(img: HTMLImageElement, mode: "magenta" | "studio"): HTMLCanva
     const r = d[o]!;
     const gc = d[o + 1]!;
     const b = d[o + 2]!;
-    if (r > 170 && b > 170 && gc < 180 && (r + b) / 2 - gc > 28) return true;
+    const chroma = (r + b) * 0.5 - gc;
+    const pair = Math.min(r, b);
+    if (pair > 155 && chroma > 20) return true;
+    if (r > 170 && b > 170 && gc < 205 && chroma > 16) return true;
+    const mx = Math.max(r, gc, b);
+    const mn = Math.min(r, gc, b);
+    if (mn > 200 && mx - mn < 32) return true;
+    if (r > 215 && b > 215 && gc > 170 && chroma < 48) return true;
     if (mode === "studio") {
-      const mx = Math.max(r, gc, b);
-      const mn = Math.min(r, gc, b);
       if (mn > 198) return true;
       if (mx > 155 && mx - mn < 24 && mn > 125) return true;
     }
@@ -437,7 +703,11 @@ function keyPixels(img: HTMLImageElement, mode: "magenta" | "studio"): HTMLCanva
 
   for (let i = 0; i < n; i++) {
     if (!bg[i]) continue;
-    d[i * 4 + 3] = 0;
+    const o = i * 4;
+    d[o] = 0;
+    d[o + 1] = 0;
+    d[o + 2] = 0;
+    d[o + 3] = 0;
   }
   for (let i = 0; i < n; i++) {
     if (bg[i]) continue;
@@ -816,7 +1086,7 @@ function darkMountOrigin(src: HTMLCanvasElement): { x: number; y: number } {
   return { x: sx / n / src.width, y: sy / n / src.height };
 }
 
-function bakeShadows(textures: Phaser.Textures.TextureManager, key: string): void {
+export function bakeShadows(textures: Phaser.Textures.TextureManager, key: string): void {
   const img = textures.get(key).getSourceImage() as CanvasImageSource;
   const w = (img as HTMLCanvasElement).width || (img as HTMLImageElement).width;
   const h = (img as HTMLCanvasElement).height || (img as HTMLImageElement).height;

@@ -18,6 +18,7 @@ export const ZOff = {
   dmg: 1.5,
   turret: 1.6,
   rotor: 2.5,
+  posted: 8,
 } as const;
 
 export function worldDepth(z: number, off = 0): number {

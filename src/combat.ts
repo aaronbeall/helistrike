@@ -1,11 +1,7 @@
-export type UnitKind =
-  | "tank"
-  | "soldier"
-  | "heli"
-  | "boat"
-  | "tower"
-  | "bunker"
-  | "radar";
+import { specOf, type FragCat, type TracerStyle, type UnitKind } from "./roster";
+import type { CamoKind } from "./camo";
+
+export type { FragCat, UnitKind } from "./roster";
 
 export type Wpn = "cannon" | "rocket" | "hellfire" | "tow";
 
@@ -41,6 +37,12 @@ export interface Unit {
   aiTy?: number;
   rotor: number;
   track: number;
+  turrets: number[];
+  muzzleT: number;
+  muzzleGun: number;
+  muzzleTip: number;
+  pinId?: number;
+  camo?: CamoKind;
 }
 
 export interface Shot {
@@ -62,7 +64,7 @@ export interface Shot {
   cruise?: number;
   loft?: number;
   yaw?: number;
-  tracer?: "chain" | "shell" | "small";
+  tracer?: TracerStyle;
   wire?: { x: number; y: number; z: number }[];
   wireSide?: number;
   wireTrim?: number;
@@ -131,83 +133,33 @@ export function nextId(): number {
 }
 
 export function stats(kind: UnitKind): { health: number; z: number } {
-  switch (kind) {
-    case "soldier":
-      return { health: 18, z: 0 };
-    case "tank":
-      return { health: 90, z: 0 };
-    case "boat":
-      return { health: 70, z: 0 };
-    case "tower":
-      return { health: 110, z: 0 };
-    case "bunker":
-      return { health: 260, z: 0 };
-    case "radar":
-      return { health: 200, z: 0 };
-    case "heli":
-      return { health: 80, z: 48 };
-  }
+  const s = specOf(kind);
+  return { health: s.health, z: s.flyZ ?? 0 };
 }
 
 export function radius(kind: UnitKind): number {
-  switch (kind) {
-    case "soldier":
-      return 10;
-    case "tank":
-      return 22;
-    case "boat":
-      return 24;
-    case "tower":
-      return 20;
-    case "bunker":
-      return 36;
-    case "radar":
-      return 32;
-    case "heli":
-      return 22;
-  }
+  return specOf(kind).radius;
 }
 
 export function textureOf(kind: UnitKind): string {
-  if (kind === "heli") return "enemy_heli";
-  if (kind === "tank") return "tank_hull";
-  return kind;
+  return specOf(kind).texture;
 }
 
 export function heightOf(kind: UnitKind): number {
-  switch (kind) {
-    case "soldier":
-      return 9;
-    case "tank":
-      return 20;
-    case "boat":
-      return 16;
-    case "tower":
-      return 38;
-    case "bunker":
-      return 26;
-    case "radar":
-      return 34;
-    case "heli":
-      return 16;
-  }
+  return specOf(kind).height;
 }
 
 export function hulkOf(kind: UnitKind): string {
-  return `hulk_${kind}`;
+  return specOf(kind).hulk;
 }
 
-export type FragCat = "mech" | "struct" | "organic";
-
 export function fragCat(kind: UnitKind): FragCat {
-  if (kind === "soldier") return "organic";
-  if (kind === "tower" || kind === "bunker" || kind === "radar") return "struct";
-  return "mech";
+  return specOf(kind).frag;
 }
 
 export function fragKeys(kind: UnitKind): string[] {
   const cat = fragCat(kind);
-  return Array.from({ length: 12 }, (_, i) => `frag_${cat}_${i}`);
+  return Array.from({ length: 12 }, (_, i) => `fx_frag_${cat}_${i}`);
 }
 
 export const FRAG_KEYS = fragKeys("tank");
