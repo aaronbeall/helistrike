@@ -44,8 +44,11 @@ export class Heli {
   immune = false;
   hellfireLock: { id: number } | null = null;
   hellfireSeek: { id: number; t: number } | null = null;
-  dmgSites: { i: number; scale: number }[] = [];
+  /** Indices into player damage POIs: 0 center, 1 gun, 2 rotor. */
+  dmgSites: { poi: number; scale: number }[] = [];
   gndSmooth: number;
+  killDx = 0;
+  killDy = 0;
 
   constructor(x: number, y: number, world: WorldData) {
     this.x = x;
@@ -199,9 +202,13 @@ export class Heli {
     this.health = 0;
   }
 
-  damage(n: number): void {
+  damage(n: number, dx?: number, dy?: number): void {
     if (this.immune) return;
     if (this.phase === "dead") return;
+    if (dx != null && dy != null && (dx || dy)) {
+      this.killDx = dx;
+      this.killDy = dy;
+    }
     this.health -= n;
     if (this.health <= 0) this.kill();
   }

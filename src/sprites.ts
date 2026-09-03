@@ -62,6 +62,7 @@ export const FX_VARIANTS = 4;
 export function preloadArt(scene: Phaser.Scene): void {
   scene.load.image("src_heli", SRC.heli);
   scene.load.image("src_enemy", SRC.enemy);
+  scene.load.image("src_enemy_heli_hulk", "sprites/helistrike-heli-enemy-hulk.png");
   scene.load.image("src_tank_parts", SRC.tankParts);
   scene.load.image("src_units", SRC.units);
   scene.load.image("src_rock", SRC.rock);
@@ -349,10 +350,10 @@ export function bakeHeliHudWireTexture(
 }
 
 export function spritePivot(key: string): { x: number; y: number } {
-  const k = key.replace(/__(woodland|desert|urban|snow)$/, "");
+  const k = key.replace(/__(woodland|desert|urban|snow|digital)$/, "");
   if (k === "heli_body") return { ...rotorLayout.player };
   if (k === "heli_gun") return { ...gunLayout.origin };
-  if (k === "enemy_heli") return { ...rotorLayout.enemy };
+  if (k === "enemy_heli" || k === "enemy_heli_hulk") return { ...rotorLayout.enemy };
   if (k === "enemy_tank_gun") return { ...tankLayout.turretOrigin };
   if (k === "enemy_tank_gun_hulk") return { ...tankLayout.hulkTurretOrigin };
   return lookupSpriteOrigin(k) ?? { x: 0.5, y: 0.5 };
@@ -432,7 +433,21 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   const body = fit(keyImage(src(textures, "src_heli"), "studio"), 120);
   const enemy = fit(keyImage(src(textures, "src_enemy"), "magenta"), 104);
   put(textures, "heli_body", body);
+  {
+    const hc = document.createElement("canvas");
+    hc.width = body.width;
+    hc.height = body.height;
+    hc.getContext("2d")!.drawImage(body, 0, 0);
+    put(textures, "heli_body_hulk", darkenWreck(hc));
+  }
   put(textures, "enemy_heli", enemy);
+  if (textures.exists("src_enemy_heli_hulk")) {
+    put(
+      textures,
+      "enemy_heli_hulk",
+      darkenWreck(fit(keyImage(src(textures, "src_enemy_heli_hulk"), "magenta"), 104))
+    );
+  }
   const rotors = splitRotorSheet(keyPixels(src(textures, "src_rotors"), "magenta"));
   put(textures, "heli_rotor", squareCenter(rotors[0]!));
   put(textures, "enemy_heli_rotor", squareCenter(rotors[1]!));
@@ -446,14 +461,14 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   tankLayout.turretOrigin = cupolaOrigin(turret);
   const wreck = sliceGrid(keyImage(src(textures, "src_tank_wreck"), "magenta"), 2, 1);
   put(textures, "enemy_tank_hulk", darkenWreck(fit(wreck[0]!, 70)));
-  const hulkTurret = darkenWreck(fit(wreck[1]!, 70));
+  const hulkTurret = darkenWreck(fit(wreck[1]!, 56));
   put(textures, "enemy_tank_gun_hulk", hulkTurret);
   tankLayout.hulkTurretOrigin = cupolaOrigin(hulkTurret);
 
   const sheet = keyPixels(src(textures, "src_units"), "magenta");
   const cells = sliceGrid(sheet, 3, 2);
   const keys = ["boat", "tower", "bunker", "radar", "soldier", "tree"] as const;
-  const sizes = [78, 58, 92, 88, 26, 42];
+  const sizes = [78, 78, 128, 128, 26, 42];
   keys.forEach((key, i) => {
     if (key === "boat" || key === "tower" || key === "radar" || key === "soldier") return;
     const texKey = key === "tree" ? "doodad_tree" : key === "bunker" ? "building_bunker" : `enemy_${key}`;
@@ -462,18 +477,18 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
 
   putGrid(textures, "src_split", 3, 2, [
     ["enemy_boat", 92],
-    ["building_tower", 58],
+    ["building_tower", 78],
     ["_", 88],
     ["enemy_boat_gun", 36],
     ["building_tower_gun", 52],
     ["_", 64],
   ]);
   putGrid(textures, "src_radar", 2, 1, [
-    ["building_radar", 96],
+    ["building_radar", 220],
     ["_", 72],
   ]);
   if (textures.exists("src_radar_dish")) {
-    put(textures, "building_radar_disk", fit(clipRadarDish(keyPixels(src(textures, "src_radar_dish"), "magenta")), 72));
+    put(textures, "building_radar_disk", fit(clipRadarDish(keyPixels(src(textures, "src_radar_dish"), "magenta")), 160));
   }
   putGrid(textures, "src_vehicles", 3, 2, [
     ["enemy_pickup", 58],
@@ -518,8 +533,8 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   putGrid(textures, "src_buildings", 2, 2, [
     ["building_barn", 86],
     ["building_tent", 64],
-    ["building_fob", 96],
-    ["building_lookout", 52],
+    ["building_fob", 128],
+    ["building_lookout", 70],
   ]);
   putGrid(textures, "src_air_ship", 2, 2, [
     ["enemy_drone", 20],
@@ -530,18 +545,18 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   grayShiftTexture(textures, "enemy_battleship");
   putHulkGrid(textures, "src_split_hulk", 3, 2, [
     ["enemy_boat_hulk", 88],
-    ["building_tower_hulk", 58],
+    ["building_tower_hulk", 78],
     ["_", 84],
     ["enemy_boat_gun_hulk", 36],
     ["building_tower_gun_hulk", 52],
     ["_", 64],
   ]);
   putHulkGrid(textures, "src_radar_hulk", 2, 1, [
-    ["building_radar_hulk", 92],
+    ["building_radar_hulk", 210],
     ["_", 64],
   ]);
   if (textures.exists("src_radar_dish_hulk")) {
-    put(textures, "building_radar_disk_hulk", darkenWreck(fit(clipRadarDish(keyPixels(src(textures, "src_radar_dish_hulk"), "magenta")), 64)));
+    put(textures, "building_radar_disk_hulk", darkenWreck(fit(clipRadarDish(keyPixels(src(textures, "src_radar_dish_hulk"), "magenta")), 150)));
   }
   putHulkGrid(textures, "src_vehicles_hulk", 3, 2, [
     ["enemy_pickup_hulk", 58],
@@ -558,8 +573,8 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   putHulkGrid(textures, "src_buildings_hulk", 2, 2, [
     ["building_barn_hulk", 86],
     ["building_tent_hulk", 64],
-    ["building_fob_hulk", 96],
-    ["building_lookout_hulk", 52],
+    ["building_fob_hulk", 128],
+    ["building_lookout_hulk", 70],
   ]);
   putHulkGrid(textures, "src_air_ship_hulk", 2, 2, [
     ["enemy_drone_hulk", 20],
@@ -597,8 +612,9 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     ["building_tower_sam_hulk", 48],
   ]);
   const rotorHulks = splitRotorSheet(keyPixels(src(textures, "src_rotors_hulk"), "magenta"));
-  put(textures, "heli_rotor_hulk", fit(squareCenter(rotorHulks[0]!), 108));
-  put(textures, "enemy_heli_rotor_hulk", fit(squareCenter(rotorHulks[1]!), 108));
+  // Keep full-res like live rotors; in-game scale matches the live 108/124 draw size.
+  put(textures, "heli_rotor_hulk", darkenWreck(squareCenter(rotorHulks[0]!)));
+  put(textures, "enemy_heli_rotor_hulk", darkenWreck(squareCenter(rotorHulks[1]!)));
   if (textures.exists("enemy_drone_rotor")) {
     const droneRotor = textures.get("enemy_drone_rotor").getSourceImage() as CanvasImageSource;
     const dc = document.createElement("canvas");
@@ -628,14 +644,15 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     "doodad_tree_hulk",
     "hulk_crater",
   ] as const;
-  const hulkSizes = [70, 90, 86, 84, 58, 74, 28, 40, 48];
+  const hulkSizes = [70, 90, 120, 84, 58, 74, 28, 40, 48];
   hulkKeys.forEach((key, i) => {
     if (
       key === "building_radar_hulk" ||
       key === "building_tower_hulk" ||
       key === "enemy_boat_hulk" ||
       key === "enemy_tank_hulk" ||
-      key === "enemy_troop_soldier_hulk"
+      key === "enemy_troop_soldier_hulk" ||
+      key === "enemy_heli_hulk"
     )
       return;
     put(textures, key, darkenWreck(fit(hulks[i]!, hulkSizes[i]!)));
@@ -667,7 +684,9 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
 
   const shadowSrc = [
     "heli_body",
+    "heli_body_hulk",
     "enemy_heli",
+    "enemy_heli_hulk",
     "cannon",
     "shell",
     "tracer_sm",
@@ -761,7 +780,7 @@ export function extractBiomeTiles(textures: Phaser.Textures.TextureManager): (Im
 
 export function shadowKey(base: string, z: number): string {
   const lvl = z < 22 ? 0 : z < 52 ? 1 : z < 88 ? 2 : 3;
-  const bare = base.replace(/__(woodland|desert|urban|snow)$/, "");
+  const bare = base.replace(/__(woodland|desert|urban|snow|digital)$/, "");
   return `${bare}_sh${lvl}`;
 }
 

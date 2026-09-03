@@ -24,6 +24,9 @@
   * Tesla coil
   * Nuke
   * MIRV
+  * Drone (auto target and explode)
+  * Flak cannon
+  * TV missile (camera )
   * (Hidden) Rave Cannon
 * [ ] Counter-measures
 * [ ] Last stand / base defense game mode
@@ -46,6 +49,10 @@
   * [ ] VTOL aircraft
   * [ ] HV: nuclear weapons facility
   * [ ] Runway/landing pad
+  * [ ] Drone swarm truck
+  * [ ] Troop truck
+  * [ ] Landed planes
+  * [ ] Ammo depot (with cookoff)
 * More doodads:
   * [ ] destroyed buildings
   * [ ] Pre-baked crashed vehicles
@@ -60,6 +67,7 @@
 * [ ] Aircraft crash animations
 * [ ] Enemy unit damage effects like player
 * [ ] Screen shock when player takes damage
+* [ ] Radial blur spinningblades
 
 ## Fix
 

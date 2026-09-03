@@ -14,6 +14,8 @@ export const ZOff = {
   shot: -1.6,
   gun: -1.1,
   body: 0,
+  smoke: 0.45,
+  fire: 1.7,
   muzzle: 3.4,
   dmg: 1.5,
   turret: 1.6,

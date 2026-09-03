@@ -474,7 +474,7 @@ function numberMounts(list: RigMount[]): void {
 }
 
 function rigMarks(key: string): { mounts: RigMount[]; muzzles: { x: number; y: number }[] } {
-  const k = key.replace(/__(woodland|desert|urban|snow)$/, "");
+  const k = key.replace(/__(woodland|desert|urban|snow|digital)$/, "");
   const mounts: RigMount[] = [];
   const muzzles = lookupSpriteMuzzles(k);
   if (k === "heli_body") {
@@ -483,12 +483,15 @@ function rigMarks(key: string): { mounts: RigMount[]; muzzles: { x: number; y: n
   }
   if (k === "enemy_heli") addMount(mounts, rotorLayout.enemy, "rotor", "rotor");
   for (const sp of allSpecs()) {
-    const tex = sp.texture.replace(/__(woodland|desert|urban|snow)$/, "");
+    const tex = sp.texture.replace(/__(woodland|desert|urban|snow|digital)$/, "");
     if (tex === k) {
       for (const g of sp.guns) addMount(mounts, g.mount, "gun", "gun");
       for (const r of sp.rotors) addMount(mounts, r.mount, "rotor", "rotor");
       if (sp.dish) addMount(mounts, sp.dish.mount, "dish", "dish");
       if (tex === "building_lookout") addMount(mounts, SPRITE_MOUNT.building_lookout, "troop", "troop");
+      if (tex === "building_bunker") {
+        for (const m of SPRITE_MOUNT.building_bunker) addMount(mounts, m, "troop", "troop");
+      }
       if (tex === "enemy_pickup") addMount(mounts, SPRITE_MOUNT.enemy_pickup, "reserved", "gun later");
     }
     for (const g of sp.guns) {
@@ -502,11 +505,11 @@ function rigMarks(key: string): { mounts: RigMount[]; muzzles: { x: number; y: n
 }
 
 function spawnYawLine(key: string): string {
-  const k = key.replace(/__(woodland|desert|urban|snow)$/, "");
+  const k = key.replace(/__(woodland|desert|urban|snow|digital)$/, "");
   const deg = (rad: number) => `±${Math.round((rad * 180) / Math.PI)}°`;
   for (const sp of allSpecs()) {
-    const tex = sp.texture.replace(/__(woodland|desert|urban|snow)$/, "");
-    const hulk = sp.hulk.replace(/__(woodland|desert|urban|snow)$/, "");
+    const tex = sp.texture.replace(/__(woodland|desert|urban|snow|digital)$/, "");
+    const hulk = sp.hulk.replace(/__(woodland|desert|urban|snow|digital)$/, "");
     if (tex === k || hulk === k) {
       if (sp.spawnYaw == null) return "SPAWN    yaw  any";
       return `SPAWN    yaw  ${deg(sp.spawnYaw)}  around as-drawn`;

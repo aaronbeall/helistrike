@@ -1290,7 +1290,8 @@ function placeForces(
 function pickGarrison(rng: Rng): UnitKind {
   const r = rng.next();
   if (r < 0.12) return "tank";
-  if (r < 0.2) return "lav";
+  if (r < 0.17) return "lav";
+  if (r < 0.22) return "lav_aa";
   if (r < 0.26) return "sam";
   if (r < 0.34) return "pickup";
   if (r < 0.4) return "motorcycle";
@@ -1304,7 +1305,8 @@ function pickGarrison(rng: Rng): UnitKind {
 function pickPatrol(rng: Rng): UnitKind {
   const r = rng.next();
   if (r < 0.16) return "tank";
-  if (r < 0.24) return "lav";
+  if (r < 0.21) return "lav";
+  if (r < 0.26) return "lav_aa";
   if (r < 0.32) return "pickup";
   if (r < 0.4) return "motorcycle";
   if (r < 0.46) return "truck";

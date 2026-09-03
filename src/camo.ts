@@ -1,16 +1,30 @@
 import type Phaser from "phaser";
 import type { Biome } from "./world";
 
-export type CamoKind = "woodland" | "desert" | "urban" | "snow";
+export type CamoKind = "woodland" | "desert" | "urban" | "snow" | "digital";
 
+/** Biome-linked patterns (not digital). */
 export const CAMO_KINDS: CamoKind[] = ["woodland", "desert", "urban", "snow"];
 
-const PATTERNS: Record<CamoKind, { seed: number; colors: string[] }> = {
+const PATTERNS: Record<Exclude<CamoKind, "digital">, { seed: number; colors: string[] }> = {
   woodland: { seed: 11029, colors: ["#3a5230", "#2a3a22", "#5a6a38", "#4a3a24"] },
   desert: { seed: 44117, colors: ["#c4a06a", "#a88854", "#8a7044", "#d8c08a"] },
   urban: { seed: 77231, colors: ["#6a6c66", "#4a4c48", "#8a8882", "#3a3c38"] },
   snow: { seed: 99013, colors: ["#e6e4dc", "#c4c6c0", "#9aa298", "#d0d4cc"] },
 };
+
+const DIGITAL = {
+  seed: 55019,
+  colors: ["#3a4638", "#2a322c", "#52604a", "#1c241e", "#6a7860", "#485248"],
+};
+
+/** Bases that only get digital (LAV-AA) skins, not biome camo. */
+const DIGITAL_CAMO_BASES = [
+  "enemy_lav",
+  "enemy_lav_hulk",
+  "building_tower_aa",
+  "building_tower_aa_hulk",
+] as const;
 
 export function camoPatternKey(kind: CamoKind): string {
   return `camo_${kind}`;
@@ -18,6 +32,10 @@ export function camoPatternKey(kind: CamoKind): string {
 
 export function skinnedKey(base: string, camo?: CamoKind): string {
   return camo ? `${base}__${camo}` : base;
+}
+
+export function stripCamoSuffix(key: string): string {
+  return key.replace(/__(woodland|desert|urban|snow|digital)$/, "");
 }
 
 export function camoForBiome(biome: Biome): CamoKind {
@@ -52,7 +70,45 @@ function hexRgb(hex: string): [number, number, number] {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
+function drawDigitalCamo(size = 128): HTMLCanvasElement {
+  const rand = rng(DIGITAL.seed);
+  const c = document.createElement("canvas");
+  c.width = size;
+  c.height = size;
+  const g = c.getContext("2d")!;
+  const [br, bg, bb] = hexRgb(DIGITAL.colors[0]!);
+  g.fillStyle = `rgb(${br},${bg},${bb})`;
+  g.fillRect(0, 0, size, size);
+  const spots = DIGITAL.colors.slice(1);
+  for (let i = 0; i < 72; i++) {
+    const [r, gv, b] = hexRgb(spots[i % spots.length]!);
+    const cell = 4 + Math.floor(rand() * 3) * 4;
+    const w = cell * (1 + Math.floor(rand() * 3));
+    const h = cell * (1 + Math.floor(rand() * 2));
+    const x = Math.floor(rand() * size / cell) * cell;
+    const y = Math.floor(rand() * size / cell) * cell;
+    g.fillStyle = `rgba(${r},${gv},${b},${0.78 + rand() * 0.22})`;
+    for (const ox of [-size, 0, size]) {
+      for (const oy of [-size, 0, size]) {
+        g.fillRect(x + ox, y + oy, w, h);
+      }
+    }
+  }
+  const pix = g.getImageData(0, 0, size, size);
+  const d = pix.data;
+  const n2 = rng(DIGITAL.seed ^ 0x9e3779b9);
+  for (let i = 0; i < d.length; i += 4) {
+    const j = (n2() - 0.5) * 10;
+    d[i] = Math.max(0, Math.min(255, d[i]! + j));
+    d[i + 1] = Math.max(0, Math.min(255, d[i + 1]! + j));
+    d[i + 2] = Math.max(0, Math.min(255, d[i + 2]! + j));
+  }
+  g.putImageData(pix, 0, 0);
+  return c;
+}
+
 function drawCamo(kind: CamoKind, size = 128): HTMLCanvasElement {
+  if (kind === "digital") return drawDigitalCamo(size);
   const { seed, colors } = PATTERNS[kind];
   const rand = rng(seed);
   const c = document.createElement("canvas");
@@ -163,13 +219,16 @@ function put(textures: Phaser.Textures.TextureManager, key: string, c: HTMLCanva
   textures.addCanvas(key, c);
 }
 
-export function bakeCamo(textures: Phaser.Textures.TextureManager): void {
-  for (const kind of CAMO_KINDS) put(textures, camoPatternKey(kind), drawCamo(kind));
-  for (const base of CAMO_BASES) {
+function bakeBaseKinds(
+  textures: Phaser.Textures.TextureManager,
+  bases: readonly string[],
+  kinds: readonly CamoKind[]
+): void {
+  for (const base of bases) {
     const src = srcCanvas(textures, base);
     if (!src) continue;
     const h = hash(base);
-    for (const kind of CAMO_KINDS) {
+    for (const kind of kinds) {
       const camo = srcCanvas(textures, camoPatternKey(kind));
       if (!camo) continue;
       const ox = h % camo.width;
@@ -177,4 +236,11 @@ export function bakeCamo(textures: Phaser.Textures.TextureManager): void {
       put(textures, skinnedKey(base, kind), blendCamo(src, camo, ox, oy));
     }
   }
+}
+
+export function bakeCamo(textures: Phaser.Textures.TextureManager): void {
+  for (const kind of CAMO_KINDS) put(textures, camoPatternKey(kind), drawCamo(kind));
+  put(textures, camoPatternKey("digital"), drawDigitalCamo());
+  bakeBaseKinds(textures, CAMO_BASES, CAMO_KINDS);
+  bakeBaseKinds(textures, DIGITAL_CAMO_BASES, ["digital"]);
 }

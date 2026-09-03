@@ -13,6 +13,7 @@ export type UnitKind =
   | "tanker"
   | "motorcycle"
   | "lav"
+  | "lav_aa"
   | "sam"
   | "ptboat"
   | "battleship"
@@ -279,8 +280,8 @@ const SPECS: Record<UnitKind, UnitSpec> = {
   },
   tower: {
     health: 110,
-    radius: 20,
-    height: 38,
+    radius: 28,
+    height: 48,
     texture: "building_tower",
     hulk: "building_tower_hulk",
     frag: "struct",
@@ -295,8 +296,8 @@ const SPECS: Record<UnitKind, UnitSpec> = {
   },
   bunker: {
     health: 260,
-    radius: 36,
-    height: 26,
+    radius: 48,
+    height: 32,
     texture: "building_bunker",
     hulk: "building_bunker_hulk",
     frag: "struct",
@@ -309,15 +310,15 @@ const SPECS: Record<UnitKind, UnitSpec> = {
   },
   radar: {
     health: 200,
-    radius: 32,
-    height: 34,
+    radius: 72,
+    height: 56,
     texture: "building_radar",
     hulk: "building_radar_hulk",
     frag: "struct",
     rotOff: Math.PI / 2,
     move: "static",
     building: true,
-    spawnYaw: (45 * Math.PI) / 180,
+    spawnYaw: (5 * Math.PI) / 180,
     guns: [],
     rotors: [],
     dish: { tex: "building_radar_disk", origin: { x: 0.5, y: 0.5 }, mount: { ...SPRITE_MOUNT.building_radar }, scale: 1 },
@@ -382,6 +383,25 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     throwGuns: true,
     weapon: shell({ fireCd: 1.15, range: 440, dmg: 6, blast: 12, muzzleLen: 20 }),
     guns: [gun("enemy_lav_gun", 0.76, { ...SPRITE_MOUNT.enemy_lav })],
+    rotors: [],
+  },
+  lav_aa: {
+    health: 54,
+    radius: 18,
+    height: 18,
+    texture: "enemy_lav",
+    hulk: "enemy_lav_hulk",
+    frag: "mech",
+    rotOff: Math.PI / 2,
+    move: "tank",
+    throwGuns: true,
+    weapon: WPN_AA,
+    guns: [
+      {
+        ...gun("building_tower_aa", 0.78, { ...SPRITE_MOUNT.enemy_lav }, undefined, WPN_AA),
+        scale: 0.72,
+      },
+    ],
     rotors: [],
   },
   sam: {
@@ -604,8 +624,8 @@ const SPECS: Record<UnitKind, UnitSpec> = {
   },
   fob: {
     health: 220,
-    radius: 40,
-    height: 22,
+    radius: 52,
+    height: 28,
     texture: "building_fob",
     hulk: "building_fob_hulk",
     frag: "struct",
@@ -619,8 +639,8 @@ const SPECS: Record<UnitKind, UnitSpec> = {
   },
   lookout: {
     health: 90,
-    radius: 16,
-    height: 46,
+    radius: 22,
+    height: 56,
     texture: "building_lookout",
     hulk: "building_lookout_hulk",
     frag: "struct",
@@ -690,7 +710,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
       dmg: 3,
       blast: 8,
       burst: 40,
-      burstGap: 0.03,
+      burstGap: 0.055,
       muzzleLen: 16,
       tracer: "chain",
       jitter: 0.04,
@@ -794,6 +814,7 @@ const KIND_LABEL: Record<UnitKind, string> = {
   tanker: "TANKER",
   motorcycle: "MOTORCYCLE",
   lav: "LAV",
+  lav_aa: "LAV-AA",
   sam: "SAM",
   ptboat: "PT BOAT",
   battleship: "BATTLESHIP",
@@ -822,6 +843,8 @@ export function driveOf(kind: UnitKind): DriveSpec {
       return { maxSpd: 32, accel: 16, brake: 22, turn: 0.7, track: "tread", trackGap: 15, trackScale: 1.05 };
     case "lav":
       return { maxSpd: 48, accel: 28, brake: 32, turn: 1.15, track: "tire", trackGap: 14, trackScale: 0.82 };
+    case "lav_aa":
+      return { maxSpd: 42, accel: 24, brake: 30, turn: 1.05, track: "tire", trackGap: 14, trackScale: 0.82 };
     case "sam":
       return { maxSpd: 24, accel: 12, brake: 18, turn: 0.55, track: "dual", trackGap: 16, trackScale: 1 };
     case "pickup":

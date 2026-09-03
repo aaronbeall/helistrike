@@ -49,6 +49,8 @@ export interface Unit {
   missileSide?: number;
   killDx?: number;
   killDy?: number;
+  /** Indices into live damage interest points (center, guns, rotors). */
+  dmgSites?: { poi: number; scale: number }[];
 }
 
 export interface Shot {
@@ -133,6 +135,19 @@ export interface Frag {
   wobble?: number;
   wobFreq?: number;
   wobAmp?: number;
+  /** Falling heli hull: spin-up, ground boom, damage flames. */
+  heliCrash?: boolean;
+  playerCrash?: boolean;
+  spinAccel?: number;
+  impactDust?: number;
+  dmgFlames?: { u: number; v: number; scale: number }[];
+  simmer?: number;
+  rotorFlames?: boolean;
+  /** Local blade offsets (fraction of rotorSpan) for extra flame points. */
+  bladeOffs?: number[];
+  rotorSpan?: number;
+  /** Strong air drag for spinning rotor debris. */
+  rotorThrow?: boolean;
 }
 
 let nid = 1;
