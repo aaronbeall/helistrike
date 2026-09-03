@@ -3597,8 +3597,8 @@ export class MissionScene extends Phaser.Scene {
           motor: home ? -0.06 : undefined,
           scale: troopRocket
             ? u.kind === "rpg"
-              ? 0.42
-              : 0.48
+              ? 0.56
+              : 0.59
             : u.kind === "gunner" || u.kind === "mounted_mg"
               ? 0.28
               : undefined,
@@ -3741,7 +3741,8 @@ export class MissionScene extends Phaser.Scene {
           gorig,
           gmount,
           gunWorldRot(g.tex, u.turrets[gi] ?? u.turret),
-          gunDepth
+          gunDepth,
+          g.scale ?? 1
         );
       });
       sp.rotors.forEach((r, ri) => {
@@ -3847,7 +3848,8 @@ export class MissionScene extends Phaser.Scene {
     const tips = gun.muzzles?.length ? gun.muzzles : [gun.muzzle ?? { x: 0.5, y: 0.08 }];
     const muz = tips[u.muzzleTip % tips.length]!;
     const ga = gunWorldRot(gun.tex, u.turrets[gunI] ?? u.turret);
-    return atUv(origin, muz, gtex.width, gtex.height, hx, hy, ga);
+    const gsc = gun.scale ?? 1;
+    return atUv(origin, muz, gtex.width * gsc, gtex.height * gsc, hx, hy, ga);
   }
 
   syncShotSprites(): void {
@@ -5634,15 +5636,15 @@ function pickSparkKind(style: "muzzle" | "ground" | "water" | "object", sparkFra
 }
 
 function troopMissileTrail(s: Shot): boolean {
-  return s.from === "enemy" && (s.scale ?? 1) < 0.6;
+  return s.from === "enemy" && (s.scale ?? 1) < 0.7;
 }
 
 function shotTrailScale(s: Shot): number {
   const vis = s.scale ?? 1;
   const small = troopMissileTrail(s);
-  if (s.kind === "rocket") return small ? vis * 0.22 : vis * 0.32;
+  if (s.kind === "rocket") return small ? vis * 0.34 : vis * 0.32;
   if (s.kind === "tow") return vis * 0.52;
-  if (s.kind === "hellfire") return small ? vis * 0.28 : vis * 0.55;
+  if (s.kind === "hellfire") return small ? vis * 0.4 : vis * 0.55;
   return vis;
 }
 
