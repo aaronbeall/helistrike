@@ -35,12 +35,12 @@
 * [ ] Sound effects
 * [ ] Night vision / thermal vision
 * [ ] Slow motion mode
-* [ ] Stringer messages
+* [ ] Stinger events (objective complete, mission complete)
 * [ ] Mission briefing screen
 * [ ] Mission outcome screen
-* [ ] Water wreckage should sink
+* [x] Water wreckage should sink
 * [ ] Water ripples and wakes
-* [ ] Laser sight ray should collide with terrain
+* [x] Laser sight ray should collide with terrain
 * [ ] Designed maps (seed + brush + placements)
 * More enemy targets:
   * [ ] HV: missile silo
@@ -64,16 +64,19 @@
   * [ ] Limited repair/rearm 
 * [ ] Player can shoot missiles out of sky (but hard)
 * [ ] Difficulty levels (projectile speeds, damage)
-* [ ] Aircraft crash animations
-* [ ] Enemy unit damage effects like player
+* [x] Aircraft crash animations
+* [x] Enemy unit damage effects like player
 * [ ] Screen shock when player takes damage
-* [ ] Radial blur spinningblades
+* [x] Radial blur spinningblades
 * [ ] Bubble explosion
 * [ ] Weather effects (rain, lightning, thunder)
 * [ ] Time of day lighting effects
   * [ ] Night rendering (lights)
 * [ ] Steam achievements
 * [ ] Shell ejecta
+* [ ] Generated art height map
+  * [ ] Whole image generation
+  * [ ] Asset composition generation
 
 ## Fix
 

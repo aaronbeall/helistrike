@@ -1808,27 +1808,65 @@ export class MissionScene extends Phaser.Scene {
       return;
     }
     this.sight.setVisible(true);
-    let bx: number;
-    let by: number;
     let ox: number;
     let oy: number;
+    let wx: number;
+    let wy: number;
+    let bx: number;
+    let by: number;
+    const oz = h.z + ZOff.shot;
     if (!missile) {
+      const tip = this.gunTip();
+      wx = tip.x;
+      wy = tip.y;
+      ox = this.gun.x;
+      oy = this.gun.y;
       const dist = Math.hypot(aim.x - h.x, aim.y - h.y);
       bx = h.x + Math.cos(h.gunAngle) * dist;
       by = h.y + Math.sin(h.gunAngle) * dist;
-      ox = this.gun.x;
-      oy = this.gun.y;
     } else {
       const pylon = this.missilePylon();
+      wx = pylon.x;
+      wy = pylon.y;
+      ox = pylon.x;
+      oy = pylon.y - screenLift(h.z);
       const along = Math.max(80, projectAlong(pylon.x, pylon.y, h.angle, aim.x, aim.y));
       bx = pylon.x + Math.cos(h.angle) * along;
       by = pylon.y + Math.sin(h.angle) * along;
-      ox = pylon.x;
-      oy = pylon.y - screenLift(h.z);
     }
+    const air = this.hoverAerial(bx, by);
+    const bz = air ? air.z + heightOf(air.kind) * 0.5 : groundZ(this.world, bx, by);
+    const clip = this.sightTerrainHitWorld(wx, wy, oz, bx, by, bz);
     const from = this.worldToHud(ox, oy);
-    const to = this.worldToHud(bx, by);
+    const to = this.worldToHud(clip.x, clip.y - screenLift(clip.z));
     this.drawSightLine(from.x, from.y, to.x, to.y, missile ? "missile" : "cannon");
+  }
+
+  /** First point along a world beam where altitude meets terrain. */
+  sightTerrainHitWorld(
+    ox: number,
+    oy: number,
+    oz: number,
+    bx: number,
+    by: number,
+    bz: number
+  ): { x: number; y: number; z: number } {
+    const steps = 48;
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const x = ox + (bx - ox) * t;
+      const y = oy + (by - oy) * t;
+      const z = oz + (bz - oz) * t;
+      if (z <= groundZ(this.world, x, y) + 1.5) {
+        const u = Math.max(0, t - 0.5 / steps);
+        return {
+          x: ox + (bx - ox) * u,
+          y: oy + (by - oy) * u,
+          z: oz + (bz - oz) * u,
+        };
+      }
+    }
+    return { x: bx, y: by, z: bz };
   }
 
   drawSightLine(x0: number, y0: number, x1: number, y1: number, kind: "cannon" | "missile"): void {
