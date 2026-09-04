@@ -99,7 +99,7 @@ export function lookupSpriteMounts(key: string): Uv[] {
   return out;
 }
 
-/** Body UV mounts for guns / rotors / dish. Lookout mount is the troop post. Pickup is reserved (no gun yet). */
+/** Body UV mounts for guns / rotors / dish / crew posts. */
 export const SPRITE_MOUNT = {
   building_lookout: { x: 0.49, y: 0.397 },
   building_tower: { x: 0.512, y: 0.482 },

@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { allSpecs } from "./roster";
-import { lookupSpriteMuzzles, SPRITE_MOUNT } from "./spriteOrigin";
+import { lookupSpriteMuzzles } from "./spriteOrigin";
 import { rotorLayout, tankLayout, gunLayout, isUuidTexture, nameGameTexture, nameGeneratedTextures, spritePivot, PLAYER_DMG_POIS } from "./sprites";
 
 const DEPTH = 9200;
@@ -642,11 +642,9 @@ function rigMarks(key: string): { mounts: RigMount[]; muzzles: { x: number; y: n
       for (const g of sp.guns) addMount(mounts, g.mount, "gun", "gun");
       for (const r of sp.rotors) addMount(mounts, r.mount, "rotor", "rotor");
       if (sp.dish) addMount(mounts, sp.dish.mount, "dish", "dish");
-      if (tex === "building_lookout") addMount(mounts, SPRITE_MOUNT.building_lookout, "troop", "troop");
-      if (tex === "building_bunker") {
-        for (const m of SPRITE_MOUNT.building_bunker) addMount(mounts, m, "troop", "troop");
+      if (sp.crew) {
+        for (const m of sp.crew.mounts) addMount(mounts, m, "troop", "troop");
       }
-      if (tex === "enemy_pickup") addMount(mounts, SPRITE_MOUNT.enemy_pickup, "reserved", "gun later");
     }
     for (const g of sp.guns) {
       if (g.tex !== k) continue;

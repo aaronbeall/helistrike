@@ -108,6 +108,20 @@ export interface UnitSpec {
   /** Hull/body aim only; cannot traverse a turret. Must face the target to fire. */
   fixedAim?: boolean;
   spawnYaw?: number;
+  /**
+   * Optional pinned crew seats on this hull.
+   * `snap` = glued to mount UV (moving vehicles); `leash` = roam within host radius (static posts).
+   */
+  crew?: CrewSpec;
+}
+
+export type PinMode = "snap" | "leash";
+
+export interface CrewSpec {
+  mounts: { x: number; y: number }[];
+  mode: PinMode;
+  /** Fill probability per mount (default 1). */
+  chance?: number;
 }
 
 const gun = (
@@ -312,6 +326,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     spawnYaw: (45 * Math.PI) / 180,
     guns: [],
     rotors: [],
+    crew: { mounts: [...SPRITE_MOUNT.building_bunker], mode: "leash" },
   },
   radar: {
     health: 200,
@@ -346,6 +361,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     wheels: 2,
     guns: [],
     rotors: [],
+    crew: { mounts: [{ ...SPRITE_MOUNT.enemy_pickup }], mode: "snap", chance: 0.33 },
   },
   truck: {
     health: 55,
@@ -669,6 +685,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     spawnYaw: (5 * Math.PI) / 180,
     guns: [],
     rotors: [],
+    crew: { mounts: [{ ...SPRITE_MOUNT.building_lookout }], mode: "leash" },
   },
   drone: {
     health: 22,
@@ -795,6 +812,10 @@ export function pickLookoutTroop(): UnitKind {
 
 export function pickPickupTroop(): UnitKind {
   return pickTroop();
+}
+
+export function crewOf(kind: UnitKind): CrewSpec | undefined {
+  return SPECS[kind].crew;
 }
 
 export function allSpecs(): UnitSpec[] {

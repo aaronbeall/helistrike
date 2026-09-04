@@ -5,12 +5,118 @@ export type { FragCat, UnitKind } from "./roster";
 
 export type Wpn = "cannon" | "rocket" | "hellfire" | "tow";
 
-export const WPN_LIST: { id: Wpn; name: string; ammo: number }[] = [
-  { id: "cannon", name: "M230 CHAIN", ammo: Infinity },
-  { id: "rocket", name: "HYDRA PODS", ammo: 38 },
-  { id: "hellfire", name: "HELLFIRE", ammo: 8 },
-  { id: "tow", name: "TOW WIRE", ammo: 6 },
-];
+/** Player loadout — shared by fire logic and the combat config browser. */
+export interface PlayerWpnSpec {
+  id: Wpn;
+  name: string;
+  ammo: number;
+  fireCd: number;
+  /** Launch / ballistic speed (hellfire/tow use kick then motor). */
+  speed: number;
+  dmg: number;
+  blast: number;
+  life: number;
+  tracer?: TracerStyle;
+  tex: string;
+  notes: string[];
+}
+
+export const PLAYER_WPNS: Record<Wpn, PlayerWpnSpec> = {
+  cannon: {
+    id: "cannon",
+    name: "M230 CHAIN",
+    ammo: Infinity,
+    fireCd: 0.07,
+    speed: 780,
+    dmg: 8,
+    blast: 18,
+    life: 0.08,
+    tracer: "chain",
+    tex: "cannon",
+    notes: [
+      "spread ±0.04 rad",
+      "air life +0.55",
+      "muzzle sparks n6 220–520 tight0.9",
+      "tracer emit ×5",
+      "muzzle flash sc 0.78 life 0.1",
+      "chain vs enemy missiles (tiny hit)",
+    ],
+  },
+  rocket: {
+    id: "rocket",
+    name: "HYDRA PODS",
+    ammo: 38,
+    fireCd: 0.22,
+    speed: 620,
+    dmg: 110,
+    blast: 140,
+    life: 0.08,
+    tex: "rocket",
+    notes: ["ballistic to aim", "missile muzzle n12 200–520", "HE explode"],
+  },
+  hellfire: {
+    id: "hellfire",
+    name: "HELLFIRE",
+    ammo: 8,
+    fireCd: 0.55,
+    speed: 380,
+    dmg: 185,
+    blast: 175,
+    life: 4.9,
+    tex: "hellfire",
+    notes: [
+      "kick speed then motor burn",
+      "lock acquire 0.5s  pick r160",
+      "ignite delay MISSILE_IGNITE",
+      "seek delay 0.42 after ignite",
+      "accel 520+burn*260  steer 7.4",
+    ],
+  },
+  tow: {
+    id: "tow",
+    name: "TOW WIRE",
+    ammo: 6,
+    fireCd: 1.1,
+    speed: 400,
+    dmg: 170,
+    blast: 160,
+    life: 5.2,
+    tex: "tow",
+    notes: [
+      "guided wire  cruise 300",
+      "ignite MISSILE_IGNITE+0.06",
+      "turn ±2.2  vz follow ×3.2",
+      "wire simulation",
+    ],
+  },
+};
+
+export const WPN_LIST: { id: Wpn; name: string; ammo: number }[] = (
+  ["cannon", "rocket", "hellfire", "tow"] as const
+).map((id) => {
+  const w = PLAYER_WPNS[id];
+  return { id: w.id, name: w.name, ammo: w.ammo };
+});
+
+/** Shared missile timing (player hellfire / TOW). */
+export const MISSILE_IGNITE = 0.525;
+export const HELLFIRE_LOCK_T = 0.5;
+export const HELLFIRE_SEEK_DELAY = 0.42;
+
+/** Gunship hardpoint missile (not on SPECS — scenes AI). */
+export const ENEMY_HELI_MISSILE = {
+  label: "GUNSHIP PYLON",
+  shot: "hellfire" as const,
+  speed: 300,
+  dmg: 18,
+  blast: 20,
+  fireCd: "5.5–9.5",
+  scale: 0.72,
+  tracer: "shell" as const,
+  range: 700,
+  motor: -0.06,
+  tex: "hellfire",
+};
 
 export interface Unit {
   id: number;
@@ -48,6 +154,8 @@ export interface Unit {
   muzzleJitR?: number;
   muzzleFrame?: number;
   pinId?: number;
+  /** Index into host UnitSpec.crew.mounts when pinned. */
+  pinMount?: number;
   camo?: CamoKind;
   strike?: number;
   parts?: PartMount[];

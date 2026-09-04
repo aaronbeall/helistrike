@@ -11,6 +11,10 @@ import {
   textureOf,
   wheelFragKeys,
   WPN_LIST,
+  PLAYER_WPNS,
+  MISSILE_IGNITE,
+  HELLFIRE_LOCK_T,
+  HELLFIRE_SEEK_DELAY,
   type Frag,
   type Shot,
   type Spark,
@@ -21,7 +25,7 @@ import {
 import { Layer, ZOff, Z_GRAVITY, worldDepth } from "./depth";
 import { range } from "./rng";
 import { CRUISE_AGL, HELI_HEIGHT, Heli, MAX_AGL } from "./heli";
-import { isAerial, isGroundVehicle, isOrganic, hasSoftBlood, specOf, driveOf, spawnAngle, pickLookoutTroop, pickPickupTroop, labelOf, allKinds, gunsOf, rollParts } from "./roster";
+import { isAerial, isGroundVehicle, isOrganic, hasSoftBlood, specOf, driveOf, spawnAngle, pickTroop, labelOf, allKinds, gunsOf, rollParts, crewOf } from "./roster";
 import { lookupSpriteMuzzles, SPRITE_MOUNT } from "./spriteOrigin";
 
 /** Overlay guns are drawn barrel-up (same as hulls). World aim 0 is +X, so +90°. */
@@ -31,6 +35,7 @@ function gunWorldRot(_tex: string, aim: number): number {
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
 import { SpriteConfigTool } from "./spriteConfig";
 import { RosterConfigTool } from "./rosterConfig";
+import { CombatConfigTool } from "./combatConfig";
 import { LOAD_TIPS } from "./tips";
 import { preloadArt, prepareArt, extractBiomeTiles, bakeHeliHudWireTexture, bakeHurtVignetteTexture, gunLayout, heliHudWireUv, rotorLayout, shadowAlpha, shadowKey, shadowOff, spriteUvPos, tankLayout, FX_VARIANTS, nameGameTexture, nameGeneratedTextures, spritePivot, PLAYER_DMG_POIS, type HeliHudWireBake } from "./sprites";
 import {
@@ -61,9 +66,6 @@ import {
   type Biome,
 } from "./world";
 
-const MISSILE_IGNITE = 0.525;
-const HELLFIRE_LOCK_T = 0.5;
-const HELLFIRE_SEEK_DELAY = 0.42;
 /** Soft rim where map-edge steering ramps up. */
 const MAP_EDGE_MARGIN = 280;
 /** Hard pad units cannot cross. */
@@ -424,6 +426,7 @@ export class MissionScene extends Phaser.Scene {
   timeScale = 1;
   spriteCfg!: SpriteConfigTool;
   rosterCfg!: RosterConfigTool;
+  combatCfg!: CombatConfigTool;
   debugOpen = false;
   debugRoot!: Phaser.GameObjects.Container;
   debugPanel!: Phaser.GameObjects.Graphics;
@@ -622,18 +625,7 @@ export class MissionScene extends Phaser.Scene {
     }
     const posted: Unit[] = [];
     for (const host of this.units) {
-      if (host.kind === "lookout") {
-        const at = this.mountAt(host, "building_lookout", SPRITE_MOUNT.building_lookout);
-        posted.push(this.makeUnit(pickLookoutTroop(), at.x, at.y, host.id));
-      } else if (host.kind === "bunker") {
-        for (const m of SPRITE_MOUNT.building_bunker) {
-          const at = this.mountAt(host, "building_bunker", m);
-          posted.push(this.makeUnit(pickLookoutTroop(), at.x, at.y, host.id));
-        }
-      } else if (host.kind === "pickup" && Math.random() < 0.33) {
-        const at = this.mountAt(host, "enemy_pickup", SPRITE_MOUNT.enemy_pickup);
-        posted.push(this.makeUnit(pickPickupTroop(), at.x, at.y, host.id));
-      }
+      posted.push(...this.spawnCrewFor(host));
     }
     this.units.push(...posted);
 
@@ -947,6 +939,7 @@ export class MissionScene extends Phaser.Scene {
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.OPEN_BRACKET).on("down", () => {
       if (this.debugSpawnOpen) this.nudgeDebugSpawn(-1);
       else if (this.debugCamOpen) this.nudgeDebugCam(-1);
+      else if (this.combatCfg?.open) this.combatCfg.cycle(-1);
       else if (this.rosterCfg?.open) this.rosterCfg.cycle(-1);
       else if (this.spriteCfg?.open) this.spriteCfg.cycle(-1);
       else if (this.editOpen) this.nudgeEditSize(-1);
@@ -954,6 +947,7 @@ export class MissionScene extends Phaser.Scene {
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.CLOSED_BRACKET).on("down", () => {
       if (this.debugSpawnOpen) this.nudgeDebugSpawn(1);
       else if (this.debugCamOpen) this.nudgeDebugCam(1);
+      else if (this.combatCfg?.open) this.combatCfg.cycle(1);
       else if (this.rosterCfg?.open) this.rosterCfg.cycle(1);
       else if (this.spriteCfg?.open) this.spriteCfg.cycle(1);
       else if (this.editOpen) this.nudgeEditSize(1);
@@ -980,6 +974,7 @@ export class MissionScene extends Phaser.Scene {
     });
     const bumpTime = (dir: number) => {
       if (this.rosterCfg?.open) this.rosterCfg.nudgeZoom(dir);
+      else if (this.combatCfg?.open) this.combatCfg.nudgeZoom(dir);
       else if (this.debugCamOpen) this.nudgeDebugCam(dir);
       else this.nudgeTimeScale(dir);
     };
@@ -997,6 +992,7 @@ export class MissionScene extends Phaser.Scene {
     };
     this.spriteCfg = new SpriteConfigTool(this, (key) => this.spriteOrigin(key), markHudRoot);
     this.rosterCfg = new RosterConfigTool(this, markHudRoot);
+    this.combatCfg = new CombatConfigTool(this, markHudRoot);
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.F9).on("down", () => this.spriteCfg.toggle());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.BACKTICK).on("down", () => this.cycleDebugRigs());
     this.input.keyboard!.addKey("F").on("down", () => this.toggleTestFx());
@@ -1004,6 +1000,7 @@ export class MissionScene extends Phaser.Scene {
       if (this.debugSpawnOpen) this.nudgeDebugSpawn(-1);
       else if (this.debugCamOpen) this.nudgeDebugCamSel(-1);
       else if (this.debugOpen) this.nudgeDebugMenu(-1);
+      else if (this.combatCfg?.open) this.combatCfg.cycle(-1);
       else if (this.rosterCfg?.open) this.rosterCfg.cycle(-1);
       else if (this.spriteCfg?.open) this.spriteCfg.cycle(-1);
     });
@@ -1011,6 +1008,7 @@ export class MissionScene extends Phaser.Scene {
       if (this.debugSpawnOpen) this.nudgeDebugSpawn(1);
       else if (this.debugCamOpen) this.nudgeDebugCamSel(1);
       else if (this.debugOpen) this.nudgeDebugMenu(1);
+      else if (this.combatCfg?.open) this.combatCfg.cycle(1);
       else if (this.rosterCfg?.open) this.rosterCfg.cycle(1);
       else if (this.spriteCfg?.open) this.spriteCfg.cycle(1);
     });
@@ -1033,6 +1031,10 @@ export class MissionScene extends Phaser.Scene {
       }
       if (this.debugSpawnOpen) {
         this.nudgeDebugSpawn(dy > 0 ? 1 : -1);
+        return;
+      }
+      if (this.combatCfg?.open) {
+        this.combatCfg.cycle(dy > 0 ? 1 : -1);
         return;
       }
       if (this.rosterCfg?.open) {
@@ -1441,7 +1443,7 @@ export class MissionScene extends Phaser.Scene {
     return spritePivot(key);
   }
 
-  /** ` cycles closed → sprite rig → roster rig → closed. */
+  /** ` cycles closed → sprite → roster → combat → closed. */
   cycleDebugRigs(): void {
     if (this.spriteCfg?.open) {
       this.spriteCfg.toggle();
@@ -1450,15 +1452,21 @@ export class MissionScene extends Phaser.Scene {
     }
     if (this.rosterCfg?.open) {
       this.rosterCfg.toggle();
+      this.combatCfg.toggle();
+      return;
+    }
+    if (this.combatCfg?.open) {
+      this.combatCfg.toggle();
       return;
     }
     this.spriteCfg.toggle();
   }
 
   update(_t: number, dms: number): void {
-    if (this.spriteCfg?.open || this.rosterCfg?.open) {
+    if (this.spriteCfg?.open || this.rosterCfg?.open || this.combatCfg?.open) {
       if (this.spriteCfg?.open) this.spriteCfg.update();
       if (this.rosterCfg?.open) this.rosterCfg.update();
+      if (this.combatCfg?.open) this.combatCfg.update(Math.min(dms / 1000, 0.05));
       this.reticle.setVisible(false);
       this.reticleMark.setVisible(false);
       this.reticleMark.clear();
@@ -1563,7 +1571,7 @@ export class MissionScene extends Phaser.Scene {
     return spritePivot(key);
   }
 
-  makeUnit(kind: Unit["kind"], x: number, y: number, pinId?: number): Unit {
+  makeUnit(kind: Unit["kind"], x: number, y: number, pinId?: number, pinMount?: number): Unit {
     const st = stats(kind);
     const sp = specOf(kind);
     const parts = rollParts(kind);
@@ -1591,6 +1599,7 @@ export class MissionScene extends Phaser.Scene {
       muzzleGun: 0,
       muzzleTip: 0,
       pinId,
+      pinMount,
       parts,
       camo: kind === "lav_aa" ? "digital" : camoForBiome(sampleBiome(this.world, x, y)),
     };
@@ -1620,14 +1629,28 @@ export class MissionScene extends Phaser.Scene {
     return this.mountAt(u, resolveSkin(this.textures, textureOf(u.kind), u.camo), mount);
   }
 
-  lookoutPost(look: Unit): { x: number; y: number } {
-    return this.mountAt(look, "building_lookout", SPRITE_MOUNT.building_lookout);
+  /** Spawn pinned crew from host UnitSpec.crew (any kind with seats). */
+  spawnCrewFor(host: Unit): Unit[] {
+    const crew = crewOf(host.kind);
+    if (!crew?.mounts.length) return [];
+    const tex = resolveSkin(this.textures, textureOf(host.kind), host.camo);
+    const chance = crew.chance ?? 1;
+    const out: Unit[] = [];
+    for (let i = 0; i < crew.mounts.length; i++) {
+      if (Math.random() >= chance) continue;
+      const m = crew.mounts[i]!;
+      const at = this.mountAt(host, tex, m);
+      out.push(this.makeUnit(pickTroop(), at.x, at.y, host.id, i));
+    }
+    return out;
   }
 
-  pickupHost(u: Unit): Unit | undefined {
+  /** Host that snaps pinned crew to a mount UV (e.g. vehicle bed) — blocks flee/walk. */
+  snapHost(u: Unit): Unit | undefined {
     if (u.pinId == null) return undefined;
     const post = this.units.find((p) => p.id === u.pinId);
-    return post && !post.dead && post.kind === "pickup" ? post : undefined;
+    if (!post || post.dead) return undefined;
+    return crewOf(post.kind)?.mode === "snap" ? post : undefined;
   }
 
   leashPinned(u: Unit): void {
@@ -1635,10 +1658,19 @@ export class MissionScene extends Phaser.Scene {
     const post = this.units.find((p) => p.id === u.pinId);
     if (!post || post.dead) {
       u.pinId = undefined;
+      u.pinMount = undefined;
       return;
     }
-    if (post.kind === "pickup") {
-      const at = this.mountAt(post, "enemy_pickup", SPRITE_MOUNT.enemy_pickup);
+    const crew = crewOf(post.kind);
+    if (!crew?.mounts.length) {
+      u.pinId = undefined;
+      u.pinMount = undefined;
+      return;
+    }
+    if (crew.mode === "snap") {
+      const m = crew.mounts[u.pinMount ?? 0] ?? crew.mounts[0]!;
+      const tex = resolveSkin(this.textures, textureOf(post.kind), post.camo);
+      const at = this.mountAt(post, tex, m);
       u.x = at.x;
       u.y = at.y;
       return;
@@ -2036,15 +2068,16 @@ export class MissionScene extends Phaser.Scene {
     const h = this.heli;
     if (h.phase !== "flight" || !this.canFire || this.debugOpen || this.editOpen) return;
     const wpn = WPN_LIST[h.weapon]!.id;
+    const spec = PLAYER_WPNS[wpn];
     const ptr = this.worldPointer();
     const down = this.input.activePointer.isDown;
 
     if (wpn === "cannon" && down && h.fireCd <= 0) {
-      h.fireCd = 0.07;
+      h.fireCd = spec.fireCd;
       const spread = (Math.random() - 0.5) * 0.08;
       const air = this.hoverAerial(ptr.x, ptr.y);
       const ang = h.gunAngle + spread;
-      const spd = 780;
+      const spd = spec.speed;
       const tip = this.gunTip();
       const tipY = tip.y + screenLift(h.z);
       const z0 = h.z + ZOff.shot;
@@ -2064,10 +2097,10 @@ export class MissionScene extends Phaser.Scene {
         vy: Math.sin(ang) * spd,
         vz: (tz - z0) / t,
         angle: ang,
-        life: t + (air ? 0.55 : 0.08),
-        blast: 18,
-        dmg: 8,
-        tracer: "chain",
+        life: t + (air ? 0.55 : spec.life),
+        blast: spec.blast,
+        dmg: spec.dmg,
+        tracer: spec.tracer,
       });
       this.spawnSparks(tip.x, tipY, h.z, {
         style: "muzzle",
@@ -2085,13 +2118,13 @@ export class MissionScene extends Phaser.Scene {
     }
 
     if (wpn === "rocket" && down && h.fireCd <= 0 && this.hasAmmo(1)) {
-      h.fireCd = 0.22;
+      h.fireCd = spec.fireCd;
       const { x: px, y: py } = this.missilePylon();
       this.spendAmmo(1);
       const air = this.hoverAerial(ptr.x, ptr.y);
       const along = projectAlong(px, py, h.angle, air ? air.x : ptr.x, air ? air.y : ptr.y);
       const dist = Math.max(80, along);
-      const t = dist / 620;
+      const t = dist / spec.speed;
       const tx = px + Math.cos(h.angle) * dist;
       const ty = py + Math.sin(h.angle) * dist;
       const tz = air ? air.z + heightOf(air.kind) * 0.5 : groundZ(this.world, tx, ty);
@@ -2101,13 +2134,13 @@ export class MissionScene extends Phaser.Scene {
         x: px,
         y: py,
         z: h.z + ZOff.shot,
-        vx: Math.cos(h.angle) * 620,
-        vy: Math.sin(h.angle) * 620,
+        vx: Math.cos(h.angle) * spec.speed,
+        vy: Math.sin(h.angle) * spec.speed,
         vz: (tz - h.z) / t,
         angle: h.angle,
-        life: t + 0.08,
-        blast: 140,
-        dmg: 110,
+        life: t + spec.life,
+        blast: spec.blast,
+        dmg: spec.dmg,
       });
       this.missileMuzzle(px, py, h.z, h.angle);
     }
@@ -2120,10 +2153,10 @@ export class MissionScene extends Phaser.Scene {
         this.hasAmmo(2) &&
         h.hellfireLock
       ) {
-        h.fireCd = 0.55;
+        h.fireCd = spec.fireCd;
         const { x: px, y: py } = this.missilePylon();
         this.spendAmmo(2);
-        const kick = 380;
+        const kick = spec.speed;
         const side = (this.ammo[2] ?? 0) % 2 === 0 ? 1 : -1;
         this.spawnShot({
           kind: "hellfire",
@@ -2135,10 +2168,10 @@ export class MissionScene extends Phaser.Scene {
           vy: h.vy + Math.sin(h.angle) * kick,
           vz: h.vz,
           angle: h.angle,
-          life: 4.9,
+          life: spec.life,
           targetId: h.hellfireLock.id,
-          blast: 175,
-          dmg: 185,
+          blast: spec.blast,
+          dmg: spec.dmg,
           motor: -MISSILE_IGNITE,
           yaw: side * (1.05 + Math.random() * 0.45),
         });
@@ -2147,7 +2180,7 @@ export class MissionScene extends Phaser.Scene {
     }
 
     if (wpn === "tow" && down && h.fireCd <= 0 && this.hasAmmo(3)) {
-      h.fireCd = 1.1;
+      h.fireCd = spec.fireCd;
       const { x: px, y: py } = this.missilePylon();
       this.spendAmmo(3);
       const side = (this.ammo[3] ?? 0) % 2 === 0 ? 1 : -1;
@@ -2157,13 +2190,13 @@ export class MissionScene extends Phaser.Scene {
         x: px,
         y: py,
         z: h.z + ZOff.shot,
-        vx: h.vx + Math.cos(h.angle) * 400,
-        vy: h.vy + Math.sin(h.angle) * 400,
+        vx: h.vx + Math.cos(h.angle) * spec.speed,
+        vy: h.vy + Math.sin(h.angle) * spec.speed,
         vz: h.vz,
         angle: h.angle,
-        life: 5.2,
-        blast: 160,
-        dmg: 170,
+        life: spec.life,
+        blast: spec.blast,
+        dmg: spec.dmg,
         guided: true,
         motor: -(MISSILE_IGNITE + 0.06),
         cruise: 300,
@@ -3254,10 +3287,8 @@ export class MissionScene extends Phaser.Scene {
   destroyUnit(u: Unit, quiet = false, skipSplash = false): void {
     if (u.dead) return;
     u.dead = true;
-    if (u.kind === "lookout" || u.kind === "bunker" || u.kind === "pickup") {
-      for (const crew of this.units) {
-        if (!crew.dead && crew.pinId === u.id) this.destroyUnit(crew);
-      }
+    for (const crew of this.units) {
+      if (!crew.dead && crew.pinId === u.id) this.destroyUnit(crew);
     }
     const sp = specOf(u.kind);
     const building = !!sp.building;
@@ -5004,7 +5035,7 @@ export class MissionScene extends Phaser.Scene {
         if (isGroundVehicle(u.kind)) {
           this.driveGroundVehicle(u, dt, h, dist);
         }
-        if ((sp.move === "inf" || sp.move === "flee") && !this.pickupHost(u)) {
+        if ((sp.move === "inf" || sp.move === "flee") && !this.snapHost(u)) {
           const canShoot = !!sp.weapon;
           if (sp.organic && u.health < u.max) {
             // Keep bleeding past the downed floor so they eventually expire quietly.
@@ -5122,7 +5153,7 @@ export class MissionScene extends Phaser.Scene {
       const atkRange = wpn?.range ?? 0;
       const inRange = !!(atkRange && dist < atkRange && dist > 40 && h.phase === "flight");
       const hullFlee =
-        (sp.move === "inf" && u.aiMood === "flee" && !(sp.organic && u.health <= 1) && !this.pickupHost(u)) ||
+        (sp.move === "inf" && u.aiMood === "flee" && !(sp.organic && u.health <= 1) && !this.snapHost(u)) ||
         (u.kind === "heli_small" && u.aiMood === "flee");
       const strafeHeli = sp.move === "heli" && u.kind !== "heli_heavy";
       if (sp.fixedAim && !guns.length && wpn && inRange && !hullFlee && !strafeHeli) {
@@ -5140,7 +5171,7 @@ export class MissionScene extends Phaser.Scene {
       const soldierDown = inf && u.health <= 1 && u.health < u.max;
       const continueBurst =
         inf && (u.burstLeft ?? 0) > 0 && h.phase === "flight" && (soldierDown || u.aiMood !== "flee");
-      const soldierFlee = inf && u.aiMood === "flee" && !soldierDown && !this.pickupHost(u);
+      const soldierFlee = inf && u.aiMood === "flee" && !soldierDown && !this.snapHost(u);
       const scoutFlee = u.kind === "heli_small" && u.aiMood === "flee";
       const aimFrom = guns.length ? this.gunMountPos(u, gunI) : { x: u.x, y: u.y };
       const gunAim = Math.atan2(h.y - aimFrom.y, h.x - aimFrom.x);
@@ -6720,18 +6751,7 @@ export class MissionScene extends Phaser.Scene {
     const y = h.y + Math.sin(a) * d;
     const u = this.makeUnit(kind, x, y);
     this.units.push(u);
-    if (kind === "lookout") {
-      const at = this.mountAt(u, "building_lookout", SPRITE_MOUNT.building_lookout);
-      this.units.push(this.makeUnit(pickLookoutTroop(), at.x, at.y, u.id));
-    } else if (kind === "bunker") {
-      for (const m of SPRITE_MOUNT.building_bunker) {
-        const at = this.mountAt(u, "building_bunker", m);
-        this.units.push(this.makeUnit(pickLookoutTroop(), at.x, at.y, u.id));
-      }
-    } else if (kind === "pickup" && Math.random() < 0.33) {
-      const at = this.mountAt(u, "enemy_pickup", SPRITE_MOUNT.enemy_pickup);
-      this.units.push(this.makeUnit(pickPickupTroop(), at.x, at.y, u.id));
-    }
+    this.units.push(...this.spawnCrewFor(u));
   }
 
   toggleReliefEditor(force?: boolean): void {
@@ -7095,6 +7115,7 @@ export class MissionScene extends Phaser.Scene {
     };
     markHudTree(this.spriteCfg.root);
     markHudTree(this.rosterCfg.root);
+    markHudTree(this.combatCfg.root);
     markHudTree(this.debugRoot);
     if (this.editRoot) markHudTree(this.editRoot);
     this.children.each((obj) => {

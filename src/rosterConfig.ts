@@ -14,6 +14,7 @@ import {
   type UnitSpec,
   type WeaponSpec,
 } from "./roster";
+import { lookupSpriteMuzzles } from "./spriteOrigin";
 import { nameGameTexture, spritePivot } from "./sprites";
 
 const DEPTH = 9250;
@@ -27,9 +28,19 @@ const LIST_W = 268;
 const STATS_W = 400;
 const LINE_H = 16;
 const PART_SLOTS = 10;
+const LABEL_SLOTS = 16;
 
 type Filter = "all" | "ground" | "air" | "water" | "building" | "troop";
 const FILTERS: Filter[] = ["all", "ground", "air", "water", "building", "troop"];
+
+type MountRole = "gun" | "rotor" | "dish" | "troop" | "origin";
+const ROLE_COLOR: Record<MountRole, number> = {
+  gun: 0x6adf6a,
+  rotor: 0x5ec8ff,
+  dish: 0xe8b84a,
+  troop: 0xd878ff,
+  origin: 0xe8b84a,
+};
 
 /**
  * Lazy debug browser for every roster UnitSpec — list, live preview (hull + parts),
@@ -42,6 +53,8 @@ export class RosterConfigTool {
   private idx = 0;
   private filter: Filter = "all";
   private zoom = 2;
+  /** Radius / height / mount / muzzle overlay markers. */
+  private showMarks = true;
   root: Phaser.GameObjects.Container;
   private dim!: Phaser.GameObjects.Rectangle;
   private board!: Phaser.GameObjects.Graphics;
@@ -51,6 +64,7 @@ export class RosterConfigTool {
   private listTxt!: Phaser.GameObjects.Text;
   private statsTxt!: Phaser.GameObjects.Text;
   private hintTxt!: Phaser.GameObjects.Text;
+  private mountLabels: Phaser.GameObjects.Text[] = [];
   private onBuilt?: (root: Phaser.GameObjects.Container) => void;
   private uiCam!: Phaser.Cameras.Scene2D.Camera;
 
@@ -119,6 +133,21 @@ export class RosterConfigTool {
     nameGameTexture(scene, this.listTxt, "ui_roster_list");
     nameGameTexture(scene, this.statsTxt, "ui_roster_stats");
     nameGameTexture(scene, this.hintTxt, "ui_roster_hint");
+    for (let i = 0; i < LABEL_SLOTS; i++) {
+      const t = scene.add
+        .text(0, 0, "", {
+          fontFamily: MONO,
+          fontSize: "11px",
+          color: "#c8ffc8",
+          stroke: "#0c0a08",
+          strokeThickness: 3,
+        })
+        .setScrollFactor(0)
+        .setDepth(DEPTH + 6)
+        .setVisible(false);
+      nameGameTexture(scene, t, `ui_roster_mount_${i}`);
+      this.mountLabels.push(t);
+    }
     this.root.add([
       this.dim,
       this.board,
@@ -128,6 +157,7 @@ export class RosterConfigTool {
       this.listTxt,
       this.statsTxt,
       this.hintTxt,
+      ...this.mountLabels,
     ]);
 
     this.uiCam = scene.cameras.add(0, 0, w, h, false, "rosterRig");
@@ -163,6 +193,11 @@ export class RosterConfigTool {
         this.idx = 0;
         this.refreshPreview();
       });
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.O).on("down", () => {
+        if (!this.open) return;
+        this.showMarks = !this.showMarks;
+        this.refreshPreview();
+      });
     }
 
     scene.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
@@ -190,6 +225,7 @@ export class RosterConfigTool {
     else {
       this.overlay.clear();
       for (const p of this.parts) p.setVisible(false);
+      for (const t of this.mountLabels) t.setVisible(false);
     }
   }
 
@@ -248,7 +284,7 @@ export class RosterConfigTool {
     const sp = specOf(kind);
 
     this.hintTxt.setText(
-      `ROSTER RIG   \` cycle / close   [ ] cycle   , . page   - + zoom ${fmtZoom(this.zoom)}   G filter ${this.filter.toUpperCase()}   derived from roster SPECS`
+      `ROSTER RIG   \` cycle / close   [ ] cycle   , . page   - + zoom ${fmtZoom(this.zoom)}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   gold origin · green gun · cyan rotor · violet troop · orange muzzle`
     );
 
     const size = this.pageSize();
@@ -288,7 +324,7 @@ export class RosterConfigTool {
     this.update();
   }
 
-  private layoutPreview(_kind: UnitKind, sp: UnitSpec): void {
+  private layoutPreview(kind: UnitKind, sp: UnitSpec): void {
     const w = this.scene.scale.width;
     const h = this.scene.scale.height;
     const tex = sp.texture;
@@ -300,6 +336,7 @@ export class RosterConfigTool {
       for (const p of this.parts) p.setVisible(false);
       this.board.clear();
       this.overlay.clear();
+      for (const t of this.mountLabels) t.setVisible(false);
       this.statsTxt.setPosition(listRight, LIST_Y);
       return;
     }
@@ -307,7 +344,6 @@ export class RosterConfigTool {
     this.hull.setVisible(true).setTexture(tex);
     const pivot = spritePivot(tex);
     this.hull.setOrigin(pivot.x, pivot.y);
-    // Controllable preview zoom (− / +); default 2×.
     const s = this.zoom;
     this.hull.setScale(s);
     this.hull.setRotation(sp.rotOff);
@@ -391,15 +427,118 @@ export class RosterConfigTool {
     }
     for (; pi < this.parts.length; pi++) this.parts[pi]!.setVisible(false);
 
-    // Collision radius / height at preview zoom.
-    this.overlay.clear();
-    this.overlay.lineStyle(1.5, 0x5ec8ff, 0.75);
-    this.overlay.strokeCircle(cx, cy, sp.radius * s);
-    this.overlay.lineStyle(1.2, 0x6dbb4a, 0.7);
-    this.overlay.lineBetween(cx, cy, cx, cy - sp.height * s);
-    this.overlay.fillStyle(0xe8b84a, 0.9);
-    this.overlay.fillCircle(cx, cy, 2);
+    this.drawMarks(kind, sp, pivot, cx, cy, s);
   }
+
+  private drawMarks(
+    _kind: UnitKind,
+    sp: UnitSpec,
+    pivot: { x: number; y: number },
+    cx: number,
+    cy: number,
+    s: number
+  ): void {
+    const g = this.overlay;
+    g.clear();
+    for (const t of this.mountLabels) t.setVisible(false);
+    if (!this.showMarks) return;
+
+    const hullDw = this.hull.displayWidth;
+    const hullDh = this.hull.displayHeight;
+    const rot = sp.rotOff;
+    const hullUv = (u: number, v: number) => {
+      const mx = (u - pivot.x) * hullDw;
+      const my = (v - pivot.y) * hullDh;
+      const ca = Math.cos(rot);
+      const sa = Math.sin(rot);
+      return { x: cx + mx * ca - my * sa, y: cy + mx * sa + my * ca };
+    };
+
+    g.lineStyle(1.5, 0x5ec8ff, 0.55);
+    g.strokeCircle(cx, cy, sp.radius * s);
+    g.lineStyle(1.2, 0x6dbb4a, 0.55);
+    g.lineBetween(cx, cy, cx, cy - sp.height * s);
+
+    g.lineStyle(1.5, ROLE_COLOR.origin, 0.95);
+    g.lineBetween(cx - 14, cy, cx + 14, cy);
+    g.lineBetween(cx, cy - 14, cx, cy + 14);
+    g.strokeCircle(cx, cy, 5);
+
+    type Mark = { x: number; y: number; role: MountRole; label: string };
+    const mounts: Mark[] = [];
+    const add = (uv: { x: number; y: number }, role: MountRole, label: string) => {
+      if (mounts.some((q) => Math.abs(q.x - uv.x) < 1e-4 && Math.abs(q.y - uv.y) < 1e-4 && q.role === role))
+        return;
+      mounts.push({ x: uv.x, y: uv.y, role, label });
+    };
+
+    for (const gun of sp.guns) add(gun.mount, "gun", "gun");
+    for (const r of sp.rotors) add(r.mount, "rotor", "rotor");
+    if (sp.dish) add(sp.dish.mount, "dish", "dish");
+    if (sp.crew) {
+      for (const m of sp.crew.mounts) add(m, "troop", "troop");
+    }
+
+    const totals = new Map<MountRole, number>();
+    for (const m of mounts) totals.set(m.role, (totals.get(m.role) ?? 0) + 1);
+    const seen = new Map<MountRole, number>();
+    for (const m of mounts) {
+      if ((totals.get(m.role) ?? 0) <= 1) continue;
+      const i = (seen.get(m.role) ?? 0) + 1;
+      seen.set(m.role, i);
+      m.label = `${m.label} ${i}`;
+    }
+
+    for (let i = 0; i < this.mountLabels.length; i++) {
+      const lab = this.mountLabels[i]!;
+      const m = mounts[i];
+      if (!m) {
+        lab.setVisible(false);
+        continue;
+      }
+      const p = hullUv(m.x, m.y);
+      const color = ROLE_COLOR[m.role];
+      g.fillStyle(color, 0.95);
+      g.fillRect(p.x - 4, p.y - 4, 8, 8);
+      g.lineStyle(1, 0x101010, 0.9);
+      g.strokeRect(p.x - 4, p.y - 4, 8, 8);
+      lab.setText(m.label);
+      lab.setColor(hexColor(color));
+      lab.setPosition(p.x + 7, p.y - 8);
+      lab.setVisible(true);
+    }
+
+    for (const gun of sp.guns) {
+      const muzzles = gun.muzzles?.length
+        ? gun.muzzles
+        : gun.muzzle
+          ? [gun.muzzle]
+          : lookupSpriteMuzzles(gun.tex);
+      if (!muzzles.length || !this.scene.textures.exists(gun.tex)) continue;
+      const gunSc = s * (gun.scale ?? 1);
+      const img = this.scene.textures.get(gun.tex).get();
+      const gdw = img.width * gunSc;
+      const gdh = img.height * gunSc;
+      const gunPos = hullUv(gun.mount.x, gun.mount.y);
+      const gunRot = Math.PI / 2;
+      for (const muz of muzzles) {
+        const lx = (muz.x - gun.origin.x) * gdw;
+        const ly = (muz.y - gun.origin.y) * gdh;
+        const ca = Math.cos(gunRot);
+        const sa = Math.sin(gunRot);
+        const x = gunPos.x + lx * ca - ly * sa;
+        const y = gunPos.y + lx * sa + ly * ca;
+        g.fillStyle(0xff7a2a, 0.95);
+        g.fillCircle(x, y, 5);
+        g.lineStyle(1.25, 0xffe8c0, 0.95);
+        g.strokeCircle(x, y, 5);
+      }
+    }
+  }
+}
+
+function hexColor(n: number): string {
+  return `#${n.toString(16).padStart(6, "0")}`;
 }
 
 function fmtZoom(z: number): string {
@@ -511,6 +650,15 @@ function formatSpec(kind: UnitKind, sp: UnitSpec): string {
     );
   } else {
     lines.push(`DISH     —`);
+  }
+
+  if (sp.crew?.mounts.length) {
+    lines.push(`CREW     ${sp.crew.mode}  chance ${sp.crew.chance ?? 1}  seats ${sp.crew.mounts.length}`);
+    sp.crew.mounts.forEach((m, i) => {
+      lines.push(`  [${i}] ${m.x.toFixed(3)},${m.y.toFixed(3)}`);
+    });
+  } else {
+    lines.push(`CREW     —`);
   }
 
   const splash = sp.building
