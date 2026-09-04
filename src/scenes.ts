@@ -1656,6 +1656,14 @@ export class MissionScene extends Phaser.Scene {
     );
     const mount = spriteUvPos(this.body, gunLayout.mount.x, gunLayout.mount.y);
     this.gun.setPosition(mount.x, mount.y);
+    // Aim from the chin mount (world XY), not the heli origin — otherwise barrel/laser
+    // diverge from the mouse as the gun yaws off the nose.
+    if (h.phase === "flight" || h.phase === "ready" || h.phase === "spool") {
+      const aim = this.worldPointer();
+      const gwy = mount.y + lift + bob;
+      const want = Math.atan2(aim.y - gwy, aim.x - mount.x);
+      h.gunAngle = Phaser.Math.Angle.RotateTo(h.gunAngle, want, 6.4 * dt);
+    }
     this.rotor.setRotation(h.rotor);
     this.gun.setRotation(h.gunAngle + Math.PI / 2);
     const spinKey = "heli_rotor_spin";
@@ -1815,15 +1823,17 @@ export class MissionScene extends Phaser.Scene {
     let bx: number;
     let by: number;
     const oz = h.z + ZOff.shot;
+    const lift = screenLift(h.z);
     if (!missile) {
       const tip = this.gunTip();
       wx = tip.x;
-      wy = tip.y;
-      ox = this.gun.x;
-      oy = this.gun.y;
-      const dist = Math.hypot(aim.x - h.x, aim.y - h.y);
-      bx = h.x + Math.cos(h.gunAngle) * dist;
-      by = h.y + Math.sin(h.gunAngle) * dist;
+      wy = tip.y + lift; // tip is in lifted display space; terrain ray uses world XY
+      ox = tip.x;
+      oy = tip.y;
+      // Beam toward the cursor from the muzzle (same parallax fix as gun aim).
+      const along = Math.max(80, projectAlong(wx, wy, h.gunAngle, aim.x, aim.y));
+      bx = wx + Math.cos(h.gunAngle) * along;
+      by = wy + Math.sin(h.gunAngle) * along;
     } else {
       const pylon = this.missilePylon();
       wx = pylon.x;
@@ -2726,13 +2736,14 @@ export class MissionScene extends Phaser.Scene {
     if ((s.kind === "hellfire" || s.kind === "tow") && (s.motor == null || s.motor < 0) && !s.homePlayer) return;
     if (s.homePlayer && s.motor != null && s.motor < 0) return;
     const isRocket = s.kind === "rocket";
-    const hydra = isRocket && (s.scale ?? 1) > 0.6;
+    const small = troopMissileTrail(s);
+    // Troop RPGs can sit above 0.6 scale — don't treat them as Hydra (smoke-only).
+    const hydra = isRocket && !small && (s.scale ?? 1) > 0.6;
     const steps = hydra ? 1 : 2;
     const rot = s.angle + Math.PI / 2;
     const vis = s.scale ?? 1;
     const tail = (hydra ? 8 : 15) * vis;
     const sc = shotTrailScale(s);
-    const small = troopMissileTrail(s);
     for (let i = 0; i < steps; i++) {
       const t = (i + range(0, 0.35)) / steps;
       const x = x0 + (s.x - x0) * t;
@@ -2742,12 +2753,12 @@ export class MissionScene extends Phaser.Scene {
       const tx = x - Math.sin(rot) * tail;
       const ty = sy + Math.cos(rot) * tail;
       this.withTrailFx(sc, () => {
-        if (hydra) {
-          if (Math.random() < 0.38) this.fxAt(z, this.lingerSmoke, ZOff.smoke).emitParticleAt(tx, ty, 1);
-        } else if (small) {
+        if (small) {
           const { fire, smoke } = this.pairFx(z, this.burn, this.lingerSmoke);
           if (Math.random() < 0.55) fire.emitParticleAt(tx, ty, 1);
           if (Math.random() < 0.4) smoke.emitParticleAt(tx, ty, 1);
+        } else if (hydra) {
+          if (Math.random() < 0.38) this.fxAt(z, this.lingerSmoke, ZOff.smoke).emitParticleAt(tx, ty, 1);
         } else if (isRocket) {
           const { fire, smoke } = this.pairFx(z, this.burn, this.lingerSmoke);
           if (Math.random() < 0.5) fire.emitParticleAt(tx, ty, 1);
@@ -2855,23 +2866,23 @@ export class MissionScene extends Phaser.Scene {
     const missileBias = he ? 2.4 : undefined;
     const mechGunBias = !he && objectHit && !(direct && isOrganic(direct.kind)) ? 2.1 : undefined;
     const expBias = missileBias ?? mechGunBias;
-    if (objectHit && direct && isOrganic(direct.kind)) {
+    // Soft-target blood spray is chain-gun only; rockets/missiles always use mech-style object hits.
+    if (objectHit && !he && direct && isOrganic(direct.kind)) {
       const graze = Phaser.Math.Clamp(Math.hypot(dx, dy) / travel, 0, 1);
       const distN = Phaser.Math.Clamp(Math.hypot(x - this.heli.x, y - this.heli.y) / 780, 0, 1);
       const acute = Math.max(graze, distN);
       this.spawnSparks(x, y, z + 3, {
         style: "ground",
-        n: he ? 48 : 22,
-        spdMin: he ? Phaser.Math.Linear(50, 160, acute) : Phaser.Math.Linear(36, 200, acute * acute),
-        spdMax: he ? Phaser.Math.Linear(220, 420, acute) : Phaser.Math.Linear(200, 520, acute * acute),
+        n: 22,
+        spdMin: Phaser.Math.Linear(36, 200, acute * acute),
+        spdMax: Phaser.Math.Linear(200, 520, acute * acute),
         bx: sparkBx,
         by: sparkBy,
-        bz: he ? sparkBz : Phaser.Math.Linear(110, 40, acute),
-        tight: he ? 0.22 : Phaser.Math.Linear(0.28, 0.72, acute),
+        bz: Phaser.Math.Linear(110, 40, acute),
+        tight: Phaser.Math.Linear(0.28, 0.72, acute),
         sparkFrac: 0,
         forceKind: "dirt",
         blood: true,
-        expBias: missileBias,
       });
     } else if (objectHit) {
       this.spawnSparks(x, y, z + 4, {
@@ -3181,8 +3192,8 @@ export class MissionScene extends Phaser.Scene {
         settled: false,
         gravity: true,
         bounces: Math.random() < 1 / 3 ? 2 + ((Math.random() * 2) | 0) : 0,
-        trailR: this.texTrailR(key) * (organic ? 0.38 : 1) * Phaser.Math.Linear(0.4, 1.4, boom),
-        scale: (organic ? 0.55 : 1) * Phaser.Math.Linear(0.32, 1.5, boom),
+        trailR: this.texTrailR(key) * (organic ? 0.46 : 1) * Phaser.Math.Linear(0.4, 1.4, boom),
+        scale: (organic ? 0.65 : 1) * Phaser.Math.Linear(0.32, 1.5, boom),
         trailSoft: organic,
       });
     }
@@ -3297,25 +3308,25 @@ export class MissionScene extends Phaser.Scene {
           const dishKey = this.textures.exists(raw) ? raw : d.tex;
           const liveSpan = this.texSpan(d.tex);
           const hulkSpan = this.texSpan(dishKey);
-          const scale = (d.scale ?? 1) * (liveSpan / Math.max(hulkSpan, 1));
+          const scale = (d.scale ?? 1) * (liveSpan / Math.max(hulkSpan, 1)) * 0.82;
           const at = this.mountAt(u, resolveSkin(this.textures, textureOf(u.kind), u.camo), d.mount);
           const span = this.texSpan(dishKey) * scale * 0.42;
           const n = 3 + ((Math.random() * 3) | 0);
-          const flamePts: { lx: number; ly: number; sc: number }[] = [{ lx: 0, ly: 0, sc: 1 }];
+          const flamePts: { lx: number; ly: number; sc: number }[] = [{ lx: 0, ly: 0, sc: 0.72 }];
           for (let i = 0; i < n; i++) {
             const rad = range(0.18, 0.82) * span;
             const ang = Math.random() * Math.PI * 2;
             flamePts.push({
               lx: Math.cos(ang) * rad,
               ly: Math.sin(ang) * rad,
-              sc: range(0.38, 0.72),
+              sc: range(0.28, 0.52),
             });
           }
           throwOff(dishKey, u.rotor, at.x, at.y, scale, {
             flamePts,
             dishFlat: true,
             spin: range(-7, 7),
-            trailR: this.texTrailR(dishKey) * scale * 0.55,
+            trailR: this.texTrailR(dishKey) * scale * 0.4,
             bounces: 0,
           });
         }
@@ -4164,7 +4175,7 @@ export class MissionScene extends Phaser.Scene {
         const ly = p.ly * flatY;
         const wx = f.x + lx * ca - ly * sa;
         const wy = pyBase + lx * sa + ly * ca;
-        this.dmgFlameScale = p.sc * (f.scale ?? 1) * 1.15;
+        this.dmgFlameScale = p.sc * (f.scale ?? 1) * (f.dishFlat ? 0.85 : 1.15);
         if (Math.random() < 0.8 * dim) fire.emitParticleAt(wx, wy, p.lx === 0 && p.ly === 0 ? 2 : 1);
         if (Math.random() < 0.42 * dim) smoke.emitParticleAt(wx, wy + 8, 1);
       }
@@ -4945,6 +4956,15 @@ export class MissionScene extends Phaser.Scene {
         }
         const home = wpn.shot === "hellfire";
         const troopRocket = u.kind === "rpg" || u.kind === "stinger";
+        let shotScale = troopRocket
+          ? u.kind === "rpg"
+            ? 0.66
+            : 0.7
+          : u.kind === "gunner" || u.kind === "mounted_mg"
+            ? 0.4
+            : undefined;
+        // Plain infantry tracers (soldier, etc.) — slight bump vs vehicle/AA small rounds.
+        if (shotScale == null && sp.organic && sp.weapon) shotScale = 1.15;
         this.spawnShot({
           kind: wpn.shot,
           from: "enemy",
@@ -4962,13 +4982,7 @@ export class MissionScene extends Phaser.Scene {
           guided: false,
           homePlayer: home,
           motor: home ? -0.06 : undefined,
-          scale: troopRocket
-            ? u.kind === "rpg"
-              ? 0.56
-              : 0.59
-            : u.kind === "gunner" || u.kind === "mounted_mg"
-              ? 0.34
-              : undefined,
+          scale: shotScale,
         });
       }
       if (u.kind === "heli" && dist < 700 && dist > 80 && h.phase === "flight") {
@@ -7335,7 +7349,8 @@ function pickSparkKind(style: "muzzle" | "ground" | "water" | "object", sparkFra
 }
 
 function troopMissileTrail(s: Shot): boolean {
-  return s.from === "enemy" && (s.scale ?? 1) < 0.7;
+  // Enemy RPG (~0.66) / Stinger (~0.7) — keep below player Hydra (~1).
+  return s.from === "enemy" && (s.scale ?? 1) <= 0.75;
 }
 
 function shotTrailScale(s: Shot): number {
