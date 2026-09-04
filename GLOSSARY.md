@@ -46,7 +46,7 @@ Short labels from the config rigs, plus terms used in code / design.
 | **shotKind(look)** | Behavior from texture: streaks → `cannon`, else rocket / hellfire / tow |
 | **shot_*** | Projectile texture prefix (streaks + missiles) |
 | **seeker** | Homing missile preset (`WPN.seeker` — body or secondary) |
-| **secondary** | Hull hardpoint weapon (`SPECS.secondary`) |
+| **secondary** | Hull hardpoint weapon / mounts (`SPECS.secondary`, craft `secondary` UVs) |
 | **cooldown** | Delay before next shot |
 | **burst** | Rapid shots in one fire cycle |
 | **burstGap** | Delay between shots in a burst |
@@ -73,8 +73,9 @@ Short labels from the config rigs, plus terms used in code / design.
 
 | | |
 |---|---|
-| **origin / pivot** | Sprite anchor (where the unit “sits”) |
-| **mount** | Tagged hull UV (`gun` / `rotor` / `troop` / `secondary` / … via `hullMountsOf`) |
+| **SPRITE_SPECS** | Central per-texture catalog (`spriteOrigin.ts`): origin, mounts, muzzles |
+| **origin / pivot** | Sprite anchor from `SPRITE_SPECS` / `lookupSpriteOrigin` |
+| **mount** | Tagged hull UV (`gun` / `rotor` / `troop` / `secondary` / … via `hullMountsOf` / `mountOf`) |
 | **HULL_MOUNT_SOURCES** | Registry of SPECS mount kinds — add here when a new mount field appears |
 | **hulk** | Wreck / debris art for a live sprite |
 | **atlas / sheet** | Texture with multiple frames |
@@ -88,6 +89,8 @@ Short labels from the config rigs, plus terms used in code / design.
 | | |
 |---|---|
 | **SPECS** | Per-kind unit config table |
+| **CRAFTS** | Playable heli catalog (`craftOf` / `selectCraft`) |
+| **craft** | Selected player helicopter id (`CraftId`) |
 | **label** | Display name on the unit (`labelOf`) |
 | **partsRoll** | Declared gun roll (`pick` or `fixed`) |
 | **crew** | Pinned seats (`snap` or `leash`) |

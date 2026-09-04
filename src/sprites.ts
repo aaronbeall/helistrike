@@ -1,5 +1,6 @@
 import type Phaser from "phaser";
-import { lookupSpriteOrigin, SPRITE_MOUNT } from "./spriteOrigin";
+import { craftOf, craftPivot } from "./craft";
+import { lookupSpriteOrigin, setSpriteOrigin } from "./spriteOrigin";
 
 const SRC = {
   heli: "sprites/helistrike-heli-player-nrotor.png",
@@ -124,35 +125,6 @@ export function preloadArt(scene: Phaser.Scene): void {
     }
   }
 }
-
-export const tankLayout = {
-  turretOrigin: { x: 0.5, y: 0.78 },
-  mountOrigin: { ...SPRITE_MOUNT.enemy_tank },
-  hulkTurretOrigin: { x: 0.5, y: 0.78 },
-};
-
-export const rotorLayout = {
-  player: { x: 0.498, y: 0.453 },
-  enemy: { x: 0.497, y: 0.411 },
-};
-
-export const gunLayout = {
-  origin: { x: 0.5, y: 0.7 },
-  mount: { x: 0.497, y: 0.174 },
-};
-
-/** Hand-picked damage-flame interest UVs on heli_body (not mount points). */
-export const PLAYER_DMG_POIS: { u: number; v: number }[] = [
-  { u: 0.282, v: 0.434 },
-  { u: 0.616, v: 0.868 },
-  { u: 0.441, v: 0.715 },
-  { u: 0.547, v: 0.496 },
-  { u: 0.362, v: 0.580 },
-  { u: 0.764, v: 0.479 },
-  { u: 0.669, v: 0.288 },
-  { u: 0.93, v: 0.417 },
-  { u: 0.443, v: 0.164 },
-];
 
 export type HudWirePoint = { u: number; v: number };
 
@@ -323,7 +295,7 @@ function bakeHudWireCanvas(
 /** Bake a white-on-transparent wireframe texture from the player heli body sprite. */
 export function bakeHeliHudWireTexture(
   scene: Phaser.Scene,
-  bodyKey = "heli_body",
+  bodyKey = craftOf().body,
   outKey = "heli_hud_wire",
   shadowKey = "heli_hud_wire_sh"
 ): HeliHudWireBake | null {
@@ -377,11 +349,8 @@ export function bakeHeliHudWireTexture(
 
 export function spritePivot(key: string): { x: number; y: number } {
   const k = key.replace(/__(woodland|desert|urban|snow|digital)$/, "");
-  if (k === "heli_body") return { ...rotorLayout.player };
-  if (k === "heli_gun") return { ...gunLayout.origin };
-  if (k === "enemy_heli" || k === "enemy_heli_hulk") return { ...rotorLayout.enemy };
-  if (k === "enemy_tank_gun") return { ...tankLayout.turretOrigin };
-  if (k === "enemy_tank_gun_hulk") return { ...tankLayout.hulkTurretOrigin };
+  const craft = craftPivot(k);
+  if (craft) return craft;
   return lookupSpriteOrigin(k) ?? { x: 0.5, y: 0.5 };
 }
 
@@ -489,12 +458,12 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   const turret = fit(parts[1]!, 56);
   put(textures, "enemy_tank", hull);
   put(textures, "enemy_tank_gun", turret);
-  tankLayout.turretOrigin = cupolaOrigin(turret);
+  setSpriteOrigin("enemy_tank_gun", cupolaOrigin(turret));
   const wreck = sliceGrid(keyImage(src(textures, "src_tank_wreck"), "magenta"), 2, 1);
   put(textures, "enemy_tank_hulk", darkenWreck(fit(wreck[0]!, 70)));
   const hulkTurret = darkenWreck(fit(wreck[1]!, 56));
   put(textures, "enemy_tank_gun_hulk", hulkTurret);
-  tankLayout.hulkTurretOrigin = cupolaOrigin(hulkTurret);
+  setSpriteOrigin("enemy_tank_gun_hulk", cupolaOrigin(hulkTurret));
 
   put(textures, "building_bunker", fit(keyImage(src(textures, "src_bunker"), "magenta"), 128));
 

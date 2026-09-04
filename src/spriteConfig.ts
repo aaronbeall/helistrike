@@ -1,5 +1,14 @@
 import Phaser from "phaser";
 import {
+  craftDmgPois,
+  craftGunMount,
+  craftGunOrigin,
+  craftMountsOf,
+  craftOf,
+  craftOrigin,
+  craftByTexture,
+} from "./craft";
+import {
   allSpecs,
   collectHullMounts,
   HULL_MOUNT_COLOR,
@@ -7,9 +16,9 @@ import {
   type HullMount,
   type HullMountRole,
 } from "./roster";
-import { lookupSpriteMuzzles } from "./spriteOrigin";
+import { lookupSpriteMuzzles, spriteSpecOf } from "./spriteOrigin";
 import { makeConfigText, setStackedTexts, CFG_VALUE, CFG_INFO, CFG_LIVE, kv, kvs, row, rowCont } from "./configUi";
-import { rotorLayout, tankLayout, gunLayout, isUuidTexture, nameGameTexture, nameGeneratedTextures, spritePivot, PLAYER_DMG_POIS } from "./sprites";
+import { isUuidTexture, nameGameTexture, nameGeneratedTextures, spritePivot } from "./sprites";
 
 const DEPTH = 9200;
 const MONO = "Share Tech Mono, monospace";
@@ -86,7 +95,7 @@ export class SpriteConfigTool {
       .setVisible(false);
     this.board = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH + 1).setVisible(false);
     this.preview = scene.add
-      .image(0, 0, "heli_body")
+      .image(0, 0, craftOf().body)
       .setScrollFactor(0)
       .setDepth(DEPTH + 2)
       .setVisible(false);
@@ -419,7 +428,7 @@ export class SpriteConfigTool {
   }
 
   private key(): string {
-    return this.available()[this.idx] ?? "heli_body";
+    return this.available()[this.idx] ?? craftOf().body;
   }
 
   /** Non-base frames for a texture (spritesheet cells), or `__BASE` for a single image. */
@@ -646,14 +655,10 @@ function rigMarks(key: string): { mounts: RigMount[]; muzzles: { x: number; y: n
   const k = key.replace(/__(woodland|desert|urban|snow|digital)$/, "");
   const mounts: RigMount[] = [];
   const muzzles = lookupSpriteMuzzles(k);
-  // Player craft layout (not in enemy SPECS).
-  if (k === "heli_body") {
-    addMount(mounts, gunLayout.mount, "gun", "gun");
-    addMount(mounts, rotorLayout.player, "rotor", "rotor");
-    for (const p of PLAYER_DMG_POIS) addMount(mounts, { x: p.u, y: p.v }, "dmg", "dmg");
+  const craft = craftByTexture(k);
+  if (craft && (craft.body === k || craft.hulk === k)) {
+    for (const m of craftMountsOf(craft)) addMount(mounts, m, m.role, m.label);
   }
-  // Legacy rotor UV when SPECS rotor differs / missing — still tagged rotor.
-  if (k === "enemy_heli") addMount(mounts, rotorLayout.enemy, "rotor", "rotor");
   for (const sp of allSpecs()) {
     const tex = sp.texture.replace(/__(woodland|desert|urban|snow|digital)$/, "");
     if (tex === k) {
@@ -695,24 +700,36 @@ function spawnYawLine(key: string): string {
 }
 
 function layoutLine(key: string): string {
-  if (key === "heli_body")
+  const craft = craftByTexture(key);
+  if (craft && (craft.body === key || craft.hulk === key)) {
     return row(
       "LAYOUT",
       kvs(
-        ["rotor", fmt(rotorLayout.player)],
-        ["gunMount", fmt(gunLayout.mount)],
-        ["dmg", PLAYER_DMG_POIS.length]
+        ["craft", craft.id],
+        ["rotor", fmt(craftOrigin(craft))],
+        ["gunMount", fmt(craftGunMount(craft))],
+        ["dmg", craftDmgPois(craft).length]
       )
     );
-  if (key === "enemy_heli") return row("LAYOUT", kv("rotor", fmt(rotorLayout.enemy)));
+  }
+  if (craft && craft.gun === key) {
+    return row("LAYOUT", kvs(["craft", craft.id], ["origin", fmt(craftGunOrigin(craft))], ["mount", fmt(craftGunMount(craft))]));
+  }
   if (key === "heli_rotor" || key === "enemy_heli_rotor")
     return row("LAYOUT", `${kv("origin", "0.500, 0.500")} spin hub`);
-  if (key === "heli_gun")
-    return row("LAYOUT", kvs(["origin", fmt(gunLayout.origin)], ["mount", fmt(gunLayout.mount)]));
-  if (key === "enemy_tank") return row("LAYOUT", kv("mountOrigin", fmt(tankLayout.mountOrigin)));
-  if (key === "enemy_tank_gun") return row("LAYOUT", kv("turretOrigin", fmt(tankLayout.turretOrigin)));
-  if (key === "enemy_tank_gun_hulk")
-    return row("LAYOUT", kv("hulkTurretOrigin", fmt(tankLayout.hulkTurretOrigin)));
+  const sp = spriteSpecOf(key);
+  if (sp) {
+    const bits: [string, string | number][] = [];
+    if (sp.origin) bits.push(["origin", fmt(sp.origin)]);
+    if (sp.originMode === "cupola") bits.push(["mode", "cupola"]);
+    for (const role of ["gun", "rotor", "dish", "troop", "secondary", "dmg", "muzzle"] as const) {
+      const pts = (sp.points ?? []).filter((p) => p.role === role);
+      if (!pts.length) continue;
+      if (pts.length === 1) bits.push([role, fmt(pts[0]!)]);
+      else bits.push([role, pts.length]);
+    }
+    if (bits.length) return row("LAYOUT", kvs(...bits));
+  }
   return row("LAYOUT", kv("origin", fmt(spritePivot(key))));
 }
 

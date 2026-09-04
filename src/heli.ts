@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { CRAFTS, craftOf, type CraftId } from "./craft";
 import { groundZ, WORLD, type WorldData } from "./world";
 
 export interface Stick {
@@ -21,7 +22,9 @@ export const CRUISE_THRUST = 36;
 export const CRUISE_DAMP = 2.2;
 /** How fast cruise's ground reference tracks real terrain. Low = ignore rivers. */
 export const GND_FOLLOW = 0.55;
-export const HELI_HEIGHT = 14;
+
+/** @deprecated Prefer craftOf().height / heli.height */
+export const HELI_HEIGHT = CRAFTS.strike.height;
 
 /** Rotor spool before the lift-off prompt (seconds). */
 export const SPOOL_DUR = 2.35;
@@ -35,6 +38,7 @@ const PAD_AGL = 5.5;
 export type Phase = "grounded" | "spool" | "ready" | "flight" | "dead";
 
 export class Heli {
+  craft: CraftId;
   x: number;
   y: number;
   z: number;
@@ -48,7 +52,7 @@ export class Heli {
   rotor = 0;
   rotorSpd = 0;
   gunAngle = 0;
-  health = 100;
+  health: number;
   phase: Phase = "grounded";
   /** Elapsed time in spool. */
   spool = 0;
@@ -62,17 +66,27 @@ export class Heli {
   immune = false;
   hellfireLock: { id: number } | null = null;
   hellfireSeek: { id: number; t: number } | null = null;
-  /** Indices into PLAYER_DMG_POIS (hand-picked heli_body UVs). */
+  /** Indices into craftDmgPois(craft). */
   dmgSites: { poi: number; scale: number }[] = [];
   gndSmooth: number;
   killDx = 0;
   killDy = 0;
 
-  constructor(x: number, y: number, world: WorldData) {
+  constructor(x: number, y: number, world: WorldData, craft: CraftId = craftOf().id) {
+    this.craft = craft;
     this.x = x;
     this.y = y;
+    this.health = craftOf(craft).health;
     this.gndSmooth = groundZ(world, x, y);
     this.z = this.gndSmooth + PAD_AGL;
+  }
+
+  get spec() {
+    return craftOf(this.craft);
+  }
+
+  get height(): number {
+    return this.spec.height;
   }
 
   get noseX(): number {

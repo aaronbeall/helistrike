@@ -1,5 +1,18 @@
 import Phaser from "phaser";
 import {
+  allCraftIds,
+  craftDmgPois,
+  craftGunMount,
+  craftGunOrigin,
+  craftId,
+  craftMountsOf,
+  craftOf,
+  craftOrigin,
+  craftSecondaryMounts,
+  type CraftId,
+  type CraftSpec,
+} from "./craft";
+import {
   allKinds,
   driveOf,
   hullMountsOf,
@@ -52,9 +65,12 @@ const FILTERS: Filter[] = ["all", "ground", "air", "water", "building", "troop"]
 
 const ORIGIN_COLOR = 0xe8b84a;
 
+/** Roster list row — playable craft or enemy unit. */
+type RosterEntry = { cat: "craft"; id: CraftId } | { cat: "unit"; id: UnitKind };
+
 /**
- * Lazy debug browser for every roster UnitSpec — list, live preview (hull + parts),
- * and a stats dump derived from the real SPECS source (incl. drive).
+ * Lazy debug browser for CRAFTS + SPECS — list, live preview (hull + parts),
+ * and a stats dump from the real craft / unit sources.
  */
 export class RosterConfigTool {
   open = false;
@@ -226,9 +242,13 @@ export class RosterConfigTool {
       const uv = this.uvAt(p);
       if (!uv) return;
       this.pinned = uv;
-      const kinds = this.kinds();
-      const kind = kinds[this.idx];
-      const tex = kind ? specOf(kind).texture : "";
+      const entries = this.entries();
+      const ent = entries[this.idx];
+      const tex = ent
+        ? ent.cat === "craft"
+          ? craftOf(ent.id).body
+          : specOf(ent.id).texture
+        : "";
       this.copied = `${tex} ${uv.uvx.toFixed(3)} ${uv.uvy.toFixed(3)}  px ${uv.px.toFixed(1)} ${uv.py.toFixed(1)}`;
       copyText(this.copied);
     });
@@ -262,7 +282,7 @@ export class RosterConfigTool {
 
   cycle(dir: number): void {
     if (!this.open) return;
-    const n = this.kinds().length;
+    const n = this.entries().length;
     if (!n) return;
     this.idx = (this.idx + dir + n) % n;
     this.pinned = null;
@@ -288,23 +308,23 @@ export class RosterConfigTool {
 
   page(dir: number): void {
     if (!this.open) return;
-    const kinds = this.kinds();
+    const entries = this.entries();
     const size = this.pageSize();
-    const pages = Math.max(1, Math.ceil(kinds.length / size));
+    const pages = Math.max(1, Math.ceil(entries.length / size));
     const next = (((this.pageOf(this.idx) + dir) % pages) + pages) % pages;
-    this.idx = Math.min(kinds.length - 1, next * size);
+    this.idx = Math.min(entries.length - 1, next * size);
     this.pinned = null;
     this.refreshPreview();
   }
 
   pickFromList(py: number): void {
     if (!this.open) return;
-    const kinds = this.kinds();
+    const entries = this.entries();
     const size = this.pageSize();
     const row = Math.floor((py - LIST_Y) / LINE_H) - 1;
     if (row < 0 || row >= size) return;
     const i = this.pageOf(this.idx) * size + row;
-    if (i < 0 || i >= kinds.length) return;
+    if (i < 0 || i >= entries.length) return;
     this.idx = i;
     this.pinned = null;
     this.refreshPreview();
@@ -312,33 +332,38 @@ export class RosterConfigTool {
 
   update(): void {
     if (!this.open) return;
-    const kinds = this.kinds();
-    if (!kinds.length) return;
-    if (this.idx >= kinds.length) this.idx = 0;
-    const kind = kinds[this.idx]!;
-    const sp = specOf(kind);
+    const entries = this.entries();
+    if (!entries.length) return;
+    if (this.idx >= entries.length) this.idx = 0;
+    const ent = entries[this.idx]!;
 
     this.hintTxt.setText(
-      `ROSTER RIG   \` cycle / close   [ ] cycle   , . page   - + zoom ${fmtZoom(this.zoom)}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   gold origin · green gun · cyan rotor/radius · violet troop/leash · orange muzzle`
+      `ROSTER RIG   \` cycle / close   [ ] cycle   , . page   - + zoom ${fmtZoom(this.zoom)}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   gold origin · green gun · cyan rotor/radius · violet troop/leash · orange secondary/muzzle`
     );
 
     const size = this.pageSize();
-    const pages = Math.max(1, Math.ceil(kinds.length / size));
+    const pages = Math.max(1, Math.ceil(entries.length / size));
     const page = this.pageOf(this.idx);
     const start = page * size;
-    const slice = kinds.slice(start, start + size);
+    const slice = entries.slice(start, start + size);
+    const totalN = allCraftIds().length + allKinds().length;
     this.listTxt.setText(
       [
-        `— ${this.filter.toUpperCase()}  ${page + 1} / ${pages}  (${kinds.length}/${allKinds().length}) —`,
-        ...slice.map((k, i) => {
+        `— ${this.filter.toUpperCase()}  ${page + 1} / ${pages}  (${entries.length}/${totalN}) —`,
+        ...slice.map((e, i) => {
           const mark = start + i === this.idx ? "▸" : " ";
-          const tag = categoryTag(k);
-          return `${mark} ${labelOf(k).padEnd(16)} ${tag}`;
+          if (e.cat === "craft") {
+            const c = craftOf(e.id);
+            const active = e.id === craftId() ? " ★" : "";
+            return `${mark} ${c.label.padEnd(16)} PLY${active}`;
+          }
+          return `${mark} ${labelOf(e.id).padEnd(16)} ${categoryTag(e.id)}`;
         }),
       ].join("\n")
     );
 
-    this.layoutPreview(kind, sp);
+    if (ent.cat === "craft") this.layoutCraftPreview(craftOf(ent.id));
+    else this.layoutPreview(ent.id, specOf(ent.id));
     this.scene.input.setDefaultCursor(this.uvAt(this.scene.input.activePointer) ? "crosshair" : "default");
   }
 
@@ -350,13 +375,130 @@ export class RosterConfigTool {
     return Math.floor(idx / this.pageSize());
   }
 
-  private kinds(): UnitKind[] {
-    return allKinds().filter((k) => matchesFilter(k, this.filter));
+  private entries(): RosterEntry[] {
+    const crafts: RosterEntry[] =
+      this.filter === "all" || this.filter === "air"
+        ? allCraftIds().map((id) => ({ cat: "craft" as const, id }))
+        : [];
+    const units: RosterEntry[] = allKinds()
+      .filter((k) => matchesFilter(k, this.filter))
+      .map((id) => ({ cat: "unit" as const, id }));
+    return [...crafts, ...units];
   }
 
   private refreshPreview(): void {
     if (!this.open || !this.built) return;
     this.update();
+  }
+
+  private layoutCraftPreview(craft: CraftSpec): void {
+    const w = this.scene.scale.width;
+    const h = this.scene.scale.height;
+    const tex = craft.body;
+    const listRight = LIST_X + LIST_W + 20;
+    const gap = 28;
+    const block = formatCraft(craft);
+    this.pendingStats = block.stats;
+    this.pendingInfo = block.info;
+
+    if (!this.scene.textures.exists(tex)) {
+      this.hull.setVisible(false);
+      for (const p of this.parts) p.setVisible(false);
+      for (const s of this.shots) s.setVisible(false);
+      this.board.clear();
+      this.overlay.clear();
+      for (const t of this.mountLabels) t.setVisible(false);
+      this.statsXY = { x: listRight, y: LIST_Y };
+      this.applyStatsPanel(tex);
+      return;
+    }
+
+    this.hull.setVisible(true).setTexture(tex);
+    const pivot = { ...craftOrigin(craft) };
+    this.hull.setOrigin(pivot.x, pivot.y);
+    const s = this.zoom;
+    this.hull.setScale(s);
+    this.hull.setRotation(craft.rotOff);
+
+    const bw = this.hull.displayWidth;
+    const bh = this.hull.displayHeight;
+    const cos = Math.abs(Math.cos(craft.rotOff));
+    const sin = Math.abs(Math.sin(craft.rotOff));
+    const boxW = bw * cos + bh * sin;
+    const boxH = bw * sin + bh * cos;
+    const pad = 10;
+    const cx = listRight + pad + boxW * 0.5;
+    const cy = Math.min(LIST_Y + pad + boxH * 0.5, h - pad - boxH * 0.5);
+    this.hull.setPosition(cx, cy);
+
+    const bx = cx - boxW * 0.5;
+    const by = cy - boxH * 0.5;
+    const statsX = Math.min(bx + boxW + gap, w - STATS_W - 16);
+    this.statsXY = { x: statsX, y: Math.max(LIST_Y, by) };
+    this.applyStatsPanel(tex);
+
+    this.board.clear();
+    const cell = 8;
+    this.board.fillStyle(0x2a2418, 1);
+    this.board.fillRect(bx - pad, by - pad, boxW + pad * 2, boxH + pad * 2);
+    for (let y = 0; y < boxH; y += cell) {
+      for (let x = 0; x < boxW; x += cell) {
+        if (((((x / cell) | 0) + ((y / cell) | 0)) & 1) === 1) this.board.fillStyle(0x3a3428, 1);
+        else this.board.fillStyle(0x241e16, 1);
+        this.board.fillRect(bx + x, by + y, Math.min(cell, boxW - x), Math.min(cell, boxH - y));
+      }
+    }
+    this.board.lineStyle(1, 0xe8b84a, 0.55);
+    this.board.strokeRect(bx - pad, by - pad, boxW + pad * 2, boxH + pad * 2);
+
+    let pi = 0;
+    const place = (
+      part: Phaser.GameObjects.Image,
+      partTex: string,
+      origin: { x: number; y: number },
+      mount: { x: number; y: number },
+      worldRot: number,
+      sc = 1
+    ) => {
+      if (!this.scene.textures.exists(partTex)) {
+        part.setVisible(false);
+        return;
+      }
+      const mx = (mount.x - pivot.x) * this.hull.displayWidth;
+      const my = (mount.y - pivot.y) * this.hull.displayHeight;
+      const ca = Math.cos(craft.rotOff);
+      const sa = Math.sin(craft.rotOff);
+      part
+        .setVisible(true)
+        .setTexture(partTex)
+        .setOrigin(origin.x, origin.y)
+        .setPosition(cx + mx * ca - my * sa, cy + mx * sa + my * ca)
+        .setRotation(worldRot)
+        .setScale(s * sc);
+    };
+
+    const gunPart = this.parts[pi++];
+    if (gunPart) place(gunPart, craft.gun, craftGunOrigin(craft), craftGunMount(craft), Math.PI / 2, 1);
+    const rotorPart = this.parts[pi++];
+    if (rotorPart) {
+      const spinKey = "heli_rotor_spin";
+      const rotorKey = this.scene.textures.exists(spinKey) ? spinKey : "heli_rotor";
+      place(rotorPart, rotorKey, { x: 0.5, y: 0.5 }, craftOrigin(craft), 0, 1);
+    }
+    for (; pi < this.parts.length; pi++) this.parts[pi]!.setVisible(false);
+    for (const im of this.shots) im.setVisible(false);
+
+    this.drawHullMarks({
+      radius: craft.radius,
+      height: craft.height,
+      rotOff: craft.rotOff,
+      mounts: craftMountsOf(craft),
+      pivot,
+      cx,
+      cy,
+      s,
+      guns: [{ tex: craft.gun, origin: craftGunOrigin(craft), mount: craftGunMount(craft), scale: 1 }],
+    });
   }
 
   private layoutPreview(kind: UnitKind, sp: UnitSpec): void {
@@ -377,7 +519,7 @@ export class RosterConfigTool {
       this.statsXY = { x: listRight, y: LIST_Y };
       this.pendingStats = block.stats;
       this.pendingInfo = block.info;
-      this.applyStatsPanel(sp);
+      this.applyStatsPanel(tex);
       return;
     }
 
@@ -406,7 +548,7 @@ export class RosterConfigTool {
     this.statsXY = { x: statsX, y: Math.max(LIST_Y, by) };
     this.pendingStats = block.stats;
     this.pendingInfo = block.info;
-    this.applyStatsPanel(sp);
+    this.applyStatsPanel(tex);
 
     this.board.clear();
     const cell = 8;
@@ -500,11 +642,22 @@ export class RosterConfigTool {
       shotX += Math.max(im.displayWidth, 28) + shotGap;
     }
 
-    this.drawMarks(kind, sp, pivot, cx, cy, s);
+    this.drawHullMarks({
+      radius: sp.radius,
+      height: sp.height,
+      rotOff: sp.rotOff,
+      mounts: hullMountsOf(sp),
+      leashR: sp.crew?.mode === "leash" ? (sp.crew.leashR ?? sp.radius) : undefined,
+      pivot,
+      cx,
+      cy,
+      s,
+      guns: sp.guns,
+    });
   }
 
-  private applyStatsPanel(sp: UnitSpec): void {
-    const origin = spritePivot(sp.texture);
+  private applyStatsPanel(tex: string): void {
+    const origin = spritePivot(tex);
     const tw = this.hull.visible && this.hull.width ? this.hull.width : 1;
     const th = this.hull.visible && this.hull.height ? this.hull.height : 1;
     const uv = this.uvAt(this.scene.input.activePointer);
@@ -548,21 +701,34 @@ export class RosterConfigTool {
     return { uvx: px / this.hull.width, uvy: py / this.hull.height, px, py };
   }
 
-  private drawMarks(
-    _kind: UnitKind,
-    sp: UnitSpec,
-    pivot: { x: number; y: number },
-    cx: number,
-    cy: number,
-    s: number
-  ): void {
+  private drawHullMarks(opts: {
+    radius: number;
+    height: number;
+    rotOff: number;
+    mounts: ReturnType<typeof hullMountsOf>;
+    leashR?: number;
+    pivot: { x: number; y: number };
+    cx: number;
+    cy: number;
+    s: number;
+    guns: {
+      tex: string;
+      origin: { x: number; y: number };
+      mount: { x: number; y: number };
+      scale?: number;
+      muzzle?: { x: number; y: number };
+      muzzles?: { x: number; y: number }[];
+    }[];
+  }): void {
     const g = this.overlay;
     g.clear();
     for (const t of this.mountLabels) t.setVisible(false);
 
     const hullDw = this.hull.displayWidth;
     const hullDh = this.hull.displayHeight;
-    const rot = sp.rotOff;
+    const rot = opts.rotOff;
+    const pivot = opts.pivot;
+    const { cx, cy, s } = opts;
     const hullUv = (u: number, v: number) => {
       const mx = (u - pivot.x) * hullDw;
       const my = (v - pivot.y) * hullDh;
@@ -582,21 +748,20 @@ export class RosterConfigTool {
     if (!this.showMarks) return;
 
     g.lineStyle(1.5, 0x5ec8ff, 0.55);
-    g.strokeCircle(cx, cy, sp.radius * s);
-    if (sp.crew?.mode === "leash") {
-      const leashR = sp.crew.leashR ?? sp.radius;
+    g.strokeCircle(cx, cy, opts.radius * s);
+    if (opts.leashR != null) {
       g.lineStyle(2.25, HULL_MOUNT_COLOR.troop, 0.85);
-      g.strokeCircle(cx, cy, leashR * s);
+      g.strokeCircle(cx, cy, opts.leashR * s);
     }
     g.lineStyle(1.2, 0x6dbb4a, 0.55);
-    g.lineBetween(cx, cy, cx, cy - sp.height * s);
+    g.lineBetween(cx, cy, cx, cy - opts.height * s);
 
     g.lineStyle(1.5, ORIGIN_COLOR, 0.95);
     g.lineBetween(cx - 14, cy, cx + 14, cy);
     g.lineBetween(cx, cy - 14, cx, cy + 14);
     g.strokeCircle(cx, cy, 5);
 
-    const mounts = hullMountsOf(sp);
+    const mounts = opts.mounts;
 
     for (let i = 0; i < this.mountLabels.length; i++) {
       const lab = this.mountLabels[i]!;
@@ -617,7 +782,7 @@ export class RosterConfigTool {
       lab.setVisible(true);
     }
 
-    for (const gun of sp.guns) {
+    for (const gun of opts.guns) {
       const muzzles = gun.muzzles?.length
         ? gun.muzzles
         : gun.muzzle
@@ -773,6 +938,38 @@ function formatTroopRoll(): string[] {
       ([k, w]) => rowCont(`${k} ${kvs(["p", weightPct(w, total)], ["w", w])}`)
     ),
   ];
+}
+
+function formatCraft(craft: CraftSpec): { stats: string[]; info: string[] } {
+  const active = craft.id === craftId();
+  const stats: string[] = [
+    row("KIND", `craft / ${craft.id}`),
+    row("LABEL", craft.label),
+    row("HP", `${craft.health} ${kvs(["radius", craft.radius], ["height", craft.height])}`),
+    row("ACTIVE", active ? "yes ★" : "no"),
+    row("TEX", craft.body),
+    row("HULK", craft.hulk),
+    row("GUN", craft.gun),
+    row("ROT OFF", `${(craft.rotOff / Math.PI).toFixed(2)}π`),
+    row("ORIGIN", `${craftOrigin(craft).x.toFixed(3)}, ${craftOrigin(craft).y.toFixed(3)}`),
+    row("GUN MOUNT", `${craftGunMount(craft).x.toFixed(3)}, ${craftGunMount(craft).y.toFixed(3)}`),
+    row("GUN ORIGIN", `${craftGunOrigin(craft).x.toFixed(3)}, ${craftGunOrigin(craft).y.toFixed(3)}`),
+    row("DMG POIS", craftDmgPois(craft).length),
+    ...craftDmgPois(craft).map(
+      (p, i) => rowCont(`[${i}] ${p.x.toFixed(3)}, ${p.y.toFixed(3)}`)
+    ),
+    row("SECONDARY", craftSecondaryMounts(craft).length),
+    ...craftSecondaryMounts(craft).map(
+      (p, i) => rowCont(`[${i}] ${p.x.toFixed(3)}, ${p.y.toFixed(3)}`)
+    ),
+  ];
+  return {
+    stats,
+    info: [
+      "source: craft.ts CRAFTS",
+      "select via selectCraft(id) — Heli / scenes read craftOf()",
+    ],
+  };
 }
 
 function formatSpec(kind: UnitKind, sp: UnitSpec): { stats: string[]; info: string[] } {
@@ -935,6 +1132,6 @@ function formatSpec(kind: UnitKind, sp: UnitSpec): { stats: string[]; info: stri
 
   return {
     stats,
-    info: ["source: roster.ts SPECS (partsRoll / crew / drive / secondary)"],
+    info: ["source: roster.ts SPECS + craft.ts CRAFTS (partsRoll / crew / drive / secondary)"],
   };
 }
