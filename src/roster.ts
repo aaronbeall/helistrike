@@ -180,82 +180,106 @@ const gun = (
   };
 };
 
-const shell = (over: Partial<WeaponSpec> = {}): WeaponSpec => ({
-  fireCd: 0.9,
-  range: 500,
-  speed: 420,
-  dmg: 8,
-  blast: 16,
-  tracer: "shell",
-  shot: "cannon",
-  muzzleLen: 22,
-  ...over,
-});
+/** Base weapon templates — shallow-merged via `wpn()`. */
+export const WPN_BASE = {
+  shell: {
+    fireCd: 0.9,
+    range: 500,
+    speed: 420,
+    dmg: 8,
+    blast: 16,
+    tracer: "shell",
+    shot: "cannon",
+    muzzleLen: 22,
+  },
+  small: {
+    fireCd: 1.05,
+    range: 280,
+    speed: 380,
+    dmg: 1,
+    blast: 5,
+    tracer: "small",
+    shot: "cannon",
+    burst: 3,
+    burstGap: 0.075,
+    jitter: 0.05,
+    muzzleLen: 9,
+  },
+} as const satisfies Record<string, WeaponSpec>;
 
-const small = (over: Partial<WeaponSpec> = {}): WeaponSpec => ({
-  fireCd: 1.05,
-  range: 280,
-  speed: 380,
-  dmg: 1,
-  blast: 5,
-  tracer: "small",
-  shot: "cannon",
-  burst: 3,
-  burstGap: 0.075,
-  jitter: 0.05,
-  muzzleLen: 9,
-  ...over,
-});
+export type WpnBaseId = keyof typeof WPN_BASE;
 
-/** Shared named presets — same object refs as SPECS / roll tables (combat rig scans these). */
-export const WPN_ARTY = shell({ fireCd: 1.35, range: 860, speed: 480, dmg: 16, blast: 22, muzzleLen: 32 });
-export const WPN_AA = small({
-  fireCd: 3.1,
-  range: 680,
-  speed: 820,
-  dmg: 1,
-  blast: 3,
-  burst: 28,
-  burstGap: 0.035,
-  tracer: "aa",
-  muzzleLen: 18,
-  jitter: 0.04,
-});
-export const WPN_SAM: WeaponSpec = {
-  fireCd: 2.8,
-  range: 820,
-  speed: 300,
-  dmg: 18,
-  blast: 22,
-  tracer: "shell",
-  shot: "hellfire",
-  jitter: 0.02,
-  muzzleLen: 16,
-};
-/** Tower “arty” roll + default tower body — not WPN_ARTY. */
-export const WPN_TOWER_CANNON = shell({
-  fireCd: 0.5,
-  range: 700,
-  speed: 920,
-  dmg: 12,
-  blast: 10,
-  tracer: "aa",
-  muzzleLen: 24,
-});
+/** Shallow merge from a base template (always a new object). */
+export function wpn(base: WpnBaseId, over: Partial<WeaponSpec> = {}): WeaponSpec {
+  return { ...WPN_BASE[base], ...over };
+}
 
-/** Factory templates (fresh objects — SPECS usually call shell/small with overrides). */
-export const WPN_SHELL_DEFAULT = shell();
-export const WPN_SMALL_DEFAULT = small();
-
-/** Named enemy weapon presets shown in the combat rig (stats + live used-by). */
+/**
+ * Shared named presets — combat rig iterates this list.
+ * Each `w` is a stable identity for `usesOfWeapon` / SPECS refs.
+ */
 export const ENEMY_WPN_PRESETS: { id: string; label: string; w: WeaponSpec }[] = [
-  { id: "shell", label: "SHELL (default)", w: WPN_SHELL_DEFAULT },
-  { id: "small", label: "SMALL (default)", w: WPN_SMALL_DEFAULT },
-  { id: "arty", label: "ARTY", w: WPN_ARTY },
-  { id: "aa", label: "AA BURST", w: WPN_AA },
-  { id: "sam", label: "SAM", w: WPN_SAM },
-  { id: "tower_cannon", label: "TOWER CANNON", w: WPN_TOWER_CANNON },
+  { id: "shell", label: "SHELL", w: wpn("shell") },
+  { id: "small", label: "SMALL", w: wpn("small") },
+  {
+    id: "arty",
+    label: "ARTY",
+    w: wpn("shell", { fireCd: 1.35, range: 860, speed: 480, dmg: 16, blast: 22, muzzleLen: 32 }),
+  },
+  {
+    id: "aa",
+    label: "AA BURST",
+    w: wpn("small", {
+      fireCd: 3.1,
+      range: 680,
+      speed: 820,
+      dmg: 1,
+      blast: 3,
+      burst: 28,
+      burstGap: 0.035,
+      tracer: "aa",
+      muzzleLen: 18,
+      jitter: 0.04,
+    }),
+  },
+  {
+    id: "sam",
+    label: "SAM",
+    w: wpn("shell", {
+      fireCd: 2.8,
+      range: 820,
+      speed: 300,
+      dmg: 18,
+      blast: 22,
+      shot: "hellfire",
+      jitter: 0.02,
+      muzzleLen: 16,
+    }),
+  },
+  {
+    id: "tower_cannon",
+    label: "TOWER CANNON",
+    w: wpn("shell", {
+      fireCd: 0.5,
+      range: 700,
+      speed: 920,
+      dmg: 12,
+      blast: 10,
+      tracer: "aa",
+      muzzleLen: 24,
+    }),
+  },
 ];
+
+/** Stable refs into ENEMY_WPN_PRESETS (`WPN.arty`, `WPN.aa`, …). */
+export const WPN = Object.fromEntries(ENEMY_WPN_PRESETS.map((p) => [p.id, p.w])) as {
+  shell: WeaponSpec;
+  small: WeaponSpec;
+  arty: WeaponSpec;
+  aa: WeaponSpec;
+  sam: WeaponSpec;
+  tower_cannon: WeaponSpec;
+};
 
 export function partsRollOf(kind: UnitKind): PartsRoll | undefined {
   return SPECS[kind].partsRoll;
@@ -367,7 +391,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     rotOff: Math.PI / 2,
     move: "tank",
     throwGuns: true,
-    weapon: shell({ fireCd: 2.05, range: 520, muzzleLen: 28 }),
+    weapon: wpn("shell", { fireCd: 2.05, range: 520, muzzleLen: 28 }),
     guns: [gun("enemy_tank_gun", 0.78, { ...SPRITE_MOUNT.enemy_tank }, "enemy_tank_gun_hulk")],
     rotors: [],
   },
@@ -382,7 +406,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     move: "inf",
     organic: true,
     fixedAim: true,
-    weapon: small(),
+    weapon: wpn("small"),
     guns: [],
     rotors: [],
   },
@@ -398,7 +422,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     move: "heli",
     aerial: true,
     noCrater: true,
-    weapon: shell({ fireCd: 1.4, range: 640, speed: 520, dmg: 3, blast: 8, muzzleLen: 18, burst: 3, burstGap: 0.13 }),
+    weapon: wpn("shell", { fireCd: 1.4, range: 640, speed: 520, dmg: 3, blast: 8, muzzleLen: 18, burst: 3, burstGap: 0.13 }),
     guns: [gun("enemy_heli_gun", 0.72, { ...SPRITE_MOUNT.enemy_heli })],
     rotors: [{ tex: "enemy_heli_rotor", hulk: "enemy_heli_rotor_hulk", origin: { x: 0.5, y: 0.5 }, mount: { x: 0.497, y: 0.411 }, scale: 1 }],
   },
@@ -414,7 +438,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     water: true,
     noCrater: true,
     throwGuns: true,
-    weapon: shell({ fireCd: 1.15, range: 480, muzzleLen: 20 }),
+    weapon: wpn("shell", { fireCd: 1.15, range: 480, muzzleLen: 20 }),
     guns: [gun("enemy_boat_gun", 0.74, { ...SPRITE_MOUNT.enemy_boat })],
     rotors: [],
   },
@@ -430,7 +454,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     building: true,
     throwGuns: true,
     spawnYaw: (5 * Math.PI) / 180,
-    weapon: WPN_TOWER_CANNON,
+    weapon: WPN.tower_cannon,
     guns: [],
     rotors: [],
     partsRoll: {
@@ -443,9 +467,9 @@ const SPECS: Record<UnitKind, UnitSpec> = {
         ["sam", 33],
       ],
       options: {
-        arty: { tex: "building_tower_gun", originY: 1.39, w: WPN_TOWER_CANNON, label: "tower_cannon" },
-        aa: { tex: "building_tower_aa", originY: 1.36, w: WPN_AA, label: "aa" },
-        sam: { tex: "building_tower_sam", originY: 1.25, w: WPN_SAM, label: "sam" },
+        arty: { tex: "building_tower_gun", originY: 1.39, w: WPN.tower_cannon, label: "tower_cannon" },
+        aa: { tex: "building_tower_aa", originY: 1.36, w: WPN.aa, label: "aa" },
+        sam: { tex: "building_tower_sam", originY: 1.25, w: WPN.sam, label: "sam" },
       },
     },
   },
@@ -550,7 +574,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     move: "tank",
     throwGuns: true,
     wheels: 2,
-    weapon: shell({ fireCd: 1.15, range: 440, dmg: 6, blast: 12, muzzleLen: 20 }),
+    weapon: wpn("shell", { fireCd: 1.15, range: 440, dmg: 6, blast: 12, muzzleLen: 20 }),
     guns: [gun("enemy_lav_gun", 0.76, { ...SPRITE_MOUNT.enemy_lav })],
     rotors: [],
   },
@@ -565,7 +589,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     move: "tank",
     throwGuns: true,
     wheels: 2,
-    weapon: WPN_AA,
+    weapon: WPN.aa,
     guns: [
       {
         ...gun("building_tower_aa", 0.9, { ...SPRITE_MOUNT.enemy_lav }),
@@ -609,7 +633,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     water: true,
     noCrater: true,
     throwGuns: true,
-    weapon: small({ fireCd: 0.85, range: 420, speed: 560, dmg: 3, blast: 6, muzzleLen: 16, burst: 3, burstGap: 0.09 }),
+    weapon: wpn("small", { fireCd: 0.85, range: 420, speed: 560, dmg: 3, blast: 6, muzzleLen: 16, burst: 3, burstGap: 0.09 }),
     guns: [gun("enemy_ptboat_gun", 0.74, { ...SPRITE_MOUNT.enemy_ptboat })],
     rotors: [],
   },
@@ -625,15 +649,15 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     water: true,
     noCrater: true,
     throwGuns: true,
-    weapon: WPN_ARTY,
+    weapon: WPN.arty,
     guns: [],
     rotors: [],
     partsRoll: {
       mode: "fixed",
       options: {
-        arty: { tex: "enemy_battleship_gun", originY: 0.8, w: WPN_ARTY, label: "arty" },
-        aa: { tex: "enemy_battleship_gun_aa", originY: 0.72, w: WPN_AA, label: "aa" },
-        sam: { tex: "enemy_battleship_gun_sam", originY: 0.7, w: WPN_SAM, label: "sam" },
+        arty: { tex: "enemy_battleship_gun", originY: 0.8, w: WPN.arty, label: "arty" },
+        aa: { tex: "enemy_battleship_gun_aa", originY: 0.72, w: WPN.aa, label: "aa" },
+        sam: { tex: "enemy_battleship_gun_sam", originY: 0.7, w: WPN.sam, label: "sam" },
       },
       slots: [
         { id: "arty", mount: { ...SPRITE_MOUNT.enemy_battleship[0]! } },
@@ -679,7 +703,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     move: "inf",
     organic: true,
     fixedAim: true,
-    weapon: small({
+    weapon: wpn("small", {
       fireCd: 1.35,
       range: 380,
       speed: 560,
@@ -705,7 +729,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     move: "static",
     organic: true,
     fixedAim: true,
-    weapon: small({
+    weapon: wpn("small", {
       fireCd: 1.15,
       range: 460,
       speed: 600,
@@ -863,7 +887,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     aerial: true,
     noCrater: true,
     fixedAim: true,
-    weapon: small({
+    weapon: wpn("small", {
       fireCd: 1.15,
       range: 700,
       speed: 680,
@@ -891,7 +915,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     aerial: true,
     noCrater: true,
     throwGuns: true,
-    weapon: small({
+    weapon: wpn("small", {
       fireCd: 0.4,
       range: 700,
       speed: 680,
