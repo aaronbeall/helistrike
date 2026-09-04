@@ -21,29 +21,47 @@ const FRAME_STRIP_MAX = 16;
 
 export class SpriteConfigTool {
   open = false;
+  private built = false;
   private scene: Phaser.Scene;
   private idx = 0;
   private frameIdx = 0;
   private pinned: { uvx: number; uvy: number } | null = null;
   private copied = "";
+  /** Always present (empty until first open) so HUD wiring can mark it at mission start. */
   root: Phaser.GameObjects.Container;
-  private dim: Phaser.GameObjects.Rectangle;
-  private board: Phaser.GameObjects.Graphics;
-  private preview: Phaser.GameObjects.Image;
-  private overlay: Phaser.GameObjects.Graphics;
-  private frameStripGfx: Phaser.GameObjects.Graphics;
+  private dim!: Phaser.GameObjects.Rectangle;
+  private board!: Phaser.GameObjects.Graphics;
+  private preview!: Phaser.GameObjects.Image;
+  private overlay!: Phaser.GameObjects.Graphics;
+  private frameStripGfx!: Phaser.GameObjects.Graphics;
   private frameThumbs: Phaser.GameObjects.Image[] = [];
-  private listTxt: Phaser.GameObjects.Text;
-  private statsTxt: Phaser.GameObjects.Text;
-  private hintTxt: Phaser.GameObjects.Text;
+  private listTxt!: Phaser.GameObjects.Text;
+  private statsTxt!: Phaser.GameObjects.Text;
+  private hintTxt!: Phaser.GameObjects.Text;
   private mountLabels: Phaser.GameObjects.Text[] = [];
   private originOf: (key: string) => { x: number; y: number };
-  private uiCam: Phaser.Cameras.Scene2D.Camera;
+  private onBuilt?: (root: Phaser.GameObjects.Container) => void;
+  private uiCam!: Phaser.Cameras.Scene2D.Camera;
   artOnly = true;
 
-  constructor(scene: Phaser.Scene, originOf: (key: string) => { x: number; y: number }) {
+  constructor(
+    scene: Phaser.Scene,
+    originOf: (key: string) => { x: number; y: number },
+    onBuilt?: (root: Phaser.GameObjects.Container) => void
+  ) {
     this.scene = scene;
     this.originOf = originOf;
+    this.onBuilt = onBuilt;
+    // Cheap placeholder — full UI + camera only on first open.
+    this.root = scene.add.container(0, 0).setDepth(DEPTH).setScrollFactor(0).setVisible(false);
+    scene.cameras.main.ignore(this.root);
+  }
+
+  /** Build UI/camera/listeners once — debug tool, so skip until actually opened. */
+  private ensureBuilt(): void {
+    if (this.built) return;
+    this.built = true;
+    const scene = this.scene;
     const w = scene.scale.width;
     const h = scene.scale.height;
     this.dim = scene.add
@@ -115,7 +133,7 @@ export class SpriteConfigTool {
       nameGameTexture(scene, t, `ui_rig_mount_${i}`);
       this.mountLabels.push(t);
     }
-    this.root = scene.add.container(0, 0, [
+    this.root.add([
       this.dim,
       this.board,
       this.preview,
@@ -127,14 +145,12 @@ export class SpriteConfigTool {
       this.hintTxt,
       ...this.mountLabels,
     ]);
-    this.root.setDepth(DEPTH).setScrollFactor(0);
 
     this.uiCam = scene.cameras.add(0, 0, w, h, false, "spriteRig");
     this.uiCam.setScroll(0, 0);
     this.uiCam.setZoom(1);
     this.uiCam.transparent = true;
     this.uiCam.setVisible(false);
-    scene.cameras.main.ignore(this.root);
     for (const child of scene.children.list) {
       if (child !== this.root) this.uiCam.ignore(child);
     }
@@ -166,6 +182,7 @@ export class SpriteConfigTool {
       });
     }
     scene.scale.on("resize", (gameSize: Phaser.Structs.Size) => {
+      if (!this.built) return;
       this.uiCam.setSize(gameSize.width, gameSize.height);
       this.dim.setSize(gameSize.width, gameSize.height);
       if (this.open) this.refreshPreview();
@@ -191,10 +208,14 @@ export class SpriteConfigTool {
       this.copied = `${key} ${uv.uvx.toFixed(3)} ${uv.uvy.toFixed(3)}  px ${uv.px.toFixed(1)} ${uv.py.toFixed(1)}`;
       copyText(this.copied);
     });
+
+    this.onBuilt?.(this.root);
   }
 
   toggle(): void {
+    this.ensureBuilt();
     this.open = !this.open;
+    this.root.setVisible(this.open);
     this.dim.setVisible(this.open);
     this.board.setVisible(this.open);
     this.preview.setVisible(this.open);

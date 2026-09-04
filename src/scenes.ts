@@ -958,7 +958,14 @@ export class MissionScene extends Phaser.Scene {
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_ADD).on("down", () => bumpTime(1));
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.MINUS).on("down", () => bumpTime(-1));
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_SUBTRACT).on("down", () => bumpTime(-1));
-    this.spriteCfg = new SpriteConfigTool(this, (key) => this.spriteOrigin(key));
+    this.spriteCfg = new SpriteConfigTool(this, (key) => this.spriteOrigin(key), (root) => {
+      const mark = (obj: Phaser.GameObjects.GameObject) => {
+        this.bindHud(obj);
+        const list = (obj as Phaser.GameObjects.Container).list;
+        if (list) for (const ch of list) mark(ch);
+      };
+      mark(root);
+    });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.F9).on("down", () => this.spriteCfg.toggle());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.BACKTICK).on("down", () => this.spriteCfg.toggle());
     this.input.keyboard!.addKey("F").on("down", () => this.toggleTestFx());
