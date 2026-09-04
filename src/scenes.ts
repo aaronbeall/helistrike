@@ -39,6 +39,7 @@ import {
   groundZ,
   screenLift,
   zScale,
+  camZoomAt,
   castZ,
   isWater,
   paintHeightMap,
@@ -140,7 +141,7 @@ export class MenuScene extends Phaser.Scene {
       .text(
         w / 2,
         h * 0.56,
-        "WASD / ARROWS  thrust & strafe\nMOUSE  turn  ·  CLICK  fire  ·  1-4 / WHEEL  weapons\nSPACE  pop-up  ·  SHIFT  nap-of-earth  ·  M  map\n+ / -  time scale",
+        "WASD  thrust & strafe\nMOUSE  turn  ·  CLICK  fire  ·  1-4 / WHEEL  weapons\nSPACE  pop-up  ·  SHIFT  nap-of-earth  ·  M  map\n+ / -  time scale",
         {
           fontFamily: "Share Tech Mono, monospace",
           fontSize: "15px",
@@ -191,7 +192,7 @@ export class LoadScene extends Phaser.Scene {
       .image(hx, this.heliY, "heli_body")
       .setOrigin(rotorLayout.player.x, rotorLayout.player.y)
       .setScale(zs);
-    this.rotorDisc = this.add.image(hx, this.heliY, "heli_rotor").setOrigin(0.5, 0.5).setAlpha(0);
+    this.rotorDisc = this.add.image(hx, this.heliY, this.textures.exists("heli_rotor_spin") ? "heli_rotor_spin" : "heli_rotor").setOrigin(0.5, 0.5).setAlpha(0);
     this.rotor = this.add.image(hx, this.heliY, "heli_rotor").setOrigin(0.5, 0.5);
     const rotorScale = (124 / this.rotor.width) * 1.08 * zs;
     this.rotor.setScale(rotorScale);
@@ -288,7 +289,6 @@ export class MissionScene extends Phaser.Scene {
   frags: Frag[] = [];
   sparks: Spark[] = [];
   ammo = WPN_LIST.map((w) => w.ammo);
-  cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   keyW!: Phaser.Input.Keyboard.Key;
   keyA!: Phaser.Input.Keyboard.Key;
   keyS!: Phaser.Input.Keyboard.Key;
@@ -387,7 +387,7 @@ export class MissionScene extends Phaser.Scene {
   mapView = false;
   mapWant = false;
   mapBlend = 0;
-  camZoom = CamTune.zoomNear;
+  camZoom = CamTune.zoom0;
   camFollow = false;
   lookCamX = 0;
   lookCamY = 0;
@@ -417,6 +417,8 @@ export class MissionScene extends Phaser.Scene {
   debugCamOpen = false;
   debugCamIdx = 0;
   debugCamRows: Phaser.GameObjects.Text[] = [];
+  /** Focused row on the main debug list (arrow-key nav). */
+  debugMenuIdx = 0;
   debugSpawnHint!: Phaser.GameObjects.Text;
   noDamage = false;
   infAmmo = false;
@@ -860,7 +862,6 @@ export class MissionScene extends Phaser.Scene {
     this.heliDust.setDepth(Layer.WORLD);
     this.applyTimeScale();
 
-    this.cursors = this.input.keyboard!.createCursorKeys();
     this.keyW = this.input.keyboard!.addKey("W");
     this.keyA = this.input.keyboard!.addKey("A");
     this.keyS = this.input.keyboard!.addKey("S");
@@ -954,13 +955,24 @@ export class MissionScene extends Phaser.Scene {
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.UP).on("down", () => {
       if (this.debugSpawnOpen) this.nudgeDebugSpawn(-1);
       else if (this.debugCamOpen) this.nudgeDebugCamSel(-1);
+      else if (this.debugOpen) this.nudgeDebugMenu(-1);
+      else if (this.spriteCfg?.open) this.spriteCfg.cycle(-1);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN).on("down", () => {
       if (this.debugSpawnOpen) this.nudgeDebugSpawn(1);
       else if (this.debugCamOpen) this.nudgeDebugCamSel(1);
+      else if (this.debugOpen) this.nudgeDebugMenu(1);
+      else if (this.spriteCfg?.open) this.spriteCfg.cycle(1);
+    });
+    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT).on("down", () => {
+      if (this.debugCamOpen) this.nudgeDebugCam(-1);
+    });
+    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT).on("down", () => {
+      if (this.debugCamOpen) this.nudgeDebugCam(1);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER).on("down", () => {
       if (this.debugSpawnOpen) this.debugSpawnSelected();
+      else if (this.debugOpen && !this.debugCamOpen) this.activateDebugRow(this.debugMenuIdx);
     });
     this.input.on("wheel", (_p: Phaser.Input.Pointer, _dx: number, dy: number) => {
       if (this.debugCamOpen) {
@@ -1285,16 +1297,33 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 
-  /** Faint mono tire print for bouncing / rolling wheel debris. */
-  stampWheelTrack(x: number, y: number, ang: number, scale = 0.48, alpha = 0.32): void {
+  /** Soft, patchy tire print for bouncing / rolling wheel debris. */
+  stampWheelTrack(x: number, y: number, ang: number, scale = 0.72, alpha = 0.38): void {
     if (isWater(this.world, x, y)) return;
+    // Skip often so the trail reads as broken / inconsistent.
+    if (Math.random() < 0.38) return;
     const key = this.textures.exists("track_mono")
       ? "track_mono"
       : this.textures.exists("track_tire")
         ? "track_tire"
         : "track";
     if (!this.textures.exists(key)) return;
-    this.stampWreck(key, x, y, ang + Math.PI / 2, scale, alpha);
+    const sc = scale * range(0.72, 1.18);
+    const a = alpha * range(0.55, 1.15);
+    const yaw = ang + range(-0.28, 0.28);
+    const ox = range(-2.2, 2.2);
+    const oy = range(-2.2, 2.2);
+    this.stampWreck(
+      key,
+      x + ox,
+      y + oy,
+      yaw + Math.PI / 2,
+      sc * range(0.75, 1.05),
+      Phaser.Math.Clamp(a, 0.12, 0.55),
+      0.5,
+      0.5,
+      sc * range(0.95, 1.45)
+    );
   }
 
   fragStampOrigin(key: string): { x: number; y: number } {
@@ -1330,10 +1359,10 @@ export class MissionScene extends Phaser.Scene {
         dt,
         this.world,
         {
-          up: this.cursors.up!.isDown || this.keyW.isDown,
-          down: this.cursors.down!.isDown || this.keyS.isDown,
-          left: this.cursors.left!.isDown || this.keyA.isDown,
-          right: this.cursors.right!.isDown || this.keyD.isDown,
+          up: this.keyW.isDown,
+          down: this.keyS.isDown,
+          left: this.keyA.isDown,
+          right: this.keyD.isDown,
         },
         aim.x,
         aim.y,
@@ -1550,9 +1579,13 @@ export class MissionScene extends Phaser.Scene {
     this.gun.setPosition(mount.x, mount.y);
     this.rotor.setRotation(h.rotor);
     this.gun.setRotation(h.gunAngle + Math.PI / 2);
+    const spinKey = "heli_rotor_spin";
+    const useSpin = h.rotorSpd >= 16 && this.textures.exists(spinKey);
+    const rotorKey = useSpin ? spinKey : "heli_rotor";
+    if (this.rotor.texture.key !== rotorKey) this.rotor.setTexture(rotorKey);
     this.rotor.setScale((this.liveRotorDrawPx("heli_rotor") / Math.max(this.rotor.width, 1)) * zs);
     this.gun.setScale(zs);
-    this.rotor.setAlpha(h.rotorSpd > 24 ? 0.72 : 1);
+    this.rotor.setAlpha(1);
     this.body.setDepth(worldDepth(h.z, ZOff.body));
     this.rotor.setDepth(worldDepth(h.z, ZOff.rotor));
     this.gun.setDepth(worldDepth(h.z, ZOff.gun));
@@ -3687,13 +3720,13 @@ export class MissionScene extends Phaser.Scene {
               f.spin *= 0.65;
               this.stampDirtSmears(f.x, f.y, f.vx, f.vy);
               const bang = Math.hypot(f.vx, f.vy) > 8 ? Math.atan2(f.vy, f.vx) : f.angle;
-              this.stampWheelTrack(f.x, f.y, bang, range(0.42, 0.58), range(0.28, 0.42));
+              this.stampWheelTrack(f.x, f.y, bang, range(0.7, 0.95), range(0.32, 0.48));
             } else {
               f.rolling = true;
               f.vz = 0;
               f.z = g;
               const hang = Math.hypot(f.vx, f.vy) > 8 ? Math.atan2(f.vy, f.vx) : f.angle;
-              this.stampWheelTrack(f.x, f.y, hang, range(0.4, 0.55), range(0.26, 0.38));
+              this.stampWheelTrack(f.x, f.y, hang, range(0.65, 0.9), range(0.28, 0.44));
             }
           } else if (f.bounces > 0 && f.vz < -50) {
             f.bounces--;
@@ -3794,17 +3827,17 @@ export class MissionScene extends Phaser.Scene {
     f.z = groundZ(this.world, f.x, f.y);
     if (spd > 22) this.emitFragTrail(f, 1);
     else if (spd > 10) this.emitFragTrail(f, 0.5);
-    if (!wet && spd > 8) {
+    if (!wet && spd > 4) {
       f.track = (f.track ?? 0) + spd * dt;
-      const gap = 11;
+      const gap = range(5, 14);
       if (f.track >= gap) {
-        f.track -= gap;
+        f.track = 0;
         const ang = Math.atan2(f.vy, f.vx);
-        const sc = 0.38 * (f.scale ?? 1);
-        this.stampWheelTrack(f.x, f.y, ang, sc, range(0.22, 0.34));
+        const sc = range(0.55, 0.88) * (f.scale ?? 1);
+        this.stampWheelTrack(f.x, f.y, ang, sc, range(0.22, 0.42));
       }
     }
-    if (wet || (spd < 12 && steep < 0.05)) {
+    if (wet || (spd < 6 && steep < 0.04)) {
       this.settleFrag(f);
     }
   }
@@ -4399,12 +4432,21 @@ export class MissionScene extends Phaser.Scene {
     const spd = Math.hypot(u.vx, u.vy);
     const slow = 1 - Math.min(1, spd / Math.max(d.maxSpd, 1));
     const wheeled = d.track !== "tread";
-    if (drive && (!wheeled || spd > 7)) u.angle = Phaser.Math.Angle.RotateTo(u.angle, want, d.turn * (0.45 + 0.55 * slow) * dt);
+    // Bikes can't pivot in place — need real forward speed, like trucks (trucks get it from low turn rate).
+    const minTurnSpd = u.kind === "motorcycle" ? 24 : 7;
+    if (drive && (!wheeled || spd > minTurnSpd)) {
+      const turnGate = wheeled ? Phaser.Math.Clamp((spd - minTurnSpd) / 18, 0.15, 1) : 1;
+      u.angle = Phaser.Math.Angle.RotateTo(
+        u.angle,
+        want,
+        d.turn * (0.45 + 0.55 * slow) * turnGate * dt
+      );
+    }
     const nx = Math.cos(u.angle);
     const ny = Math.sin(u.angle);
     const align = drive ? Math.cos(Phaser.Math.Angle.Wrap(want - u.angle)) : 1;
     let a = -d.brake;
-    if (drive && wheeled && spd <= 7) a = d.accel;
+    if (drive && wheeled && spd <= minTurnSpd) a = d.accel;
     else if (drive && align > 0.2) a = d.accel * Phaser.Math.Clamp(align, 0.25, 1);
     else if (drive) a = -d.brake * 0.65;
     let vx = u.vx + nx * a * dt;
@@ -4823,7 +4865,9 @@ export class MissionScene extends Phaser.Scene {
       sp.rotors.forEach((r, ri) => {
         const part = parts[pi++];
         if (!part) return;
-        place(part, r.tex, r.origin, r.mount, ri % 2 ? -u.rotor : u.rotor, ZOff.rotor, r.scale ?? 1);
+        const spinKey = `${r.tex}_spin`;
+        const rotorKey = this.textures.exists(spinKey) ? spinKey : r.tex;
+        place(part, rotorKey, r.origin, r.mount, ri % 2 ? -u.rotor : u.rotor, ZOff.rotor, r.scale ?? 1);
         if (r.tex.includes("rotor")) {
           const px = this.liveRotorDrawPx(r.tex, r.scale ?? 1);
           part.setScale((px / Math.max(part.width, 1)) * zs);
@@ -5769,14 +5813,8 @@ export class MissionScene extends Phaser.Scene {
         .setName(`debug_row_${i}`);
       t.on("pointerdown", () => {
         if (this.debugSpawnOpen || this.debugCamOpen) return;
-        if (i === 0) this.setNoDamage(!this.noDamage);
-        else if (i === 1) this.setInfAmmo(!this.infAmmo);
-        else if (i === 2) this.toggleHeightMap();
-        else if (i === 3) this.setDebugAi(!this.debugAi);
-        else if (i === 4) this.toggleTestFx();
-        else if (i === 5) this.toggleReliefEditor();
-        else if (i === 6) this.openDebugCam();
-        else this.openDebugSpawn();
+        this.debugMenuIdx = i;
+        this.activateDebugRow(i);
       });
       return t;
     });
@@ -5788,7 +5826,7 @@ export class MissionScene extends Phaser.Scene {
       })
       .setVisible(false)
       .setName("debug_spawn_hint");
-    const camLabels = ["Y-LIFT", "PROJ", "ZOOM NEAR", "ZOOM FAR", "ZOOM ZMAX"];
+    const camLabels = ["Y-LIFT", "EYE", "ZOOM0"];
     this.debugCamRows = camLabels.map((_label, i) => {
       const t = this.add
         .text(12, 34 + i * 22, "", {
@@ -5853,15 +5891,13 @@ export class MissionScene extends Phaser.Scene {
       this.debugTitle.setVisible(false);
       this.debugSpawnHint
         .setVisible(true)
-        .setText("CAMERA   ↑↓  [ ] nudge   ESC back");
+        .setText("CAMERA   ↑↓ select  ←→ nudge   ESC back");
       const vals = [
         CamTune.lift.toFixed(3),
         String(CamTune.cam | 0),
-        CamTune.zoomNear.toFixed(2),
-        CamTune.zoomFar.toFixed(2),
-        String(CamTune.zoomZFar | 0),
+        CamTune.zoom0.toFixed(2),
       ];
-      const names = ["Y-LIFT", "PROJ", "ZOOM NEAR", "ZOOM FAR", "ZOOM ZMAX"];
+      const names = ["Y-LIFT", "EYE", "ZOOM0"];
       for (let i = 0; i < this.debugCamRows.length; i++) {
         const row = this.debugCamRows[i]!;
         const sel = i === this.debugCamIdx;
@@ -5926,23 +5962,45 @@ export class MissionScene extends Phaser.Scene {
     ];
     // Number shortcuts only for rows without a letter hotkey.
     const nums = ["1", "2", "", "3", "", "", "4", "5"];
+    if (this.debugMenuIdx >= this.debugRows.length) this.debugMenuIdx = 0;
     for (let i = 0; i < this.debugRows.length; i++) {
       const row = this.debugRows[i]!;
       row.setVisible(true);
       const num = nums[i]!;
-      const prefix = num ? `${num}  ` : "   ";
+      const focus = i === this.debugMenuIdx;
+      const mark = focus ? "▸" : " ";
+      const prefix = num ? `${mark}${num} ` : `${mark}  `;
       if (i < 6) {
         const on = flags[i]!;
         row.setText(`${prefix}${names[i]!}            ${on ? "ON" : "OFF"}`);
-        row.setColor(on ? "#e8b84a" : "#8a8470");
+        row.setColor(focus ? "#e8b84a" : on ? "#c8b87a" : "#8a8470");
       } else if (i === 6) {
         row.setText(`${prefix}CAMERA…`);
-        row.setColor("#f0e6c8");
+        row.setColor(focus ? "#e8b84a" : "#f0e6c8");
       } else {
         row.setText(`${prefix}SPAWN…`);
-        row.setColor("#f0e6c8");
+        row.setColor(focus ? "#e8b84a" : "#f0e6c8");
       }
     }
+  }
+
+  nudgeDebugMenu(dir: number): void {
+    const n = this.debugRows.length;
+    if (!n) return;
+    this.debugMenuIdx = (this.debugMenuIdx + dir + n) % n;
+    this.syncDebugMenu();
+  }
+
+  activateDebugRow(i: number): void {
+    if (i === 0) this.setNoDamage(!this.noDamage);
+    else if (i === 1) this.setInfAmmo(!this.infAmmo);
+    else if (i === 2) this.toggleHeightMap();
+    else if (i === 3) this.setDebugAi(!this.debugAi);
+    else if (i === 4) this.toggleTestFx();
+    else if (i === 5) this.toggleReliefEditor();
+    else if (i === 6) this.openDebugCam();
+    else if (i === 7) this.openDebugSpawn();
+    this.syncDebugMenu();
   }
 
   nudgeCamLift(dir: number): void {
@@ -5955,32 +6013,15 @@ export class MissionScene extends Phaser.Scene {
     this.syncDebugMenu();
   }
 
-  nudgeCamZoomNear(dir: number): void {
-    CamTune.zoomNear = Phaser.Math.Clamp(
-      Math.round((CamTune.zoomNear + dir * 0.05) * 100) / 100,
-      0.4,
-      4
-    );
-    this.syncDebugMenu();
-  }
-
-  nudgeCamZoomFar(dir: number): void {
-    CamTune.zoomFar = Phaser.Math.Clamp(
-      Math.round((CamTune.zoomFar + dir * 0.02) * 100) / 100,
-      0.15,
-      2
-    );
-    this.syncDebugMenu();
-  }
-
-  nudgeCamZoomZFar(dir: number): void {
-    CamTune.zoomZFar = Phaser.Math.Clamp(CamTune.zoomZFar + dir * 10, 60, 600);
+  nudgeCamZoom0(dir: number): void {
+    CamTune.zoom0 = Phaser.Math.Clamp(Math.round((CamTune.zoom0 + dir * 0.05) * 100) / 100, 0.4, 4);
     this.syncDebugMenu();
   }
 
   openDebugCam(): void {
     this.debugCamOpen = true;
     this.debugSpawnOpen = false;
+    if (this.debugCamIdx >= this.debugCamRows.length) this.debugCamIdx = 0;
     this.syncDebugMenu();
   }
 
@@ -5999,9 +6040,7 @@ export class MissionScene extends Phaser.Scene {
   nudgeDebugCam(dir: number): void {
     if (this.debugCamIdx === 0) this.nudgeCamLift(dir);
     else if (this.debugCamIdx === 1) this.nudgeCamProj(dir);
-    else if (this.debugCamIdx === 2) this.nudgeCamZoomNear(dir);
-    else if (this.debugCamIdx === 3) this.nudgeCamZoomFar(dir);
-    else this.nudgeCamZoomZFar(dir);
+    else this.nudgeCamZoom0(dir);
   }
 
   openDebugSpawn(): void {
@@ -6475,11 +6514,8 @@ export class MissionScene extends Phaser.Scene {
 
   playZoom(): number {
     const h = this.heli;
-    // Absolute world Z: higher altitude → more zoomed out (Phaser zoom shrinks).
-    const zNear = 0;
-    const zFar = Math.max(1, CamTune.zoomZFar);
-    const u = Phaser.Math.Clamp((h.z - zNear) / zFar, 0, 1);
-    const base = Phaser.Math.Linear(CamTune.zoomNear, CamTune.zoomFar, u);
+    // Zoom is the inverse of zScale(focus) so the focus stays constant screen size.
+    const base = camZoomAt(h.z);
     const spdN = Phaser.Math.Clamp(Math.hypot(h.vx, h.vy) / 340, 0, 1);
     return base * (1 - spdN * 0.06);
   }

@@ -450,8 +450,12 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   }
   const rotors = splitRotorSheet(keyPixels(src(textures, "src_rotors"), "magenta"));
   // Bake near in-game draw size (player ~134, enemy 108) — not full 1024-sheet res.
-  put(textures, "heli_rotor", fit(squareCenter(rotors[0]!), 134));
-  put(textures, "enemy_heli_rotor", fit(squareCenter(rotors[1]!), 108));
+  const playerRotor = fit(squareCenter(rotors[0]!), 134);
+  const enemyRotor = fit(squareCenter(rotors[1]!), 108);
+  put(textures, "heli_rotor", playerRotor);
+  put(textures, "enemy_heli_rotor", enemyRotor);
+  put(textures, "heli_rotor_spin", radialStampBlur(playerRotor));
+  put(textures, "enemy_heli_rotor_spin", radialStampBlur(enemyRotor));
   put(textures, "doodad_rock", fit(keyImage(src(textures, "src_rock"), "magenta"), 36));
 
   const parts = sliceGrid(keyImage(src(textures, "src_tank_parts"), "magenta"), 2, 1);
@@ -511,6 +515,10 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     ["enemy_drone_rotor", 14],
     ["_", 8],
   ]);
+  if (textures.exists("enemy_drone_rotor")) {
+    const drone = textures.get("enemy_drone_rotor").getSourceImage() as HTMLCanvasElement;
+    put(textures, "enemy_drone_rotor_spin", radialStampBlur(drone));
+  }
   putGrid(textures, "src_tower_guns", 2, 1, [
     ["building_tower_aa", 48],
     ["building_tower_sam", 48],
@@ -1426,6 +1434,51 @@ function squareCenter(src: HTMLCanvasElement): HTMLCanvasElement {
   c.height = size;
   c.getContext("2d")!.drawImage(src, half - hub.x, half - hub.y);
   return c;
+}
+
+/** Tunable spin-disc bake: faint rotated stamps around the hub (canvas center). */
+const ROTOR_SPIN_STAMPS = 20;
+const ROTOR_SPIN_ARC_DEG = 30;
+
+function copyCanvas(src: HTMLCanvasElement): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = src.width;
+  c.height = src.height;
+  c.getContext("2d")!.drawImage(src, 0, 0);
+  return c;
+}
+
+/**
+ * Radial smear for fast-spin rotors.
+ * 1) Chroma-spill matte on a copy (source stays sharp for hulks / slow spin).
+ * 2) Transparent canvas, stamp N times at 1/N alpha, each rotated about center.
+ */
+function radialStampBlur(
+  src: HTMLCanvasElement,
+  stamps = ROTOR_SPIN_STAMPS,
+  totalDeg = ROTOR_SPIN_ARC_DEG
+): HTMLCanvasElement {
+  const blade = matteMagenta(copyCanvas(src));
+  const out = document.createElement("canvas");
+  out.width = src.width;
+  out.height = src.height;
+  const g = out.getContext("2d")!;
+  const cx = out.width * 0.5;
+  const cy = out.height * 0.5;
+  const totalRad = (totalDeg * Math.PI) / 180;
+  const step = totalRad / Math.max(1, stamps);
+  const alpha = 3 / Math.max(1, stamps);
+  for (let i = 0; i < stamps; i++) {
+    // Center the arc on 0 so the disc stays registered with the sharp hub.
+    const ang = (i + 0.5) * step - totalRad * 0.5;
+    g.save();
+    g.globalAlpha = alpha;
+    g.translate(cx, cy);
+    g.rotate(ang);
+    g.drawImage(blade, -cx, -cy);
+    g.restore();
+  }
+  return out;
 }
 
 function rowStats(src: HTMLCanvasElement): { count: number; minx: number; maxx: number }[] {

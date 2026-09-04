@@ -261,32 +261,51 @@ function sampleBiomeId(world: WorldData, x: number, y: number): number {
   return world.biome[ty * TEX + tx]!;
 }
 
-/** Camera projection knobs (mutable for debug tuning). */
+/**
+ * Shared perspective camera (mutable for debug tuning).
+ *
+ * Model: eye fixed at world Z = `cam`, looking down. An object at absolute Z has
+ * depth `(cam - Z)`. Sprite scale grows as  cam/depth. Phaser zoom is the inverse
+ * so a reference at the focus altitude keeps constant on-screen size while the
+ * ground appears to fall away — same net effect as a chase cam rising with the
+ * player. Screen Y lift is pitch foreshortening: height × that same scale.
+ */
 export const CamTune = {
-  /** Screen Y offset per world Z (fake height). */
-  lift: 0.05,
-  /** Perspective camera distance for zScale. */
+  /** Eye height above world Z = 0 (also the Z where scale would diverge). */
   cam: 480,
-  /** Phaser zoom at absolute Z = 0. */
-  zoomNear: 1.45,
-  /** Phaser zoom at absolute Z ≥ zoomZFar. */
-  zoomFar: 0.38,
-  /** Absolute Z where zoomFar is reached. */
-  zoomZFar: 240,
+  /** Phaser zoom when focus altitude is Z = 0. */
+  zoom0: 1.45,
+  /** Pitch factor: world-Y lift per world-Z, multiplied by perspective scale. */
+  lift: 0.05,
 };
+/** Near-plane clamp so scale/zoom stay finite as Z → cam. */
 export const Z_SCALE_NEAR = 96;
 /** Height-map value at or below this becomes groundZ 0. */
 export const GROUND_H_ZERO = 0.16;
 /** World Z per unit of height-map above GROUND_H_ZERO. Peak ≈ (0.94 - GROUND_H_ZERO) * this. */
 export const GROUND_Z_SCALE = 258;
 
-export function screenLift(z: number): number {
-  return z * CamTune.lift;
+/** Perspective depth from the eye to absolute Z. */
+export function camDepth(z: number): number {
+  return Math.max(Z_SCALE_NEAR, CamTune.cam - z);
 }
 
+/** Sprite scale at absolute Z (1 at Z = 0). */
 export function zScale(z: number): number {
-  const d = Math.max(Z_SCALE_NEAR, CamTune.cam - z);
-  return CamTune.cam / d;
+  return CamTune.cam / camDepth(z);
+}
+
+/** Screen-Y offset for absolute Z (perspective-weighted pitch). */
+export function screenLift(z: number): number {
+  return z * CamTune.lift * zScale(z);
+}
+
+/**
+ * Phaser zoom for a camera focused at absolute Z.
+ * Equals `zoom0 / zScale(z)` so zoom×scale stays constant for that focus.
+ */
+export function camZoomAt(z: number): number {
+  return CamTune.zoom0 * (camDepth(z) / CamTune.cam);
 }
 
 export function groundZ(world: WorldData, x: number, y: number): number {
