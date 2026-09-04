@@ -1857,14 +1857,14 @@ export class MissionScene extends Phaser.Scene {
         tex: sparkTexKey("dirt"),
         frame: (Math.random() * FX_VARIANTS) | 0,
         angJit: range(-0.06, 0.06),
-        spin: spinSign * range(0.8, 2.6),
+        spin: spinSign * range(1.1, 3.2),
         tint: look.tint,
         additive: look.add,
         heading: a,
         dart: true,
         ox: h.x,
         oy: h.y,
-        swirl: spinSign * range(120, 300),
+        swirl: spinSign * range(180, 420),
       });
     }
   }
@@ -2468,7 +2468,7 @@ export class MissionScene extends Phaser.Scene {
         s.vy *= Math.pow(0.08, dt * edge);
         const tx = -dy / r;
         const ty = dx / r;
-        const swirl = s.swirl * (0.12 + edge * 1.4);
+        const swirl = s.swirl * (0.18 + edge * 1.85);
         s.vx += tx * swirl * dt;
         s.vy += ty * swirl * dt;
         s.vz *= Math.pow(0.4, dt);
@@ -2560,7 +2560,7 @@ export class MissionScene extends Phaser.Scene {
       const thick = shock
         ? s.scale * (1.05 + 0.95 * age)
         : dart
-        ? s.scale * (0.78 + 0.35 * fade + 0.45 * round)
+        ? s.scale * (0.78 + 0.28 * fade + 0.72 * round)
         : dirt
           ? s.scale * (0.06 + 3.6 * grow)
           : s.scale * (spark ? 0.48 + fade * 0.42 : 0.4 + fade * 0.7);
@@ -2570,7 +2570,7 @@ export class MissionScene extends Phaser.Scene {
       const rot = s.straight || shock
         ? s.heading
         : dart
-        ? heading + s.angJit * 0.08 + age * s.spin * (0.15 + round * 0.7)
+        ? heading + s.angJit * 0.08 + age * s.spin * (0.22 + round * 1.05)
         : dirt
           ? s.heading + s.angJit * 0.14
           : streak
@@ -2581,7 +2581,7 @@ export class MissionScene extends Phaser.Scene {
       const sx = shock
         ? thick * stretch
         : dart
-        ? thick * (stretch * 1.28 * (1 - round) + (1.02 + 0.18 * grow) * round)
+        ? thick * (stretch * 1.28 * (1 - round) + (1.12 + 0.38 * grow) * round)
         : dirt
           ? thick * (0.85 + 0.55 * grow)
           : streak
@@ -2593,7 +2593,7 @@ export class MissionScene extends Phaser.Scene {
       const sy = shock
         ? thick * (0.48 + 0.7 * age)
         : dart
-        ? thick * ((0.58 + 0.16 / Math.max(stretch, 1)) * (1 - round) + (0.95 + 0.12 * grow) * round)
+        ? thick * ((0.58 + 0.16 / Math.max(stretch, 1)) * (1 - round) + (1.08 + 0.28 * grow) * round)
         : dirt
           ? thick * (0.28 + 0.42 * late)
         : streak
