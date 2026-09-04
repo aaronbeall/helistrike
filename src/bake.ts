@@ -34,7 +34,6 @@ export function bakeAll(textures: Phaser.Textures.TextureManager): void {
   add(textures, "heli_body", drawPlayerHeli());
   add(textures, "heli_gun", drawGun());
   add(textures, "enemy_heli", drawEnemyHeli());
-  add(textures, "tank", drawTank());
   add(textures, "enemy_boat", drawBoat());
   add(textures, "building_tower", drawTower());
   add(textures, "building_bunker", drawBunker());
@@ -60,15 +59,12 @@ export function bakeAll(textures: Phaser.Textures.TextureManager): void {
   add(textures, "hellfire", drawMissile("#c45c1a"));
   add(textures, "tow", drawMissile("#c8b45a"));
   add(textures, "fx_frag_metal", drawFrag("#6a7064"));
-  add(textures, "fx_frag_sand", drawFrag("#b89a6a"));
-  add(textures, "fx_frag_dark", drawFrag("#3a3c38"));
   add(textures, "fx_spark", drawSpark());
   add(textures, "fx_smoke", drawSmoke());
   add(textures, "fx_muzzle", drawMuzzle());
   add(textures, "reticle", drawReticle());
   add(textures, "reticle_sq", drawReticleSquare());
   add(textures, "lock", drawLock());
-  add(textures, "minimap_mask", drawMinimapMask());
   add(textures, "track", drawTrack("tread"));
   add(textures, "track_tread", drawTrack("tread"));
   add(textures, "track_tire", drawTrack("tire"));
@@ -902,16 +898,6 @@ function drawLock(): HTMLCanvasElement {
   g.strokeStyle = "#ffd0c0";
   g.lineWidth = 1.4;
   g.strokeRect(18, 18, 36, 36);
-  return c;
-}
-
-function drawMinimapMask(): HTMLCanvasElement {
-  const c = canvas(200, 200);
-  const g = ctxOf(c);
-  g.fillStyle = "#fff";
-  g.beginPath();
-  g.arc(100, 100, 96, 0, Math.PI * 2);
-  g.fill();
   return c;
 }
 

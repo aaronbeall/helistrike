@@ -169,6 +169,8 @@ export interface Frag {
   /** Wheel debris: bounce then roll downhill along the height map. */
   wheelRoll?: boolean;
   rolling?: boolean;
+  /** Distance accumulator for wreck-map tire prints while rolling. */
+  track?: number;
 }
 
 let nid = 1;
@@ -209,5 +211,3 @@ export function fragKeys(kind: UnitKind): string[] {
 export function wheelFragKeys(): string[] {
   return Array.from({ length: 4 }, (_, i) => `fx_frag_wheel_${i}`);
 }
-
-export const FRAG_KEYS = fragKeys("tank");

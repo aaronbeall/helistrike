@@ -5,10 +5,9 @@ const SRC = {
   heli: "sprites/helistrike-heli-player-nrotor.png",
   enemy: "sprites/helistrike-heli-enemy-nrotor.png",
   tankParts: "sprites/helistrike-tank-parts.png",
-  units: "sprites/helistrike-units.png",
+  bunker: "sprites/helistrike-bunker.png",
+  bunkerHulk: "sprites/helistrike-bunker-hulk.png",
   rock: "sprites/helistrike-rock.png",
-  hulk: "sprites/helistrike-hulk.png",
-  debris: "sprites/helistrike-debris.png",
   debrisMech: "sprites/helistrike-debris-mech.png",
   debrisStruct: "sprites/helistrike-debris-struct.png",
   debrisOrganic: "sprites/helistrike-debris-organic.png",
@@ -65,10 +64,9 @@ export function preloadArt(scene: Phaser.Scene): void {
   scene.load.image("src_enemy", SRC.enemy);
   scene.load.image("src_enemy_heli_hulk", "sprites/helistrike-heli-enemy-hulk.png");
   scene.load.image("src_tank_parts", SRC.tankParts);
-  scene.load.image("src_units", SRC.units);
+  scene.load.image("src_bunker", SRC.bunker);
+  scene.load.image("src_bunker_hulk", SRC.bunkerHulk);
   scene.load.image("src_rock", SRC.rock);
-  scene.load.image("src_hulk", SRC.hulk);
-  scene.load.image("src_debris", SRC.debris);
   scene.load.image("src_debris_mech", SRC.debrisMech);
   scene.load.image("src_debris_struct", SRC.debrisStruct);
   scene.load.image("src_debris_organic", SRC.debrisOrganic);
@@ -468,15 +466,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   put(textures, "enemy_tank_gun_hulk", hulkTurret);
   tankLayout.hulkTurretOrigin = cupolaOrigin(hulkTurret);
 
-  const sheet = keyPixels(src(textures, "src_units"), "magenta");
-  const cells = sliceGrid(sheet, 3, 2);
-  const keys = ["boat", "tower", "bunker", "radar", "soldier", "tree"] as const;
-  const sizes = [78, 78, 128, 128, 26, 42];
-  keys.forEach((key, i) => {
-    if (key === "boat" || key === "tower" || key === "radar" || key === "soldier") return;
-    const texKey = key === "tree" ? "doodad_tree" : key === "bunker" ? "building_bunker" : `enemy_${key}`;
-    put(textures, texKey, fit(cells[i]!, sizes[i]!));
-  });
+  put(textures, "building_bunker", fit(keyImage(src(textures, "src_bunker"), "magenta"), 128));
 
   putGrid(textures, "src_split", 3, 2, [
     ["enemy_boat", 92],
@@ -635,39 +625,15 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     put(textures, `doodad_${d.key}`, fit(keyDoodad(src(textures, srcKey)), d.size));
   }
 
-  const hulks = sliceGrid(keyImage(src(textures, "src_hulk"), "magenta"), 3, 3);
-  const hulkKeys = [
-    "enemy_tank_hulk",
-    "enemy_heli_hulk",
-    "building_bunker_hulk",
-    "building_radar_hulk",
-    "building_tower_hulk",
-    "enemy_boat_hulk",
-    "enemy_troop_soldier_hulk",
-    "doodad_tree_hulk",
-    "hulk_crater",
-  ] as const;
-  const hulkSizes = [70, 90, 120, 84, 58, 74, 28, 40, 48];
-  hulkKeys.forEach((key, i) => {
-    if (
-      key === "building_radar_hulk" ||
-      key === "building_tower_hulk" ||
-      key === "enemy_boat_hulk" ||
-      key === "enemy_tank_hulk" ||
-      key === "enemy_troop_soldier_hulk" ||
-      key === "enemy_heli_hulk"
-    )
-      return;
-    put(textures, key, darkenWreck(fit(hulks[i]!, hulkSizes[i]!)));
-  });
+  putHulkGrid(textures, "src_bunker_hulk", 2, 1, [
+    ["building_bunker_hulk", 120],
+    ["hulk_crater", 48],
+  ]);
 
   putDebrisSheet(textures, "src_debris_mech", "mech");
   putDebrisSheet(textures, "src_debris_struct", "struct");
   putDebrisSheet(textures, "src_debris_organic", "organic");
   putWheelDebrisSheet(textures);
-  if (!textures.exists("fx_frag_mech_0") && textures.exists("src_debris")) {
-    putDebrisSheet(textures, "src_debris", "mech");
-  }
 
   const wpn = sliceGrid(keyImage(src(textures, "src_weapons"), "magenta"), 2, 2);
   put(textures, "heli_gun", fit(wpn[0]!, 46));
@@ -743,8 +709,6 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     "enemy_drone_rotor",
     "tracer_aa",
     "fx_frag_metal",
-    "fx_frag_sand",
-    "fx_frag_dark",
     ...["mech", "struct", "organic"].flatMap((cat) =>
       Array.from({ length: 12 }, (_, i) => `fx_frag_${cat}_${i}`)
     ),
@@ -1501,28 +1465,6 @@ function cupolaOrigin(src: HTMLCanvasElement): { x: number; y: number } {
   }
   if (wsum < 8) return { x: 0.5, y: 0.78 };
   return { x: sx / wsum / src.width, y: sy / wsum / src.height };
-}
-
-function darkMountOrigin(src: HTMLCanvasElement): { x: number; y: number } {
-  const g = src.getContext("2d")!;
-  const pix = g.getImageData(0, 0, src.width, src.height);
-  const d = pix.data;
-  let sx = 0;
-  let sy = 0;
-  let n = 0;
-  for (let y = 0; y < src.height; y++) {
-    for (let x = 0; x < src.width; x++) {
-      const o = (y * src.width + x) * 4;
-      if (d[o + 3]! < 40) continue;
-      const lum = 0.3 * d[o]! + 0.5 * d[o + 1]! + 0.2 * d[o + 2]!;
-      if (lum > 58) continue;
-      sx += x;
-      sy += y;
-      n++;
-    }
-  }
-  if (n < 20) return { x: 0.5, y: 0.4 };
-  return { x: sx / n / src.width, y: sy / n / src.height };
 }
 
 export function bakeShadows(textures: Phaser.Textures.TextureManager, key: string): void {

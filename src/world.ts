@@ -261,8 +261,19 @@ function sampleBiomeId(world: WorldData, x: number, y: number): number {
   return world.biome[ty * TEX + tx]!;
 }
 
-export const Z_LIFT = 0.05;
-export const Z_CAM = 480;
+/** Camera projection knobs (mutable for debug tuning). */
+export const CamTune = {
+  /** Screen Y offset per world Z (fake height). */
+  lift: 0.05,
+  /** Perspective camera distance for zScale. */
+  cam: 480,
+  /** Phaser zoom at absolute Z = 0. */
+  zoomNear: 1.45,
+  /** Phaser zoom at absolute Z ≥ zoomZFar. */
+  zoomFar: 0.38,
+  /** Absolute Z where zoomFar is reached. */
+  zoomZFar: 240,
+};
 export const Z_SCALE_NEAR = 96;
 /** Height-map value at or below this becomes groundZ 0. */
 export const GROUND_H_ZERO = 0.16;
@@ -270,12 +281,12 @@ export const GROUND_H_ZERO = 0.16;
 export const GROUND_Z_SCALE = 258;
 
 export function screenLift(z: number): number {
-  return z * Z_LIFT;
+  return z * CamTune.lift;
 }
 
 export function zScale(z: number): number {
-  const d = Math.max(Z_SCALE_NEAR, Z_CAM - z);
-  return Z_CAM / d;
+  const d = Math.max(Z_SCALE_NEAR, CamTune.cam - z);
+  return CamTune.cam / d;
 }
 
 export function groundZ(world: WorldData, x: number, y: number): number {

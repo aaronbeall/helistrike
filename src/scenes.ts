@@ -20,7 +20,7 @@ import {
 } from "./combat";
 import { Layer, ZOff, Z_GRAVITY, worldDepth } from "./depth";
 import { range } from "./rng";
-import { CRUISE_AGL, HELI_HEIGHT, Heli, LOW_AGL, MAX_AGL } from "./heli";
+import { CRUISE_AGL, HELI_HEIGHT, Heli, MAX_AGL } from "./heli";
 import { isAerial, isGroundVehicle, isOrganic, specOf, driveOf, spawnAngle, pickLookoutTroop, pickPickupTroop, labelOf, allKinds, gunsOf, rollParts } from "./roster";
 import { lookupSpriteMuzzles, SPRITE_MOUNT } from "./spriteOrigin";
 
@@ -50,6 +50,7 @@ import {
   SCALE,
   WORLD,
   WRECK_TEX,
+  CamTune,
   doodadTex,
   type HvSpec,
   type WorldData,
@@ -139,7 +140,7 @@ export class MenuScene extends Phaser.Scene {
       .text(
         w / 2,
         h * 0.56,
-        "WASD / ARROWS  thrust & strafe\nMOUSE  turn  ·  CLICK  fire  ·  1-4 / WHEEL  weapons\nSPACE  pop-up  ·  SHIFT  nap-of-earth  ·  M  map  ·  E  relief\n+ / -  time scale",
+        "WASD / ARROWS  thrust & strafe\nMOUSE  turn  ·  CLICK  fire  ·  1-4 / WHEEL  weapons\nSPACE  pop-up  ·  SHIFT  nap-of-earth  ·  M  map\n+ / -  time scale",
         {
           fontFamily: "Share Tech Mono, monospace",
           fontSize: "15px",
@@ -350,6 +351,7 @@ export class MissionScene extends Phaser.Scene {
   fxBarrelPulse = 0;
   fxHud!: Phaser.GameObjects.Text;
   hud!: Phaser.GameObjects.Text;
+  liftPrompt!: Phaser.GameObjects.Text;
   hvHud!: Phaser.GameObjects.Text;
   hvRows: Phaser.GameObjects.Text[] = [];
   wpnHud!: Phaser.GameObjects.Text;
@@ -385,7 +387,7 @@ export class MissionScene extends Phaser.Scene {
   mapView = false;
   mapWant = false;
   mapBlend = 0;
-  camZoom = 2.55;
+  camZoom = CamTune.zoomNear;
   camFollow = false;
   lookCamX = 0;
   lookCamY = 0;
@@ -412,6 +414,9 @@ export class MissionScene extends Phaser.Scene {
   debugSpawnOpen = false;
   debugSpawnIdx = 0;
   debugSpawnRows: Phaser.GameObjects.Text[] = [];
+  debugCamOpen = false;
+  debugCamIdx = 0;
+  debugCamRows: Phaser.GameObjects.Text[] = [];
   debugSpawnHint!: Phaser.GameObjects.Text;
   noDamage = false;
   infAmmo = false;
@@ -467,6 +472,7 @@ export class MissionScene extends Phaser.Scene {
     this.showHeightMap = false;
     this.debugOpen = false;
     this.debugSpawnOpen = false;
+    this.debugCamOpen = false;
     this.noDamage = false;
     this.infAmmo = false;
     this.debugAi = false;
@@ -863,29 +869,29 @@ export class MissionScene extends Phaser.Scene {
     this.keyShift = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT);
     this.input.keyboard!.addKey("ONE").on("down", () => {
       if (this.editOpen) this.setEditBrush(0);
-      else if (this.debugSpawnOpen) return;
+      else if (this.debugSpawnOpen || this.debugCamOpen) return;
       else if (this.debugOpen) this.setNoDamage(!this.noDamage);
       else this.heli.weapon = 0;
     });
     this.input.keyboard!.addKey("TWO").on("down", () => {
       if (this.editOpen) this.setEditBrush(1);
-      else if (this.debugSpawnOpen) return;
+      else if (this.debugSpawnOpen || this.debugCamOpen) return;
       else if (this.debugOpen) this.setInfAmmo(!this.infAmmo);
       else this.heli.weapon = 1;
     });
     this.input.keyboard!.addKey("THREE").on("down", () => {
       if (this.editOpen) this.setEditBrush(2);
-      else if (this.debugSpawnOpen) return;
-      else if (this.debugOpen) this.toggleHeightMap();
+      else if (this.debugSpawnOpen || this.debugCamOpen) return;
+      else if (this.debugOpen) this.setDebugAi(!this.debugAi);
       else this.heli.weapon = 2;
     });
     this.input.keyboard!.addKey("FOUR").on("down", () => {
-      if (this.debugSpawnOpen) return;
-      if (this.debugOpen) this.setDebugAi(!this.debugAi);
+      if (this.debugSpawnOpen || this.debugCamOpen) return;
+      if (this.debugOpen) this.openDebugCam();
       else this.heli.weapon = 3;
     });
     this.input.keyboard!.addKey("FIVE").on("down", () => {
-      if (this.debugOpen && !this.debugSpawnOpen) this.openDebugSpawn();
+      if (this.debugOpen && !this.debugSpawnOpen && !this.debugCamOpen) this.openDebugSpawn();
     });
     this.input.keyboard!.addKey("E").on("down", () => this.toggleReliefEditor());
     this.input.keyboard!.addKey("I").on("down", () => {
@@ -901,16 +907,31 @@ export class MissionScene extends Phaser.Scene {
     this.input.keyboard!.addKey("PERIOD").on("down", () => {
       if (this.editOpen) this.nudgeEditOff(1, 0);
     });
+    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.OPEN_BRACKET).on("down", () => {
+      if (this.debugSpawnOpen) this.nudgeDebugSpawn(-1);
+      else if (this.debugCamOpen) this.nudgeDebugCam(-1);
+      else if (this.spriteCfg?.open) this.spriteCfg.cycle(-1);
+      else if (this.editOpen) this.nudgeEditSize(-1);
+    });
+    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.CLOSED_BRACKET).on("down", () => {
+      if (this.debugSpawnOpen) this.nudgeDebugSpawn(1);
+      else if (this.debugCamOpen) this.nudgeDebugCam(1);
+      else if (this.spriteCfg?.open) this.spriteCfg.cycle(1);
+      else if (this.editOpen) this.nudgeEditSize(1);
+    });
     this.input.keyboard!.addKey("SEMICOLON").on("down", () => {
-      if (this.editOpen) this.nudgeEditOff(0, -1);
+      if (this.debugCamOpen) this.nudgeDebugCam(-1);
+      else if (this.editOpen) this.nudgeEditOff(0, -1);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.QUOTES).on("down", () => {
-      if (this.editOpen) this.nudgeEditOff(0, 1);
+      if (this.debugCamOpen) this.nudgeDebugCam(1);
+      else if (this.editOpen) this.nudgeEditOff(0, 1);
     });
     this.input.keyboard!.addKey("K").on("down", () => this.toggleHeightMap());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.FORWARD_SLASH).on("down", () => this.toggleDebugMenu());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ESC).on("down", () => {
-      if (this.debugSpawnOpen) this.closeDebugSpawn();
+      if (this.debugCamOpen) this.closeDebugCam();
+      else if (this.debugSpawnOpen) this.closeDebugSpawn();
       else if (this.editOpen) this.toggleReliefEditor(false);
       else if (this.debugOpen) this.toggleDebugMenu(false);
     });
@@ -918,9 +939,11 @@ export class MissionScene extends Phaser.Scene {
       if (this.editOpen && !this.over) this.nudgeEditRot(1);
       else if (this.over) this.scene.start("load");
     });
-    const bumpTime = (dir: number) => this.nudgeTimeScale(dir);
+    const bumpTime = (dir: number) => {
+      if (this.debugCamOpen) this.nudgeDebugCam(dir);
+      else this.nudgeTimeScale(dir);
+    };
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.PLUS).on("down", () => bumpTime(1));
-    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.EQUALS).on("down", () => bumpTime(1));
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_ADD).on("down", () => bumpTime(1));
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.MINUS).on("down", () => bumpTime(-1));
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_SUBTRACT).on("down", () => bumpTime(-1));
@@ -928,26 +951,22 @@ export class MissionScene extends Phaser.Scene {
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.F9).on("down", () => this.spriteCfg.toggle());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.BACKTICK).on("down", () => this.spriteCfg.toggle());
     this.input.keyboard!.addKey("F").on("down", () => this.toggleTestFx());
-    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.OPEN_BRACKET).on("down", () => {
-      if (this.debugSpawnOpen) this.nudgeDebugSpawn(-1);
-      else if (this.spriteCfg?.open) this.spriteCfg.cycle(-1);
-      else if (this.editOpen) this.nudgeEditSize(-1);
-    });
-    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.CLOSED_BRACKET).on("down", () => {
-      if (this.debugSpawnOpen) this.nudgeDebugSpawn(1);
-      else if (this.spriteCfg?.open) this.spriteCfg.cycle(1);
-      else if (this.editOpen) this.nudgeEditSize(1);
-    });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.UP).on("down", () => {
       if (this.debugSpawnOpen) this.nudgeDebugSpawn(-1);
+      else if (this.debugCamOpen) this.nudgeDebugCamSel(-1);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN).on("down", () => {
       if (this.debugSpawnOpen) this.nudgeDebugSpawn(1);
+      else if (this.debugCamOpen) this.nudgeDebugCamSel(1);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER).on("down", () => {
       if (this.debugSpawnOpen) this.debugSpawnSelected();
     });
     this.input.on("wheel", (_p: Phaser.Input.Pointer, _dx: number, dy: number) => {
+      if (this.debugCamOpen) {
+        this.nudgeDebugCam(dy > 0 ? -1 : 1);
+        return;
+      }
       if (this.debugSpawnOpen) {
         this.nudgeDebugSpawn(dy > 0 ? 1 : -1);
         return;
@@ -973,6 +992,17 @@ export class MissionScene extends Phaser.Scene {
       })
       .setScrollFactor(0)
       .setDepth(Layer.HUD);
+    this.liftPrompt = this.add
+      .text(this.scale.width / 2, this.scale.height * 0.62, "HOLD SPACE TO LIFT OFF", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "18px",
+        color: "#e8b84a",
+        align: "center",
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(Layer.HUD + 8)
+      .setVisible(false);
     this.fxHud = this.add
       .text(16, this.scale.height - 18, "", {
         fontFamily: "Share Tech Mono, monospace",
@@ -1255,6 +1285,18 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 
+  /** Faint mono tire print for bouncing / rolling wheel debris. */
+  stampWheelTrack(x: number, y: number, ang: number, scale = 0.48, alpha = 0.32): void {
+    if (isWater(this.world, x, y)) return;
+    const key = this.textures.exists("track_mono")
+      ? "track_mono"
+      : this.textures.exists("track_tire")
+        ? "track_tire"
+        : "track";
+    if (!this.textures.exists(key)) return;
+    this.stampWreck(key, x, y, ang + Math.PI / 2, scale, alpha);
+  }
+
   fragStampOrigin(key: string): { x: number; y: number } {
     return spritePivot(key);
   }
@@ -1488,12 +1530,7 @@ export class MissionScene extends Phaser.Scene {
     this.shadow.setOrigin(rotorLayout.player.x, rotorLayout.player.y);
     const lift = screenLift(h.z);
     const zs = zScale(h.z);
-    const bob =
-      h.phase === "flight" || h.phase === "liftoff"
-        ? Math.sin(this.time.now * 0.0026) * 2.2 * zs
-        : h.phase === "spool"
-          ? Math.sin(this.time.now * 0.0022) * 0.9 * zs
-          : 0;
+    const bob = h.phase === "flight" ? Math.sin(this.time.now * 0.0026) * 2.2 * zs : 0;
     this.body.setOrigin(rotorLayout.player.x, rotorLayout.player.y);
     this.body.setPosition(h.x, h.y - lift - bob);
     this.body.setRotation(h.angle + Math.PI / 2);
@@ -1528,19 +1565,19 @@ export class MissionScene extends Phaser.Scene {
     const h = this.heli;
     if (h.phase === "dead") return;
     const agl = castZ(this.world, h.x, h.y, h.z);
-    const takeoff = h.phase === "spool" || h.phase === "liftoff";
+    const takeoff = h.phase === "spool" || h.phase === "ready";
     const low = h.phase === "flight" && agl < 26;
     if (!takeoff && !low) return;
     const power = takeoff
-      ? Phaser.Math.Clamp(h.rotorSpd / 26, 0.2, 1)
+      ? h.dustPower
       : Phaser.Math.Clamp(1 - agl / 26, 0, 1) * 0.72;
-    if (power < 0.08) return;
+    if (power < 0.04) return;
     const rate = Phaser.Math.Clamp(dt, 0, 0.05) * 60;
     const gnd = groundZ(this.world, h.x, h.y);
     const wet = isWater(this.world, h.x, h.y);
     const sy = h.y - screenLift(gnd);
     this.heliDust.setDepth(worldDepth(gnd, 0.2));
-    const puffs = Math.max(1, Math.round((takeoff ? 2 + power * 3 : 0.6 + power * 1.4) * rate));
+    const puffs = Math.max(0, Math.round((takeoff ? 0.4 + power * 4.5 : 0.6 + power * 1.4) * rate));
     for (let i = 0; i < puffs; i++) {
       const a = Math.random() * Math.PI * 2;
       const r = range(16, 56 + power * 36);
@@ -1548,7 +1585,8 @@ export class MissionScene extends Phaser.Scene {
       this.heliDust.emitParticleAt(h.x + Math.cos(a) * r, sy + Math.sin(a) * r * 0.55, 1);
     }
     if (wet) return;
-    const n = Math.max(1, Math.round((takeoff ? 4 + power * 6 : 1 + power * 3) * rate));
+    const n = Math.max(0, Math.round((takeoff ? 0.5 + power * 9 : 1 + power * 3) * rate));
+    if (n < 1) return;
     const extra = this.sparks.length + n - 360;
     if (extra > 0) this.sparks.splice(0, extra);
     const biome = sampleBiome(this.world, h.x, h.y);
@@ -1558,7 +1596,7 @@ export class MissionScene extends Phaser.Scene {
       const ca = Math.cos(a);
       const sa = Math.sin(a);
       const r0 = range(8, 26);
-      const spd = range(420, 800) * (0.55 + power * 0.7);
+      const spd = range(420, 800) * (0.35 + power * 0.9);
       const life = range(0.48, 0.86);
       const look = sparkLook("dirt", biome);
       this.sparks.push({
@@ -3197,6 +3235,7 @@ export class MissionScene extends Phaser.Scene {
         trailR: this.texTrailR(key) * sc * 0.7,
         scale: sc,
         wheelRoll: true,
+        track: 0,
       });
     }
   }
@@ -3647,10 +3686,14 @@ export class MissionScene extends Phaser.Scene {
               }
               f.spin *= 0.65;
               this.stampDirtSmears(f.x, f.y, f.vx, f.vy);
+              const bang = Math.hypot(f.vx, f.vy) > 8 ? Math.atan2(f.vy, f.vx) : f.angle;
+              this.stampWheelTrack(f.x, f.y, bang, range(0.42, 0.58), range(0.28, 0.42));
             } else {
               f.rolling = true;
               f.vz = 0;
               f.z = g;
+              const hang = Math.hypot(f.vx, f.vy) > 8 ? Math.atan2(f.vy, f.vx) : f.angle;
+              this.stampWheelTrack(f.x, f.y, hang, range(0.4, 0.55), range(0.26, 0.38));
             }
           } else if (f.bounces > 0 && f.vz < -50) {
             f.bounces--;
@@ -3751,6 +3794,16 @@ export class MissionScene extends Phaser.Scene {
     f.z = groundZ(this.world, f.x, f.y);
     if (spd > 22) this.emitFragTrail(f, 1);
     else if (spd > 10) this.emitFragTrail(f, 0.5);
+    if (!wet && spd > 8) {
+      f.track = (f.track ?? 0) + spd * dt;
+      const gap = 11;
+      if (f.track >= gap) {
+        f.track -= gap;
+        const ang = Math.atan2(f.vy, f.vx);
+        const sc = 0.38 * (f.scale ?? 1);
+        this.stampWheelTrack(f.x, f.y, ang, sc, range(0.22, 0.34));
+      }
+    }
     if (wet || (spd < 12 && steep < 0.05)) {
       this.settleFrag(f);
     }
@@ -4922,6 +4975,12 @@ export class MissionScene extends Phaser.Scene {
                 ? 0.72
                 : 0.58
           : 1) * vis;
+      const zs = zScale(s.z);
+      // Foreshorten along the barrel when climbing/diving (non-zero vz).
+      const horiz = Math.hypot(s.vx, s.vy);
+      const pitchN = Phaser.Math.Clamp(Math.abs(s.vz) / Math.max(90, Math.hypot(horiz, s.vz)), 0, 1);
+      const along = 1 - pitchN * 0.52;
+      const across = 1 + pitchN * 0.06;
       sh.setVisible(true).setOrigin(ox, 0.5);
       this.applyCastShadow(sh, s.x, s.y, s.z, key, rot, sc);
       im.setVisible(true)
@@ -4929,7 +4988,7 @@ export class MissionScene extends Phaser.Scene {
         .setOrigin(ox, 0.5)
         .setPosition(s.x, s.y - screenLift(s.z))
         .setRotation(rot)
-        .setScale(sc * zScale(s.z))
+        .setScale(sc * zs * along, sc * zs * across)
         .setDepth(worldDepth(s.z));
     });
   }
@@ -5267,8 +5326,8 @@ export class MissionScene extends Phaser.Scene {
     const phase =
       h.phase === "grounded" || h.phase === "spool"
         ? "SPOOLING ROTORS"
-        : h.phase === "liftoff"
-          ? "LIFTING"
+        : h.phase === "ready"
+          ? "READY"
           : h.phase === "dead"
             ? "DOWN"
             : "AIRBORNE";
@@ -5279,6 +5338,7 @@ export class MissionScene extends Phaser.Scene {
     this.hud.setText(
       `ALT ${castZ(this.world, h.x, h.y, h.z) | 0}   ELV ${elv}   SPD ${Math.hypot(h.vx, h.vy) | 0}   TIME ${this.timeScale.toFixed(2)}×\n${phase}\nWPN ${w.name}  ${ammoS}${overLine}`
     );
+    this.syncLiftPrompt();
 
     const lines = this.world.hv.map((spec) => this.hvLine(spec));
     const left = lines.filter((l) => !l.done).length;
@@ -5296,6 +5356,14 @@ export class MissionScene extends Phaser.Scene {
       else row.setColor("#ff3a22").setAlpha(1);
     }
     this.drawWeaponHud();
+  }
+
+  syncLiftPrompt(): void {
+    const show = this.heli.phase === "ready" && !this.mapView && !this.over;
+    this.liftPrompt.setVisible(show);
+    if (!show) return;
+    const blink = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(this.time.now * 0.0075));
+    this.liftPrompt.setAlpha(blink);
   }
 
   drawWeaponHud(): void {
@@ -5596,7 +5664,10 @@ export class MissionScene extends Phaser.Scene {
 
   toggleDebugMenu(force?: boolean): void {
     this.debugOpen = force ?? !this.debugOpen;
-    if (!this.debugOpen) this.debugSpawnOpen = false;
+    if (!this.debugOpen) {
+      this.debugSpawnOpen = false;
+      this.debugCamOpen = false;
+    }
     this.debugRoot.setVisible(this.debugOpen);
     if (this.debugOpen) this.syncDebugMenu();
   }
@@ -5610,6 +5681,7 @@ export class MissionScene extends Phaser.Scene {
     if (!this.fxOn) this.fxBarrelPulse = 0;
     this.applyTestFxActive();
     this.syncTestFxHud();
+    this.syncDebugMenu();
   }
 
   applyTestFxActive(): void {
@@ -5666,9 +5738,17 @@ export class MissionScene extends Phaser.Scene {
   setupDebugMenu(): void {
     const x = 22;
     const y = 86;
-    const w = 280;
     const rowH = 26;
-    const labels = ["NO DAMAGE", "INFINITE AMMO", "HEIGHT MAP   K", "DEBUG AI", "SPAWN"];
+    const labels = [
+      "NO DAMAGE",
+      "INFINITE AMMO",
+      "HEIGHT MAP   K",
+      "DEBUG AI",
+      "FX           F",
+      "RELIEF       E",
+      "CAMERA",
+      "SPAWN",
+    ];
     this.debugRoot = this.add.container(x, y);
     this.debugRoot.setDepth(Layer.HUD + 180);
     this.debugRoot.setScrollFactor(0);
@@ -5678,7 +5758,7 @@ export class MissionScene extends Phaser.Scene {
       fontSize: "13px",
       color: "#e8b84a",
     }).setName("debug_title");
-    this.debugRows = labels.map((label, i) => {
+    this.debugRows = labels.map((_label, i) => {
       const t = this.add
         .text(12, 38 + i * rowH, "", {
           fontFamily: "Share Tech Mono, monospace",
@@ -5688,11 +5768,14 @@ export class MissionScene extends Phaser.Scene {
         .setInteractive({ useHandCursor: true })
         .setName(`debug_row_${i}`);
       t.on("pointerdown", () => {
-        if (this.debugSpawnOpen) return;
+        if (this.debugSpawnOpen || this.debugCamOpen) return;
         if (i === 0) this.setNoDamage(!this.noDamage);
         else if (i === 1) this.setInfAmmo(!this.infAmmo);
         else if (i === 2) this.toggleHeightMap();
         else if (i === 3) this.setDebugAi(!this.debugAi);
+        else if (i === 4) this.toggleTestFx();
+        else if (i === 5) this.toggleReliefEditor();
+        else if (i === 6) this.openDebugCam();
         else this.openDebugSpawn();
       });
       return t;
@@ -5705,6 +5788,24 @@ export class MissionScene extends Phaser.Scene {
       })
       .setVisible(false)
       .setName("debug_spawn_hint");
+    const camLabels = ["Y-LIFT", "PROJ", "ZOOM NEAR", "ZOOM FAR", "ZOOM ZMAX"];
+    this.debugCamRows = camLabels.map((_label, i) => {
+      const t = this.add
+        .text(12, 34 + i * 22, "", {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: "13px",
+          color: "#f0e6c8",
+        })
+        .setInteractive({ useHandCursor: true })
+        .setVisible(false)
+        .setName(`debug_cam_${i}`);
+      t.on("pointerdown", () => {
+        if (!this.debugCamOpen) return;
+        this.debugCamIdx = i;
+        this.nudgeDebugCam(1);
+      });
+      return t;
+    });
     const kinds = allKinds();
     this.debugSpawnRows = kinds.map((kind, i) => {
       const t = this.add
@@ -5723,15 +5824,54 @@ export class MissionScene extends Phaser.Scene {
       });
       return t;
     });
-    this.debugRoot.add([this.debugPanel, this.debugTitle, ...this.debugRows, this.debugSpawnHint, ...this.debugSpawnRows]);
+    this.debugRoot.add([
+      this.debugPanel,
+      this.debugTitle,
+      ...this.debugRows,
+      this.debugSpawnHint,
+      ...this.debugCamRows,
+      ...this.debugSpawnRows,
+    ]);
     this.debugRoot.setVisible(false);
     this.syncDebugMenu();
   }
 
   syncDebugMenu(): void {
     if (!this.debugRows.length) return;
-    const w = 280;
+    const w = 300;
     const rowH = 26;
+    if (this.debugCamOpen) {
+      const n = this.debugCamRows.length;
+      const hgt = 36 + n * 22 + 10;
+      this.debugPanel.clear();
+      this.debugPanel.fillStyle(0x12100c, 0.92);
+      this.debugPanel.fillRoundedRect(0, 0, w, hgt, 3);
+      this.debugPanel.lineStyle(1.5, 0xe8b84a, 0.85);
+      this.debugPanel.strokeRoundedRect(0, 0, w, hgt, 3);
+      for (const t of this.debugRows) t.setVisible(false);
+      for (const t of this.debugSpawnRows) t.setVisible(false);
+      this.debugTitle.setVisible(false);
+      this.debugSpawnHint
+        .setVisible(true)
+        .setText("CAMERA   ↑↓  [ ] nudge   ESC back");
+      const vals = [
+        CamTune.lift.toFixed(3),
+        String(CamTune.cam | 0),
+        CamTune.zoomNear.toFixed(2),
+        CamTune.zoomFar.toFixed(2),
+        String(CamTune.zoomZFar | 0),
+      ];
+      const names = ["Y-LIFT", "PROJ", "ZOOM NEAR", "ZOOM FAR", "ZOOM ZMAX"];
+      for (let i = 0; i < this.debugCamRows.length; i++) {
+        const row = this.debugCamRows[i]!;
+        const sel = i === this.debugCamIdx;
+        row
+          .setVisible(true)
+          .setText(`${sel ? "▸" : " "}  ${names[i]!}  ${vals[i]!}`)
+          .setColor(sel ? "#e8b84a" : "#c8c0a8");
+      }
+      return;
+    }
     if (this.debugSpawnOpen) {
       const kinds = allKinds();
       const n = kinds.length;
@@ -5742,6 +5882,7 @@ export class MissionScene extends Phaser.Scene {
       this.debugPanel.lineStyle(1.5, 0xe8b84a, 0.85);
       this.debugPanel.strokeRoundedRect(0, 0, w, hgt, 3);
       for (const t of this.debugRows) t.setVisible(false);
+      for (const t of this.debugCamRows) t.setVisible(false);
       this.debugTitle.setVisible(false);
       this.debugSpawnHint
         .setVisible(true)
@@ -5766,24 +5907,106 @@ export class MissionScene extends Phaser.Scene {
     this.debugTitle.setVisible(true);
     this.debugSpawnHint.setVisible(false);
     for (const t of this.debugSpawnRows) t.setVisible(false);
-    const flags = [this.noDamage, this.infAmmo, this.showHeightMap, this.debugAi];
-    const names = ["NO DAMAGE", "INFINITE AMMO", "HEIGHT MAP   K", "DEBUG AI", "SPAWN"];
+    for (const t of this.debugCamRows) t.setVisible(false);
+    const flags = [
+      this.noDamage,
+      this.infAmmo,
+      this.showHeightMap,
+      this.debugAi,
+      this.fxOn,
+      this.editOpen,
+    ];
+    const names = [
+      "NO DAMAGE",
+      "INFINITE AMMO",
+      "HEIGHT MAP   K",
+      "DEBUG AI",
+      "FX           F",
+      "RELIEF       E",
+    ];
+    // Number shortcuts only for rows without a letter hotkey.
+    const nums = ["1", "2", "", "3", "", "", "4", "5"];
     for (let i = 0; i < this.debugRows.length; i++) {
       const row = this.debugRows[i]!;
       row.setVisible(true);
-      if (i < 4) {
+      const num = nums[i]!;
+      const prefix = num ? `${num}  ` : "   ";
+      if (i < 6) {
         const on = flags[i]!;
-        row.setText(`${i + 1}  ${names[i]!}            ${on ? "ON" : "OFF"}`);
+        row.setText(`${prefix}${names[i]!}            ${on ? "ON" : "OFF"}`);
         row.setColor(on ? "#e8b84a" : "#8a8470");
+      } else if (i === 6) {
+        row.setText(`${prefix}CAMERA…`);
+        row.setColor("#f0e6c8");
       } else {
-        row.setText("5  SPAWN…");
+        row.setText(`${prefix}SPAWN…`);
         row.setColor("#f0e6c8");
       }
     }
   }
 
+  nudgeCamLift(dir: number): void {
+    CamTune.lift = Phaser.Math.Clamp(Math.round((CamTune.lift + dir * 0.005) * 1000) / 1000, 0.01, 0.2);
+    this.syncDebugMenu();
+  }
+
+  nudgeCamProj(dir: number): void {
+    CamTune.cam = Phaser.Math.Clamp(CamTune.cam + dir * 20, 160, 1200);
+    this.syncDebugMenu();
+  }
+
+  nudgeCamZoomNear(dir: number): void {
+    CamTune.zoomNear = Phaser.Math.Clamp(
+      Math.round((CamTune.zoomNear + dir * 0.05) * 100) / 100,
+      0.4,
+      4
+    );
+    this.syncDebugMenu();
+  }
+
+  nudgeCamZoomFar(dir: number): void {
+    CamTune.zoomFar = Phaser.Math.Clamp(
+      Math.round((CamTune.zoomFar + dir * 0.02) * 100) / 100,
+      0.15,
+      2
+    );
+    this.syncDebugMenu();
+  }
+
+  nudgeCamZoomZFar(dir: number): void {
+    CamTune.zoomZFar = Phaser.Math.Clamp(CamTune.zoomZFar + dir * 10, 60, 600);
+    this.syncDebugMenu();
+  }
+
+  openDebugCam(): void {
+    this.debugCamOpen = true;
+    this.debugSpawnOpen = false;
+    this.syncDebugMenu();
+  }
+
+  closeDebugCam(): void {
+    this.debugCamOpen = false;
+    this.syncDebugMenu();
+  }
+
+  nudgeDebugCamSel(dir: number): void {
+    const n = this.debugCamRows.length;
+    if (!n) return;
+    this.debugCamIdx = (this.debugCamIdx + dir + n) % n;
+    this.syncDebugMenu();
+  }
+
+  nudgeDebugCam(dir: number): void {
+    if (this.debugCamIdx === 0) this.nudgeCamLift(dir);
+    else if (this.debugCamIdx === 1) this.nudgeCamProj(dir);
+    else if (this.debugCamIdx === 2) this.nudgeCamZoomNear(dir);
+    else if (this.debugCamIdx === 3) this.nudgeCamZoomFar(dir);
+    else this.nudgeCamZoomZFar(dir);
+  }
+
   openDebugSpawn(): void {
     this.debugSpawnOpen = true;
+    this.debugCamOpen = false;
     this.syncDebugMenu();
   }
 
@@ -5848,6 +6071,7 @@ export class MissionScene extends Phaser.Scene {
       this.editGfx.clear();
       this.editDirty = null;
     }
+    this.syncDebugMenu();
   }
 
   setEditBrush(i: number): void {
@@ -6155,6 +6379,7 @@ export class MissionScene extends Phaser.Scene {
       this.miniWrecks,
       this.miniGfx,
       this.hud,
+      this.liftPrompt,
       this.hvHud,
       ...this.hvRows,
       this.playerHud,
@@ -6250,28 +6475,13 @@ export class MissionScene extends Phaser.Scene {
 
   playZoom(): number {
     const h = this.heli;
-    const spool = Phaser.Math.Easing.Sine.In(Phaser.Math.Clamp(h.rotorSpd / 32, 0, 1));
-    if (h.phase !== "flight" && h.phase !== "liftoff") {
-      return Phaser.Math.Linear(2.55, 1.02, spool);
-    }
-    const napeZ = 1.28;
-    const cruiseZ = 1.02;
-    const popZ = 0.78;
-    let altZoom: number;
-    if (this.keySpace?.isDown) altZoom = popZ;
-    else if (this.keyShift?.isDown) altZoom = napeZ;
-    else {
-      const agl = castZ(this.world, h.x, h.y, h.z);
-      if (agl <= CRUISE_AGL) {
-        const t = Phaser.Math.Clamp((agl - LOW_AGL) / Math.max(1, CRUISE_AGL - LOW_AGL), 0, 1);
-        altZoom = Phaser.Math.Linear(napeZ, cruiseZ, t);
-      } else {
-        const t = Phaser.Math.Clamp((agl - CRUISE_AGL) / Math.max(1, MAX_AGL - CRUISE_AGL), 0, 1);
-        altZoom = Phaser.Math.Linear(cruiseZ, popZ, t);
-      }
-    }
+    // Absolute world Z: higher altitude → more zoomed out (Phaser zoom shrinks).
+    const zNear = 0;
+    const zFar = Math.max(1, CamTune.zoomZFar);
+    const u = Phaser.Math.Clamp((h.z - zNear) / zFar, 0, 1);
+    const base = Phaser.Math.Linear(CamTune.zoomNear, CamTune.zoomFar, u);
     const spdN = Phaser.Math.Clamp(Math.hypot(h.vx, h.vy) / 340, 0, 1);
-    return altZoom * (1 - spdN * 0.06);
+    return base * (1 - spdN * 0.06);
   }
 
   theaterZoom(): number {
@@ -6424,6 +6634,7 @@ export class MissionScene extends Phaser.Scene {
 
   setHudVisible(on: boolean): void {
     this.hud.setVisible(on);
+    this.liftPrompt.setVisible(on && this.heli.phase === "ready");
     this.hvHud.setVisible(on);
     for (const t of this.hvRows) t.setVisible(on);
     this.wpnHud.setVisible(on);
