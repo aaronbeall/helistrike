@@ -63,6 +63,10 @@ import {
 const MISSILE_IGNITE = 0.525;
 const HELLFIRE_LOCK_T = 0.5;
 const HELLFIRE_SEEK_DELAY = 0.42;
+/** Soft rim where map-edge steering ramps up. */
+const MAP_EDGE_MARGIN = 280;
+/** Hard pad units cannot cross. */
+const MAP_EDGE_PAD = 40;
 
 /** Player damage interest UVs — hand-picked on heli_body (see PLAYER_DMG_POIS / sprite rig). */
 const PLAYER_DMG_POI_UV = PLAYER_DMG_POIS;
@@ -972,9 +976,11 @@ export class MissionScene extends Phaser.Scene {
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT).on("down", () => {
       if (this.debugCamOpen) this.nudgeDebugCam(-1);
+      else if (this.spriteCfg?.open) this.spriteCfg.cycleFrame(-1);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT).on("down", () => {
       if (this.debugCamOpen) this.nudgeDebugCam(1);
+      else if (this.spriteCfg?.open) this.spriteCfg.cycleFrame(1);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER).on("down", () => {
       if (this.debugSpawnOpen) this.debugSpawnSelected();
@@ -4566,23 +4572,83 @@ export class MissionScene extends Phaser.Scene {
         wy += (ly / ld) * 48;
       }
     }
-    return { x: wx, y: wy };
+    // Map rim overrides other wants — turn inland before leaving the theater.
+    return this.mapEdgeSteer(u.x, u.y, wx, wy);
+  }
+
+  /** Inward aim that overrides other steer wants near the map rim. */
+  mapEdgeSteer(x: number, y: number, wantX: number, wantY: number): { x: number; y: number } {
+    const lo = MAP_EDGE_PAD;
+    const hi = WORLD - MAP_EDGE_PAD;
+    const m = MAP_EDGE_MARGIN;
+    let px = 0;
+    let py = 0;
+    if (x < lo + m) px += 1 - Phaser.Math.Clamp((x - lo) / m, 0, 1);
+    if (x > hi - m) px -= 1 - Phaser.Math.Clamp((hi - x) / m, 0, 1);
+    if (y < lo + m) py += 1 - Phaser.Math.Clamp((y - lo) / m, 0, 1);
+    if (y > hi - m) py -= 1 - Phaser.Math.Clamp((hi - y) / m, 0, 1);
+    const w = Math.hypot(px, py);
+    if (w < 0.02) return { x: wantX, y: wantY };
+    const t = Math.min(1, w * 1.2);
+    const inlandX = x + (px / w) * (220 + t * 400);
+    const inlandY = y + (py / w) * (220 + t * 400);
+    return {
+      x: Phaser.Math.Linear(wantX, inlandX, t),
+      y: Phaser.Math.Linear(wantY, inlandY, t),
+    };
+  }
+
+  /** Kill outbound velocity and clamp so units cannot leave the map. */
+  containOnMap(u: Unit, dt: number): void {
+    const sp = specOf(u.kind);
+    if (sp.building || sp.move === "static") return;
+    const lo = MAP_EDGE_PAD;
+    const hi = WORLD - MAP_EDGE_PAD;
+    const m = MAP_EDGE_MARGIN;
+    if (u.x < lo + m && u.vx < 0) u.vx *= Phaser.Math.Clamp((u.x - lo) / m, 0, 1);
+    if (u.x > hi - m && u.vx > 0) u.vx *= Phaser.Math.Clamp((hi - u.x) / m, 0, 1);
+    if (u.y < lo + m && u.vy < 0) u.vy *= Phaser.Math.Clamp((u.y - lo) / m, 0, 1);
+    if (u.y > hi - m && u.vy > 0) u.vy *= Phaser.Math.Clamp((hi - u.y) / m, 0, 1);
+    // Aerial / boat: active inward bias when deep in the rim (no steerGround path).
+    if (sp.aerial || sp.water || sp.move === "boat") {
+      let px = 0;
+      let py = 0;
+      if (u.x < lo + m) px += 1 - Phaser.Math.Clamp((u.x - lo) / m, 0, 1);
+      if (u.x > hi - m) px -= 1 - Phaser.Math.Clamp((hi - u.x) / m, 0, 1);
+      if (u.y < lo + m) py += 1 - Phaser.Math.Clamp((u.y - lo) / m, 0, 1);
+      if (u.y > hi - m) py -= 1 - Phaser.Math.Clamp((hi - u.y) / m, 0, 1);
+      const w = Math.hypot(px, py);
+      if (w > 0.02) {
+        const t = Math.min(1, w);
+        const thrust = (sp.aerial ? 160 : 70) * t * t;
+        u.vx += (px / w) * thrust * dt;
+        u.vy += (py / w) * thrust * dt;
+        if (t > 0.45) {
+          const inland = Math.atan2(py, px);
+          u.angle = Phaser.Math.Angle.RotateTo(u.angle, inland, 2.6 * t * dt);
+        }
+      }
+    }
+    u.x = Phaser.Math.Clamp(u.x, lo, hi);
+    u.y = Phaser.Math.Clamp(u.y, lo, hi);
   }
 
   pickBoatWaypoint(u: Unit): void {
+    const lo = MAP_EDGE_PAD + 80;
+    const hi = WORLD - MAP_EDGE_PAD - 80;
     for (let i = 0; i < 14; i++) {
       const a = Math.random() * Math.PI * 2;
       const d = 140 + Math.random() * 260;
-      const x = u.x + Math.cos(a) * d;
-      const y = u.y + Math.sin(a) * d;
+      const x = Phaser.Math.Clamp(u.x + Math.cos(a) * d, lo, hi);
+      const y = Phaser.Math.Clamp(u.y + Math.sin(a) * d, lo, hi);
       if (isWater(this.world, x, y) && isWater(this.world, (u.x + x) / 2, (u.y + y) / 2)) {
         u.aiTx = x;
         u.aiTy = y;
         return;
       }
     }
-    u.aiTx = u.x + Math.cos(u.angle) * 80;
-    u.aiTy = u.y + Math.sin(u.angle) * 80;
+    u.aiTx = Phaser.Math.Clamp(u.x + Math.cos(u.angle) * 80, lo, hi);
+    u.aiTy = Phaser.Math.Clamp(u.y + Math.sin(u.angle) * 80, lo, hi);
   }
 
   driveBoat(u: Unit, dt: number): void {
@@ -4853,6 +4919,7 @@ export class MissionScene extends Phaser.Scene {
           u.z = groundZ(this.world, u.x, u.y);
         }
       }
+      this.containOnMap(u, dt);
       const guns = gunsOf(u);
       if (guns.length) {
         for (let gi = 0; gi < guns.length; gi++) {
