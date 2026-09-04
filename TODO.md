@@ -70,6 +70,9 @@
 * [ ] Screen shock when player takes damage
 * [ ] Radial blur spinningblades
 * [ ] Bubble explosion
+* [ ] Weather effects (rain, lightning, thunder)
+* [ ] Time of day lighting effects
+  * [ ] Night rendering (lights)
 
 ## Fix
 
@@ -83,3 +86,6 @@
   * [ ] Add wheels to wheeled vehicle debris
 * [ ] Enemy helis rotar hulks are wrong -- should be the 5 point and sized correctly
 * [ ] Cleanup unused sprites
+* [ ] Hit areas -- use rects where appropriate?
+* [ ] Boat spawns should happen only with enough space
+* [ ] Chroma key bleed

@@ -150,8 +150,20 @@ export interface Frag {
   /** Local blade offsets (fraction of rotorSpan) for extra flame points. */
   bladeOffs?: number[];
   rotorSpan?: number;
+  /** Local burn points on a thrown part (e.g. radar dish), in unrotated frag space. */
+  flamePts?: { lx: number; ly: number; sc: number }[];
+  /** Match live radar dish foreshortening (scaleY squash). */
+  dishFlat?: boolean;
   /** Strong air drag for spinning rotor debris. */
   rotorThrow?: boolean;
+  /** Rotor stays on the falling hull mount instead of flying off. */
+  pinHost?: Frag;
+  pinMount?: { x: number; y: number };
+  /** Mild foreshortening / bend for a pinned rotor (same center). */
+  rotorSkew?: boolean;
+  /** Wheel debris: bounce then roll downhill along the height map. */
+  wheelRoll?: boolean;
+  rolling?: boolean;
 }
 
 let nid = 1;
@@ -187,6 +199,10 @@ export function fragCat(kind: UnitKind): FragCat {
 export function fragKeys(kind: UnitKind): string[] {
   const cat = fragCat(kind);
   return Array.from({ length: 12 }, (_, i) => `fx_frag_${cat}_${i}`);
+}
+
+export function wheelFragKeys(): string[] {
+  return Array.from({ length: 4 }, (_, i) => `fx_frag_wheel_${i}`);
 }
 
 export const FRAG_KEYS = fragKeys("tank");

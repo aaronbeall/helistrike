@@ -12,6 +12,7 @@ const SRC = {
   debrisMech: "sprites/helistrike-debris-mech.png",
   debrisStruct: "sprites/helistrike-debris-struct.png",
   debrisOrganic: "sprites/helistrike-debris-organic.png",
+  debrisWheels: "sprites/helistrike-debris-wheels.png",
   tankWreck: "sprites/helistrike-tank-wreck-parts.png",
   weapons: "sprites/helistrike-weapons.png",
   blasts: "sprites/helistrike-blasts.png",
@@ -71,6 +72,7 @@ export function preloadArt(scene: Phaser.Scene): void {
   scene.load.image("src_debris_mech", SRC.debrisMech);
   scene.load.image("src_debris_struct", SRC.debrisStruct);
   scene.load.image("src_debris_organic", SRC.debrisOrganic);
+  scene.load.image("src_debris_wheels", SRC.debrisWheels);
   scene.load.image("src_tank_wreck", SRC.tankWreck);
   scene.load.image("src_weapons", SRC.weapons);
   scene.load.image("src_blasts", SRC.blasts);
@@ -662,6 +664,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   putDebrisSheet(textures, "src_debris_mech", "mech");
   putDebrisSheet(textures, "src_debris_struct", "struct");
   putDebrisSheet(textures, "src_debris_organic", "organic");
+  putWheelDebrisSheet(textures);
   if (!textures.exists("fx_frag_mech_0") && textures.exists("src_debris")) {
     putDebrisSheet(textures, "src_debris", "mech");
   }
@@ -745,6 +748,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     ...["mech", "struct", "organic"].flatMap((cat) =>
       Array.from({ length: 12 }, (_, i) => `fx_frag_${cat}_${i}`)
     ),
+    ...Array.from({ length: 4 }, (_, i) => `fx_frag_wheel_${i}`),
   ];
   for (const key of shadowSrc) {
     if (textures.exists(key)) bakeShadows(textures, key);
@@ -849,6 +853,15 @@ function putDebrisSheet(
   cells.forEach((c, i) => {
     if (!c.width || !c.height) return;
     put(textures, `fx_frag_${cat}_${i}`, darkenWreck(fit(c, cat === "organic" ? 12 : 22), 0.7));
+  });
+}
+
+function putWheelDebrisSheet(textures: Phaser.Textures.TextureManager): void {
+  if (!textures.exists("src_debris_wheels")) return;
+  const cells = sliceGrid(keyPixels(src(textures, "src_debris_wheels"), "magenta"), 2, 2);
+  cells.forEach((c, i) => {
+    if (!c.width || !c.height) return;
+    put(textures, `fx_frag_wheel_${i}`, darkenWreck(fit(c, 15), 0.65));
   });
 }
 

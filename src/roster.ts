@@ -101,6 +101,8 @@ export interface UnitSpec {
   hv?: boolean;
   noCrater?: boolean;
   throwGuns?: boolean;
+  /** Spawn 1–2 rolling wheel debris on death (wheeled vehicles). */
+  wheels?: number;
   /** Hull/body aim only; cannot traverse a turret. Must face the target to fire. */
   fixedAim?: boolean;
   spawnYaw?: number;
@@ -321,7 +323,13 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     spawnYaw: (5 * Math.PI) / 180,
     guns: [],
     rotors: [],
-    dish: { tex: "building_radar_disk", origin: { x: 0.5, y: 0.5 }, mount: { ...SPRITE_MOUNT.building_radar }, scale: 1 },
+    dish: {
+      tex: "building_radar_disk",
+      hulk: "building_radar_disk_hulk",
+      origin: { x: 0.5, y: 0.5 },
+      mount: { ...SPRITE_MOUNT.building_radar },
+      scale: 1,
+    },
   },
   pickup: {
     health: 42,
@@ -332,6 +340,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     frag: "mech",
     rotOff: Math.PI / 2,
     move: "vehicle",
+    wheels: 2,
     guns: [],
     rotors: [],
   },
@@ -344,6 +353,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     frag: "mech",
     rotOff: Math.PI / 2,
     move: "vehicle",
+    wheels: 2,
     guns: [],
     rotors: [],
   },
@@ -356,6 +366,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     frag: "mech",
     rotOff: Math.PI / 2,
     move: "vehicle",
+    wheels: 2,
     guns: [],
     rotors: [],
   },
@@ -368,6 +379,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     frag: "mech",
     rotOff: Math.PI / 2,
     move: "vehicle",
+    wheels: 2,
     guns: [],
     rotors: [],
   },
@@ -381,6 +393,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     rotOff: Math.PI / 2,
     move: "tank",
     throwGuns: true,
+    wheels: 2,
     weapon: shell({ fireCd: 1.15, range: 440, dmg: 6, blast: 12, muzzleLen: 20 }),
     guns: [gun("enemy_lav_gun", 0.76, { ...SPRITE_MOUNT.enemy_lav })],
     rotors: [],
@@ -395,6 +408,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     rotOff: Math.PI / 2,
     move: "tank",
     throwGuns: true,
+    wheels: 2,
     weapon: WPN_AA,
     guns: [
       {
@@ -879,6 +893,7 @@ export const ROSTER_TEX: string[] = [
       ...s.guns.flatMap((g) => [g.tex, g.hulk ?? ""]),
       ...s.rotors.flatMap((r) => [r.tex, r.hulk ?? ""]),
       s.dish?.tex ?? "",
+      s.dish?.hulk ?? "",
     ])
   ),
   "tracer_aa",
