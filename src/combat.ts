@@ -110,6 +110,8 @@ export interface Spark {
   streak?: boolean;
   dart?: boolean;
   blood?: boolean;
+  /** Blood particle already painted a multiply stain onto the terrain. */
+  stamped?: boolean;
   shock?: boolean;
   straight?: boolean;
   ox?: number;
@@ -171,6 +173,11 @@ export interface Frag {
   rolling?: boolean;
   /** Distance accumulator for wreck-map tire prints while rolling. */
   track?: number;
+  /** Patrol/PT boat hull: surface sink (scale down) with pre-baked blue hulk. */
+  boatSink?: boolean;
+  /** Elapsed / total sink duration for scale progress. */
+  sinkT?: number;
+  sinkMax?: number;
 }
 
 let nid = 1;

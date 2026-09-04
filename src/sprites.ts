@@ -516,10 +516,6 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     ["enemy_drone_rotor", 14],
     ["_", 8],
   ]);
-  if (textures.exists("enemy_drone_rotor")) {
-    const drone = textures.get("enemy_drone_rotor").getSourceImage() as HTMLCanvasElement;
-    put(textures, "enemy_drone_rotor_spin", radialStampBlur(drone));
-  }
   putGrid(textures, "src_tower_guns", 2, 1, [
     ["building_tower_aa", 48],
     ["building_tower_sam", 48],
@@ -568,6 +564,11 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     ["enemy_sam_hulk", 68],
     ["enemy_ptboat_hulk", 50],
   ]);
+  for (const key of ["enemy_boat_hulk", "enemy_ptboat_hulk"] as const) {
+    if (!textures.exists(key)) continue;
+    const img = textures.get(key).getSourceImage() as HTMLCanvasElement;
+    put(textures, `${key}_sink`, submergeBlue(img));
+  }
   putHulkGrid(textures, "src_moto_mg_hulk", 2, 1, [
     ["enemy_motorcycle_hulk", 46],
     ["enemy_troop_mounted_mg_hulk", 36],
@@ -1214,6 +1215,25 @@ function darkenWreck(src: HTMLCanvasElement, mul = 0.55): HTMLCanvasElement {
   return src;
 }
 
+/** Pre-bake a dark submerged blue cast of a boat hulk. */
+function submergeBlue(src: HTMLCanvasElement): HTMLCanvasElement {
+  const c = copyCanvas(src);
+  const g = c.getContext("2d")!;
+  const pix = g.getImageData(0, 0, c.width, c.height);
+  const d = pix.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const a = d[i + 3]!;
+    if (a < 8) continue;
+    const lum = d[i]! * 0.28 + d[i + 1]! * 0.48 + d[i + 2]! * 0.24;
+    d[i] = Math.min(255, lum * 0.14 + 6);
+    d[i + 1] = Math.min(255, lum * 0.28 + 14);
+    d[i + 2] = Math.min(255, lum * 0.48 + 28);
+    d[i + 3] = Math.min(255, Math.round(a * 0.9));
+  }
+  g.putImageData(pix, 0, 0);
+  return c;
+}
+
 /** Remove soft gray drop-shadow fringes baked into sprite art (keeps solid blade/metal pixels). */
 function stripBakedDropShadow(src: HTMLCanvasElement): HTMLCanvasElement {
   const g = src.getContext("2d")!;
@@ -1468,7 +1488,7 @@ function radialStampBlur(
   const cy = out.height * 0.5;
   const totalRad = (totalDeg * Math.PI) / 180;
   const step = totalRad / Math.max(1, stamps);
-  const alpha = 3 / Math.max(1, stamps);
+  const alpha = 4.5 / Math.max(1, stamps);
   for (let i = 0; i < stamps; i++) {
     // Center the arc on 0 so the disc stays registered with the sharp hub.
     const ang = (i + 0.5) * step - totalRad * 0.5;

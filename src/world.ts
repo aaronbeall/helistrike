@@ -313,6 +313,11 @@ export function groundZ(world: WorldData, x: number, y: number): number {
   return Math.max(0, (h - GROUND_H_ZERO) * GROUND_Z_SCALE);
 }
 
+/** Floating craft ride this Z on water; bed under the water is still `groundZ`. */
+export function waterSurfaceZ(): number {
+  return Math.max(0, (H_WATER - GROUND_H_ZERO) * GROUND_Z_SCALE);
+}
+
 export function castZ(world: WorldData, x: number, y: number, z: number): number {
   return Math.max(0, z - groundZ(world, x, y));
 }

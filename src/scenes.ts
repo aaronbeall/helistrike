@@ -48,6 +48,7 @@ import {
   rebuildWorldPatch,
   applyTerrainLight,
   sampleBiome,
+  waterSurfaceZ,
   SCALE,
   WORLD,
   WRECK_TEX,
@@ -85,6 +86,7 @@ const LOAD_TIPS = [
   "Nap-of-earth (SHIFT) through ravines and river beds to break enemy line of sight.",
   "Hellfires lock onto fast movers — keep the box steady, then let them run.",
   "TOWs are ideal for killing AA from outside their envelope — stay long and wire-guide in.",
+  "While a TOW is in flight, SPACE raises the missile and SHIFT drops it — steer height as well as aim.",
   "Chain gun eats soft targets; save rockets and missiles for armor and emplacements.",
   "Wounded infantry crawl and bleed — finish them before they dig in and return fire.",
   "Battleships pack mixed batteries. Prioritize the AA mount before you linger overhead.",
@@ -93,6 +95,9 @@ const LOAD_TIPS = [
   "M opens the theater map. Mark high-value sites before you commit to a gun run.",
   "Hydras shred soft clusters; Hellfires and TOWs punch hard points from stand-off.",
 ];
+
+/** Scratch canvas for tinting blood dirt frames before multiply-stamping terrain. */
+let bloodStampScratch: HTMLCanvasElement | null = null;
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -1317,6 +1322,60 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Paint a blood dirt particle onto the terrain with multiply (does not alter the live spark).
+   * Matches mid-life dirt size/rotation from syncSparkSprites.
+   */
+  stampBloodWorld(s: Spark): void {
+    if (!s.blood || isWater(this.world, s.x, s.y) || !this.textures.exists(s.tex)) return;
+    const age = 1 - Phaser.Math.Clamp(s.life / Math.max(s.max, 1e-6), 0, 1);
+    const fade = 1 - age;
+    const grow = 1 - Math.pow(1 - age, 3.4);
+    const thick = s.scale * (0.06 + 3.6 * grow);
+    const late = Math.pow(Phaser.Math.Clamp((age - 0.52) / 0.48, 0, 1), 1.7);
+    const sx = thick * (0.85 + 0.55 * grow);
+    const sy = thick * (0.28 + 0.42 * late);
+    const rot = s.heading + s.angJit * 0.14;
+    const zs = zScale(s.z);
+    const ox = 0.12;
+    const oy = 0.5;
+
+    const tex = this.textures.get(s.tex);
+    const fr = tex.get(s.frame);
+    const srcImg = tex.getSourceImage() as CanvasImageSource;
+    const tw = fr.cutWidth;
+    const th = fr.cutHeight;
+    if (tw < 1 || th < 1) return;
+
+    if (!bloodStampScratch || bloodStampScratch.width < tw || bloodStampScratch.height < th) {
+      bloodStampScratch = document.createElement("canvas");
+      bloodStampScratch.width = tw;
+      bloodStampScratch.height = th;
+    }
+    const sg = bloodStampScratch.getContext("2d")!;
+    sg.clearRect(0, 0, tw, th);
+    sg.globalCompositeOperation = "source-over";
+    sg.drawImage(srcImg, fr.cutX, fr.cutY, tw, th, 0, 0, tw, th);
+    sg.globalCompositeOperation = "source-in";
+    const cr = (s.tint >> 16) & 255;
+    const cg = (s.tint >> 8) & 255;
+    const cb = s.tint & 255;
+    sg.fillStyle = `rgb(${cr},${cg},${cb})`;
+    sg.fillRect(0, 0, tw, th);
+    sg.globalCompositeOperation = "source-over";
+
+    const dw = (tw * sx * zs) / SCALE;
+    const dh = (th * sy * zs) / SCALE;
+    const g = this.world.canvas.getContext("2d")!;
+    g.save();
+    g.globalCompositeOperation = "multiply";
+    g.globalAlpha = Phaser.Math.Clamp(0.35 + fade * 0.65, 0.2, 0.85);
+    g.translate(s.x / SCALE, s.y / SCALE);
+    g.rotate(rot);
+    g.drawImage(bloodStampScratch, 0, 0, tw, th, -ox * dw, -oy * dh, dw, dh);
+    g.restore();
+  }
+
   /** Soft, patchy tire print for bouncing / rolling wheel debris. */
   stampWheelTrack(x: number, y: number, ang: number, scale = 0.72, alpha = 0.38): void {
     if (isWater(this.world, x, y)) return;
@@ -2198,6 +2257,7 @@ export class MissionScene extends Phaser.Scene {
     const drag = Math.pow(0.045, dt);
     const sparkDrag = Math.pow(0.5, dt);
     const zDrag = Math.pow(0.18, dt);
+    let bloodDirty = false;
     for (const s of this.sparks) {
       s.x += s.vx * dt;
       s.y += s.vy * dt;
@@ -2263,9 +2323,17 @@ export class MissionScene extends Phaser.Scene {
           s.life = Math.min(s.life, 0.06);
         }
       }
+      if (s.blood && !s.stamped && s.life / s.max <= 0.5) {
+        s.stamped = true;
+        this.stampBloodWorld(s);
+        bloodDirty = true;
+      }
       if (s.life > 0) live.push(s);
     }
     this.sparks = live;
+    if (bloodDirty && this.textures.exists("terrain")) {
+      (this.textures.get("terrain") as Phaser.Textures.CanvasTexture).refresh();
+    }
     this.syncSparkSprites();
   }
 
@@ -3088,7 +3156,9 @@ export class MissionScene extends Phaser.Scene {
     }
     const guns = gunsOf(u);
     const isHeli = sp.move === "heli";
-    if (isHeli) {
+    if (sp.move === "boat") {
+      this.spawnBoatSink(u);
+    } else if (isHeli) {
       this.spawnHeliCrash({
         x: u.x,
         y: u.y,
@@ -3147,7 +3217,6 @@ export class MissionScene extends Phaser.Scene {
             // Turret hulks are large textures; don't inherit full debris trailR bump.
             throwOff(turretKey, (u.turrets[gi] ?? u.turret) + Math.PI / 2, at.x, at.y, scale, {
               trailR: this.texTrailR(turretKey) * scale * 0.38,
-              bounces: 0,
             });
           });
         }
@@ -3315,6 +3384,67 @@ export class MissionScene extends Phaser.Scene {
   /** Frag scale so a rotor hulk draws ~60% of the live rotor size. */
   rotorHulkScale(liveTex: string, hulkKey: string, partScale = 1): number {
     return (this.liveRotorDrawPx(liveTex, partScale) * 0.6) / Math.max(this.texSpan(hulkKey), 1);
+  }
+
+  /** Hull sinks below the waterline; guns still pop off as normal debris. */
+  spawnBoatSink(u: Unit): void {
+    const sp = specOf(u.kind);
+    const guns = gunsOf(u);
+    const hullKey = resolveSkin(this.textures, this.textures.exists(sp.hulk) ? sp.hulk : textureOf(u.kind), u.camo);
+    if (sp.throwGuns && guns.length) {
+      guns.forEach((g, gi) => {
+        const raw = this.textures.exists(g.hulk ?? "") ? g.hulk! : g.tex;
+        const turretKey = resolveSkin(this.textures, raw, u.camo);
+        const liveKey = resolveSkin(this.textures, g.tex, u.camo);
+        const liveSpan = this.texSpan(liveKey);
+        const hulkSpan = this.texSpan(turretKey);
+        const scale = (g.scale ?? 1) * (liveSpan / Math.max(hulkSpan, 1));
+        const at = this.gunMountPos(u, gi);
+        const a = Math.random() * Math.PI * 2;
+        const throwSp = range(70, 160);
+        this.frags.push({
+          x: at.x,
+          y: at.y,
+          z: u.z + 14,
+          vx: Math.cos(a) * throwSp,
+          vy: Math.sin(a) * throwSp,
+          vz: range(120, 210),
+          angle: (u.turrets[gi] ?? u.turret) + Math.PI / 2,
+          spin: range(-5, 5),
+          life: 5,
+          key: turretKey,
+          settled: false,
+          gravity: true,
+          bounces: Math.random() < 1 / 3 ? 2 + ((Math.random() * 2) | 0) : 0,
+          trailR: this.texTrailR(turretKey) * scale * 0.38,
+          scale,
+        });
+      });
+    }
+    const baseKey = this.textures.exists(hullKey) ? hullKey : textureOf(u.kind);
+    const sinkKey = `${baseKey}_sink`;
+    const key = this.textures.exists(sinkKey) ? sinkKey : baseKey;
+    const surface = waterSurfaceZ();
+    this.frags.push({
+      x: u.x,
+      y: u.y,
+      z: surface,
+      vx: u.vx * 0.35 + range(-14, 14),
+      vy: u.vy * 0.35 + range(-14, 14),
+      vz: 0,
+      angle: u.angle + Math.PI / 2,
+      spin: range(0.18, 0.42) * (Math.random() < 0.5 ? -1 : 1),
+      life: 22,
+      key,
+      settled: false,
+      gravity: false,
+      bounces: 0,
+      trailR: this.texTrailR(key) * 0.45,
+      scale: 1,
+      boatSink: true,
+      sinkT: 0,
+      sinkMax: range(5.2, 7.5),
+    });
   }
 
   spawnHeliCrash(opts: {
@@ -3640,7 +3770,8 @@ export class MissionScene extends Phaser.Scene {
           }
           continue;
         }
-        this.tickFragTrailFade(f, dt);
+        // Boat hulks leave a wreck stamp only — never burn/smoke trails.
+        if (!f.boatSink) this.tickFragTrailFade(f, dt);
         if (!f.trailOnly || (f.trailFade ?? 0) > 0) keep.push(f);
         continue;
       }
@@ -3650,6 +3781,12 @@ export class MissionScene extends Phaser.Scene {
       }
       if (f.rolling && f.wheelRoll && !f.settled) {
         this.tickWheelRoll(f, dt);
+        if (!f.settled) keep.push(f);
+        else if (!f.trailOnly || (f.trailFade ?? 0) > 0) keep.push(f);
+        continue;
+      }
+      if (f.boatSink && !f.settled) {
+        this.tickBoatSink(f, dt);
         if (!f.settled) keep.push(f);
         else if (!f.trailOnly || (f.trailFade ?? 0) > 0) keep.push(f);
         continue;
@@ -3873,6 +4010,44 @@ export class MissionScene extends Phaser.Scene {
     if (wet || (spd < 6 && steep < 0.04)) {
       this.settleFrag(f);
     }
+  }
+
+  tickBoatSink(f: Frag, dt: number): void {
+    const max = Math.max(0.5, f.sinkMax ?? 6);
+    f.sinkT = (f.sinkT ?? 0) + dt;
+    const u = Phaser.Math.Clamp(f.sinkT / max, 0, 1);
+    // Ease in: slow at first, then drop under faster.
+    const ease = u * u;
+    f.x += f.vx * dt;
+    f.y += f.vy * dt;
+    f.vx *= Math.pow(0.35, dt);
+    f.vy *= Math.pow(0.35, dt);
+    // Keep a gentle yaw the whole way down.
+    f.angle += f.spin * dt;
+    f.spin = Phaser.Math.Linear(f.spin, f.spin >= 0 ? 0.12 : -0.12, 1 - Math.pow(0.5, dt));
+    // Surface → terrain bed (ignore waterline). Scale shrinks with depth.
+    const surface = waterSurfaceZ();
+    const bed = groundZ(this.world, f.x, f.y);
+    f.z = Phaser.Math.Linear(surface, bed, ease);
+    f.vz = 0;
+    f.scale = Phaser.Math.Linear(1, 0.55, ease);
+    if (u >= 1) this.settleBoatSink(f);
+  }
+
+  settleBoatSink(f: Frag): void {
+    f.settled = true;
+    f.vx = 0;
+    f.vy = 0;
+    f.vz = 0;
+    if (!f.trailOnly) {
+      const o = this.fragStampOrigin(f.key);
+      const hs = this.wreckDrawScale(f.x, f.y, f.z || 0, f.scale ?? 0.55);
+      // Pre-baked blue sink art — no runtime tintFill.
+      this.stampWreck(f.key, f.x, f.y, f.angle, hs.sx, 0.8, o.x, o.y, hs.sy);
+      f.trailOnly = true;
+    }
+    f.trailFade = 0;
+    f.life = 0;
   }
 
   impactHeliCrash(f: Frag): void {
@@ -4628,7 +4803,11 @@ export class MissionScene extends Phaser.Scene {
           }
         }
         this.leashPinned(u);
-        u.z = groundZ(this.world, u.x, u.y);
+        if (sp.move === "boat" && isWater(this.world, u.x, u.y)) {
+          u.z = waterSurfaceZ();
+        } else {
+          u.z = groundZ(this.world, u.x, u.y);
+        }
       }
       const guns = gunsOf(u);
       if (guns.length) {
@@ -4899,7 +5078,8 @@ export class MissionScene extends Phaser.Scene {
         const part = parts[pi++];
         if (!part) return;
         const spinKey = `${r.tex}_spin`;
-        const rotorKey = this.textures.exists(spinKey) ? spinKey : r.tex;
+        const rotorKey =
+          r.tex !== "enemy_drone_rotor" && this.textures.exists(spinKey) ? spinKey : r.tex;
         place(part, rotorKey, r.origin, r.mount, ri % 2 ? -u.rotor : u.rotor, ZOff.rotor, r.scale ?? 1);
         if (r.tex.includes("rotor")) {
           const px = this.liveRotorDrawPx(r.tex, r.scale ?? 1);
@@ -5077,7 +5257,11 @@ export class MissionScene extends Phaser.Scene {
       this.fragG.add(this.add.image(0, 0, "fx_frag_metal"));
     }
     const kids = this.fragG.getChildren() as Phaser.GameObjects.Image[];
-    for (const k of kids) k.setVisible(false);
+    for (const k of kids) {
+      k.setVisible(false);
+      const wrap = k.getData("tiltWrap") as Phaser.GameObjects.Container | undefined;
+      if (wrap) wrap.setVisible(false);
+    }
     vis.forEach((f, i) => {
       const sh = kids[i * 2]!;
       const im = kids[i * 2 + 1]!;
@@ -5095,21 +5279,68 @@ export class MissionScene extends Phaser.Scene {
       }
       const cast = castZ(this.world, f.x, f.y, z);
       // Rotor throws have no baked shadow atlas — generic soft "shadow" scales into a huge gray blob.
-      const canShadow = !f.rotorThrow && !f.pinHost && this.textures.exists(shadowKey(f.key, cast));
+      const canShadow =
+        !f.rotorThrow && !f.pinHost && !f.boatSink && this.textures.exists(shadowKey(f.key, cast));
+      const depth = f.settled ? Layer.HULK : worldDepth(z, ZOff.body + (f.pinHost ? 0.55 : 0.35));
+      const spd = Math.hypot(f.vx, f.vy);
+      // Squash along travel; inner image keeps f.angle spin relative to heading.
+      const wheelSquash = !!f.wheelRoll && !f.settled && spd > 8;
+      if (wheelSquash) {
+        const travel = Math.atan2(f.vy, f.vx);
+        const t = Phaser.Math.Clamp((spd - 8) / 160, 0, 1);
+        // Squash perpendicular to travel (narrow across, slightly longer along).
+        const along = Phaser.Math.Linear(1.04, 1.2, t);
+        const across = Phaser.Math.Linear(0.9, 0.66, t);
+        let wrap = im.getData("tiltWrap") as Phaser.GameObjects.Container | undefined;
+        if (!wrap || !wrap.scene) {
+          wrap = this.add.container(f.x, f.y - screenLift(z));
+          wrap.add(im);
+          im.setData("tiltWrap", wrap);
+        }
+        wrap
+          .setVisible(true)
+          .setPosition(f.x, f.y - screenLift(z))
+          .setRotation(travel)
+          .setScale(sc * along, sc * across)
+          .setDepth(depth)
+          .setAlpha(1);
+        im.setVisible(true)
+          .setTexture(f.key)
+          .setOrigin(ox, oy)
+          .setPosition(0, 0)
+          .setRotation(f.angle - travel)
+          .setScale(1)
+          .setAlpha(1);
+        if (canShadow) {
+          sh.setVisible(true).setOrigin(ox, oy);
+          this.applyCastShadow(sh, f.x, f.y, z, f.key, travel, f.scale ?? 1);
+          sh.setScale(sh.scaleX * along, sh.scaleY * across);
+          if (cast < 1) sh.setAlpha(0.22);
+        }
+        return;
+      }
+      this.unwrapTilt(im);
       if (canShadow) {
         sh.setVisible(true).setOrigin(ox, oy);
         this.applyCastShadow(sh, f.x, f.y, z, f.key, f.angle, f.scale ?? 1);
         if (f.dishFlat) sh.setScale(sh.scaleX * 1.04, sh.scaleY * 0.52);
         if (cast < 1) sh.setAlpha(0.22);
       }
+      const sinkU =
+        f.boatSink && !f.settled
+          ? Phaser.Math.Clamp((f.sinkT ?? 0) / Math.max(0.5, f.sinkMax ?? 6), 0, 1)
+          : -1;
+      im.clearTint();
       im.setVisible(true)
         .setTexture(f.key)
         .setOrigin(ox, oy)
         .setPosition(f.x, f.y - screenLift(z))
         .setRotation(f.angle)
         .setScale(sx, sy)
-        .setDepth(f.settled ? Layer.HULK : worldDepth(z, ZOff.body + (f.pinHost ? 0.55 : 0.35)))
-        .setAlpha(f.settled ? 0.92 : 1);
+        .setDepth(depth)
+        .setAlpha(
+          f.settled ? 0.92 : sinkU >= 0 ? Phaser.Math.Linear(0.92, 0.78, sinkU * sinkU) : 1
+        );
     });
   }
 

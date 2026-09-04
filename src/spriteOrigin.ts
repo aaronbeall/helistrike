@@ -54,10 +54,10 @@ export const SPRITE_MUZZLE: Record<string, Uv | readonly Uv[]> = {
   enemy_battleship_gun_aa: { x: 0.5, y: 0.05 },
   enemy_battleship_gun_sam: { x: 0.5, y: 0.12 },
   building_tower_aa: [
-    { x: 0.455, y: 0.173 },
-    { x: 0.486, y: 0.173 },
-    { x: 0.523, y: 0.173 },
-    { x: 0.555, y: 0.173 },
+    { x: 0.40, y: 0.13 }, // front-left muzzle
+    { x: 0.60, y: 0.13 }, // front-right muzzle
+    { x: 0.40, y: 0.27 }, // rear-left muzzle
+    { x: 0.60, y: 0.27 }, // rear-right muzzle
   ],
   building_tower_sam: { x: 0.5, y: 0.12 },
   enemy_heli_gun: { x: 0.5, y: 0.08 },
