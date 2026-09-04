@@ -348,6 +348,8 @@ export class MissionScene extends Phaser.Scene {
   muzzleLife = 0;
   dmgFlameScale = 1;
   trailFxScale = 1;
+  /** Multiplier for trail particle lifespan (mid ≈ 1; large debris > 1). */
+  trailFxLife = 1;
   playerCrashStarted = false;
   playerCrashLanded = false;
   /** <0 = waiting for crash simmer; >=0 = countdown to BIRD DOWN. */
@@ -657,7 +659,7 @@ export class MissionScene extends Phaser.Scene {
     this.tracer.setDepth(Layer.WORLD);
     this.flame = this.poolFx(() =>
       this.add.particles(0, 0, "fx_flame", {
-        lifespan: 480,
+        lifespan: { onEmit: () => 480 * this.trailFxLife },
         speed: { min: 8, max: 40 },
         scale: {
           onEmit: (p) => {
@@ -681,7 +683,7 @@ export class MissionScene extends Phaser.Scene {
     );
     this.playerFlame = this.poolFx(() =>
       this.add.particles(0, 0, "fx_flame", {
-        lifespan: 480,
+        lifespan: { onEmit: () => 480 * this.trailFxLife },
         speed: { min: 8, max: 40 },
         scale: {
           onEmit: (p) => {
@@ -705,7 +707,12 @@ export class MissionScene extends Phaser.Scene {
     );
     this.hurtSmoke = this.poolFx(() =>
       this.add.particles(0, 0, "fx_smoke", {
-        lifespan: { min: 2400, max: 4200 },
+        lifespan: {
+          onEmit: () => {
+            const base = range(2400, 4200);
+            return base * Math.max(1, this.trailFxLife * 0.85);
+          },
+        },
         speed: { min: 3, max: 16 },
         angle: { min: -125, max: -55 },
         scale: { start: 0.32, end: 1.05 },
@@ -720,7 +727,12 @@ export class MissionScene extends Phaser.Scene {
     );
     this.playerHurtSmoke = this.poolFx(() =>
       this.add.particles(0, 0, "fx_smoke", {
-        lifespan: { min: 2400, max: 4200 },
+        lifespan: {
+          onEmit: () => {
+            const base = range(2400, 4200);
+            return base * Math.max(1, this.trailFxLife * 0.85);
+          },
+        },
         speed: { min: 3, max: 16 },
         angle: { min: -125, max: -55 },
         scale: { start: 0.32, end: 1.05 },
@@ -750,7 +762,7 @@ export class MissionScene extends Phaser.Scene {
     };
     this.burn = this.poolFx(() =>
       this.add.particles(0, 0, "fx_flame", {
-        lifespan: { min: 240, max: 420 },
+        lifespan: { onEmit: () => range(240, 420) * this.trailFxLife },
         speed: { min: 2, max: 14 },
         scale: {
           onEmit: (p) => fxEmit(p, () => (0.7 + Math.pow(Math.random(), 0.65) * 0.7) * this.trailFxScale),
@@ -767,7 +779,7 @@ export class MissionScene extends Phaser.Scene {
     );
     this.blastBurn = this.poolFx(() =>
       this.add.particles(0, 0, "fx_flame", {
-        lifespan: { min: 240, max: 420 },
+        lifespan: { onEmit: () => range(240, 420) * this.trailFxLife },
         speed: { min: 2, max: 14 },
         scale: {
           onEmit: (p) => fxEmit(p, () => (0.28 + Math.pow(Math.random(), 0.65) * 0.28) * this.trailFxScale),
@@ -796,7 +808,7 @@ export class MissionScene extends Phaser.Scene {
     this.blastFire.setDepth(Layer.WORLD);
     this.ember = this.poolFx(() =>
       this.add.particles(0, 0, "fx_flame", {
-        lifespan: { min: 180, max: 320 },
+        lifespan: { onEmit: () => range(180, 320) * this.trailFxLife },
         speed: { min: 1, max: 10 },
         scale: {
           onEmit: (p) => fxEmit(p, () => (0.12 + Math.pow(Math.random(), 0.65) * 0.12) * this.trailFxScale),
@@ -813,7 +825,7 @@ export class MissionScene extends Phaser.Scene {
     );
     this.fragSmoke = this.poolFx(() =>
       this.add.particles(0, 0, "fx_smoke", {
-        lifespan: 520,
+        lifespan: { onEmit: () => 520 * this.trailFxLife },
         speed: { min: 8, max: 36 },
         scale: {
           onEmit: (p) => fxEmit(p, () => 0.35 * this.trailFxScale),
@@ -828,7 +840,9 @@ export class MissionScene extends Phaser.Scene {
     );
     this.lingerSmoke = this.poolFx(() =>
       this.add.particles(0, 0, "fx_smoke", {
-        lifespan: { min: 2200, max: 4000 },
+        lifespan: {
+          onEmit: () => range(2200, 4000) * Math.max(1, this.trailFxLife * 0.7),
+        },
         speed: { min: 4, max: 18 },
         angle: { min: -128, max: -52 },
         scale: {
@@ -2509,7 +2523,9 @@ export class MissionScene extends Phaser.Scene {
   updateShots(dt: number): void {
     const ptr = this.worldPointer();
     const remain: Shot[] = [];
+    const culled = new Set<Shot>();
     for (const s of this.shots) {
+      if (culled.has(s)) continue;
       if (s.motor != null) {
         const was = s.motor;
         s.motor += dt;
@@ -2660,6 +2676,20 @@ export class MissionScene extends Phaser.Scene {
         hit = true;
         hitPlayer = true;
       }
+      // Chain gun can pick off enemy rockets/missiles — tiny hit volume, segment-tested.
+      if (!hit && s.from === "player" && s.kind === "cannon") {
+        const killR = 3.6;
+        for (const m of this.shots) {
+          if (culled.has(m) || m === s || m.from !== "enemy" || m.kind === "cannon") continue;
+          if (segPointDist3(x0, y0, z0, s.x, s.y, s.z, m.x, m.y, m.z) > killR) continue;
+          culled.add(s);
+          culled.add(m);
+          this.explode(m.x, m.y, m.z, m.blast, m.dmg, undefined, m.vx, m.vy, m.vz, false, m.kind);
+          hit = true;
+          break;
+        }
+        if (culled.has(s)) continue;
+      }
       if (s.from === "player") {
         for (const u of this.units) {
           if (u.dead) continue;
@@ -2685,7 +2715,7 @@ export class MissionScene extends Phaser.Scene {
       this.emitShotTrail(s, x0, y0, z0);
       remain.push(s);
     }
-    this.shots = remain;
+    this.shots = remain.filter((q) => !culled.has(q));
     this.syncShotSprites();
   }
 
@@ -3150,7 +3180,7 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 
-  destroyUnit(u: Unit): void {
+  destroyUnit(u: Unit, quiet = false): void {
     if (u.dead) return;
     u.dead = true;
     if (u.kind === "lookout" || u.kind === "bunker" || u.kind === "pickup") {
@@ -3158,58 +3188,63 @@ export class MissionScene extends Phaser.Scene {
         if (!crew.dead && crew.pinId === u.id) this.destroyUnit(crew);
       }
     }
-    const hz = u.z + heightOf(u.kind) * 0.5;
     const sp = specOf(u.kind);
     const building = !!sp.building;
     const boom = Phaser.Math.Clamp((radius(u.kind) - 6) / 86, 0.16, 1);
-    const blast = Math.max(42, radius(u.kind) * 2.4) * (building ? 1.4 : 1);
-    const near = Math.hypot(u.x - this.heli.x, u.y - this.heli.y);
-    if (building) {
-      const killPulse =
-        Phaser.Math.Clamp(1.2 - near / 1100, 0.18, 0.62) * Phaser.Math.Linear(0.55, 1.15, boom);
-      this.pulseTestBarrel(killPulse);
-    }
-    this.heFireBurst(u.x, u.y, hz, 0, 0, 1, blast, !!sp.organic, building ? 2.25 : 1, boom);
-    if (building) this.emitDustShock(u.x, u.y, 1);
-    this.smoke.setDepth(worldDepth(u.z, 0.2));
-    this.smoke.emitParticleAt(u.x, u.y - screenLift(u.z) + 12, 16);
-    this.shake = Math.min(10, this.shake + 3);
-    const n = Math.max(2, Math.round((sp.organic ? 4 : building ? 16 : 10) * Phaser.Math.Linear(0.4, 1.2, boom)));
-    const keys = fragKeys(u.kind);
-    for (let i = 0; i < n; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const spd = range(55, 255);
-      const key = this.textures.exists(keys[i % keys.length]!)
-        ? keys[i % keys.length]!
-        : "fx_frag_metal";
-      const organic = !!sp.organic;
-      // Organic debris sprite scale stays varied; flame size is a fixed mid band (see emitFragTrail).
-      this.frags.push({
-        x: u.x,
-        y: u.y,
-        z: u.z + range(8, 22),
-        vx: Math.cos(a) * spd,
-        vy: Math.sin(a) * spd,
-        vz: range(170, 330),
-        angle: a,
-        spin: range(-5, 5),
-        life: range(0.45, 0.85),
-        key,
-        settled: false,
-        gravity: true,
-        bounces: Math.random() < 1 / 3 ? 2 + ((Math.random() * 2) | 0) : 0,
-        trailR: organic
-          ? range(6.8, 7.6)
-          : this.texTrailR(key) * Phaser.Math.Linear(0.4, 1.4, boom),
-        scale: (organic ? 0.78 : 1) * Phaser.Math.Linear(0.32, 1.5, boom),
-        trailSoft: organic,
-      });
-    }
-    if (!sp.noCrater) {
-      const key = `fx_blast_${(Math.random() * 4) | 0}`;
-      let sc = (radius(u.kind) / 20) * range(0.72, 1.42);
-      if (u.kind === "tank") sc *= 1.25;
-      this.stampWreck(this.textures.exists(key) ? key : "fx_blast_0", u.x, u.y, Math.random() * Math.PI * 2, sc, 1);
+    if (!quiet) {
+      const hz = u.z + heightOf(u.kind) * 0.5;
+      const blast = Math.max(42, radius(u.kind) * 2.4) * (building ? 1.4 : 1);
+      const near = Math.hypot(u.x - this.heli.x, u.y - this.heli.y);
+      if (building) {
+        const killPulse =
+          Phaser.Math.Clamp(1.2 - near / 1100, 0.18, 0.62) * Phaser.Math.Linear(0.55, 1.15, boom);
+        this.pulseTestBarrel(killPulse);
+      }
+      this.heFireBurst(u.x, u.y, hz, 0, 0, 1, blast, !!sp.organic, building ? 2.25 : 1, boom);
+      if (building) this.emitDustShock(u.x, u.y, 1);
+      this.smoke.setDepth(worldDepth(u.z, 0.2));
+      this.smoke.emitParticleAt(u.x, u.y - screenLift(u.z) + 12, 16);
+      this.shake = Math.min(10, this.shake + 3);
+      const n = Math.max(2, Math.round((sp.organic ? 4 : building ? 16 : 10) * Phaser.Math.Linear(0.4, 1.2, boom)));
+      const keys = fragKeys(u.kind);
+      for (let i = 0; i < n; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const spd = range(55, 255);
+        const key = this.textures.exists(keys[i % keys.length]!)
+          ? keys[i % keys.length]!
+          : "fx_frag_metal";
+        const organic = !!sp.organic;
+        // HV buildings were throwing outsized chunks; keep mid/vehicle debris as-is.
+        const maxSc = u.hv && !organic ? 1.18 : 1.5;
+        const maxTrail = u.hv && !organic ? 1.12 : 1.4;
+        // Organic debris sprite scale stays varied; flame size is a fixed mid band (see emitFragTrail).
+        this.frags.push({
+          x: u.x,
+          y: u.y,
+          z: u.z + range(8, 22),
+          vx: Math.cos(a) * spd,
+          vy: Math.sin(a) * spd,
+          vz: range(170, 330),
+          angle: a,
+          spin: range(-5, 5),
+          life: range(0.45, 0.85),
+          key,
+          settled: false,
+          gravity: true,
+          bounces: Math.random() < 1 / 3 ? 2 + ((Math.random() * 2) | 0) : 0,
+          trailR: organic
+            ? range(6.8, 7.6)
+            : this.texTrailR(key) * Phaser.Math.Linear(0.4, maxTrail, boom),
+          scale: (organic ? 0.78 : 1) * Phaser.Math.Linear(0.32, maxSc, boom),
+          trailSoft: organic,
+        });
+      }
+      if (!sp.noCrater) {
+        const key = `fx_blast_${(Math.random() * 4) | 0}`;
+        let sc = (radius(u.kind) / 20) * range(0.72, 1.42);
+        if (u.kind === "tank") sc *= 1.25;
+        this.stampWreck(this.textures.exists(key) ? key : "fx_blast_0", u.x, u.y, Math.random() * Math.PI * 2, sc, 1);
+      }
     }
     const guns = gunsOf(u);
     const isHeli = sp.move === "heli";
@@ -3915,7 +3950,11 @@ export class MissionScene extends Phaser.Scene {
               const hang = Math.hypot(f.vx, f.vy) > 8 ? Math.atan2(f.vy, f.vx) : f.angle;
               this.stampWheelTrack(f.x, f.y, hang, range(0.65, 0.9), range(0.28, 0.44));
             }
-          } else if (f.bounces > 0 && f.vz < -50) {
+          } else if (
+            f.bounces > 0 &&
+            f.vz < -50 &&
+            Math.hypot(f.vx, f.vy, f.vz) > 120
+          ) {
             f.bounces--;
             // Same elevation bounce as wheels, weaker so flight path barely turns.
             this.bounceFragSlope(f, 0.32);
@@ -4157,8 +4196,32 @@ export class MissionScene extends Phaser.Scene {
   }
 
   beginFragTrailFade(f: Frag): void {
-    f.trailFadeMax = f.linger ? range(2.2, 3.8) : range(0.55, 1.05);
+    // Unclamped size (emitFragTrail still clamps draw scale). Mid (~1) keeps current fade.
+    const flameSc = this.fragTrailSize(f);
+    const over = Math.max(0, flameSc - 1.05);
+    const stretch = 1 + over * (f.linger ? 0.7 : 1.35);
+    const base = f.linger ? range(2.2, 3.8) : range(0.55, 1.05);
+    f.trailFadeMax = base * stretch;
     f.trailFade = f.trailFadeMax;
+  }
+
+  /** Unclamped trail size band used for fade duration and particle lifespan. */
+  fragTrailSize(f: Frag): number {
+    const r = f.trailR;
+    if (f.trailSoft) return r / 4.8;
+    let size = (r * (f.scale ?? 1)) / (f.linger ? 6 : 6.5);
+    // Dish trails keep trailR small for emit rate; lifespan should follow the big sprite.
+    if (f.dishFlat || f.flamePts?.length) {
+      size = Math.max(size, (this.texSpan(f.key) * (f.scale ?? 1)) / 48);
+    }
+    return size;
+  }
+
+  /** Particle life multiplier — mid (~1) unchanged; large debris leave a long tail. */
+  fragTrailLifeMul(size: number): number {
+    const over = Math.max(0, size - 1.05);
+    // Linear near mid stays mild; quadratic stretches big radar-scale trails further.
+    return 1 + over * 0.4 + over * over * 1.65;
   }
 
   tickFragTrailFade(f: Frag, dt: number): void {
@@ -4174,12 +4237,15 @@ export class MissionScene extends Phaser.Scene {
     // Trails sit under the debris sprite (body ≈ 0); keep fire above smoke within the pair.
     const trailFire = -0.35;
     const trailSmoke = -1.15;
+    const lifeMul = this.fragTrailLifeMul(this.fragTrailSize(f));
     if (f.flamePts?.length) {
       const ca = Math.cos(f.angle);
       const sa = Math.sin(f.angle);
       const flatX = f.dishFlat ? 1.04 : 1;
       const flatY = f.dishFlat ? 0.52 : 1;
       const { fire, smoke } = this.pairFx(f.z, this.flame, this.hurtSmoke, trailFire, trailSmoke);
+      const prevLife = this.trailFxLife;
+      this.trailFxLife = lifeMul;
       for (const p of f.flamePts) {
         const lx = p.lx * flatX;
         const ly = p.ly * flatY;
@@ -4189,6 +4255,7 @@ export class MissionScene extends Phaser.Scene {
         if (Math.random() < 0.8 * dim) fire.emitParticleAt(wx, wy, p.lx === 0 && p.ly === 0 ? 2 : 1);
         if (Math.random() < 0.42 * dim) smoke.emitParticleAt(wx, wy, 1);
       }
+      this.trailFxLife = prevLife;
       return;
     }
     if (f.rotorFlames) {
@@ -4198,6 +4265,8 @@ export class MissionScene extends Phaser.Scene {
       const pts: { ox: number; sc: number }[] = [{ ox: 0, sc: 1 }];
       for (const b of f.bladeOffs ?? [0.4]) pts.push({ ox: b * span, sc: 0.48 });
       const { fire, smoke } = this.pairFx(f.z, this.flame, this.hurtSmoke, trailFire, trailSmoke);
+      const prevLife = this.trailFxLife;
+      this.trailFxLife = lifeMul;
       for (const p of pts) {
         const wx = f.x + p.ox * ca;
         const wy = pyBase + p.ox * sa;
@@ -4205,6 +4274,7 @@ export class MissionScene extends Phaser.Scene {
         if (Math.random() < 0.78 * dim) fire.emitParticleAt(wx, wy, p.ox === 0 ? 2 : 1);
         if (p.ox === 0 && Math.random() < 0.4 * dim) smoke.emitParticleAt(wx, wy, 1);
       }
+      this.trailFxLife = prevLife;
       return;
     }
     if (f.heliCrash) return;
@@ -4224,20 +4294,21 @@ export class MissionScene extends Phaser.Scene {
     const r = f.trailR;
     const fireProto = f.trailSoft ? this.ember : f.linger ? this.blastBurn : this.burn;
     const puffProto = f.linger ? this.lingerSmoke : this.fragSmoke;
+    const rawSc = this.fragTrailSize(f);
     // Soft trails: size from trailR only (ignore frag sprite scale) so debris + blast embers match.
     const sc = f.trailSoft
-      ? Phaser.Math.Clamp(r / 4.8, 1.4, 1.65)
-      : Phaser.Math.Clamp((r * (f.scale ?? 1)) / (f.linger ? 6 : 6.5), 0.35, 2.75);
+      ? Phaser.Math.Clamp(rawSc, 1.4, 1.65)
+      : Phaser.Math.Clamp(rawSc, 0.35, 2.75);
     // Soft fire uses ember (tiny base); keep smoke from inheriting the ember boost.
     const smokeSc = f.trailSoft ? Phaser.Math.Clamp(sc * 0.28, 0.32, 0.48) : sc;
     const jit = Math.max(1.5, r * 0.12);
     const { fire, smoke: puff } = this.pairFx(f.z, fireProto, puffProto, trailFire, trailSmoke);
     const p = jitterDisk(px, py, jit);
     if (Math.random() < (f.trailOnly ? 0.85 : 0.7) * dim) {
-      this.withTrailFx(sc, () => fire.emitParticleAt(p.x, p.y, 1));
+      this.withTrailFx(sc, () => fire.emitParticleAt(p.x, p.y, 1), lifeMul);
     }
     if (Math.random() < (f.trailOnly ? 0.65 : 0.5) * dim) {
-      this.withTrailFx(smokeSc, () => puff.emitParticleAt(p.x, p.y, 1));
+      this.withTrailFx(smokeSc, () => puff.emitParticleAt(p.x, p.y, 1), lifeMul);
     }
   }
 
@@ -4344,11 +4415,14 @@ export class MissionScene extends Phaser.Scene {
     return { fire, smoke };
   }
 
-  withTrailFx(scale: number, fn: () => void): void {
+  withTrailFx(scale: number, fn: () => void, lifeMul = 1): void {
     const prev = this.trailFxScale;
+    const prevLife = this.trailFxLife;
     this.trailFxScale = scale;
+    this.trailFxLife = lifeMul;
     fn();
     this.trailFxScale = prev;
+    this.trailFxLife = prevLife;
   }
 
   driveDrone(u: Unit, dt: number, h: Heli, dist: number, dx: number, dy: number): void {
@@ -4838,7 +4912,15 @@ export class MissionScene extends Phaser.Scene {
         }
         if ((sp.move === "inf" || sp.move === "flee") && !this.pickupHost(u)) {
           const canShoot = !!sp.weapon;
-          if (sp.organic && u.health > 1 && u.health < u.max) u.health = Math.max(1, u.health - u.max * 0.05 * dt);
+          if (sp.organic && u.health < u.max) {
+            // Keep bleeding past the downed floor so they eventually expire quietly.
+            const rate = u.health <= 1 ? 0.028 : 0.05;
+            u.health -= u.max * rate * dt;
+            if (u.health <= 0) {
+              this.destroyUnit(u, true);
+              continue;
+            }
+          }
           const seeR = 400;
           const screenR = this.scale.width / Math.max(this.cameras.main.zoom, 0.001);
           const wounded = u.health < u.max;
@@ -7572,6 +7654,28 @@ function norm3(x: number, y: number, z: number): { x: number; y: number; z: numb
   const n = Math.hypot(x, y, z);
   if (n < 1e-6) return { x: 1, y: 0, z: 0 };
   return { x: x / n, y: y / n, z: z / n };
+}
+
+/** Closest distance from point P to segment AB in 3D. */
+function segPointDist3(
+  ax: number,
+  ay: number,
+  az: number,
+  bx: number,
+  by: number,
+  bz: number,
+  px: number,
+  py: number,
+  pz: number
+): number {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const abz = bz - az;
+  const ab2 = abx * abx + aby * aby + abz * abz;
+  if (ab2 < 1e-8) return Math.hypot(px - ax, py - ay, pz - az);
+  let t = ((px - ax) * abx + (py - ay) * aby + (pz - az) * abz) / ab2;
+  t = Phaser.Math.Clamp(t, 0, 1);
+  return Math.hypot(ax + abx * t - px, ay + aby * t - py, az + abz * t - pz);
 }
 
 function steerDir(
