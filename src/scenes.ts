@@ -3614,10 +3614,37 @@ export class MissionScene extends Phaser.Scene {
           } else if (f.wheelRoll) {
             if (f.bounces > 0 && f.vz < -40) {
               f.bounces--;
-              f.vz = -f.vz * 0.38;
-              const spd = Math.hypot(f.vx, f.vy);
-              f.vx = (f.vx + range(-spd * 0.2, spd * 0.2)) * 0.72;
-              f.vy = (f.vy + range(-spd * 0.2, spd * 0.2)) * 0.72;
+              const sl = groundSlope(this.world, f.x, f.y);
+              let nx = -sl.dx;
+              let ny = -sl.dy;
+              let nz = 1;
+              const nlen = Math.hypot(nx, ny, nz) || 1;
+              nx /= nlen;
+              ny /= nlen;
+              nz /= nlen;
+              const vin = f.vx * nx + f.vy * ny + f.vz * nz;
+              // Reflect off the terrain normal (same slope field as downhill roll / rivers).
+              if (vin < 0) {
+                const e = 0.42;
+                const kick = (1 + e) * vin;
+                f.vx -= kick * nx;
+                f.vy -= kick * ny;
+                f.vz -= kick * nz;
+              } else {
+                f.vz = -f.vz * 0.38;
+              }
+              f.vx *= 0.78;
+              f.vy *= 0.78;
+              f.vz *= 0.92;
+              // Extra downhill shove from the gradient, stronger on steeper ground.
+              const steep = Math.hypot(sl.dx, sl.dy);
+              if (steep > 1e-4) {
+                const dx = -sl.dx / steep;
+                const dy = -sl.dy / steep;
+                const shove = Math.min(140, 38 + steep * 900) * Phaser.Math.Clamp(-f.vz / 220, 0.35, 1.2);
+                f.vx += dx * shove;
+                f.vy += dy * shove;
+              }
               f.spin *= 0.65;
               this.stampDirtSmears(f.x, f.y, f.vx, f.vy);
             } else {
@@ -3828,21 +3855,33 @@ export class MissionScene extends Phaser.Scene {
       return;
     }
     if (f.heliCrash) return;
-    const px = f.x;
-    const py = pyBase;
+    if (f.trailLx == null || f.trailLy == null) {
+      const rad = Math.max(3, Math.min((this.texSpan(f.key) * (f.scale ?? 1)) * 0.42, f.trailR * 0.9));
+      const a = Math.random() * Math.PI * 2;
+      const d = range(0.28, 0.92) * rad;
+      f.trailLx = Math.cos(a) * d;
+      f.trailLy = Math.sin(a) * d;
+    }
+    const ca = Math.cos(f.angle);
+    const sa = Math.sin(f.angle);
+    const lx = f.trailLx;
+    const ly = f.trailLy;
+    const px = f.x + lx * ca - ly * sa;
+    const py = pyBase + lx * sa + ly * ca;
     const r = f.trailR;
     const fireProto = f.trailSoft ? this.ember : f.linger ? this.blastBurn : this.burn;
     const puffProto = f.linger ? this.lingerSmoke : this.fragSmoke;
     const ref = f.trailSoft ? 3.2 : f.linger ? 6 : 6.5;
     const sc = Phaser.Math.Clamp((r * (f.scale ?? 1)) / ref, 0.35, 2.75);
+    const jit = Math.max(1.5, r * 0.12);
     this.withTrailFx(sc, () => {
       const { fire, smoke: puff } = this.pairFx(f.z, fireProto, puffProto, trailFire, trailSmoke);
       if (Math.random() < (f.trailOnly ? 0.85 : 0.7) * dim) {
-        const p = jitterDisk(px, py, r * 0.55);
+        const p = jitterDisk(px, py, jit);
         fire.emitParticleAt(p.x, p.y, 1);
       }
       if (Math.random() < (f.trailOnly ? 0.65 : 0.5) * dim) {
-        const p = jitterDisk(px, py, r);
+        const p = jitterDisk(px, py, jit * 1.35);
         puff.emitParticleAt(p.x, p.y + 10, 1);
       }
     });

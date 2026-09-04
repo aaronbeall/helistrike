@@ -131,6 +131,9 @@ export interface Frag {
   bounces: number;
   trailOnly?: boolean;
   trailR: number;
+  /** Local flame attach offset in unrotated frag space; orbits as the piece spins. */
+  trailLx?: number;
+  trailLy?: number;
   scale?: number;
   trailSoft?: boolean;
   trailFade?: number;

@@ -89,3 +89,4 @@
 * [ ] Hit areas -- use rects where appropriate?
 * [ ] Boat spawns should happen only with enough space
 * [ ] Chroma key bleed
+* [ ] Camera change shouldn't change reticle location
