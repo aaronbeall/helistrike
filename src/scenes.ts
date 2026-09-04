@@ -414,6 +414,10 @@ export class MissionScene extends Phaser.Scene {
   playViewW = 0;
   playViewH = 0;
   debugHit = false;
+  /** Draw fading rings for explosion damage / heli splash radii. */
+  debugBlast = false;
+  blastRings: { x: number; y: number; z: number; r: number; heliR: number; life: number; max: number }[] = [];
+  blastGfx!: Phaser.GameObjects.Graphics;
   showHeightMap = false;
   debugGfx!: Phaser.GameObjects.Graphics;
   timeScale = 1;
@@ -481,6 +485,8 @@ export class MissionScene extends Phaser.Scene {
     this.towLookY = 0;
     this.playLastFrame = false;
     this.debugHit = false;
+    this.debugBlast = false;
+    this.blastRings = [];
     this.fxOn = true;
     this.fxBarrelPulse = 0;
     this.showHeightMap = false;
@@ -912,10 +918,14 @@ export class MissionScene extends Phaser.Scene {
     });
     this.input.keyboard!.addKey("FOUR").on("down", () => {
       if (this.debugSpawnOpen || this.debugCamOpen) return;
-      if (this.debugOpen) this.openDebugCam();
+      if (this.debugOpen) this.setDebugBlast(!this.debugBlast);
       else this.heli.weapon = 3;
     });
     this.input.keyboard!.addKey("FIVE").on("down", () => {
+      if (this.debugSpawnOpen || this.debugCamOpen) return;
+      if (this.debugOpen) this.openDebugCam();
+    });
+    this.input.keyboard!.addKey("SIX").on("down", () => {
       if (this.debugOpen && !this.debugSpawnOpen && !this.debugCamOpen) this.openDebugSpawn();
     });
     this.input.keyboard!.addKey("E").on("down", () => this.toggleReliefEditor());
@@ -1160,6 +1170,7 @@ export class MissionScene extends Phaser.Scene {
     this.mapGfx = this.add.graphics().setDepth(Layer.FIELD);
     this.mapHvLabels = [];
     this.debugGfx = this.add.graphics().setDepth(Layer.FIELD).setVisible(false);
+    this.blastGfx = this.add.graphics().setDepth(Layer.FIELD + 20).setName("blast_radius_debug");
     this.aiGfx = this.add.graphics().setDepth(Layer.FIELD + 8);
     const cx = 18 + 88;
     const cy = this.scale.height - 18 - 88;
@@ -1474,6 +1485,7 @@ export class MissionScene extends Phaser.Scene {
       this.emitHeliCrashDmgFlames();
       this.drawDebugHits();
     }
+    this.tickDebugBlast(wallDt);
 
     if (this.editOpen) this.handleReliefEdit(wallDt);
     this.drawDebugAi();
@@ -2992,6 +3004,23 @@ export class MissionScene extends Phaser.Scene {
     }
     this.shake = Math.min(8, this.shake + blast * (he ? 0.055 : 0.028));
     if (!he) this.spawnImpactFlash(x, sy, z, 0xffc878, 34, 0.85, 160);
+    // HE already splashed — skip a second death splash. Chain gun should still run vehicle death splash.
+    this.applyBlastDamage(x, y, z, blast, dmg, direct, dx, dy, he);
+  }
+
+  /** Splash hurt to units in radius (and light heli damage when low/close). */
+  applyBlastDamage(
+    x: number,
+    y: number,
+    z: number,
+    blast: number,
+    dmg: number,
+    direct: Unit | undefined,
+    dx: number,
+    dy: number,
+    skipDeathSplash = false
+  ): void {
+    this.pushBlastRing(x, y, z, blast);
     for (const u of this.units) {
       if (u.dead) continue;
       const d = Math.hypot(u.x - x, u.y - y);
@@ -2999,12 +3028,26 @@ export class MissionScene extends Phaser.Scene {
         u.killDx = dx;
         u.killDy = dy;
         const fall = u === direct ? dmg : dmg * (1 - d / blast);
-        this.hurt(u, fall);
+        this.hurt(u, fall, skipDeathSplash);
       }
     }
     const hd = Math.hypot(this.heli.x - x, this.heli.y - y);
     const agl = castZ(this.world, this.heli.x, this.heli.y, this.heli.z);
     if (hd < blast * 0.55 && agl < 30) this.heli.damage(dmg * 0.25, dx, dy);
+  }
+
+  pushBlastRing(x: number, y: number, z: number, blast: number): void {
+    if (!this.debugBlast || blast <= 0) return;
+    this.blastRings.push({
+      x,
+      y,
+      z,
+      r: blast,
+      heliR: blast * 0.55,
+      life: 3.2,
+      max: 3.2,
+    });
+    this.redrawBlastRings();
   }
 
   stampCannonScar(x: number, y: number, dx: number, dy: number, dz: number): void {
@@ -3153,10 +3196,10 @@ export class MissionScene extends Phaser.Scene {
     );
   }
 
-  hurt(u: Unit, dmg: number): void {
+  hurt(u: Unit, dmg: number, fromBlast = false): void {
     u.health -= dmg;
     if (u.health <= 0) {
-      this.destroyUnit(u);
+      this.destroyUnit(u, false, fromBlast);
       return;
     }
     if (isOrganic(u.kind) && specOf(u.kind).weapon && u.health > 1) {
@@ -3180,7 +3223,7 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 
-  destroyUnit(u: Unit, quiet = false): void {
+  destroyUnit(u: Unit, quiet = false, skipSplash = false): void {
     if (u.dead) return;
     u.dead = true;
     if (u.kind === "lookout" || u.kind === "bunker" || u.kind === "pickup") {
@@ -3205,6 +3248,29 @@ export class MissionScene extends Phaser.Scene {
       this.smoke.setDepth(worldDepth(u.z, 0.2));
       this.smoke.emitParticleAt(u.x, u.y - screenLift(u.z) + 12, 16);
       this.shake = Math.min(10, this.shake + 3);
+      // Buildings/vehicles: weak splash at ~3× body radius (FX blast can be larger).
+      if (!skipSplash && !sp.organic) {
+        const mech =
+          building ||
+          isGroundVehicle(u.kind) ||
+          !!sp.water ||
+          !!sp.aerial;
+        if (mech) {
+          const splashR = radius(u.kind) * 3;
+          const deathDmg = u.max * (building ? 0.05 : 0.1);
+          this.applyBlastDamage(
+            u.x,
+            u.y,
+            u.z,
+            splashR,
+            deathDmg,
+            undefined,
+            u.killDx ?? 0,
+            u.killDy ?? 0,
+            false
+          );
+        }
+      }
       const n = Math.max(2, Math.round((sp.organic ? 4 : building ? 16 : 10) * Phaser.Math.Linear(0.4, 1.2, boom)));
       const keys = fragKeys(u.kind);
       for (let i = 0; i < n; i++) {
@@ -6118,6 +6184,53 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 
+  setDebugBlast(on: boolean): void {
+    this.debugBlast = on;
+    if (!on) {
+      this.blastRings = [];
+      this.blastGfx.clear();
+    }
+    this.blastGfx.setVisible(on);
+    this.syncDebugMenu();
+  }
+
+  redrawBlastRings(): void {
+    this.blastGfx.clear();
+    if (!this.debugBlast) return;
+    for (const ring of this.blastRings) {
+      const a = Phaser.Math.Clamp(ring.life / ring.max, 0, 1);
+      const sy = ring.y - screenLift(ring.z || 0);
+      // Outer = unit splash, inner amber = heli splash band.
+      this.blastGfx.lineStyle(3, 0xff2a18, 0.45 + a * 0.55);
+      this.blastGfx.strokeCircle(ring.x, sy, ring.r);
+      this.blastGfx.lineStyle(2, 0xffc040, 0.35 + a * 0.5);
+      this.blastGfx.strokeCircle(ring.x, sy, ring.heliR);
+      this.blastGfx.fillStyle(0xff2a18, 0.06 + a * 0.08);
+      this.blastGfx.fillCircle(ring.x, sy, ring.r);
+      this.blastGfx.lineStyle(1.5, 0xffe8a0, 0.7 * a);
+      this.blastGfx.lineBetween(ring.x - 6, sy, ring.x + 6, sy);
+      this.blastGfx.lineBetween(ring.x, sy - 6, ring.x, sy + 6);
+    }
+  }
+
+  tickDebugBlast(dt: number): void {
+    if (!this.debugBlast) {
+      this.blastGfx.clear();
+      return;
+    }
+    if (!this.blastRings.length) {
+      this.blastGfx.clear();
+      return;
+    }
+    const keep: typeof this.blastRings = [];
+    for (const ring of this.blastRings) {
+      ring.life -= dt;
+      if (ring.life > 0) keep.push(ring);
+    }
+    this.blastRings = keep;
+    this.redrawBlastRings();
+  }
+
   drawDebugAi(): void {
     this.aiGfx.clear();
     if (!this.debugAi) {
@@ -6292,6 +6405,7 @@ export class MissionScene extends Phaser.Scene {
       "INFINITE AMMO",
       "HEIGHT MAP   K",
       "DEBUG AI",
+      "BLAST RADIUS",
       "FX           F",
       "RELIEF       E",
       "CAMERA",
@@ -6453,6 +6567,7 @@ export class MissionScene extends Phaser.Scene {
       this.infAmmo,
       this.showHeightMap,
       this.debugAi,
+      this.debugBlast,
       this.fxOn,
       this.editOpen,
     ];
@@ -6461,11 +6576,12 @@ export class MissionScene extends Phaser.Scene {
       "INFINITE AMMO",
       "HEIGHT MAP   K",
       "DEBUG AI",
+      "BLAST RADIUS",
       "FX           F",
       "RELIEF       E",
     ];
     // Number shortcuts only for rows without a letter hotkey.
-    const nums = ["1", "2", "", "3", "", "", "4", "5"];
+    const nums = ["1", "2", "", "3", "4", "", "", "5", "6"];
     if (this.debugMenuIdx >= this.debugRows.length) this.debugMenuIdx = 0;
     for (let i = 0; i < this.debugRows.length; i++) {
       const row = this.debugRows[i]!;
@@ -6474,11 +6590,11 @@ export class MissionScene extends Phaser.Scene {
       const focus = i === this.debugMenuIdx;
       const mark = focus ? "▸" : " ";
       const prefix = num ? `${mark}${num} ` : `${mark}  `;
-      if (i < 6) {
+      if (i < 7) {
         const on = flags[i]!;
         row.setText(`${prefix}${names[i]!}            ${on ? "ON" : "OFF"}`);
         row.setColor(focus ? "#e8b84a" : on ? "#c8b87a" : "#8a8470");
-      } else if (i === 6) {
+      } else if (i === 7) {
         row.setText(`${prefix}CAMERA…`);
         row.setColor(focus ? "#e8b84a" : "#f0e6c8");
       } else {
@@ -6500,10 +6616,11 @@ export class MissionScene extends Phaser.Scene {
     else if (i === 1) this.setInfAmmo(!this.infAmmo);
     else if (i === 2) this.toggleHeightMap();
     else if (i === 3) this.setDebugAi(!this.debugAi);
-    else if (i === 4) this.toggleTestFx();
-    else if (i === 5) this.toggleReliefEditor();
-    else if (i === 6) this.openDebugCam();
-    else if (i === 7) this.openDebugSpawn();
+    else if (i === 4) this.setDebugBlast(!this.debugBlast);
+    else if (i === 5) this.toggleTestFx();
+    else if (i === 6) this.toggleReliefEditor();
+    else if (i === 7) this.openDebugCam();
+    else if (i === 8) this.openDebugSpawn();
     this.syncDebugMenu();
   }
 

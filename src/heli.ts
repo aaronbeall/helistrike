@@ -29,8 +29,8 @@ const ROTOR_SPOOL_PEAK = 26;
 const ROTOR_FLIGHT = 32;
 /** Rotor speed before dust-off starts kicking in during spool. */
 const DUST_ROTOR_MIN = 15;
-/** Pad sit height above ground while waiting for lift-off. */
-const PAD_AGL = 2;
+/** Pad sit height above ground while waiting for lift-off (landing-gear clearance). */
+const PAD_AGL = 5.5;
 
 export type Phase = "grounded" | "spool" | "ready" | "flight" | "dead";
 
