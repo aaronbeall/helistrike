@@ -487,7 +487,7 @@ function formatPreset(label: string, w: WeaponSpec): { stats: string[]; info: st
       uses.length
         ? `used by: ${uses.join(" · ")}`
         : "used by: — (factory template; SPECS usually call shell/small with overrides)",
-      "source: roster.ts ENEMY_WPN_PRESETS / usesOfWeapon",
+      "source: roster.ts ENEMY_WPN_PRESETS / SPECS.partsRoll / usesOfWeapon",
     ],
   };
 }

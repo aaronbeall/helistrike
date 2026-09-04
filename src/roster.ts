@@ -113,6 +113,12 @@ export interface UnitSpec {
    * `snap` = glued to mount UV (moving vehicles); `leash` = roam within leashR (static posts).
    */
   crew?: CrewSpec;
+  /**
+   * Optional gun parts roll. When set, owns live spawn guns (`rollParts`) and
+   * SPECS.guns preview — no separate PARTS_ROLLS table.
+   * `pick` = weighted random; `fixed` = declared mounts.
+   */
+  partsRoll?: PartsRoll;
 }
 
 export type PinMode = "snap" | "leash";
@@ -125,6 +131,35 @@ export interface CrewSpec {
   /** Leash roam radius; defaults to host unit radius when omitted. */
   leashR?: number;
 }
+
+export type GunRollId = string;
+
+export type GunRollSpec = {
+  tex: string;
+  originY: number;
+  w: WeaponSpec;
+  /** Short id for rigs / used-by (defaults to option key). */
+  label?: string;
+};
+
+/** Weighted pick: one option chosen at spawn via `rollParts`. */
+export type PartsPickRoll = {
+  mode: "pick";
+  weights: [GunRollId, number][];
+  options: Record<GunRollId, GunRollSpec>;
+  mount: { x: number; y: number };
+  /** SPECS.guns / preview fallback (defaults to first weight). */
+  fallback?: GunRollId;
+};
+
+/** Fixed slots: each mount gets a declared option (not random). */
+export type PartsFixedRoll = {
+  mode: "fixed";
+  options: Record<GunRollId, GunRollSpec>;
+  slots: { id: GunRollId; mount: { x: number; y: number } }[];
+};
+
+export type PartsRoll = PartsPickRoll | PartsFixedRoll;
 
 const gun = (
   tex: string,
@@ -212,27 +247,6 @@ export const WPN_TOWER_CANNON = shell({
 export const WPN_SHELL_DEFAULT = shell();
 export const WPN_SMALL_DEFAULT = small();
 
-export type GunRollId = "arty" | "aa" | "sam";
-
-export type GunRollSpec = { tex: string; originY: number; w: WeaponSpec };
-
-/** Tower `rollParts` options — weapon refs drive combat-rig “used by”. */
-export const TOWER_GUN_ROLLS: Record<GunRollId, GunRollSpec> = {
-  arty: { tex: "building_tower_gun", originY: 1.39, w: WPN_TOWER_CANNON },
-  aa: { tex: "building_tower_aa", originY: 1.36, w: WPN_AA },
-  sam: { tex: "building_tower_sam", originY: 1.25, w: WPN_SAM },
-};
-
-/** Battleship fixed mounts / `shipGun` options. */
-export const SHIP_GUN_ROLLS: Record<GunRollId, GunRollSpec> = {
-  arty: { tex: "enemy_battleship_gun", originY: 0.8, w: WPN_ARTY },
-  aa: { tex: "enemy_battleship_gun_aa", originY: 0.72, w: WPN_AA },
-  sam: { tex: "enemy_battleship_gun_sam", originY: 0.7, w: WPN_SAM },
-};
-
-/** Battleship mount order (indices match SPRITE_MOUNT.enemy_battleship). */
-export const BATTLESHIP_MOUNT_ROLLS: GunRollId[] = ["arty", "aa", "sam", "arty"];
-
 /** Named enemy weapon presets shown in the combat rig (stats + live used-by). */
 export const ENEMY_WPN_PRESETS: { id: string; label: string; w: WeaponSpec }[] = [
   { id: "shell", label: "SHELL (default)", w: WPN_SHELL_DEFAULT },
@@ -243,8 +257,47 @@ export const ENEMY_WPN_PRESETS: { id: string; label: string; w: WeaponSpec }[] =
   { id: "tower_cannon", label: "TOWER CANNON", w: WPN_TOWER_CANNON },
 ];
 
+export function partsRollOf(kind: UnitKind): PartsRoll | undefined {
+  return SPECS[kind].partsRoll;
+}
+
+export function weaponPresetId(w: WeaponSpec): string {
+  for (const p of ENEMY_WPN_PRESETS) {
+    if (p.w === w) return p.id;
+  }
+  return w.shot;
+}
+
+function pickWeighted(weights: [GunRollId, number][], rand = Math.random): GunRollId {
+  const total = weights.reduce((s, [, w]) => s + w, 0);
+  let r = rand() * total;
+  for (const [id, w] of weights) {
+    r -= w;
+    if (r < 0) return id;
+  }
+  return weights[weights.length - 1]![0];
+}
+
+function partFromOption(opt: GunRollSpec, mount: { x: number; y: number }): PartMount {
+  return gun(opt.tex, opt.originY, mount, undefined, opt.w);
+}
+
+function gunsFromPartsRoll(roll: PartsRoll): PartMount[] {
+  if (roll.mode === "pick") {
+    const id = roll.fallback ?? roll.weights[0]![0];
+    return [partFromOption(roll.options[id]!, { ...roll.mount })];
+  }
+  return roll.slots.map((s) => partFromOption(roll.options[s.id]!, { ...s.mount }));
+}
+
+/** SPECS.guns fallback / roster preview from unit `partsRoll` (not a live roll). */
+export function defaultGunsFromRoll(kind: UnitKind): PartMount[] | undefined {
+  const roll = partsRollOf(kind);
+  return roll ? gunsFromPartsRoll(roll) : undefined;
+}
+
 /**
- * Where this exact WeaponSpec object is referenced (SPECS body/guns + roll tables).
+ * Where this exact WeaponSpec object is referenced (SPECS body/guns + partsRoll).
  * Empty → factory template / unused shared ref.
  */
 export function usesOfWeapon(w: WeaponSpec): string[] {
@@ -252,22 +305,27 @@ export function usesOfWeapon(w: WeaponSpec): string[] {
   for (const kind of Object.keys(SPECS) as UnitKind[]) {
     const sp = SPECS[kind];
     if (sp.weapon === w) uses.push(`${kind} body`);
+    if (sp.partsRoll) {
+      for (const [id, opt] of Object.entries(sp.partsRoll.options)) {
+        if (opt.w !== w) continue;
+        const tag = opt.label ?? id;
+        if (sp.partsRoll.mode === "pick") {
+          const wt = sp.partsRoll.weights.find(([k]) => k === id)?.[1];
+          uses.push(wt != null ? `${kind} roll:${tag} w${wt}` : `${kind} roll:${tag}`);
+        } else {
+          const mounts = sp.partsRoll.slots
+            .map((s, i) => (s.id === id ? i : -1))
+            .filter((i) => i >= 0);
+          uses.push(
+            mounts.length ? `${kind} mount:${tag} [${mounts.join(",")}]` : `${kind} mount:${tag}`
+          );
+        }
+      }
+      continue;
+    }
     sp.guns.forEach((g, i) => {
       if (g.weapon === w) uses.push(`${kind} gun[${i}]`);
     });
-  }
-  for (const id of Object.keys(TOWER_GUN_ROLLS) as GunRollId[]) {
-    if (TOWER_GUN_ROLLS[id]!.w === w) uses.push(`tower roll:${id}`);
-  }
-  for (const id of Object.keys(SHIP_GUN_ROLLS) as GunRollId[]) {
-    if (SHIP_GUN_ROLLS[id]!.w === w) {
-      const mounts = BATTLESHIP_MOUNT_ROLLS.map((r, i) => (r === id ? i : -1)).filter((i) => i >= 0);
-      uses.push(
-        mounts.length
-          ? `battleship mount:${id} [${mounts.join(",")}]`
-          : `battleship mount:${id}`
-      );
-    }
   }
   return uses;
 }
@@ -283,34 +341,19 @@ export function shotTexture(shot: WeaponSpec["shot"], tracer?: WeaponSpec["trace
   return "cannon";
 }
 
-function pickGunVar(): GunRollId {
-  const r = Math.random();
-  if (r < 0.34) return "arty";
-  if (r < 0.67) return "aa";
-  return "sam";
-}
-
-function shipGun(v: GunRollId, mount: { x: number; y: number }): PartMount {
-  const r = SHIP_GUN_ROLLS[v]!;
-  return gun(r.tex, r.originY, mount, undefined, r.w);
-}
-
-function towerGun(v: GunRollId): PartMount {
-  const r = TOWER_GUN_ROLLS[v]!;
-  return gun(r.tex, r.originY, { ...SPRITE_MOUNT.building_tower }, undefined, r.w);
-}
-
+/** Live spawn guns from unit `partsRoll` (undefined → use SPECS.guns). */
 export function rollParts(kind: UnitKind): PartMount[] | undefined {
-  if (kind === "tower") return [towerGun(pickGunVar())];
-  if (kind === "battleship") {
-    const m = SPRITE_MOUNT.enemy_battleship;
-    return BATTLESHIP_MOUNT_ROLLS.map((roll, i) => shipGun(roll, { ...m[i]! }));
+  const roll = partsRollOf(kind);
+  if (!roll) return undefined;
+  if (roll.mode === "pick") {
+    const id = pickWeighted(roll.weights);
+    return [partFromOption(roll.options[id]!, { ...roll.mount })];
   }
-  return undefined;
+  return roll.slots.map((s) => partFromOption(roll.options[s.id]!, { ...s.mount }));
 }
 
 export function gunsOf(u: { kind: UnitKind; parts?: PartMount[] }): PartMount[] {
-  return u.parts ?? SPECS[u.kind].guns;
+  return u.parts ?? defaultGunsFromRoll(u.kind) ?? SPECS[u.kind].guns;
 }
 
 const SPECS: Record<UnitKind, UnitSpec> = {
@@ -388,8 +431,23 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     throwGuns: true,
     spawnYaw: (5 * Math.PI) / 180,
     weapon: WPN_TOWER_CANNON,
-    guns: [gun("building_tower_gun", 1.39, { ...SPRITE_MOUNT.building_tower })],
+    guns: [],
     rotors: [],
+    partsRoll: {
+      mode: "pick",
+      mount: { ...SPRITE_MOUNT.building_tower },
+      fallback: "arty",
+      weights: [
+        ["arty", 34],
+        ["aa", 33],
+        ["sam", 33],
+      ],
+      options: {
+        arty: { tex: "building_tower_gun", originY: 1.39, w: WPN_TOWER_CANNON, label: "tower_cannon" },
+        aa: { tex: "building_tower_aa", originY: 1.36, w: WPN_AA, label: "aa" },
+        sam: { tex: "building_tower_sam", originY: 1.25, w: WPN_SAM, label: "sam" },
+      },
+    },
   },
   bunker: {
     health: 260,
@@ -568,16 +626,22 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     noCrater: true,
     throwGuns: true,
     weapon: WPN_ARTY,
-    guns: (() => {
-      const m = SPRITE_MOUNT.enemy_battleship;
-      return [
-        shipGun("arty", { ...m[0]! }),
-        shipGun("aa", { ...m[1]! }),
-        shipGun("sam", { ...m[2]! }),
-        shipGun("arty", { ...m[3]! }),
-      ];
-    })(),
+    guns: [],
     rotors: [],
+    partsRoll: {
+      mode: "fixed",
+      options: {
+        arty: { tex: "enemy_battleship_gun", originY: 0.8, w: WPN_ARTY, label: "arty" },
+        aa: { tex: "enemy_battleship_gun_aa", originY: 0.72, w: WPN_AA, label: "aa" },
+        sam: { tex: "enemy_battleship_gun_sam", originY: 0.7, w: WPN_SAM, label: "sam" },
+      },
+      slots: [
+        { id: "arty", mount: { ...SPRITE_MOUNT.enemy_battleship[0]! } },
+        { id: "aa", mount: { ...SPRITE_MOUNT.enemy_battleship[1]! } },
+        { id: "sam", mount: { ...SPRITE_MOUNT.enemy_battleship[2]! } },
+        { id: "arty", mount: { ...SPRITE_MOUNT.enemy_battleship[3]! } },
+      ],
+    },
   },
   rpg: {
     health: 9,
@@ -853,6 +917,12 @@ const SPECS: Record<UnitKind, UnitSpec> = {
   },
 };
 
+/** `partsRoll` owns SPECS.guns for those units (preview / gunsOf fallback). */
+for (const kind of Object.keys(SPECS) as UnitKind[]) {
+  const guns = defaultGunsFromRoll(kind);
+  if (guns) SPECS[kind].guns = guns;
+}
+
 export function specOf(kind: UnitKind): UnitSpec {
   return SPECS[kind];
 }
@@ -864,7 +934,7 @@ export function spawnAngle(kind: UnitKind): number {
   return -sp.rotOff + (Math.random() * 2 - 1) * sp.spawnYaw;
 }
 
-const TROOP_WEIGHTS: [UnitKind, number][] = [
+export const TROOP_WEIGHTS: [UnitKind, number][] = [
   ["soldier", 40],
   ["rpg", 22],
   ["gunner", 14],

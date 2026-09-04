@@ -8,7 +8,10 @@ import {
   isInfantry,
   isWaterCraft,
   labelOf,
+  partsRollOf,
   specOf,
+  TROOP_WEIGHTS,
+  weaponPresetId,
   type MoveKind,
   type UnitKind,
   type UnitSpec,
@@ -748,6 +751,59 @@ function formatWeapon(w: WeaponSpec): string[] {
   return [row("WEAPON", head!), ...rest.map((l) => rowCont(l))];
 }
 
+function weightPct(w: number, total: number): string {
+  return `${Math.round((w / total) * 100)}%`;
+}
+
+/** Live `partsRoll` on the unit SPECS (not a separate table). */
+function formatPartsRoll(kind: UnitKind): string[] {
+  const roll = partsRollOf(kind);
+  if (!roll) return [];
+  if (roll.mode === "pick") {
+    const total = roll.weights.reduce((s, [, w]) => s + w, 0);
+    const lines = [
+      row("ROLL", `pick ${kvs(["via", "partsRoll"], ["n", roll.weights.length])}`),
+    ];
+    for (const [id, w] of roll.weights) {
+      const opt = roll.options[id]!;
+      lines.push(
+        rowCont(
+          `${id} ${kvs(
+            ["p", weightPct(w, total)],
+            ["tex", opt.tex],
+            ["wpn", opt.label ?? weaponPresetId(opt.w)]
+          )}`
+        )
+      );
+    }
+    const fb = roll.fallback ?? roll.weights[0]?.[0];
+    if (fb) lines.push(rowCont(`SPECS.guns fallback ${fb}`));
+    return lines;
+  }
+  const lines = [
+    row("ROLL", `fixed ${kvs(["via", "partsRoll"], ["n", roll.slots.length])}`),
+  ];
+  roll.slots.forEach((s, i) => {
+    const opt = roll.options[s.id]!;
+    lines.push(
+      rowCont(
+        `[${i}] ${s.id} ${kvs(["tex", opt.tex], ["wpn", opt.label ?? weaponPresetId(opt.w)])}`
+      )
+    );
+  });
+  return lines;
+}
+
+function formatTroopRoll(): string[] {
+  const total = TROOP_WEIGHTS.reduce((s, [, w]) => s + w, 0);
+  return [
+    rowCont(`troop pick ${kvs(["via", "pickTroop"], ["n", TROOP_WEIGHTS.length])}`),
+    ...TROOP_WEIGHTS.map(
+      ([k, w]) => rowCont(`${k} ${kvs(["p", weightPct(w, total)], ["w", w])}`)
+    ),
+  ];
+}
+
 function formatSpec(kind: UnitKind, sp: UnitSpec): { stats: string[]; info: string[] } {
   const flags = [
     sp.building && "building",
@@ -798,6 +854,8 @@ function formatSpec(kind: UnitKind, sp: UnitSpec): { stats: string[]; info: stri
   if (sp.weapon) {
     stats.push(...formatWeapon(sp.weapon));
   }
+
+  stats.push(...formatPartsRoll(kind));
 
   if (sp.guns.length) {
     stats.push(row("GUNS", sp.guns.length));
@@ -863,6 +921,7 @@ function formatSpec(kind: UnitKind, sp: UnitSpec): { stats: string[]; info: stri
     sp.crew.mounts.forEach((m, i) => {
       stats.push(rowCont(`[${i}] ${m.x.toFixed(3)},${m.y.toFixed(3)}`));
     });
+    stats.push(...formatTroopRoll());
   } else {
     stats.push(row("CREW", "—"));
   }
@@ -877,6 +936,6 @@ function formatSpec(kind: UnitKind, sp: UnitSpec): { stats: string[]; info: stri
 
   return {
     stats,
-    info: ["source: roster.ts SPECS / driveOf / labelOf"],
+    info: ["source: roster.ts SPECS (partsRoll / crew / driveOf)"],
   };
 }
