@@ -129,6 +129,19 @@ export const gunLayout = {
   mount: { x: 0.497, y: 0.174 },
 };
 
+/** Hand-picked damage-flame interest UVs on heli_body (not mount points). */
+export const PLAYER_DMG_POIS: { u: number; v: number }[] = [
+  { u: 0.282, v: 0.434 },
+  { u: 0.616, v: 0.868 },
+  { u: 0.441, v: 0.715 },
+  { u: 0.547, v: 0.496 },
+  { u: 0.362, v: 0.580 },
+  { u: 0.764, v: 0.479 },
+  { u: 0.669, v: 0.288 },
+  { u: 0.93, v: 0.417 },
+  { u: 0.443, v: 0.164 },
+];
+
 export type HudWirePoint = { u: number; v: number };
 
 export type HeliHudWireBake = {
@@ -726,6 +739,13 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   ];
   for (const key of shadowSrc) {
     if (textures.exists(key)) bakeShadows(textures, key);
+  }
+  // Wreck / pop-hulk atlases (guns, rotors, hulls) — needed for in-flight frag shadows.
+  for (const key of textures.getTextureKeys()) {
+    if (!key.endsWith("_hulk")) continue;
+    if (/__(woodland|desert|urban|snow|digital)$/.test(key)) continue;
+    if (textures.exists(`${key}_sh0`)) continue;
+    bakeShadows(textures, key);
   }
 }
 

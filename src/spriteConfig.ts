@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { allSpecs } from "./roster";
 import { lookupSpriteMuzzles, SPRITE_MOUNT } from "./spriteOrigin";
-import { rotorLayout, tankLayout, gunLayout, isUuidTexture, nameGameTexture, nameGeneratedTextures, spritePivot } from "./sprites";
+import { rotorLayout, tankLayout, gunLayout, isUuidTexture, nameGameTexture, nameGeneratedTextures, spritePivot, PLAYER_DMG_POIS } from "./sprites";
 
 const DEPTH = 9200;
 const MONO = "Share Tech Mono, monospace";
@@ -160,7 +160,7 @@ export class SpriteConfigTool {
       if (!uv) return;
       this.pinned = uv;
       const key = this.key();
-      this.copied = `${key}  origin ${uv.uvx.toFixed(3)} ${uv.uvy.toFixed(3)}  px ${uv.px.toFixed(1)} ${uv.py.toFixed(1)}`;
+      this.copied = `${key} ${uv.uvx.toFixed(3)} ${uv.uvy.toFixed(3)}  px ${uv.px.toFixed(1)} ${uv.py.toFixed(1)}`;
       copyText(this.copied);
     });
   }
@@ -233,7 +233,7 @@ export class SpriteConfigTool {
     const th = src.height;
 
     this.hintTxt.setText(
-      `SPRITE RIG   \` / F9 close   [ ] cycle   , . page   G art-only ${this.artOnly ? "ON" : "OFF"}   gold origin · green gun · cyan rotor · gold dish · violet troop · orange muzzle`
+      `SPRITE RIG   \` / F9 close   [ ] cycle   , . page   G art-only ${this.artOnly ? "ON" : "OFF"}   gold origin · green gun · cyan rotor · gold dish · violet troop · red dmg · orange muzzle`
     );
     const size = this.pageSize();
     const pages = Math.max(1, Math.ceil(keys.length / size));
@@ -252,7 +252,7 @@ export class SpriteConfigTool {
       : "CURSOR   off board";
     const pin = this.pinned
       ? `PIN      uv  ${this.pinned.uvx.toFixed(3)}  ${this.pinned.uvy.toFixed(3)}\n         copied  ${this.copied}`
-      : "PIN      click the sprite to copy origin uv / px";
+      : "PIN      click the sprite to copy name / uv / px";
     const marks = rigMarks(key);
     const mountLines = marks.mounts.length
       ? marks.mounts
@@ -440,7 +440,7 @@ function dedupeUv(list: { x: number; y: number }[]): { x: number; y: number }[] 
   return out;
 }
 
-type MountRole = "gun" | "rotor" | "dish" | "troop" | "reserved";
+type MountRole = "gun" | "rotor" | "dish" | "troop" | "reserved" | "dmg";
 
 type RigMount = { x: number; y: number; role: MountRole; label: string; color: number };
 
@@ -450,6 +450,7 @@ const ROLE_COLOR: Record<MountRole, number> = {
   dish: 0xe8b84a,
   troop: 0xd878ff,
   reserved: 0x9a9480,
+  dmg: 0xff4a4a,
 };
 
 function hexColor(n: number): string {
@@ -480,6 +481,7 @@ function rigMarks(key: string): { mounts: RigMount[]; muzzles: { x: number; y: n
   if (k === "heli_body") {
     addMount(mounts, gunLayout.mount, "gun", "gun");
     addMount(mounts, rotorLayout.player, "rotor", "rotor");
+    for (const p of PLAYER_DMG_POIS) addMount(mounts, { x: p.u, y: p.v }, "dmg", "dmg");
   }
   if (k === "enemy_heli") addMount(mounts, rotorLayout.enemy, "rotor", "rotor");
   for (const sp of allSpecs()) {
@@ -528,7 +530,7 @@ function spawnYawLine(key: string): string {
 
 function layoutLine(key: string): string {
   if (key === "heli_body")
-    return `LAYOUT   rotorLayout.player  ${fmt(rotorLayout.player)}`;
+    return `LAYOUT   rotor ${fmt(rotorLayout.player)}  gun mount ${fmt(gunLayout.mount)}  dmg×${PLAYER_DMG_POIS.length}`;
   if (key === "enemy_heli")
     return `LAYOUT   rotorLayout.enemy   ${fmt(rotorLayout.enemy)}`;
   if (key === "heli_rotor" || key === "enemy_heli_rotor") return "LAYOUT   origin 0.5 0.5  (spin hub)";

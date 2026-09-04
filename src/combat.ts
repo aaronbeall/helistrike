@@ -168,6 +168,8 @@ export interface Frag {
   pinMount?: { x: number; y: number };
   /** Mild foreshortening / bend for a pinned rotor (same center). */
   rotorSkew?: boolean;
+  /** Fixed tilt-plane angle for rotorSkew (container); blades spin inside. */
+  skewAng?: number;
   /** Wheel debris: bounce then roll downhill along the height map. */
   wheelRoll?: boolean;
   rolling?: boolean;

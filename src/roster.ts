@@ -98,6 +98,8 @@ export interface UnitSpec {
   aerial?: boolean;
   water?: boolean;
   organic?: boolean;
+  /** Soft blood hit spray / death streaks in addition to normal wreck FX (e.g. motorcycle rider). */
+  softBlood?: boolean;
   hv?: boolean;
   noCrater?: boolean;
   throwGuns?: boolean;
@@ -380,6 +382,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     frag: "mech",
     rotOff: Math.PI / 2,
     move: "vehicle",
+    softBlood: true,
     wheels: 2,
     guns: [],
     rotors: [],
@@ -812,6 +815,11 @@ export function isBuilding(kind: UnitKind): boolean {
 
 export function isOrganic(kind: UnitKind): boolean {
   return !!SPECS[kind].organic;
+}
+
+/** Soft blood hit spray / death streaks (troops, or vehicles with a rider like motorcycle). */
+export function hasSoftBlood(kind: UnitKind): boolean {
+  return !!SPECS[kind].organic || !!SPECS[kind].softBlood;
 }
 
 export function isWaterCraft(kind: UnitKind): boolean {

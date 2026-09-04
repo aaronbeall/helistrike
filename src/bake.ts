@@ -1540,5 +1540,11 @@ export function bakeRosterArt(textures: Phaser.Textures.TextureManager): void {
   for (const key of shadowKeys) {
     if (textures.exists(key)) bakeShadows(textures, key);
   }
+  for (const key of textures.getTextureKeys()) {
+    if (!key.endsWith("_hulk")) continue;
+    if (/__(woodland|desert|urban|snow|digital)$/.test(key)) continue;
+    if (textures.exists(`${key}_sh0`)) continue;
+    bakeShadows(textures, key);
+  }
 }
 

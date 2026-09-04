@@ -21,7 +21,7 @@ import {
 import { Layer, ZOff, Z_GRAVITY, worldDepth } from "./depth";
 import { range } from "./rng";
 import { CRUISE_AGL, HELI_HEIGHT, Heli, MAX_AGL } from "./heli";
-import { isAerial, isGroundVehicle, isOrganic, specOf, driveOf, spawnAngle, pickLookoutTroop, pickPickupTroop, labelOf, allKinds, gunsOf, rollParts } from "./roster";
+import { isAerial, isGroundVehicle, isOrganic, hasSoftBlood, specOf, driveOf, spawnAngle, pickLookoutTroop, pickPickupTroop, labelOf, allKinds, gunsOf, rollParts } from "./roster";
 import { lookupSpriteMuzzles, SPRITE_MOUNT } from "./spriteOrigin";
 
 /** Overlay guns are drawn barrel-up (same as hulls). World aim 0 is +X, so +90°. */
@@ -30,7 +30,8 @@ function gunWorldRot(_tex: string, aim: number): number {
 }
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
 import { SpriteConfigTool } from "./spriteConfig";
-import { preloadArt, prepareArt, extractBiomeTiles, bakeHeliHudWireTexture, bakeHurtVignetteTexture, gunLayout, heliHudWireUv, rotorLayout, shadowAlpha, shadowKey, shadowOff, spriteUvPos, tankLayout, FX_VARIANTS, nameGameTexture, nameGeneratedTextures, spritePivot, type HeliHudWireBake } from "./sprites";
+import { LOAD_TIPS } from "./tips";
+import { preloadArt, prepareArt, extractBiomeTiles, bakeHeliHudWireTexture, bakeHurtVignetteTexture, gunLayout, heliHudWireUv, rotorLayout, shadowAlpha, shadowKey, shadowOff, spriteUvPos, tankLayout, FX_VARIANTS, nameGameTexture, nameGeneratedTextures, spritePivot, PLAYER_DMG_POIS, type HeliHudWireBake } from "./sprites";
 import {
   generateWorld,
   generateWorldAsync,
@@ -63,14 +64,10 @@ const MISSILE_IGNITE = 0.525;
 const HELLFIRE_LOCK_T = 0.5;
 const HELLFIRE_SEEK_DELAY = 0.42;
 
-/** Player damage interest UVs: body center, gun mount, rotor mount. */
-const PLAYER_DMG_POI_UV: { u: number; v: number }[] = [
-  { u: 0.5, v: 0.52 },
-  { u: gunLayout.mount.x, v: gunLayout.mount.y },
-  { u: rotorLayout.player.x, v: rotorLayout.player.y },
-];
+/** Player damage interest UVs — hand-picked on heli_body (see PLAYER_DMG_POIS / sprite rig). */
+const PLAYER_DMG_POI_UV = PLAYER_DMG_POIS;
 
-/** Fallback UV jitter pool when a crash has no live damage sites. */
+/** Fallback UV jitter pool when a non-player crash has no live damage sites. */
 const CRASH_DMG_UV: { u: number; v: number }[] = [
   { u: 0.32, v: 0.38 },
   { u: 0.58, v: 0.42 },
@@ -78,22 +75,6 @@ const CRASH_DMG_UV: { u: number; v: number }[] = [
   { u: 0.68, v: 0.55 },
   { u: 0.38, v: 0.72 },
   { u: 0.52, v: 0.28 },
-];
-
-const LOAD_TIPS = [
-  "Pop-up (SPACE) to dodge incoming fire — climb, slide, drop back into cover.",
-  "Use pop-up to clear ridgelines and hit targets tucked behind terrain.",
-  "Nap-of-earth (SHIFT) through ravines and river beds to break enemy line of sight.",
-  "Hellfires lock onto fast movers — keep the box steady, then let them run.",
-  "TOWs are ideal for killing AA from outside their envelope — stay long and wire-guide in.",
-  "While a TOW is in flight, SPACE raises the missile and SHIFT drops it — steer height as well as aim.",
-  "Chain gun eats soft targets; save rockets and missiles for armor and emplacements.",
-  "Wounded infantry crawl and bleed — finish them before they dig in and return fire.",
-  "Battleships pack mixed batteries. Prioritize the AA mount before you linger overhead.",
-  "Drones charge when lined up. Sidestep the run, then hit them while they turn.",
-  "Low and slow is quiet until it isn’t — pop up only for the shot, then get back in the dirt.",
-  "M opens the theater map. Mark high-value sites before you commit to a gun run.",
-  "Hydras shred soft clusters; Hellfires and TOWs punch hard points from stand-off.",
 ];
 
 /** Scratch canvas for tinting blood dirt frames before multiply-stamping terrain. */
@@ -1662,7 +1643,8 @@ export class MissionScene extends Phaser.Scene {
       const aim = this.worldPointer();
       const gwy = mount.y + lift + bob;
       const want = Math.atan2(aim.y - gwy, aim.x - mount.x);
-      h.gunAngle = Phaser.Math.Angle.RotateTo(h.gunAngle, want, 6.4 * dt);
+      // Snappy chin traverse, but slow enough to read as a turret (not mouse lock).
+      h.gunAngle = Phaser.Math.Angle.RotateTo(h.gunAngle, want, 3.6 * dt);
     }
     this.rotor.setRotation(h.rotor);
     this.gun.setRotation(h.gunAngle + Math.PI / 2);
@@ -2712,7 +2694,7 @@ export class MissionScene extends Phaser.Scene {
     this.withTrailFx(sc, () => {
       const { fire, smoke } = this.pairFx(s.z, this.burn, this.fragSmoke, ZOff.fire, ZOff.smoke);
       fire.emitParticleAt(s.x, sy, n);
-      smoke.emitParticleAt(s.x, sy + 8, Math.max(1, Math.round((small ? 3 : 6) * sc)));
+      smoke.emitParticleAt(s.x, sy, Math.max(1, Math.round((small ? 3 : 6) * sc)));
       if (!small) {
         this.blastFire.setDepth(worldDepth(s.z, ZOff.fire + 0.2));
         this.blastFire.explode(Math.max(1, Math.round(4 * sc)), s.x, sy);
@@ -2739,11 +2721,11 @@ export class MissionScene extends Phaser.Scene {
     const small = troopMissileTrail(s);
     // Troop RPGs can sit above 0.6 scale — don't treat them as Hydra (smoke-only).
     const hydra = isRocket && !small && (s.scale ?? 1) > 0.6;
-    const steps = hydra ? 1 : 2;
+    const steps = 2;
     const rot = s.angle + Math.PI / 2;
     const vis = s.scale ?? 1;
-    const tail = (hydra ? 8 : 15) * vis;
-    const sc = shotTrailScale(s);
+    const tail = (hydra ? 10 : 15) * vis;
+    const sc = shotTrailScale(s) * (hydra ? 1.35 : 1);
     for (let i = 0; i < steps; i++) {
       const t = (i + range(0, 0.35)) / steps;
       const x = x0 + (s.x - x0) * t;
@@ -2758,7 +2740,8 @@ export class MissionScene extends Phaser.Scene {
           if (Math.random() < 0.55) fire.emitParticleAt(tx, ty, 1);
           if (Math.random() < 0.4) smoke.emitParticleAt(tx, ty, 1);
         } else if (hydra) {
-          if (Math.random() < 0.38) this.fxAt(z, this.lingerSmoke, ZOff.smoke).emitParticleAt(tx, ty, 1);
+          if (Math.random() < 0.72) this.fxAt(z, this.lingerSmoke, ZOff.smoke).emitParticleAt(tx, ty, 1);
+          if (Math.random() < 0.35) this.fxAt(z, this.lingerSmoke, ZOff.smoke).emitParticleAt(tx + range(-2, 2), ty + range(-2, 2), 1);
         } else if (isRocket) {
           const { fire, smoke } = this.pairFx(z, this.burn, this.lingerSmoke);
           if (Math.random() < 0.5) fire.emitParticleAt(tx, ty, 1);
@@ -2867,7 +2850,9 @@ export class MissionScene extends Phaser.Scene {
     const mechGunBias = !he && objectHit && !(direct && isOrganic(direct.kind)) ? 2.1 : undefined;
     const expBias = missileBias ?? mechGunBias;
     // Soft-target blood spray is chain-gun only; rockets/missiles always use mech-style object hits.
-    if (objectHit && !he && direct && isOrganic(direct.kind)) {
+    // Motorcycle keeps mech sparks and also gets rider blood.
+    const softBloodHit = objectHit && !he && direct && hasSoftBlood(direct.kind);
+    if (softBloodHit) {
       const graze = Phaser.Math.Clamp(Math.hypot(dx, dy) / travel, 0, 1);
       const distN = Phaser.Math.Clamp(Math.hypot(x - this.heli.x, y - this.heli.y) / 780, 0, 1);
       const acute = Math.max(graze, distN);
@@ -2884,19 +2869,23 @@ export class MissionScene extends Phaser.Scene {
         forceKind: "dirt",
         blood: true,
       });
-    } else if (objectHit) {
-      this.spawnSparks(x, y, z + 4, {
-        style: "object",
-        n: Math.min(56, Math.round((he ? 36 : 18) * fx.n)),
-        spdMin: (he ? 110 : 90) * fx.spd,
-        spdMax: (he ? 480 : 340) * fx.spd,
-        bx: sparkBx,
-        by: sparkBy,
-        bz: sparkBz,
-        tight: he ? 0.28 : 0.52,
-        scaleMul: fx.size,
-        expBias,
-      });
+    }
+    if (objectHit) {
+      // Troops: blood only. Motorcycle: blood + mech sparks. Everything else: mech sparks.
+      if (!softBloodHit || !isOrganic(direct!.kind)) {
+        this.spawnSparks(x, y, z + 4, {
+          style: "object",
+          n: Math.min(56, Math.round((he ? 36 : 18) * fx.n)),
+          spdMin: (he ? 110 : 90) * fx.spd,
+          spdMax: (he ? 480 : 340) * fx.spd,
+          bx: sparkBx,
+          by: sparkBy,
+          bz: sparkBz,
+          tight: he ? 0.28 : 0.52,
+          scaleMul: fx.size,
+          expBias,
+        });
+      }
     } else if (water) {
       this.spawnSparks(x, y, z + 3, {
         style: "water",
@@ -3084,7 +3073,10 @@ export class MissionScene extends Phaser.Scene {
         bounces: Math.random() < 0.4 ? 1 : 0,
         trailOnly: true,
         linger: true,
-        trailR: Phaser.Math.Linear(soft ? 1 : 2.2, soft ? 5 : 14, size01) * range(0.75, 1.15),
+        // Soft (troop) blast trails share the same mid flame size as organic debris trails.
+        trailR: soft
+          ? range(6.8, 7.6)
+          : Phaser.Math.Linear(2.2, 14, size01) * range(0.75, 1.15),
         trailSoft: soft,
         wobble: Math.random() * Math.PI * 2,
         wobFreq: range(9, 17),
@@ -3178,6 +3170,7 @@ export class MissionScene extends Phaser.Scene {
         ? keys[i % keys.length]!
         : "fx_frag_metal";
       const organic = !!sp.organic;
+      // Organic debris sprite scale stays varied; flame size is a fixed mid band (see emitFragTrail).
       this.frags.push({
         x: u.x,
         y: u.y,
@@ -3192,8 +3185,10 @@ export class MissionScene extends Phaser.Scene {
         settled: false,
         gravity: true,
         bounces: Math.random() < 1 / 3 ? 2 + ((Math.random() * 2) | 0) : 0,
-        trailR: this.texTrailR(key) * (organic ? 0.46 : 1) * Phaser.Math.Linear(0.4, 1.4, boom),
-        scale: (organic ? 0.65 : 1) * Phaser.Math.Linear(0.32, 1.5, boom),
+        trailR: organic
+          ? range(6.8, 7.6)
+          : this.texTrailR(key) * Phaser.Math.Linear(0.4, 1.4, boom),
+        scale: (organic ? 0.78 : 1) * Phaser.Math.Linear(0.32, 1.5, boom),
         trailSoft: organic,
       });
     }
@@ -3345,7 +3340,7 @@ export class MissionScene extends Phaser.Scene {
           hp.y,
           hs.sy
         );
-        if (sp.organic && this.textures.exists("fx_dirt") && !isWater(this.world, u.x, u.y)) {
+        if (hasSoftBlood(u.kind) && this.textures.exists("fx_dirt") && !isWater(this.world, u.x, u.y)) {
           const kdx = u.killDx ?? 0;
           const kdy = u.killDy ?? 0;
           const impactAng = (kdx || kdy) ? Math.atan2(kdy, kdx) : u.angle;
@@ -3634,6 +3629,7 @@ export class MissionScene extends Phaser.Scene {
           pinHost: hull,
           pinMount: { ...r.mount },
           rotorSkew: true,
+          skewAng: range(-0.4, 0.4) + (Math.random() < 0.5 ? 0 : Math.PI / 2),
         });
       } else {
         this.throwRotorHulk({
@@ -3681,6 +3677,8 @@ export class MissionScene extends Phaser.Scene {
       scale: opts.scale,
       rotorFlames: true,
       rotorThrow: true,
+      rotorSkew: true,
+      skewAng: range(-0.5, 0.5) + (Math.random() < 0.5 ? 0 : Math.PI / 2),
       bladeOffs: opts.bladeOffs,
       rotorSpan: opts.rotorSpan,
     });
@@ -3717,11 +3715,7 @@ export class MissionScene extends Phaser.Scene {
   }
 
   playerDmgPois(): { x: number; y: number }[] {
-    return [
-      { x: this.body.x, y: this.body.y },
-      { x: this.gun.x, y: this.gun.y },
-      { x: this.rotor.x, y: this.rotor.y },
-    ];
+    return PLAYER_DMG_POIS.map((uv) => spriteUvPos(this.body, uv.u, uv.v));
   }
 
   crashDmgFlames(
@@ -4137,8 +4131,8 @@ export class MissionScene extends Phaser.Scene {
         sx *= 1.04;
         sy *= 0.52;
       } else if (f.rotorSkew) {
-        sx *= 1.14;
-        sy *= 0.56;
+        sx *= 1.08;
+        sy *= 0.78;
       }
       this.stampWreck(f.key, f.x, f.y, f.angle, sx, 0.92, o.x, o.y, sy);
       f.trailOnly = true;
@@ -4177,7 +4171,7 @@ export class MissionScene extends Phaser.Scene {
         const wy = pyBase + lx * sa + ly * ca;
         this.dmgFlameScale = p.sc * (f.scale ?? 1) * (f.dishFlat ? 0.85 : 1.15);
         if (Math.random() < 0.8 * dim) fire.emitParticleAt(wx, wy, p.lx === 0 && p.ly === 0 ? 2 : 1);
-        if (Math.random() < 0.42 * dim) smoke.emitParticleAt(wx, wy + 8, 1);
+        if (Math.random() < 0.42 * dim) smoke.emitParticleAt(wx, wy, 1);
       }
       return;
     }
@@ -4193,7 +4187,7 @@ export class MissionScene extends Phaser.Scene {
         const wy = pyBase + p.ox * sa;
         this.dmgFlameScale = p.sc * (f.scale ?? 1) * 0.9;
         if (Math.random() < 0.78 * dim) fire.emitParticleAt(wx, wy, p.ox === 0 ? 2 : 1);
-        if (p.ox === 0 && Math.random() < 0.4 * dim) smoke.emitParticleAt(wx, wy + 8, 1);
+        if (p.ox === 0 && Math.random() < 0.4 * dim) smoke.emitParticleAt(wx, wy, 1);
       }
       return;
     }
@@ -4214,20 +4208,21 @@ export class MissionScene extends Phaser.Scene {
     const r = f.trailR;
     const fireProto = f.trailSoft ? this.ember : f.linger ? this.blastBurn : this.burn;
     const puffProto = f.linger ? this.lingerSmoke : this.fragSmoke;
-    const ref = f.trailSoft ? 3.2 : f.linger ? 6 : 6.5;
-    const sc = Phaser.Math.Clamp((r * (f.scale ?? 1)) / ref, 0.35, 2.75);
+    // Soft trails: size from trailR only (ignore frag sprite scale) so debris + blast embers match.
+    const sc = f.trailSoft
+      ? Phaser.Math.Clamp(r / 4.8, 1.4, 1.65)
+      : Phaser.Math.Clamp((r * (f.scale ?? 1)) / (f.linger ? 6 : 6.5), 0.35, 2.75);
+    // Soft fire uses ember (tiny base); keep smoke from inheriting the ember boost.
+    const smokeSc = f.trailSoft ? Phaser.Math.Clamp(sc * 0.28, 0.32, 0.48) : sc;
     const jit = Math.max(1.5, r * 0.12);
-    this.withTrailFx(sc, () => {
-      const { fire, smoke: puff } = this.pairFx(f.z, fireProto, puffProto, trailFire, trailSmoke);
-      if (Math.random() < (f.trailOnly ? 0.85 : 0.7) * dim) {
-        const p = jitterDisk(px, py, jit);
-        fire.emitParticleAt(p.x, p.y, 1);
-      }
-      if (Math.random() < (f.trailOnly ? 0.65 : 0.5) * dim) {
-        const p = jitterDisk(px, py, jit * 1.35);
-        puff.emitParticleAt(p.x, p.y + 10, 1);
-      }
-    });
+    const { fire, smoke: puff } = this.pairFx(f.z, fireProto, puffProto, trailFire, trailSmoke);
+    const p = jitterDisk(px, py, jit);
+    if (Math.random() < (f.trailOnly ? 0.85 : 0.7) * dim) {
+      this.withTrailFx(sc, () => fire.emitParticleAt(p.x, p.y, 1));
+    }
+    if (Math.random() < (f.trailOnly ? 0.65 : 0.5) * dim) {
+      this.withTrailFx(smokeSc, () => puff.emitParticleAt(p.x, p.y, 1));
+    }
   }
 
   emitHeliCrashDmgFlames(): void {
@@ -4266,7 +4261,7 @@ export class MissionScene extends Phaser.Scene {
       const p = spriteUvPos(spr, s.u, s.v);
       this.dmgFlameScale = s.scale * dim * airMul;
       if (Math.random() < 0.72 * dim) fire.emitParticleAt(p.x, p.y, 2);
-      if (Math.random() < 0.35 * dim) smoke.emitParticleAt(p.x, p.y + 8, 1);
+      if (Math.random() < 0.35 * dim) smoke.emitParticleAt(p.x, p.y, 1);
     }
   }
 
@@ -5326,13 +5321,13 @@ export class MissionScene extends Phaser.Scene {
         sx = sc * 1.04;
         sy = sc * 0.52;
       } else if (f.rotorSkew) {
-        sx = sc * 1.14;
-        sy = sc * 0.56;
+        sx = sc * 1.08;
+        sy = sc * 0.78;
       }
       const cast = castZ(this.world, f.x, f.y, z);
-      // Rotor throws have no baked shadow atlas — generic soft "shadow" scales into a huge gray blob.
+      // Pinned rotors skip shadows (stay with hull). Thrown rotors / gun hulks need a baked atlas.
       const canShadow =
-        !f.rotorThrow && !f.pinHost && !f.boatSink && this.textures.exists(shadowKey(f.key, cast));
+        !f.pinHost && !f.boatSink && this.textures.exists(shadowKey(f.key, cast));
       const depth = f.settled ? Layer.HULK : worldDepth(z, ZOff.body + (f.pinHost ? 0.55 : 0.35));
       const spd = Math.hypot(f.vx, f.vy);
       // Squash along travel; inner image keeps f.angle spin relative to heading.
@@ -5371,11 +5366,45 @@ export class MissionScene extends Phaser.Scene {
         }
         return;
       }
+      // Rotor hulks: fixed foreshortened tilt plane; blades spin inside the wrap.
+      if (f.rotorSkew && !f.settled) {
+        const skew = f.skewAng ?? 0.28;
+        const along = 1.08;
+        const across = 0.78;
+        let wrap = im.getData("tiltWrap") as Phaser.GameObjects.Container | undefined;
+        if (!wrap || !wrap.scene) {
+          wrap = this.add.container(f.x, f.y - screenLift(z));
+          wrap.add(im);
+          im.setData("tiltWrap", wrap);
+        }
+        wrap
+          .setVisible(true)
+          .setPosition(f.x, f.y - screenLift(z))
+          .setRotation(skew)
+          .setScale(sc * along, sc * across)
+          .setDepth(depth)
+          .setAlpha(1);
+        im.setVisible(true)
+          .setTexture(f.key)
+          .setOrigin(ox, oy)
+          .setPosition(0, 0)
+          .setRotation(f.angle - skew)
+          .setScale(1)
+          .setAlpha(1);
+        if (canShadow) {
+          sh.setVisible(true).setOrigin(ox, oy);
+          this.applyCastShadow(sh, f.x, f.y, z, f.key, skew, f.scale ?? 1);
+          sh.setScale(sh.scaleX * along, sh.scaleY * across);
+          if (cast < 1) sh.setAlpha(0.22);
+        }
+        return;
+      }
       this.unwrapTilt(im);
       if (canShadow) {
         sh.setVisible(true).setOrigin(ox, oy);
         this.applyCastShadow(sh, f.x, f.y, z, f.key, f.angle, f.scale ?? 1);
         if (f.dishFlat) sh.setScale(sh.scaleX * 1.04, sh.scaleY * 0.52);
+        if (f.rotorSkew) sh.setScale(sh.scaleX * 1.08, sh.scaleY * 0.78);
         if (cast < 1) sh.setAlpha(0.22);
       }
       const sinkU =
@@ -7265,10 +7294,10 @@ export class MissionScene extends Phaser.Scene {
         const pois = this.playerDmgPois();
         for (const s of h.dmgSites) {
           const base = pois[s.poi] ?? pois[0]!;
-          const p = jitterDisk(base.x, base.y, 10 + s.scale * 6);
+          const p = jitterDisk(base.x, base.y, 6 + s.scale * 4);
           this.dmgFlameScale = s.scale * 1.65;
           if (Math.random() < 0.72) fire.emitParticleAt(p.x, p.y, 2);
-          if (Math.random() < 0.4) smoke.emitParticleAt(p.x, p.y + 9, 1);
+          if (Math.random() < 0.4) smoke.emitParticleAt(p.x, p.y, 1);
         }
       }
     } else if (h.phase !== "dead") {
@@ -7298,10 +7327,10 @@ export class MissionScene extends Phaser.Scene {
       const sizeMul = sp.aerial ? 1.65 : sp.building ? 1.15 : 1;
       for (const s of u.dmgSites) {
         const base = pois[s.poi] ?? pois[0]!;
-        const p = jitterDisk(base.x, base.y, 8 + s.scale * 7);
+        const p = jitterDisk(base.x, base.y, 5 + s.scale * 4.5);
         this.dmgFlameScale = s.scale * sizeMul;
         if (Math.random() < 0.7) fire.emitParticleAt(p.x, p.y, 2);
-        if (Math.random() < 0.38) smoke.emitParticleAt(p.x, p.y + 8, 1);
+        if (Math.random() < 0.38) smoke.emitParticleAt(p.x, p.y, 1);
       }
     }
   }

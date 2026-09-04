@@ -62,7 +62,7 @@ export class Heli {
   immune = false;
   hellfireLock: { id: number } | null = null;
   hellfireSeek: { id: number; t: number } | null = null;
-  /** Indices into player damage POIs: 0 center, 1 gun, 2 rotor. */
+  /** Indices into PLAYER_DMG_POIS (hand-picked heli_body UVs). */
   dmgSites: { poi: number; scale: number }[] = [];
   gndSmooth: number;
   killDx = 0;
