@@ -3337,7 +3337,7 @@ export class MissionScene extends Phaser.Scene {
       });
       const rotorSpan = this.texSpan(rk) * scale * 0.42;
       const rotorAng = ri % 2 ? -opts.rotor : opts.rotor;
-      if (Math.random() < 1 / 3) {
+      if (Math.random() < 0.4) {
         const spinSign = rotorAng >= 0 ? 1 : -1;
         this.frags.push({
           x,
@@ -4552,9 +4552,13 @@ export class MissionScene extends Phaser.Scene {
           u.fireCd = wpn.fireCd;
         }
         const jitter = (Math.random() - 0.5) * (wpn.jitter ?? 0);
+        const tipCount =
+          guns[gunI]?.muzzles?.length || lookupSpriteMuzzles(textureOf(u.kind)).length || 1;
+        const tipI = u.muzzleTip % tipCount;
+        u.muzzleFireTip = tipI;
+        u.muzzleTip = tipI;
         const muzzle = this.enemyMuzzle(u, gunI);
-        const tips = guns[gunI]?.muzzles?.length || lookupSpriteMuzzles(textureOf(u.kind)).length;
-        if (tips > 1) u.muzzleTip = (u.muzzleTip + 1) % tips;
+        if (tipCount > 1) u.muzzleTip = (tipI + 1) % tipCount;
         // Stay on the same gun for the whole burst so each mount keeps its own ammo type.
         if (guns.length > 1 && (u.burstLeft ?? 0) <= 0) u.muzzleGun = (gunI + 1) % guns.length;
         const fireAng = barrelAng + jitter;
@@ -4852,7 +4856,9 @@ export class MissionScene extends Phaser.Scene {
     if (!gun || !wpn) {
       const bodyTips = lookupSpriteMuzzles(textureOf(u.kind));
       if (bodyTips.length) {
-        const muz = bodyTips[u.muzzleTip % bodyTips.length]!;
+        const tipIdx =
+          u.muzzleT > 0 && u.muzzleFireTip != null ? u.muzzleFireTip : u.muzzleTip;
+        const muz = bodyTips[tipIdx % bodyTips.length]!;
         return atUv(hullPivot, muz, hullImg.width, hullImg.height, u.x, u.y, hullRot);
       }
       const len = wpn?.muzzleLen ?? 10;
@@ -4871,7 +4877,9 @@ export class MissionScene extends Phaser.Scene {
       ? (this.textures.get(gun.tex).getSourceImage() as { width: number; height: number })
       : { width: 24, height: 48 };
     const tips = gun.muzzles?.length ? gun.muzzles : [gun.muzzle ?? { x: 0.5, y: 0.08 }];
-    const muz = tips[u.muzzleTip % tips.length]!;
+    const tipIdx =
+      u.muzzleT > 0 && u.muzzleFireTip != null ? u.muzzleFireTip : u.muzzleTip;
+    const muz = tips[tipIdx % tips.length]!;
     const ga = gunWorldRot(gun.tex, u.turrets[gunI] ?? u.turret);
     const gsc = gun.scale ?? 1;
     return atUv(origin, muz, gtex.width * gsc, gtex.height * gsc, hx, hy, ga);

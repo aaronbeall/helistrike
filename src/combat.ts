@@ -41,6 +41,8 @@ export interface Unit {
   muzzleT: number;
   muzzleGun: number;
   muzzleTip: number;
+  /** Tip index used for the active muzzle flash (may differ from next-shot muzzleTip). */
+  muzzleFireTip?: number;
   /** Baked muzzle flash jitter for the current flash window. */
   muzzleJitS?: number;
   muzzleJitR?: number;

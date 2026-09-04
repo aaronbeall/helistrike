@@ -44,7 +44,7 @@ function asUvList(v: Uv | readonly Uv[] | undefined): Uv[] {
   return [{ x: p.x, y: p.y }];
 }
 
-/** Barrel tips: flashes and projectiles emit here (texture UV). SAM has two tubes. */
+/** Barrel tips: flashes and projectiles emit here (texture UV). Tower AA cycles 4; SAM gun has two tubes. */
 export const SPRITE_MUZZLE: Record<string, Uv | readonly Uv[]> = {
   building_tower_gun: { x: 0.52, y: 0.039 },
   enemy_battleship_gun: [
@@ -53,7 +53,12 @@ export const SPRITE_MUZZLE: Record<string, Uv | readonly Uv[]> = {
   ],
   enemy_battleship_gun_aa: { x: 0.5, y: 0.05 },
   enemy_battleship_gun_sam: { x: 0.5, y: 0.12 },
-  building_tower_aa: { x: 0.5, y: 0.05 },
+  building_tower_aa: [
+    { x: 0.455, y: 0.173 },
+    { x: 0.486, y: 0.173 },
+    { x: 0.523, y: 0.173 },
+    { x: 0.555, y: 0.173 },
+  ],
   building_tower_sam: { x: 0.5, y: 0.12 },
   enemy_heli_gun: { x: 0.5, y: 0.08 },
   enemy_heli_heavy_gun: { x: 0.5, y: 0.08 },
