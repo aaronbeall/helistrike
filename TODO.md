@@ -24,10 +24,9 @@
   * Tesla coil
   * Nuke
   * MIRV
-  * Drone (auto target and explode)
   * Flak cannon
-  * TV missile (camera follows missile)
-  * Orbital strike (use map)
+  * Drone (drive and detonate)
+  * Orbital strike (uses map to target)
   * (Hidden) Rave Cannon
 * [ ] Counter-measures
 * [ ] Last stand / base defense game mode
@@ -73,6 +72,8 @@
 * [ ] Weather effects (rain, lightning, thunder)
 * [ ] Time of day lighting effects
   * [ ] Night rendering (lights)
+* [ ] Steam achievements
+* [ ] Shell ejecta
 
 ## Fix
 

@@ -121,36 +121,55 @@ export class MenuScene extends Phaser.Scene {
   create(): void {
     const { width: w, height: h } = this.scale;
     this.cameras.main.setBackgroundColor("#1c1812");
+    if (this.textures.exists("menu_splash")) {
+      const bg = this.add.image(w / 2, h / 2, "menu_splash").setDepth(0);
+      const sx = w / bg.width;
+      const sy = h / bg.height;
+      bg.setScale(Math.max(sx, sy));
+      this.add
+        .rectangle(w / 2, h / 2, w, h, 0x0c0a08, 0.42)
+        .setDepth(1)
+        .setName("menu_scrim");
+    }
     this.add
-      .text(w / 2, h * 0.28, "HELISTRIKE", {
+      .text(w / 2, h * 0.22, "HELISTRIKE", {
         fontFamily: "Black Ops One, Impact, sans-serif",
         fontSize: "72px",
         color: "#e8b84a",
+        stroke: "#1c1812",
+        strokeThickness: 6,
       })
       .setOrigin(0.5)
+      .setDepth(2)
       .setName("menu_title");
     this.add
-      .text(w / 2, h * 0.4, "TOP-DOWN GUNSHIP  ·  GULF THEATER", {
+      .text(w / 2, h * 0.34, "TOP-DOWN GUNSHIP  ·  GULF THEATER", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "16px",
-        color: "#8a8470",
+        color: "#d4cbb0",
+        stroke: "#1c1812",
+        strokeThickness: 3,
       })
       .setOrigin(0.5)
+      .setDepth(2)
       .setName("menu_sub");
     this.add
       .text(
         w / 2,
-        h * 0.56,
+        h * 0.54,
         "WASD  thrust & strafe\nMOUSE  turn  ·  CLICK  fire  ·  1-4 / WHEEL  weapons\nSPACE  pop-up  ·  SHIFT  nap-of-earth  ·  M  map\n+ / -  time scale",
         {
           fontFamily: "Share Tech Mono, monospace",
           fontSize: "15px",
-          color: "#c8c0a8",
+          color: "#e8e0cc",
           align: "center",
           lineSpacing: 8,
+          stroke: "#1c1812",
+          strokeThickness: 3,
         }
       )
       .setOrigin(0.5)
+      .setDepth(2)
       .setName("menu_controls");
     const go = this.add
       .text(w / 2, h * 0.78, "[  START MISSION  ]", {
@@ -161,6 +180,7 @@ export class MenuScene extends Phaser.Scene {
         padding: { x: 18, y: 10 },
       })
       .setOrigin(0.5)
+      .setDepth(2)
       .setInteractive({ useHandCursor: true })
       .setName("menu_start");
     go.on("pointerdown", () => this.scene.start("load"));
@@ -3127,6 +3147,7 @@ export class MissionScene extends Phaser.Scene {
             // Turret hulks are large textures; don't inherit full debris trailR bump.
             throwOff(turretKey, (u.turrets[gi] ?? u.turret) + Math.PI / 2, at.x, at.y, scale, {
               trailR: this.texTrailR(turretKey) * scale * 0.38,
+              bounces: 0,
             });
           });
         }
@@ -3188,6 +3209,7 @@ export class MissionScene extends Phaser.Scene {
             dishFlat: true,
             spin: range(-7, 7),
             trailR: this.texTrailR(dishKey) * scale * 0.55,
+            bounces: 0,
           });
         }
       } else {
@@ -3686,37 +3708,7 @@ export class MissionScene extends Phaser.Scene {
           } else if (f.wheelRoll) {
             if (f.bounces > 0 && f.vz < -40) {
               f.bounces--;
-              const sl = groundSlope(this.world, f.x, f.y);
-              let nx = -sl.dx;
-              let ny = -sl.dy;
-              let nz = 1;
-              const nlen = Math.hypot(nx, ny, nz) || 1;
-              nx /= nlen;
-              ny /= nlen;
-              nz /= nlen;
-              const vin = f.vx * nx + f.vy * ny + f.vz * nz;
-              // Reflect off the terrain normal (same slope field as downhill roll / rivers).
-              if (vin < 0) {
-                const e = 0.42;
-                const kick = (1 + e) * vin;
-                f.vx -= kick * nx;
-                f.vy -= kick * ny;
-                f.vz -= kick * nz;
-              } else {
-                f.vz = -f.vz * 0.38;
-              }
-              f.vx *= 0.78;
-              f.vy *= 0.78;
-              f.vz *= 0.92;
-              // Extra downhill shove from the gradient, stronger on steeper ground.
-              const steep = Math.hypot(sl.dx, sl.dy);
-              if (steep > 1e-4) {
-                const dx = -sl.dx / steep;
-                const dy = -sl.dy / steep;
-                const shove = Math.min(140, 38 + steep * 900) * Phaser.Math.Clamp(-f.vz / 220, 0.35, 1.2);
-                f.vx += dx * shove;
-                f.vy += dy * shove;
-              }
+              this.bounceFragSlope(f, 1);
               f.spin *= 0.65;
               this.stampDirtSmears(f.x, f.y, f.vx, f.vy);
               const bang = Math.hypot(f.vx, f.vy) > 8 ? Math.atan2(f.vy, f.vx) : f.angle;
@@ -3730,13 +3722,11 @@ export class MissionScene extends Phaser.Scene {
             }
           } else if (f.bounces > 0 && f.vz < -50) {
             f.bounces--;
-            f.vz = -f.vz * 0.22;
-            const spd = Math.hypot(f.vx, f.vy);
-            const jit = 0.45;
-            f.vx = (f.vx + range(-spd * jit * 0.5, spd * jit * 0.5)) * 0.5;
-            f.vy = (f.vy + range(-spd * jit * 0.5, spd * jit * 0.5)) * 0.5;
-            f.spin *= 0.55;
-            f.angle += range(-0.4, 0.4);
+            // Same elevation bounce as wheels, weaker so flight path barely turns.
+            this.bounceFragSlope(f, 0.32);
+            f.spin *= range(0.78, 1.22);
+            f.spin += range(-2.4, 2.4);
+            f.angle += range(-0.28, 0.28);
           } else {
             this.settleFrag(f);
           }
@@ -3793,6 +3783,49 @@ export class MissionScene extends Phaser.Scene {
       x: host.x + mx * ca - my * sa,
       y: host.y + mx * sa + my * ca,
     };
+  }
+
+  /**
+   * Reflect a frag off the height-map slope (same field as wheel roll / rivers).
+   * strength 1 = full wheel bounce; ~0.3 nudges trajectory without redirecting it.
+   */
+  bounceFragSlope(f: Frag, strength: number): void {
+    const s = Phaser.Math.Clamp(strength, 0, 1);
+    const sl = groundSlope(this.world, f.x, f.y);
+    let nx = -sl.dx;
+    let ny = -sl.dy;
+    let nz = 1;
+    const nlen = Math.hypot(nx, ny, nz) || 1;
+    nx /= nlen;
+    ny /= nlen;
+    nz /= nlen;
+    const vin = f.vx * nx + f.vy * ny + f.vz * nz;
+    const e = Phaser.Math.Linear(0.14, 0.42, s);
+    if (vin < 0) {
+      // Scale the horizontal part of the kick down at low strength so path barely turns.
+      const kick = (1 + e) * vin;
+      const hMul = Phaser.Math.Linear(0.28, 1, s);
+      f.vx -= kick * nx * hMul;
+      f.vy -= kick * ny * hMul;
+      f.vz -= kick * nz;
+    } else {
+      f.vz = -f.vz * e;
+    }
+    const fric = Phaser.Math.Linear(0.68, 0.78, s);
+    f.vx *= fric;
+    f.vy *= fric;
+    f.vz *= Phaser.Math.Linear(0.88, 0.92, s);
+    const steep = Math.hypot(sl.dx, sl.dy);
+    if (steep > 1e-4) {
+      const dx = -sl.dx / steep;
+      const dy = -sl.dy / steep;
+      const shove =
+        Math.min(140, 38 + steep * 900) *
+        Phaser.Math.Clamp(-f.vz / 220, 0.35, 1.2) *
+        Phaser.Math.Linear(0.18, 1, s);
+      f.vx += dx * shove;
+      f.vy += dy * shove;
+    }
   }
 
   tickWheelRoll(f: Frag, dt: number): void {

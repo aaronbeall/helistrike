@@ -60,6 +60,7 @@ const FX_KINDS = ["spark", "flame", "smoke", "muzzle", "dirt", "splash"] as cons
 export const FX_VARIANTS = 4;
 
 export function preloadArt(scene: Phaser.Scene): void {
+  scene.load.image("menu_splash", "helistrike-menu-splash.png");
   scene.load.image("src_heli", SRC.heli);
   scene.load.image("src_enemy", SRC.enemy);
   scene.load.image("src_enemy_heli_hulk", "sprites/helistrike-heli-enemy-hulk.png");
