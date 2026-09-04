@@ -30,6 +30,7 @@ function gunWorldRot(_tex: string, aim: number): number {
 }
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
 import { SpriteConfigTool } from "./spriteConfig";
+import { RosterConfigTool } from "./rosterConfig";
 import { LOAD_TIPS } from "./tips";
 import { preloadArt, prepareArt, extractBiomeTiles, bakeHeliHudWireTexture, bakeHurtVignetteTexture, gunLayout, heliHudWireUv, rotorLayout, shadowAlpha, shadowKey, shadowOff, spriteUvPos, tankLayout, FX_VARIANTS, nameGameTexture, nameGeneratedTextures, spritePivot, PLAYER_DMG_POIS, type HeliHudWireBake } from "./sprites";
 import {
@@ -422,6 +423,7 @@ export class MissionScene extends Phaser.Scene {
   debugGfx!: Phaser.GameObjects.Graphics;
   timeScale = 1;
   spriteCfg!: SpriteConfigTool;
+  rosterCfg!: RosterConfigTool;
   debugOpen = false;
   debugRoot!: Phaser.GameObjects.Container;
   debugPanel!: Phaser.GameObjects.Graphics;
@@ -945,12 +947,14 @@ export class MissionScene extends Phaser.Scene {
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.OPEN_BRACKET).on("down", () => {
       if (this.debugSpawnOpen) this.nudgeDebugSpawn(-1);
       else if (this.debugCamOpen) this.nudgeDebugCam(-1);
+      else if (this.rosterCfg?.open) this.rosterCfg.cycle(-1);
       else if (this.spriteCfg?.open) this.spriteCfg.cycle(-1);
       else if (this.editOpen) this.nudgeEditSize(-1);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.CLOSED_BRACKET).on("down", () => {
       if (this.debugSpawnOpen) this.nudgeDebugSpawn(1);
       else if (this.debugCamOpen) this.nudgeDebugCam(1);
+      else if (this.rosterCfg?.open) this.rosterCfg.cycle(1);
       else if (this.spriteCfg?.open) this.spriteCfg.cycle(1);
       else if (this.editOpen) this.nudgeEditSize(1);
     });
@@ -975,34 +979,39 @@ export class MissionScene extends Phaser.Scene {
       else if (this.over) this.scene.start("load");
     });
     const bumpTime = (dir: number) => {
-      if (this.debugCamOpen) this.nudgeDebugCam(dir);
+      if (this.rosterCfg?.open) this.rosterCfg.nudgeZoom(dir);
+      else if (this.debugCamOpen) this.nudgeDebugCam(dir);
       else this.nudgeTimeScale(dir);
     };
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.PLUS).on("down", () => bumpTime(1));
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_ADD).on("down", () => bumpTime(1));
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.MINUS).on("down", () => bumpTime(-1));
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_SUBTRACT).on("down", () => bumpTime(-1));
-    this.spriteCfg = new SpriteConfigTool(this, (key) => this.spriteOrigin(key), (root) => {
+    const markHudRoot = (root: Phaser.GameObjects.Container) => {
       const mark = (obj: Phaser.GameObjects.GameObject) => {
         this.bindHud(obj);
         const list = (obj as Phaser.GameObjects.Container).list;
         if (list) for (const ch of list) mark(ch);
       };
       mark(root);
-    });
+    };
+    this.spriteCfg = new SpriteConfigTool(this, (key) => this.spriteOrigin(key), markHudRoot);
+    this.rosterCfg = new RosterConfigTool(this, markHudRoot);
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.F9).on("down", () => this.spriteCfg.toggle());
-    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.BACKTICK).on("down", () => this.spriteCfg.toggle());
+    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.BACKTICK).on("down", () => this.cycleDebugRigs());
     this.input.keyboard!.addKey("F").on("down", () => this.toggleTestFx());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.UP).on("down", () => {
       if (this.debugSpawnOpen) this.nudgeDebugSpawn(-1);
       else if (this.debugCamOpen) this.nudgeDebugCamSel(-1);
       else if (this.debugOpen) this.nudgeDebugMenu(-1);
+      else if (this.rosterCfg?.open) this.rosterCfg.cycle(-1);
       else if (this.spriteCfg?.open) this.spriteCfg.cycle(-1);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN).on("down", () => {
       if (this.debugSpawnOpen) this.nudgeDebugSpawn(1);
       else if (this.debugCamOpen) this.nudgeDebugCamSel(1);
       else if (this.debugOpen) this.nudgeDebugMenu(1);
+      else if (this.rosterCfg?.open) this.rosterCfg.cycle(1);
       else if (this.spriteCfg?.open) this.spriteCfg.cycle(1);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT).on("down", () => {
@@ -1024,6 +1033,10 @@ export class MissionScene extends Phaser.Scene {
       }
       if (this.debugSpawnOpen) {
         this.nudgeDebugSpawn(dy > 0 ? 1 : -1);
+        return;
+      }
+      if (this.rosterCfg?.open) {
+        this.rosterCfg.cycle(dy > 0 ? 1 : -1);
         return;
       }
       if (this.spriteCfg?.open) {
@@ -1428,9 +1441,24 @@ export class MissionScene extends Phaser.Scene {
     return spritePivot(key);
   }
 
-  update(_t: number, dms: number): void {
+  /** ` cycles closed → sprite rig → roster rig → closed. */
+  cycleDebugRigs(): void {
     if (this.spriteCfg?.open) {
-      this.spriteCfg.update();
+      this.spriteCfg.toggle();
+      this.rosterCfg.toggle();
+      return;
+    }
+    if (this.rosterCfg?.open) {
+      this.rosterCfg.toggle();
+      return;
+    }
+    this.spriteCfg.toggle();
+  }
+
+  update(_t: number, dms: number): void {
+    if (this.spriteCfg?.open || this.rosterCfg?.open) {
+      if (this.spriteCfg?.open) this.spriteCfg.update();
+      if (this.rosterCfg?.open) this.rosterCfg.update();
       this.reticle.setVisible(false);
       this.reticleMark.setVisible(false);
       this.reticleMark.clear();
@@ -7066,6 +7094,7 @@ export class MissionScene extends Phaser.Scene {
       if (list) for (const ch of list) markHudTree(ch);
     };
     markHudTree(this.spriteCfg.root);
+    markHudTree(this.rosterCfg.root);
     markHudTree(this.debugRoot);
     if (this.editRoot) markHudTree(this.editRoot);
     this.children.each((obj) => {

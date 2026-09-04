@@ -301,7 +301,7 @@ export class SpriteConfigTool {
 
     const frameHint = frames.length > 1 ? `   ← → frame ${this.frameIdx + 1}/${frames.length}` : "";
     this.hintTxt.setText(
-      `SPRITE RIG   \` / F9 close   [ ] cycle   , . page   G art-only ${this.artOnly ? "ON" : "OFF"}${frameHint}   gold origin · green gun · cyan rotor · gold dish · violet troop · red dmg · orange muzzle`
+      `SPRITE RIG   \` cycle   F9 close   [ ] cycle   , . page   G art-only ${this.artOnly ? "ON" : "OFF"}${frameHint}   gold origin · green gun · cyan rotor · gold dish · violet troop · red dmg · orange muzzle`
     );
     const size = this.pageSize();
     const pages = Math.max(1, Math.ceil(keys.length / size));
