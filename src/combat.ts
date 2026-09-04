@@ -39,7 +39,6 @@ export const PLAYER_WPNS: Record<Wpn, PlayerWpnSpec> = {
       "muzzle sparks n6 220–520 tight0.9",
       "tracer emit ×5",
       "muzzle flash sc 0.78 life 0.1",
-      "chain vs enemy missiles (tiny hit)",
     ],
   },
   rocket: {

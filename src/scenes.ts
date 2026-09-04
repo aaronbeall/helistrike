@@ -2596,9 +2596,7 @@ export class MissionScene extends Phaser.Scene {
   updateShots(dt: number): void {
     const ptr = this.worldPointer();
     const remain: Shot[] = [];
-    const culled = new Set<Shot>();
     for (const s of this.shots) {
-      if (culled.has(s)) continue;
       if (s.motor != null) {
         const was = s.motor;
         s.motor += dt;
@@ -2749,20 +2747,6 @@ export class MissionScene extends Phaser.Scene {
         hit = true;
         hitPlayer = true;
       }
-      // Chain gun can pick off enemy rockets/missiles — tiny hit volume, segment-tested.
-      if (!hit && s.from === "player" && s.kind === "cannon") {
-        const killR = 3.6;
-        for (const m of this.shots) {
-          if (culled.has(m) || m === s || m.from !== "enemy" || m.kind === "cannon") continue;
-          if (segPointDist3(x0, y0, z0, s.x, s.y, s.z, m.x, m.y, m.z) > killR) continue;
-          culled.add(s);
-          culled.add(m);
-          this.explode(m.x, m.y, m.z, m.blast, m.dmg, undefined, m.vx, m.vy, m.vz, false, m.kind);
-          hit = true;
-          break;
-        }
-        if (culled.has(s)) continue;
-      }
       if (s.from === "player") {
         for (const u of this.units) {
           if (u.dead) continue;
@@ -2788,7 +2772,7 @@ export class MissionScene extends Phaser.Scene {
       this.emitShotTrail(s, x0, y0, z0);
       remain.push(s);
     }
-    this.shots = remain.filter((q) => !culled.has(q));
+    this.shots = remain;
     this.syncShotSprites();
   }
 
@@ -7821,28 +7805,6 @@ function norm3(x: number, y: number, z: number): { x: number; y: number; z: numb
   const n = Math.hypot(x, y, z);
   if (n < 1e-6) return { x: 1, y: 0, z: 0 };
   return { x: x / n, y: y / n, z: z / n };
-}
-
-/** Closest distance from point P to segment AB in 3D. */
-function segPointDist3(
-  ax: number,
-  ay: number,
-  az: number,
-  bx: number,
-  by: number,
-  bz: number,
-  px: number,
-  py: number,
-  pz: number
-): number {
-  const abx = bx - ax;
-  const aby = by - ay;
-  const abz = bz - az;
-  const ab2 = abx * abx + aby * aby + abz * abz;
-  if (ab2 < 1e-8) return Math.hypot(px - ax, py - ay, pz - az);
-  let t = ((px - ax) * abx + (py - ay) * aby + (pz - az) * abz) / ab2;
-  t = Phaser.Math.Clamp(t, 0, 1);
-  return Math.hypot(ax + abx * t - px, ay + aby * t - py, az + abz * t - pz);
 }
 
 function steerDir(
