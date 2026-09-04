@@ -3239,7 +3239,8 @@ export class MissionScene extends Phaser.Scene {
         const hullKey = resolveSkin(this.textures, sp.hulk, u.camo);
         const hp = spritePivot(hullKey);
         const hs = this.wreckDrawScale(u.x, u.y, u.z, 1, !sp.aerial);
-        this.stampWreck(hullKey, u.x, u.y, u.angle + Math.PI / 2, hs.sx, 0.95, hp.x, hp.y, hs.sy);
+        // Match live hull screen Y (perspective lift); stamp without it snaps south of the body.
+        this.stampWreck(hullKey, u.x, u.y - screenLift(u.z), u.angle + Math.PI / 2, hs.sx, 0.95, hp.x, hp.y, hs.sy);
         const throwOff = (key: string, ang: number, x: number, y: number, scale = 1, extra: Partial<Frag> = {}) => {
           const a = Math.random() * Math.PI * 2;
           const throwSp = range(90, 200);
@@ -3269,7 +3270,8 @@ export class MissionScene extends Phaser.Scene {
             const liveKey = resolveSkin(this.textures, g.tex, u.camo);
             const liveSpan = this.texSpan(liveKey);
             const hulkSpan = this.texSpan(turretKey);
-            const scale = (g.scale ?? 1) * (liveSpan / Math.max(hulkSpan, 1));
+            // Slightly under live gun size so pop hulks read as wreckage, not spare parts.
+            const scale = (g.scale ?? 1) * (liveSpan / Math.max(hulkSpan, 1)) * 0.86;
             const at = this.gunMountPos(u, gi);
             // Turret hulks are large textures; don't inherit full debris trailR bump.
             throwOff(turretKey, (u.turrets[gi] ?? u.turret) + Math.PI / 2, at.x, at.y, scale, {
@@ -3345,7 +3347,7 @@ export class MissionScene extends Phaser.Scene {
         this.stampWreck(
           this.textures.exists(hulkKey) ? hulkKey : "hulk_crater",
           u.x,
-          u.y,
+          u.y - screenLift(u.z),
           u.angle + Math.PI / 2,
           hs.sx,
           0.95,
@@ -3455,7 +3457,7 @@ export class MissionScene extends Phaser.Scene {
         const liveKey = resolveSkin(this.textures, g.tex, u.camo);
         const liveSpan = this.texSpan(liveKey);
         const hulkSpan = this.texSpan(turretKey);
-        const scale = (g.scale ?? 1) * (liveSpan / Math.max(hulkSpan, 1));
+        const scale = (g.scale ?? 1) * (liveSpan / Math.max(hulkSpan, 1)) * 0.86;
         const at = this.gunMountPos(u, gi);
         const a = Math.random() * Math.PI * 2;
         const throwSp = range(70, 160);
@@ -4099,7 +4101,7 @@ export class MissionScene extends Phaser.Scene {
       const o = this.fragStampOrigin(f.key);
       const hs = this.wreckDrawScale(f.x, f.y, f.z || 0, f.scale ?? 0.55);
       // Pre-baked blue sink art — no runtime tintFill.
-      this.stampWreck(f.key, f.x, f.y, f.angle, hs.sx, 0.8, o.x, o.y, hs.sy);
+      this.stampWreck(f.key, f.x, f.y - screenLift(f.z || 0), f.angle, hs.sx, 0.8, o.x, o.y, hs.sy);
       f.trailOnly = true;
     }
     f.trailFade = 0;
@@ -4147,7 +4149,8 @@ export class MissionScene extends Phaser.Scene {
         sx *= 1.08;
         sy *= 0.78;
       }
-      this.stampWreck(f.key, f.x, f.y, f.angle, sx, 0.92, o.x, o.y, sy);
+      // Live frags draw at y - screenLift(z); stamp at raw y jumped south on hills.
+      this.stampWreck(f.key, f.x, f.y - screenLift(f.z || 0), f.angle, sx, 0.92, o.x, o.y, sy);
       f.trailOnly = true;
     }
     if (!f.heliCrash) this.beginFragTrailFade(f);
@@ -7368,7 +7371,7 @@ export class MissionScene extends Phaser.Scene {
         const pois = this.playerDmgPois();
         for (const s of h.dmgSites) {
           const base = pois[s.poi] ?? pois[0]!;
-          const p = jitterDisk(base.x, base.y, 6 + s.scale * 4);
+          const p = jitterDisk(base.x, base.y, 2.2 + s.scale * 1.5);
           this.dmgFlameScale = s.scale * 1.65;
           if (Math.random() < 0.72) fire.emitParticleAt(p.x, p.y, 2);
           if (Math.random() < 0.4) smoke.emitParticleAt(p.x, p.y, 1);
@@ -7401,7 +7404,7 @@ export class MissionScene extends Phaser.Scene {
       const sizeMul = sp.aerial ? 1.65 : sp.building ? 1.15 : 1;
       for (const s of u.dmgSites) {
         const base = pois[s.poi] ?? pois[0]!;
-        const p = jitterDisk(base.x, base.y, 5 + s.scale * 4.5);
+        const p = jitterDisk(base.x, base.y, 1.8 + s.scale * 1.6);
         this.dmgFlameScale = s.scale * sizeMul;
         if (Math.random() < 0.7) fire.emitParticleAt(p.x, p.y, 2);
         if (Math.random() < 0.38) smoke.emitParticleAt(p.x, p.y, 1);
