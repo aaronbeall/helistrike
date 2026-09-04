@@ -334,7 +334,8 @@ export class MissionScene extends Phaser.Scene {
   trailFxScale = 1;
   playerCrashStarted = false;
   playerCrashLanded = false;
-  playerCrashEndT = 0;
+  /** <0 = waiting for crash simmer; >=0 = countdown to BIRD DOWN. */
+  playerCrashEndT = -1;
   /** Camera post-FX (toggle with F). */
   fxBloom?: Phaser.FX.Bloom;
   fxBarrel?: Phaser.FX.Barrel;
@@ -1313,7 +1314,7 @@ export class MissionScene extends Phaser.Scene {
     if (hvLeft.length === 0) this.end(true);
     if (this.heli.phase === "dead") {
       if (!this.playerCrashStarted) this.beginPlayerCrash();
-      else if (this.playerCrashLanded) {
+      else if (this.playerCrashLanded && this.playerCrashEndT >= 0) {
         this.playerCrashEndT -= wallDt;
         if (this.playerCrashEndT <= 0) this.end(false);
       }
@@ -1907,18 +1908,26 @@ export class MissionScene extends Phaser.Scene {
   }
 
   showMuzzle(x: number, y: number, ang: number, scale: number, life: number): void {
+    const sc = scale * range(0.9, 1.12);
+    const rot = ang + range(-0.1, 0.1);
     this.muzzle
       .setVisible(true)
       .setFrame((Math.random() * FX_VARIANTS) | 0)
       .setOrigin(0.14, 0.5)
       .setPosition(x, y)
-      .setRotation(ang)
-      .setScale(scale)
+      .setRotation(rot)
+      .setScale(sc)
       .setBlendMode(Phaser.BlendModes.ADD)
       .setTint(0xfff6d0)
       .setAlpha(1)
       .setDepth(worldDepth(this.heli.z, ZOff.muzzle));
     this.muzzleLife = life;
+    this.spawnMuzzleLight(x, y, this.heli.z, 26 * sc);
+  }
+
+  /** Soft additive light bloom under a muzzle flash. */
+  spawnMuzzleLight(x: number, y: number, z: number, size: number): void {
+    this.spawnImpactFlash(x, y, z, 0xfff2c8, Math.max(14, size), 0.5, 70);
   }
 
   spawnImpactFlash(
@@ -3097,9 +3106,9 @@ export class MissionScene extends Phaser.Scene {
     return this.texSpan(tex) * partScale;
   }
 
-  /** Frag scale so a rotor hulk matches the live rotor draw size. */
+  /** Frag scale so a rotor hulk draws ~60% of the live rotor size. */
   rotorHulkScale(liveTex: string, hulkKey: string, partScale = 1): number {
-    return this.liveRotorDrawPx(liveTex, partScale) / Math.max(this.texSpan(hulkKey), 1);
+    return (this.liveRotorDrawPx(liveTex, partScale) * 0.6) / Math.max(this.texSpan(hulkKey), 1);
   }
 
   spawnHeliCrash(opts: {
@@ -3386,6 +3395,8 @@ export class MissionScene extends Phaser.Scene {
           if ((f.simmer ?? 0) > 0) {
             f.simmer! -= dt;
             keep.push(f);
+          } else if (f.playerCrash && this.playerCrashEndT < 0) {
+            this.playerCrashEndT = 0.55;
           }
           continue;
         }
@@ -3483,7 +3494,7 @@ export class MissionScene extends Phaser.Scene {
     f.spinAccel = 0;
     if (f.playerCrash) {
       this.playerCrashLanded = true;
-      this.playerCrashEndT = 0.7;
+      this.playerCrashEndT = -1; // wait for simmer to finish
     }
   }
 
@@ -4201,6 +4212,15 @@ export class MissionScene extends Phaser.Scene {
         const shotDist = Math.max(40, dist);
         const t = Math.max(0.12, shotDist / wpn.speed);
         u.muzzleT = 0.07;
+        u.muzzleJitS = range(0.9, 1.12);
+        u.muzzleJitR = range(-0.1, 0.1);
+        u.muzzleFrame = (Math.random() * FX_VARIANTS) | 0;
+        this.spawnMuzzleLight(
+          muzzle.x,
+          muzzle.y - screenLift(u.z),
+          u.z,
+          (sp.organic ? 18 : 28) * zScale(u.z) * (u.muzzleJitS ?? 1)
+        );
         if (u.kind === "heli_small") {
           if (u.aiMood !== "flee") u.aiMood = "kite";
           if ((u.burstLeft ?? 0) <= 0) {
@@ -4247,7 +4267,7 @@ export class MissionScene extends Phaser.Scene {
               ? 0.56
               : 0.59
             : u.kind === "gunner" || u.kind === "mounted_mg"
-              ? 0.28
+              ? 0.34
               : undefined,
         });
       }
@@ -4435,14 +4455,18 @@ export class MissionScene extends Phaser.Scene {
       if (u.muzzleT > 0 && (sp.weapon || guns.length)) {
         const tip = this.enemyMuzzle(u, u.muzzleGun);
         const ang = !guns.length ? u.angle : u.turrets[u.muzzleGun] ?? u.turret;
+        const jitS = u.muzzleJitS ?? 1;
+        const jitR = u.muzzleJitR ?? 0;
         flash
           .setVisible(true)
           .setTexture("fx_muzzle")
+          .setFrame(u.muzzleFrame ?? 0)
           .setBlendMode(Phaser.BlendModes.ADD)
+          .setTint(0xfff6d0)
           .setOrigin(0.15, 0.5)
           .setPosition(tip.x, tip.y - lift)
-          .setRotation(ang)
-          .setScale((sp.organic ? 0.7 : 1.15) * zs)
+          .setRotation(ang + jitR)
+          .setScale((sp.organic ? 0.7 : 1.15) * zs * jitS)
           .setAlpha(Phaser.Math.Clamp(u.muzzleT / 0.07, 0, 1))
           .setDepth(worldDepth(u.z, gunDepth + 0.4 + zBias));
       }
@@ -4534,7 +4558,7 @@ export class MissionScene extends Phaser.Scene {
           ? s.tracer === "aa"
             ? 0.95
             : s.tracer === "small"
-              ? 0.38
+              ? 0.46
               : s.tracer === "shell"
                 ? 0.72
                 : 0.58
@@ -4565,9 +4589,14 @@ export class MissionScene extends Phaser.Scene {
       const z = f.z || 0;
       const { x: ox, y: oy } = spritePivot(f.key);
       const sc = (f.scale ?? 1) * zScale(z);
-      sh.setVisible(true).setOrigin(ox, oy);
-      this.applyCastShadow(sh, f.x, f.y, z, f.key, f.angle, f.scale ?? 1);
-      if (castZ(this.world, f.x, f.y, z) < 1) sh.setAlpha(0.22);
+      const cast = castZ(this.world, f.x, f.y, z);
+      // Rotor throws have no baked shadow atlas — generic soft "shadow" scales into a huge gray blob.
+      const canShadow = !f.rotorThrow && this.textures.exists(shadowKey(f.key, cast));
+      if (canShadow) {
+        sh.setVisible(true).setOrigin(ox, oy);
+        this.applyCastShadow(sh, f.x, f.y, z, f.key, f.angle, f.scale ?? 1);
+        if (cast < 1) sh.setAlpha(0.22);
+      }
       im.setVisible(true)
         .setTexture(f.key)
         .setOrigin(ox, oy)
@@ -5204,32 +5233,43 @@ export class MissionScene extends Phaser.Scene {
   }
 
   setupTestPostFx(): void {
-    const cam = this.cameras.main;
-    this.fxBloom = cam.postFX.addBloom(0xffe6b0, 1.1, 1.1, 1.0, 0.85, 3);
-    this.fxBarrel = cam.postFX.addBarrel(1);
     this.applyTestFxActive();
   }
 
   toggleTestFx(): void {
     this.fxOn = !this.fxOn;
-    if (!this.fxOn) {
-      this.fxBarrelPulse = 0;
-      if (this.fxBarrel) this.fxBarrel.amount = 1;
-    }
+    if (!this.fxOn) this.fxBarrelPulse = 0;
     this.applyTestFxActive();
     this.syncTestFxHud();
   }
 
   applyTestFxActive(): void {
-    // setActive alone is unreliable on some builds — also zero strength / identity barrel.
-    if (this.fxBloom) {
-      this.fxBloom.setActive(this.fxOn);
-      this.fxBloom.strength = this.fxOn ? 0.85 : 0;
-      this.fxBloom.blurStrength = this.fxOn ? 1.0 : 0;
-    }
-    if (this.fxBarrel) {
-      this.fxBarrel.setActive(this.fxOn);
-      if (!this.fxOn) this.fxBarrel.amount = 1;
+    const cam = this.cameras.main;
+    // Phaser bloom blends with mix(scene, bloom*strength, 0.5). Strength 0 ⇒ mix with black
+    // ⇒ a permanent faded frame. setActive(false) is unreliable, so remove FX entirely when off.
+    if (this.fxOn) {
+      if (!this.fxBloom) {
+        this.fxBloom = cam.postFX.addBloom(0xffe6b0, 1.1, 1.1, 1.0, 0.85, 3);
+      } else {
+        this.fxBloom.setActive(true);
+        this.fxBloom.strength = 0.85;
+        this.fxBloom.blurStrength = 1.0;
+      }
+      if (!this.fxBarrel) {
+        this.fxBarrel = cam.postFX.addBarrel(1);
+      } else {
+        this.fxBarrel.setActive(true);
+        this.fxBarrel.amount = 1;
+      }
+    } else {
+      if (this.fxBloom) {
+        cam.postFX.remove(this.fxBloom);
+        this.fxBloom = undefined;
+      }
+      if (this.fxBarrel) {
+        cam.postFX.remove(this.fxBarrel);
+        this.fxBarrel = undefined;
+      }
     }
   }
 

@@ -449,8 +449,9 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     );
   }
   const rotors = splitRotorSheet(keyPixels(src(textures, "src_rotors"), "magenta"));
-  put(textures, "heli_rotor", squareCenter(rotors[0]!));
-  put(textures, "enemy_heli_rotor", squareCenter(rotors[1]!));
+  // Bake near in-game draw size (player ~134, enemy 108) — not full 1024-sheet res.
+  put(textures, "heli_rotor", fit(squareCenter(rotors[0]!), 134));
+  put(textures, "enemy_heli_rotor", fit(squareCenter(rotors[1]!), 108));
   put(textures, "doodad_rock", fit(keyImage(src(textures, "src_rock"), "magenta"), 36));
 
   const parts = sliceGrid(keyImage(src(textures, "src_tank_parts"), "magenta"), 2, 1);
@@ -612,9 +613,9 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     ["building_tower_sam_hulk", 48],
   ]);
   const rotorHulks = splitRotorSheet(keyPixels(src(textures, "src_rotors_hulk"), "magenta"));
-  // Keep full-res like live rotors; in-game scale matches the live 108/124 draw size.
-  put(textures, "heli_rotor_hulk", darkenWreck(squareCenter(rotorHulks[0]!)));
-  put(textures, "enemy_heli_rotor_hulk", darkenWreck(squareCenter(rotorHulks[1]!)));
+  // ~60% of live rotor bake size (player 134 → 80, enemy 108 → 65).
+  put(textures, "heli_rotor_hulk", fit(stripBakedDropShadow(squareCenter(rotorHulks[0]!)), 80));
+  put(textures, "enemy_heli_rotor_hulk", fit(stripBakedDropShadow(squareCenter(rotorHulks[1]!)), 65));
   if (textures.exists("enemy_drone_rotor")) {
     const droneRotor = textures.get("enemy_drone_rotor").getSourceImage() as CanvasImageSource;
     const dc = document.createElement("canvas");
@@ -1227,6 +1228,28 @@ function darkenWreck(src: HTMLCanvasElement, mul = 0.55): HTMLCanvasElement {
   return src;
 }
 
+/** Remove soft gray drop-shadow fringes baked into sprite art (keeps solid blade/metal pixels). */
+function stripBakedDropShadow(src: HTMLCanvasElement): HTMLCanvasElement {
+  const g = src.getContext("2d")!;
+  const pix = g.getImageData(0, 0, src.width, src.height);
+  const d = pix.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const a = d[i + 3]!;
+    // Opaque / near-opaque pixels are metal — never strip (dark olive blades are lum < 100).
+    if (a >= 128) continue;
+    if (a < 8) continue;
+    const r = d[i]!;
+    const gc = d[i + 1]!;
+    const b = d[i + 2]!;
+    const lum = 0.3 * r + 0.5 * gc + 0.2 * b;
+    const chroma = Math.max(r, gc, b) - Math.min(r, gc, b);
+    // Soft fringe only: translucent + dark + low chroma.
+    if (lum < 120 && chroma < 40) d[i + 3] = 0;
+  }
+  g.putImageData(pix, 0, 0);
+  return src;
+}
+
 function sliceGrid(src: HTMLCanvasElement, cols: number, rows: number): HTMLCanvasElement[] {
   const xs = gutterCuts(src, cols, "x");
   const ys = gutterCuts(src, rows, "y");
@@ -1324,8 +1347,13 @@ function splitRotorSheet(src: HTMLCanvasElement): HTMLCanvasElement[] {
     empty[x] = blank;
   }
   const mid = w / 2;
-  let split = (mid) | 0;
+  // Only accept a gutter near the sheet center. Edge padding gutters (common on
+  // hulk sheets where soft shadows bridge the two rotors) would otherwise "win"
+  // and leave the right cell blank.
+  const midBand = w * 0.22;
+  let split = mid | 0;
   let best = 1e9;
+  let found = false;
   let x = 0;
   while (x < w) {
     if (!empty[x]) {
@@ -1338,11 +1366,14 @@ function splitRotorSheet(src: HTMLCanvasElement): HTMLCanvasElement[] {
     if (len < 8) continue;
     const cx = x0 + len / 2;
     const dist = Math.abs(cx - mid);
+    if (dist > midBand) continue;
     if (dist < best) {
       best = dist;
       split = x0;
+      found = true;
     }
   }
+  if (!found) split = mid | 0;
   const cut = (x0: number, x1: number) => {
     const c = document.createElement("canvas");
     c.width = Math.max(1, x1 - x0);

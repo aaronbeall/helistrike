@@ -41,6 +41,10 @@ export interface Unit {
   muzzleT: number;
   muzzleGun: number;
   muzzleTip: number;
+  /** Baked muzzle flash jitter for the current flash window. */
+  muzzleJitS?: number;
+  muzzleJitR?: number;
+  muzzleFrame?: number;
   pinId?: number;
   camo?: CamoKind;
   strike?: number;

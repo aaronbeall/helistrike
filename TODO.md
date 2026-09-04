@@ -26,7 +26,8 @@
   * MIRV
   * Drone (auto target and explode)
   * Flak cannon
-  * TV missile (camera )
+  * TV missile (camera follows missile)
+  * Orbital strike (use map)
   * (Hidden) Rave Cannon
 * [ ] Counter-measures
 * [ ] Last stand / base defense game mode
@@ -68,6 +69,7 @@
 * [ ] Enemy unit damage effects like player
 * [ ] Screen shock when player takes damage
 * [ ] Radial blur spinningblades
+* [ ] Bubble explosion
 
 ## Fix
 
