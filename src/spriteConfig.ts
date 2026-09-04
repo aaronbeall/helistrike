@@ -15,11 +15,15 @@ const LIST_Y = 40;
 const LIST_W = 248;
 const STATS_W = 360;
 const LINE_H = 16;
+const FRAME_THUMB = 52;
+const FRAME_GAP = 8;
+const FRAME_STRIP_MAX = 16;
 
 export class SpriteConfigTool {
   open = false;
   private scene: Phaser.Scene;
   private idx = 0;
+  private frameIdx = 0;
   private pinned: { uvx: number; uvy: number } | null = null;
   private copied = "";
   root: Phaser.GameObjects.Container;
@@ -27,6 +31,8 @@ export class SpriteConfigTool {
   private board: Phaser.GameObjects.Graphics;
   private preview: Phaser.GameObjects.Image;
   private overlay: Phaser.GameObjects.Graphics;
+  private frameStripGfx: Phaser.GameObjects.Graphics;
+  private frameThumbs: Phaser.GameObjects.Image[] = [];
   private listTxt: Phaser.GameObjects.Text;
   private statsTxt: Phaser.GameObjects.Text;
   private hintTxt: Phaser.GameObjects.Text;
@@ -52,6 +58,18 @@ export class SpriteConfigTool {
       .setScrollFactor(0)
       .setDepth(DEPTH + 2)
       .setVisible(false);
+    this.frameStripGfx = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH + 2).setVisible(false);
+    for (let i = 0; i < FRAME_STRIP_MAX; i++) {
+      // Don't nameGameTexture — that renames the shared art key (e.g. heli_body).
+      const im = scene.add
+        .image(0, 0, "__DEFAULT")
+        .setName(`ui_rig_frame_${i}`)
+        .setScrollFactor(0)
+        .setDepth(DEPTH + 2)
+        .setVisible(false)
+        .setOrigin(0.5);
+      this.frameThumbs.push(im);
+    }
     this.overlay = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH + 3).setVisible(false);
     this.listTxt = scene.add
       .text(LIST_X, LIST_Y, "", {
@@ -101,6 +119,8 @@ export class SpriteConfigTool {
       this.dim,
       this.board,
       this.preview,
+      this.frameStripGfx,
+      ...this.frameThumbs,
       this.overlay,
       this.listTxt,
       this.statsTxt,
@@ -139,6 +159,7 @@ export class SpriteConfigTool {
         if (!this.open) return;
         this.artOnly = !this.artOnly;
         this.idx = 0;
+        this.frameIdx = 0;
         this.pinned = null;
         nameGeneratedTextures(this.scene);
         this.refreshPreview();
@@ -156,6 +177,13 @@ export class SpriteConfigTool {
         this.pickFromList(p.y);
         return;
       }
+      const fi = this.pickFrameAt(p);
+      if (fi != null) {
+        this.frameIdx = fi;
+        this.pinned = null;
+        this.refreshPreview();
+        return;
+      }
       const uv = this.uvAt(p);
       if (!uv) return;
       this.pinned = uv;
@@ -170,6 +198,7 @@ export class SpriteConfigTool {
     this.dim.setVisible(this.open);
     this.board.setVisible(this.open);
     this.preview.setVisible(this.open);
+    this.frameStripGfx.setVisible(this.open);
     this.overlay.setVisible(this.open);
     this.listTxt.setVisible(this.open);
     this.statsTxt.setVisible(this.open);
@@ -181,7 +210,9 @@ export class SpriteConfigTool {
       this.refreshPreview();
     } else {
       this.overlay.clear();
+      this.frameStripGfx.clear();
       for (const t of this.mountLabels) t.setVisible(false);
+      for (const im of this.frameThumbs) im.setVisible(false);
     }
   }
 
@@ -190,6 +221,16 @@ export class SpriteConfigTool {
     const n = this.available().length;
     if (!n) return;
     this.idx = (this.idx + dir + n) % n;
+    this.frameIdx = 0;
+    this.pinned = null;
+    this.refreshPreview();
+  }
+
+  cycleFrame(dir: number): void {
+    if (!this.open) return;
+    const frames = this.framesOf(this.key());
+    if (frames.length <= 1) return;
+    this.frameIdx = (this.frameIdx + dir + frames.length) % frames.length;
     this.pinned = null;
     this.refreshPreview();
   }
@@ -201,6 +242,7 @@ export class SpriteConfigTool {
     const pages = Math.max(1, Math.ceil(keys.length / size));
     const next = (((this.pageOf(this.idx) + dir) % pages) + pages) % pages;
     this.idx = Math.min(keys.length - 1, next * size);
+    this.frameIdx = 0;
     this.pinned = null;
     this.refreshPreview();
   }
@@ -214,6 +256,7 @@ export class SpriteConfigTool {
     const i = this.pageOf(this.idx) * size + row;
     if (i < 0 || i >= keys.length) return;
     this.idx = i;
+    this.frameIdx = 0;
     this.pinned = null;
     this.refreshPreview();
   }
@@ -224,16 +267,20 @@ export class SpriteConfigTool {
     if (!keys.length) return;
     if (this.idx >= keys.length) this.idx = 0;
     const key = this.key();
+    const frames = this.framesOf(key);
+    if (this.frameIdx >= frames.length) this.frameIdx = 0;
+    const frame = frames[this.frameIdx]!;
     const p = this.scene.input.activePointer;
     const uv = this.uvAt(p);
     const origin = this.originOf(key);
     const tex = this.scene.textures.get(key);
-    const src = tex.getSourceImage() as HTMLImageElement | HTMLCanvasElement;
-    const tw = src.width;
-    const th = src.height;
+    const fr = tex.get(frame);
+    const tw = fr.cutWidth || fr.width || 1;
+    const th = fr.cutHeight || fr.height || 1;
 
+    const frameHint = frames.length > 1 ? `   ← → frame ${this.frameIdx + 1}/${frames.length}` : "";
     this.hintTxt.setText(
-      `SPRITE RIG   \` / F9 close   [ ] cycle   , . page   G art-only ${this.artOnly ? "ON" : "OFF"}   gold origin · green gun · cyan rotor · gold dish · violet troop · red dmg · orange muzzle`
+      `SPRITE RIG   \` / F9 close   [ ] cycle   , . page   G art-only ${this.artOnly ? "ON" : "OFF"}${frameHint}   gold origin · green gun · cyan rotor · gold dish · violet troop · red dmg · orange muzzle`
     );
     const size = this.pageSize();
     const pages = Math.max(1, Math.ceil(keys.length / size));
@@ -243,7 +290,12 @@ export class SpriteConfigTool {
     this.listTxt.setText(
       [
         `— ${this.artOnly ? "ART" : "ALL"}  ${page + 1} / ${pages}  (${keys.length}) —`,
-        ...slice.map((k, i) => (start + i === this.idx ? `▸ ${k}` : `  ${k}`)),
+        ...slice.map((k, i) => {
+          const mark = start + i === this.idx ? "▸" : " ";
+          const n = this.framesOf(k).length;
+          const tag = n > 1 ? ` ×${n}` : "";
+          return `${mark} ${k}${tag}`;
+        }),
       ].join("\n")
     );
 
@@ -267,10 +319,15 @@ export class SpriteConfigTool {
           })
           .join("\n")
       : "MUZZLE   —";
+    const frameLine =
+      frames.length > 1
+        ? `FRAME    ${this.frameIdx + 1} / ${frames.length}  (${String(frame)})   ← → / click strip`
+        : `FRAME    —`;
     this.statsTxt.setText(
       [
         `KEY      ${key}`,
         `TEX      ${tw} × ${th}`,
+        frameLine,
         `ORIGIN   ${origin.x.toFixed(3)}  ${origin.y.toFixed(3)}`,
         `         px  ${(origin.x * tw).toFixed(1)}  ${(origin.y * th).toFixed(1)}`,
         layoutLine(key),
@@ -310,19 +367,41 @@ export class SpriteConfigTool {
     return this.available()[this.idx] ?? "heli_body";
   }
 
+  /** Non-base frames for a texture (spritesheet cells), or `__BASE` for a single image. */
+  private framesOf(key: string): (string | number)[] {
+    if (!this.scene.textures.exists(key)) return ["__BASE"];
+    const tex = this.scene.textures.get(key);
+    const named = tex.getFrameNames(false).filter((n) => n !== "__BASE");
+    if (named.length) {
+      // Prefer numeric order for sheet cells (0,1,2…).
+      return named.slice().sort((a, b) => {
+        const na = Number(a);
+        const nb = Number(b);
+        if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
+        return String(a).localeCompare(String(b));
+      });
+    }
+    return ["__BASE"];
+  }
+
   private refreshPreview(): void {
     const key = this.key();
+    const frames = this.framesOf(key);
+    if (this.frameIdx >= frames.length) this.frameIdx = 0;
+    const frame = frames[this.frameIdx]!;
     const w = this.scene.scale.width;
     const h = this.scene.scale.height;
-    this.preview.setTexture(key);
+    this.preview.setTexture(key, frame);
     this.preview.setOrigin(0.5, 0.5);
     const listRight = LIST_X + LIST_W + 20;
     const gap = 28;
     const availW = Math.max(180, w - listRight - STATS_W - gap - 20);
-    const max = Math.min(h * 0.72, availW);
+    const stripH = frames.length > 1 ? FRAME_THUMB + 28 : 0;
+    const max = Math.min(h * 0.62, availW, h - LIST_Y - stripH - 80);
     const s = max / Math.max(this.preview.width, this.preview.height, 1);
     this.preview.setScale(s);
-    this.preview.setPosition(listRight + max * 0.5, h * 0.48);
+    const previewCy = Math.min(h * 0.42, h - stripH - FRAME_THUMB - 56);
+    this.preview.setPosition(listRight + max * 0.5, previewCy);
     const bw = this.preview.displayWidth;
     const bh = this.preview.displayHeight;
     const bx = this.preview.x - bw * this.preview.originX;
@@ -342,6 +421,58 @@ export class SpriteConfigTool {
     }
     this.board.lineStyle(1, 0xe8b84a, 0.55);
     this.board.strokeRect(bx - 10, by - 10, bw + 20, bh + 20);
+
+    this.layoutFrameStrip(key, frames, bx, by + bh + 18, bw);
+  }
+
+  private layoutFrameStrip(
+    key: string,
+    frames: (string | number)[],
+    boardLeft: number,
+    top: number,
+    boardW: number
+  ): void {
+    this.frameStripGfx.clear();
+    for (const im of this.frameThumbs) im.setVisible(false);
+    if (frames.length <= 1 || !this.open) return;
+
+    const n = Math.min(frames.length, FRAME_STRIP_MAX);
+    const totalW = n * FRAME_THUMB + (n - 1) * FRAME_GAP;
+    const startX = boardLeft + Math.max(0, (boardW - totalW) / 2) + FRAME_THUMB / 2;
+    const cy = top + FRAME_THUMB / 2;
+
+    for (let i = 0; i < n; i++) {
+      const im = this.frameThumbs[i]!;
+      const fr = frames[i]!;
+      im.setTexture(key, fr).setVisible(true);
+      const sc = (FRAME_THUMB - 6) / Math.max(im.width, im.height, 1);
+      im.setScale(sc).setPosition(startX + i * (FRAME_THUMB + FRAME_GAP), cy);
+
+      const hx = im.x - FRAME_THUMB / 2;
+      const hy = im.y - FRAME_THUMB / 2;
+      this.frameStripGfx.fillStyle(0x1a1610, 0.95);
+      this.frameStripGfx.fillRect(hx, hy, FRAME_THUMB, FRAME_THUMB);
+      if (i === this.frameIdx) {
+        this.frameStripGfx.lineStyle(2, 0xe8b84a, 1);
+      } else {
+        this.frameStripGfx.lineStyle(1, 0x5c5344, 0.7);
+      }
+      this.frameStripGfx.strokeRect(hx + 0.5, hy + 0.5, FRAME_THUMB - 1, FRAME_THUMB - 1);
+    }
+  }
+
+  private pickFrameAt(p: Phaser.Input.Pointer): number | null {
+    const frames = this.framesOf(this.key());
+    if (frames.length <= 1) return null;
+    const n = Math.min(frames.length, FRAME_STRIP_MAX);
+    for (let i = 0; i < n; i++) {
+      const im = this.frameThumbs[i]!;
+      if (!im.visible) continue;
+      const hx = im.x - FRAME_THUMB / 2;
+      const hy = im.y - FRAME_THUMB / 2;
+      if (p.x >= hx && p.x <= hx + FRAME_THUMB && p.y >= hy && p.y <= hy + FRAME_THUMB) return i;
+    }
+    return null;
   }
 
   private uvAt(p: Phaser.Input.Pointer): { uvx: number; uvy: number; px: number; py: number } | null {
