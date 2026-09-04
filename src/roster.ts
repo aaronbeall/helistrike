@@ -195,9 +195,10 @@ function shipGun(v: GunVar, mount: { x: number; y: number }): PartMount {
 }
 
 function towerGun(v: GunVar): PartMount {
-  if (v === "aa") return gun("building_tower_aa", 0.78, { x: 0.5, y: 0.5 }, undefined, WPN_AA);
-  if (v === "sam") return gun("building_tower_sam", 0.72, { x: 0.5, y: 0.5 }, undefined, WPN_SAM);
-  return gun("building_tower_gun", 0.8, { x: 0.5, y: 0.5 }, undefined, shell({ fireCd: 0.5, range: 700, speed: 920, dmg: 12, blast: 10, tracer: "aa", muzzleLen: 24 }));
+  const mount = { ...SPRITE_MOUNT.building_tower };
+  if (v === "aa") return gun("building_tower_aa", 1.36, mount, undefined, WPN_AA);
+  if (v === "sam") return gun("building_tower_sam", 1.25, mount, undefined, WPN_SAM);
+  return gun("building_tower_gun", 1.39, mount, undefined, shell({ fireCd: 0.5, range: 700, speed: 920, dmg: 12, blast: 10, tracer: "aa", muzzleLen: 24 }));
 }
 
 export function rollParts(kind: UnitKind): PartMount[] | undefined {
@@ -293,7 +294,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     throwGuns: true,
     spawnYaw: (5 * Math.PI) / 180,
     weapon: shell({ fireCd: 0.5, range: 700, speed: 920, dmg: 12, blast: 10, tracer: "aa", muzzleLen: 24 }),
-    guns: [gun("building_tower_gun", 0.8, { x: 0.5, y: 0.5 })],
+    guns: [gun("building_tower_gun", 1.39, { ...SPRITE_MOUNT.building_tower })],
     rotors: [],
   },
   bunker: {
@@ -412,8 +413,8 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     weapon: WPN_AA,
     guns: [
       {
-        ...gun("building_tower_aa", 0.78, { ...SPRITE_MOUNT.enemy_lav }, undefined, WPN_AA),
-        scale: 0.72,
+        ...gun("building_tower_aa", 0.9, { ...SPRITE_MOUNT.enemy_lav }, undefined, WPN_AA),
+        scale: 0.83,
       },
     ],
     rotors: [],

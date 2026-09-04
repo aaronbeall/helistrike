@@ -1,5 +1,5 @@
 export const SPRITE_ORIGIN: Record<string, { x: number; y: number }> = {
-  building_tower: { x: 0.499, y: 0.466 },
+  building_tower: { x: 0.512, y: 0.482 },
   building_tower_gun: { x: 0.495, y: 0.729 },
   enemy_battleship_gun: { x: 0.5, y: 0.68 },
   enemy_battleship_gun_aa: { x: 0.5, y: 0.72 },
@@ -102,6 +102,7 @@ export function lookupSpriteMounts(key: string): Uv[] {
 /** Body UV mounts for guns / rotors / dish. Lookout mount is the troop post. Pickup is reserved (no gun yet). */
 export const SPRITE_MOUNT = {
   building_lookout: { x: 0.49, y: 0.397 },
+  building_tower: { x: 0.512, y: 0.482 },
   building_bunker: [
     { x: 0.38, y: 0.42 },
     { x: 0.62, y: 0.42 },
