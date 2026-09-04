@@ -6,7 +6,7 @@ import {
   PLAYER_WPNS,
   type PlayerWpnSpec,
 } from "./combat";
-import { ENEMY_WPNS, HELI_PYLON_AI, isStreakShot, usesOfWeapon, type WeaponSpec } from "./roster";
+import { ENEMY_WPNS, isStreakShot, usesOfWeapon, type WeaponSpec } from "./roster";
 import { CFG_INFO, CFG_VALUE, kv, kvs, makeConfigText, row, setStatsAndInfo } from "./configUi";
 import {
   FX_BLAST_CELLS,
@@ -51,8 +51,8 @@ export interface CombatEntry {
 
 /**
  * Lazy debug browser for shared combat sources: player weapons (PLAYER_WPNS),
- * ENEMY_WPNS (+ usesOfWeapon / HELI_PYLON_AI), and FX_KINDS / blast cells.
- * Per-unit WeaponSpecs live on the roster rig, not here.
+ * ENEMY_WPNS (+ usesOfWeapon), and FX_KINDS / blast cells.
+ * Per-unit WeaponSpecs / secondary live on the roster rig, not here.
  */
 export class CombatConfigTool {
   open = false;
@@ -422,7 +422,7 @@ function formatPlayer(w: PlayerWpnSpec): { stats: string[]; info: string[] } {
 /** Shared enemy weapon tables — not per-unit SPECS copies. */
 function presetEntries(): CombatEntry[] {
   return ENEMY_WPNS.map((p) => {
-    const block = formatPreset(p.id, p.label, p.w);
+    const block = formatPreset(p.label, p.w);
     return {
       id: `preset_${p.id}`,
       cat: "preset" as const,
@@ -436,36 +436,22 @@ function presetEntries(): CombatEntry[] {
   });
 }
 
-function formatPreset(id: string, label: string, w: WeaponSpec): { stats: string[]; info: string[] } {
+function formatPreset(label: string, w: WeaponSpec): { stats: string[]; info: string[] } {
   const uses = usesOfWeapon(w);
-  const pylon = id === "heli_pylon";
-  const fireCd = pylon
-    ? `${HELI_PYLON_AI.fireCdMin}–${HELI_PYLON_AI.fireCdMax}s (AI)`
-    : `${w.fireCd}s`;
-  const stats = [
-    row("KIND", `enemy preset / ${label}`),
-    row("LOOK", w.look),
-    row("FIRE CD", fireCd),
-    row("RANGE", w.range),
-    row("SPEED", w.speed),
-    row("DMG", `${w.dmg} ${kv("blast", w.blast)}`),
-    row("BURST", w.burst != null ? `${w.burst}×${w.burstGap ?? "?"}` : "—"),
-    row("MUZZLE", kvs(["len", w.muzzleLen], w.jitter != null && ["jitter", w.jitter])),
-  ];
-  if (pylon) {
-    stats.push(row("SCALE", HELI_PYLON_AI.scale), row("MOTOR", HELI_PYLON_AI.motor), row("HOME", "player"));
-  }
   return {
-    stats,
+    stats: [
+      row("KIND", `enemy preset / ${label}`),
+      row("LOOK", w.look),
+      row("FIRE CD", `${w.fireCd}s`),
+      row("RANGE", w.range),
+      row("SPEED", w.speed),
+      row("DMG", `${w.dmg} ${kv("blast", w.blast)}`),
+      row("BURST", w.burst != null ? `${w.burst}×${w.burstGap ?? "?"}` : "—"),
+      row("MUZZLE", kvs(["len", w.muzzleLen], w.jitter != null && ["jitter", w.jitter])),
+    ],
     info: [
-      pylon
-        ? "gunship wing AI — not SPECS.guns (chin gun separate)"
-        : uses.length
-          ? `used by: ${uses.join(" · ")}`
-          : "used by: —",
-      pylon
-        ? "source: roster.ts WPN.heli_pylon + HELI_PYLON_AI"
-        : "source: roster.ts ENEMY_WPNS / SPECS.partsRoll / usesOfWeapon",
+      uses.length ? `used by: ${uses.join(" · ")}` : "used by: —",
+      "source: roster.ts ENEMY_WPNS / SPECS / usesOfWeapon",
     ],
   };
 }

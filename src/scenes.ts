@@ -25,8 +25,8 @@ import {
 import { Layer, ZOff, Z_GRAVITY, worldDepth } from "./depth";
 import { range } from "./rng";
 import { CRUISE_AGL, HELI_HEIGHT, Heli, MAX_AGL } from "./heli";
-import { isAerial, isGroundVehicle, isOrganic, hasSoftBlood, specOf, driveOf, spawnAngle, pickTroop, labelOf, allKinds, gunsOf, rollParts, crewOf, shotKind, isStreakShot, shotDrawScale, HELI_PYLON_AI, WPN, type ShotLook } from "./roster";
-import { lookupSpriteMuzzles, SPRITE_MOUNT } from "./spriteOrigin";
+import { isAerial, isGroundVehicle, isOrganic, hasSoftBlood, specOf, driveOf, spawnAngle, pickTroop, labelOf, allKinds, gunsOf, rollParts, crewOf, shotKind, isStreakShot, shotDrawScale, type ShotLook } from "./roster";
+import { lookupSpriteMuzzles } from "./spriteOrigin";
 
 /** Overlay guns are drawn barrel-up (same as hulls). World aim 0 is +X, so +90°. */
 function gunWorldRot(_tex: string, aim: number): number {
@@ -5292,28 +5292,30 @@ export class MissionScene extends Phaser.Scene {
           scale: shotScale,
         });
       }
-      if (u.kind === "heli" && h.phase === "flight") {
-        const pw = WPN.heli_pylon;
-        if (dist < pw.range && dist > 80) {
+      const sec = sp.secondary;
+      if (sec?.mounts.length && (!sp.aerial || h.phase === "flight")) {
+        const pw = sec.wpn;
+        const minR = sec.minRange ?? 80;
+        const aimCone = sec.aimCone ?? Math.PI / 2;
+        if (dist < pw.range && dist > minR) {
           const aimErr = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(dy, dx) - u.angle));
           u.missileCd = (u.missileCd ?? (4 + Math.random() * 3)) - dt;
-          if (u.missileCd <= 0 && aimErr < Math.PI / 2) {
-            u.missileCd =
-              HELI_PYLON_AI.fireCdMin + Math.random() * (HELI_PYLON_AI.fireCdMax - HELI_PYLON_AI.fireCdMin);
-            const pylons = SPRITE_MOUNT.enemy_heli_pylon;
-            const side = (u.missileSide ?? 0) % pylons.length;
+          if (u.missileCd <= 0 && aimErr < aimCone) {
+            u.missileCd = sec.fireCdMin + Math.random() * (sec.fireCdMax - sec.fireCdMin);
+            const mounts = sec.mounts;
+            const side = (u.missileSide ?? 0) % mounts.length;
             u.missileSide = side + 1;
-            const pylon = pylons[side]!;
+            const mount = mounts[side]!;
             const pivot = spritePivot(textureOf(u.kind));
-            const hullRot = u.angle + specOf(u.kind).rotOff;
+            const hullRot = u.angle + sp.rotOff;
             const zs = zScale(u.z);
             const hullImg = this.textures.exists(textureOf(u.kind))
               ? (this.textures.get(textureOf(u.kind)).getSourceImage() as { width: number; height: number })
               : { width: 64, height: 64 };
             const dw = hullImg.width * zs;
             const dh = hullImg.height * zs;
-            const mx = (pylon.x - pivot.x) * dw;
-            const my = (pylon.y - pivot.y) * dh;
+            const mx = (mount.x - pivot.x) * dw;
+            const my = (mount.y - pivot.y) * dh;
             const px = u.x + mx * Math.cos(hullRot) - my * Math.sin(hullRot);
             const py = u.y + mx * Math.sin(hullRot) + my * Math.cos(hullRot);
             const muzzleZ = u.z + heightOf(u.kind) * 0.5;
@@ -5321,6 +5323,7 @@ export class MissionScene extends Phaser.Scene {
             const fireAng = u.angle + (Math.random() - 0.5) * jit;
             const tgtZ = h.z + HELI_HEIGHT * 0.5;
             const missileT = Math.max(0.25, dist / pw.speed);
+            const home = sec.homePlayer !== false;
             this.spawnShot({
               kind: shotKind(pw.look),
               from: "enemy",
@@ -5335,9 +5338,9 @@ export class MissionScene extends Phaser.Scene {
               blast: pw.blast,
               dmg: pw.dmg,
               look: pw.look,
-              homePlayer: true,
-              motor: HELI_PYLON_AI.motor,
-              scale: HELI_PYLON_AI.scale,
+              homePlayer: home,
+              motor: sec.motor,
+              scale: sec.scale,
             });
             this.missileMuzzle(px, py, u.z, fireAng);
           }

@@ -124,7 +124,7 @@ export const SPRITE_MOUNT = {
     { x: 0.874, y: 0.875 },
   ],
   enemy_heli: { x: 0.503, y: 0.142 },
-  enemy_heli_pylon: [
+  enemy_heli_wing: [
     { x: 0.16, y: 0.52 },
     { x: 0.84, y: 0.52 },
   ],

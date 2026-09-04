@@ -1,5 +1,12 @@
 import Phaser from "phaser";
-import { allSpecs } from "./roster";
+import {
+  allSpecs,
+  collectHullMounts,
+  HULL_MOUNT_COLOR,
+  numberMountLabels,
+  type HullMount,
+  type HullMountRole,
+} from "./roster";
 import { lookupSpriteMuzzles } from "./spriteOrigin";
 import { makeConfigText, setStackedTexts, CFG_VALUE, CFG_INFO, CFG_LIVE, kv, kvs, row, rowCont } from "./configUi";
 import { rotorLayout, tankLayout, gunLayout, isUuidTexture, nameGameTexture, nameGeneratedTextures, spritePivot, PLAYER_DMG_POIS } from "./sprites";
@@ -374,7 +381,7 @@ export class SpriteConfigTool {
     ];
     this.pendingLive = [...hover, ...pin];
     this.pendingInfo = [
-      "texture space · nose-up · roles from unit roster (not a flat UV dump)",
+      "texture space · nose-up · tagged mounts from SPECS (HULL_MOUNT_SOURCES)",
       "spawn yaw any unless listed",
     ];
     this.applyStatsPanel();
@@ -620,58 +627,38 @@ function dedupeUv(list: { x: number; y: number }[]): { x: number; y: number }[] 
   return out;
 }
 
-type MountRole = "gun" | "rotor" | "dish" | "troop" | "reserved" | "dmg";
+type RigMount = HullMount & { color: number };
 
-type RigMount = { x: number; y: number; role: MountRole; label: string; color: number };
-
-const ROLE_COLOR: Record<MountRole, number> = {
-  gun: 0x6adf6a,
-  rotor: 0x5ec8ff,
-  dish: 0xe8b84a,
-  troop: 0xd878ff,
-  reserved: 0x9a9480,
-  dmg: 0xff4a4a,
-};
+function mountColor(role: HullMountRole): number {
+  return HULL_MOUNT_COLOR[role] ?? 0x9a9480;
+}
 
 function hexColor(n: number): string {
   return `#${n.toString(16).padStart(6, "0")}`;
 }
 
-function addMount(list: RigMount[], p: { x: number; y: number }, role: MountRole, label: string): void {
+function addMount(list: RigMount[], p: { x: number; y: number }, role: HullMountRole, label: string): void {
   if (list.some((q) => Math.abs(q.x - p.x) < 1e-4 && Math.abs(q.y - p.y) < 1e-4 && q.role === role)) return;
-  list.push({ x: p.x, y: p.y, role, label, color: ROLE_COLOR[role] });
-}
-
-function numberMounts(list: RigMount[]): void {
-  const total = new Map<MountRole, number>();
-  for (const m of list) total.set(m.role, (total.get(m.role) ?? 0) + 1);
-  const seen = new Map<MountRole, number>();
-  for (const m of list) {
-    if ((total.get(m.role) ?? 0) <= 1) continue;
-    const i = (seen.get(m.role) ?? 0) + 1;
-    seen.set(m.role, i);
-    m.label = `${m.label} ${i}`;
-  }
+  list.push({ x: p.x, y: p.y, role, label, color: mountColor(role) });
 }
 
 function rigMarks(key: string): { mounts: RigMount[]; muzzles: { x: number; y: number }[] } {
   const k = key.replace(/__(woodland|desert|urban|snow|digital)$/, "");
   const mounts: RigMount[] = [];
   const muzzles = lookupSpriteMuzzles(k);
+  // Player craft layout (not in enemy SPECS).
   if (k === "heli_body") {
     addMount(mounts, gunLayout.mount, "gun", "gun");
     addMount(mounts, rotorLayout.player, "rotor", "rotor");
     for (const p of PLAYER_DMG_POIS) addMount(mounts, { x: p.u, y: p.v }, "dmg", "dmg");
   }
+  // Legacy rotor UV when SPECS rotor differs / missing — still tagged rotor.
   if (k === "enemy_heli") addMount(mounts, rotorLayout.enemy, "rotor", "rotor");
   for (const sp of allSpecs()) {
     const tex = sp.texture.replace(/__(woodland|desert|urban|snow|digital)$/, "");
     if (tex === k) {
-      for (const g of sp.guns) addMount(mounts, g.mount, "gun", "gun");
-      for (const r of sp.rotors) addMount(mounts, r.mount, "rotor", "rotor");
-      if (sp.dish) addMount(mounts, sp.dish.mount, "dish", "dish");
-      if (sp.crew) {
-        for (const m of sp.crew.mounts) addMount(mounts, m, "troop", "troop");
+      for (const m of collectHullMounts(sp)) {
+        addMount(mounts, m, m.role, m.label);
       }
     }
     for (const g of sp.guns) {
@@ -680,7 +667,8 @@ function rigMarks(key: string): { mounts: RigMount[]; muzzles: { x: number; y: n
       else if (g.muzzle) muzzles.push({ ...g.muzzle });
     }
   }
-  numberMounts(mounts);
+  numberMountLabels(mounts);
+  for (const m of mounts) m.color = mountColor(m.role);
   return { mounts, muzzles: dedupeUv(muzzles) };
 }
 

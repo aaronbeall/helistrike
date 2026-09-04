@@ -2,6 +2,8 @@ import Phaser from "phaser";
 import {
   allKinds,
   driveOf,
+  hullMountsOf,
+  HULL_MOUNT_COLOR,
   isAerial,
   isBuilding,
   isGroundVehicle,
@@ -48,14 +50,7 @@ const SHOT_SLOTS = 4;
 type Filter = "all" | "ground" | "air" | "water" | "building" | "troop";
 const FILTERS: Filter[] = ["all", "ground", "air", "water", "building", "troop"];
 
-type MountRole = "gun" | "rotor" | "dish" | "troop" | "origin";
-const ROLE_COLOR: Record<MountRole, number> = {
-  gun: 0x6adf6a,
-  rotor: 0x5ec8ff,
-  dish: 0xe8b84a,
-  troop: 0xd878ff,
-  origin: 0xe8b84a,
-};
+const ORIGIN_COLOR = 0xe8b84a;
 
 /**
  * Lazy debug browser for every roster UnitSpec — list, live preview (hull + parts),
@@ -590,41 +585,18 @@ export class RosterConfigTool {
     g.strokeCircle(cx, cy, sp.radius * s);
     if (sp.crew?.mode === "leash") {
       const leashR = sp.crew.leashR ?? sp.radius;
-      g.lineStyle(2.25, ROLE_COLOR.troop, 0.85);
+      g.lineStyle(2.25, HULL_MOUNT_COLOR.troop, 0.85);
       g.strokeCircle(cx, cy, leashR * s);
     }
     g.lineStyle(1.2, 0x6dbb4a, 0.55);
     g.lineBetween(cx, cy, cx, cy - sp.height * s);
 
-    g.lineStyle(1.5, ROLE_COLOR.origin, 0.95);
+    g.lineStyle(1.5, ORIGIN_COLOR, 0.95);
     g.lineBetween(cx - 14, cy, cx + 14, cy);
     g.lineBetween(cx, cy - 14, cx, cy + 14);
     g.strokeCircle(cx, cy, 5);
 
-    type Mark = { x: number; y: number; role: MountRole; label: string };
-    const mounts: Mark[] = [];
-    const add = (uv: { x: number; y: number }, role: MountRole, label: string) => {
-      if (mounts.some((q) => Math.abs(q.x - uv.x) < 1e-4 && Math.abs(q.y - uv.y) < 1e-4 && q.role === role))
-        return;
-      mounts.push({ x: uv.x, y: uv.y, role, label });
-    };
-
-    for (const gun of sp.guns) add(gun.mount, "gun", "gun");
-    for (const r of sp.rotors) add(r.mount, "rotor", "rotor");
-    if (sp.dish) add(sp.dish.mount, "dish", "dish");
-    if (sp.crew) {
-      for (const m of sp.crew.mounts) add(m, "troop", "troop");
-    }
-
-    const totals = new Map<MountRole, number>();
-    for (const m of mounts) totals.set(m.role, (totals.get(m.role) ?? 0) + 1);
-    const seen = new Map<MountRole, number>();
-    for (const m of mounts) {
-      if ((totals.get(m.role) ?? 0) <= 1) continue;
-      const i = (seen.get(m.role) ?? 0) + 1;
-      seen.set(m.role, i);
-      m.label = `${m.label} ${i}`;
-    }
+    const mounts = hullMountsOf(sp);
 
     for (let i = 0; i < this.mountLabels.length; i++) {
       const lab = this.mountLabels[i]!;
@@ -634,7 +606,7 @@ export class RosterConfigTool {
         continue;
       }
       const p = hullUv(m.x, m.y);
-      const color = ROLE_COLOR[m.role];
+      const color = HULL_MOUNT_COLOR[m.role];
       g.fillStyle(color, 0.95);
       g.fillRect(p.x - 4, p.y - 4, 8, 8);
       g.lineStyle(1, 0x101010, 0.9);
@@ -854,6 +826,34 @@ function formatSpec(kind: UnitKind, sp: UnitSpec): { stats: string[]; info: stri
     stats.push(...formatWeapon(sp.weapon));
   }
 
+  if (sp.secondary) {
+    const s = sp.secondary;
+    const home = s.homePlayer !== false;
+    stats.push(
+      row(
+        "SECONDARY",
+        kvs(
+          ["wpn", weaponPresetId(s.wpn)],
+          ["cd", `${s.fireCdMin}–${s.fireCdMax}s`],
+          ["mounts", s.mounts.length]
+        )
+      ),
+      rowCont(
+        kvs(
+          s.scale != null && ["sc", s.scale],
+          s.motor != null && ["motor", s.motor],
+          ["home", home ? "yes" : "no"],
+          ["minR", s.minRange ?? 80],
+          ["aim", s.aimCone ?? "π/2"]
+        )
+      )
+    );
+    s.mounts.forEach((m, i) => {
+      stats.push(rowCont(`[${i}] ${m.x.toFixed(3)},${m.y.toFixed(3)}`));
+    });
+    for (const block of weaponBlocks(s.wpn)) stats.push(rowCont(block));
+  }
+
   stats.push(...formatPartsRoll(kind));
 
   if (sp.guns.length) {
@@ -935,6 +935,6 @@ function formatSpec(kind: UnitKind, sp: UnitSpec): { stats: string[]; info: stri
 
   return {
     stats,
-    info: ["source: roster.ts SPECS (partsRoll / crew / drive)"],
+    info: ["source: roster.ts SPECS (partsRoll / crew / drive / secondary)"],
   };
 }

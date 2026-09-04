@@ -29,7 +29,7 @@ Short labels from the config rigs, plus terms used in code / design.
 | **HV** | High-value map objective |
 | **FX** | Visual effects |
 | **AA** | Anti-air |
-| **SAM** | Surface-to-air missile |
+| **SAM** | Surface-to-air launcher / unit (fires seeker) |
 | **ARTY** | Artillery |
 | **HE** | High-explosive shell preset |
 | **MG / LMG** | Machine-gun preset |
@@ -45,7 +45,8 @@ Short labels from the config rigs, plus terms used in code / design.
 | **look** | Projectile art key (= Phaser texture) |
 | **shotKind(look)** | Behavior from texture: streaks → `cannon`, else rocket / hellfire / tow |
 | **shot_*** | Projectile texture prefix (streaks + missiles) |
-| **HELI_PYLON_AI** | Gunship wing-missile cadence / scale / motor (uses `WPN.heli_pylon`) |
+| **seeker** | Homing missile preset (`WPN.seeker` — body or secondary) |
+| **secondary** | Hull hardpoint weapon (`SPECS.secondary`) |
 | **cooldown** | Delay before next shot |
 | **burst** | Rapid shots in one fire cycle |
 | **burstGap** | Delay between shots in a burst |
@@ -73,12 +74,13 @@ Short labels from the config rigs, plus terms used in code / design.
 | | |
 |---|---|
 | **origin / pivot** | Sprite anchor (where the unit “sits”) |
-| **mount** | UV where a part attaches to the hull |
+| **mount** | Tagged hull UV (`gun` / `rotor` / `troop` / `secondary` / … via `hullMountsOf`) |
+| **HULL_MOUNT_SOURCES** | Registry of SPECS mount kinds — add here when a new mount field appears |
 | **hulk** | Wreck / debris art for a live sprite |
 | **atlas / sheet** | Texture with multiple frames |
 | **bake** | Offline / boot-time art processing |
 | **camo** | Biome skin variant |
-| **POI** | Point of interest (dmg / mount markers) |
+| **POI** | Damage interest UVs (player `dmg` role); not general mounts |
 | **rig** | Debug config browser (sprite / roster / combat) |
 
 ## Units / AI

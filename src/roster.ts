@@ -90,6 +90,100 @@ export interface WeaponSpec {
   muzzleLen: number;
 }
 
+/**
+ * Hull hardpoint secondary (e.g. seeker missiles). Separate from body `weapon` / `guns`.
+ * Cadence rolls between fireCdMin/Max; mounts alternate each shot.
+ */
+export interface SecondaryWpnSpec {
+  wpn: WeaponSpec;
+  mounts: { x: number; y: number }[];
+  fireCdMin: number;
+  fireCdMax: number;
+  /** Projectile draw scale. */
+  scale?: number;
+  /** Pre-ignite motor timer (negative = delay before burn). */
+  motor?: number;
+  /** Home on the player (default true). */
+  homePlayer?: boolean;
+  /** Min engagement range (default 80). */
+  minRange?: number;
+  /** Max |aim error| rad to fire (default π/2). */
+  aimCone?: number;
+}
+
+/**
+ * Tagged hull UV roles. Rigs collect via `hullMountsOf` / `HULL_MOUNT_SOURCES` —
+ * add a source when SPECS gains a new mount kind; game code handles behavior.
+ */
+export type HullMountRole = "gun" | "rotor" | "dish" | "troop" | "secondary" | "dmg";
+
+export interface HullMount {
+  x: number;
+  y: number;
+  role: HullMountRole;
+  label: string;
+}
+
+/** Shared marker colors for sprite / roster rigs. */
+export const HULL_MOUNT_COLOR: Record<HullMountRole, number> = {
+  gun: 0x6adf6a,
+  rotor: 0x5ec8ff,
+  dish: 0xe8b84a,
+  troop: 0xd878ff,
+  secondary: 0xff8c42,
+  dmg: 0xff4a4a,
+};
+
+/**
+ * SPECS fields that expose hull UVs. One entry per mount kind —
+ * both config rigs iterate this instead of hardcoding roles.
+ */
+export const HULL_MOUNT_SOURCES: {
+  role: HullMountRole;
+  label: string;
+  uvs: (sp: UnitSpec) => readonly { x: number; y: number }[];
+}[] = [
+  { role: "gun", label: "gun", uvs: (sp) => sp.guns.map((g) => g.mount) },
+  { role: "rotor", label: "rotor", uvs: (sp) => sp.rotors.map((r) => r.mount) },
+  { role: "dish", label: "dish", uvs: (sp) => (sp.dish ? [sp.dish.mount] : []) },
+  { role: "troop", label: "troop", uvs: (sp) => sp.crew?.mounts ?? [] },
+  { role: "secondary", label: "secondary", uvs: (sp) => sp.secondary?.mounts ?? [] },
+];
+
+/** Collect tagged hull mounts from a unit spec (unnumbered). */
+export function collectHullMounts(sp: UnitSpec): HullMount[] {
+  const out: HullMount[] = [];
+  for (const src of HULL_MOUNT_SOURCES) {
+    for (const uv of src.uvs(sp)) {
+      if (out.some((q) => Math.abs(q.x - uv.x) < 1e-4 && Math.abs(q.y - uv.y) < 1e-4 && q.role === src.role)) {
+        continue;
+      }
+      out.push({ x: uv.x, y: uv.y, role: src.role, label: src.label });
+    }
+  }
+  return out;
+}
+
+/** Suffix labels when a role appears more than once (`gun 1`, `secondary 2`). */
+export function numberMountLabels(list: { role: string; label: string }[]): void {
+  const total = new Map<string, number>();
+  for (const m of list) total.set(m.role, (total.get(m.role) ?? 0) + 1);
+  const seen = new Map<string, number>();
+  for (const m of list) {
+    if ((total.get(m.role) ?? 0) <= 1) continue;
+    const i = (seen.get(m.role) ?? 0) + 1;
+    seen.set(m.role, i);
+    m.label = `${m.label} ${i}`;
+  }
+}
+
+/** Hull mounts for a unit, labels numbered for display. */
+export function hullMountsOf(sp: UnitSpec): HullMount[] {
+  const out = collectHullMounts(sp);
+  numberMountLabels(out);
+  return out;
+}
+
 export interface UnitSpec {
   /** Display name (roster / HUD). */
   label: string;
@@ -105,6 +199,11 @@ export interface UnitSpec {
   /** Ground locomotion (tank / vehicle). Omitted for non-driving kinds. */
   drive?: DriveSpec;
   weapon?: WeaponSpec;
+  /**
+   * Optional hull hardpoint secondary (seeker missiles, etc.).
+   * Fired by scenes from `mounts` — not via SPECS.guns.
+   */
+  secondary?: SecondaryWpnSpec;
   guns: PartMount[];
   rotors: PartMount[];
   dish?: PartMount;
@@ -216,7 +315,7 @@ export function shotDrawScale(look: ShotLook): number {
   return 1;
 }
 
-export type EnemyWpnId = "he" | "mg" | "arty" | "aa" | "sam" | "tower_cannon" | "heli_pylon";
+export type EnemyWpnId = "he" | "mg" | "arty" | "aa" | "seeker" | "tower_cannon";
 
 /**
  * Shared named enemy weapons — combat rig iterates this list.
@@ -282,8 +381,8 @@ export const ENEMY_WPNS: { id: EnemyWpnId; label: string; w: WeaponSpec }[] = [
     },
   },
   {
-    id: "sam",
-    label: "SAM",
+    id: "seeker",
+    label: "SEEKER",
     w: {
       fireCd: 2.8,
       range: 820,
@@ -308,20 +407,6 @@ export const ENEMY_WPNS: { id: EnemyWpnId; label: string; w: WeaponSpec }[] = [
       muzzleLen: 24,
     },
   },
-  {
-    id: "heli_pylon",
-    label: "GUNSHIP PYLON",
-    w: {
-      fireCd: 7,
-      range: 700,
-      speed: 300,
-      dmg: 18,
-      blast: 20,
-      look: "shot_hellfire",
-      jitter: 0.04,
-      muzzleLen: 14,
-    },
-  },
 ];
 
 /** Stable refs into ENEMY_WPNS (`WPN.arty`, `WPN.aa`, …). */
@@ -336,18 +421,6 @@ export function wpn(id: EnemyWpnId, over: Partial<WeaponSpec> = {}): WeaponSpec 
 
 /** @deprecated Use ENEMY_WPNS */
 export const ENEMY_WPN_PRESETS = ENEMY_WPNS;
-
-/**
- * Gunship wing-pylon AI (uses WPN.heli_pylon stats).
- * fireCd on the weapon is nominal; AI rolls between min/max.
- */
-export const HELI_PYLON_AI = {
-  wpnId: "heli_pylon" as const,
-  fireCdMin: 5.5,
-  fireCdMax: 9.5,
-  scale: 0.72,
-  motor: -0.06,
-};
 
 export function partsRollOf(kind: UnitKind): PartsRoll | undefined {
   return SPECS[kind].partsRoll;
@@ -389,7 +462,7 @@ export function defaultGunsFromRoll(kind: UnitKind): PartMount[] | undefined {
 }
 
 /**
- * Where this exact WeaponSpec object is referenced (SPECS body/guns + partsRoll).
+ * Where this exact WeaponSpec object is referenced (SPECS body/secondary/guns + partsRoll).
  * Empty → factory template / unused shared ref.
  */
 export function usesOfWeapon(w: WeaponSpec): string[] {
@@ -397,6 +470,7 @@ export function usesOfWeapon(w: WeaponSpec): string[] {
   for (const kind of Object.keys(SPECS) as UnitKind[]) {
     const sp = SPECS[kind];
     if (sp.weapon === w) uses.push(`${kind} body`);
+    if (sp.secondary?.wpn === w) uses.push(`${kind} secondary`);
     if (sp.partsRoll) {
       for (const [id, opt] of Object.entries(sp.partsRoll.options)) {
         if (opt.w !== w) continue;
@@ -484,6 +558,14 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     aerial: true,
     noCrater: true,
     weapon: wpn("he", { fireCd: 1.4, range: 640, speed: 520, dmg: 3, blast: 8, muzzleLen: 18, burst: 3, burstGap: 0.13 }),
+    secondary: {
+      wpn: WPN.seeker,
+      mounts: [...SPRITE_MOUNT.enemy_heli_wing],
+      fireCdMin: 5.5,
+      fireCdMax: 9.5,
+      scale: 0.72,
+      motor: -0.06,
+    },
     guns: [gun("enemy_heli_gun", 0.72, { ...SPRITE_MOUNT.enemy_heli })],
     rotors: [{ tex: "enemy_heli_rotor", hulk: "enemy_heli_rotor_hulk", origin: { x: 0.5, y: 0.5 }, mount: { x: 0.497, y: 0.411 }, scale: 1 }],
   },
@@ -532,7 +614,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
       options: {
         arty: { tex: "building_tower_gun", originY: 1.39, w: WPN.tower_cannon, label: "tower_cannon" },
         aa: { tex: "building_tower_aa", originY: 1.36, w: WPN.aa, label: "aa" },
-        sam: { tex: "building_tower_sam", originY: 1.25, w: WPN.sam, label: "sam" },
+        sam: { tex: "building_tower_sam", originY: 1.25, w: WPN.seeker, label: "seeker" },
       },
     },
   },
@@ -687,15 +769,14 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     move: "tank",
     drive: { maxSpd: 24, accel: 12, brake: 18, turn: 0.55, track: "dual", trackGap: 16, trackScale: 1 },
     throwGuns: true,
-    weapon: {
-      look: "shot_hellfire",
+    weapon: wpn("seeker", {
       fireCd: 3.4,
       range: 780,
       speed: 280,
       dmg: 22,
       blast: 28,
       muzzleLen: 18,
-    },
+    }),
     guns: [gun("enemy_sam_gun", 0.7, { ...SPRITE_MOUNT.enemy_sam })],
     rotors: [],
   },
@@ -737,7 +818,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
       options: {
         arty: { tex: "enemy_battleship_gun", originY: 0.8, w: WPN.arty, label: "arty" },
         aa: { tex: "enemy_battleship_gun_aa", originY: 0.72, w: WPN.aa, label: "aa" },
-        sam: { tex: "enemy_battleship_gun_sam", originY: 0.7, w: WPN.sam, label: "sam" },
+        sam: { tex: "enemy_battleship_gun_sam", originY: 0.7, w: WPN.seeker, label: "seeker" },
       },
       slots: [
         { id: "arty", mount: { ...SPRITE_MOUNT.enemy_battleship[0]! } },
@@ -838,16 +919,14 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     move: "inf",
     organic: true,
     fixedAim: true,
-    weapon: {
-      look: "shot_hellfire",
+    weapon: wpn("seeker", {
       fireCd: 3.1,
       range: 520,
       speed: 320,
       dmg: 16,
       blast: 18,
-      jitter: 0.02,
       muzzleLen: 12,
-    },
+    }),
     guns: [],
     rotors: [],
   },
