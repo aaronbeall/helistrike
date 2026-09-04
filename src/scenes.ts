@@ -33,9 +33,7 @@ function gunWorldRot(_tex: string, aim: number): number {
   return aim + Math.PI / 2;
 }
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
-import { SpriteConfigTool } from "./spriteConfig";
-import { RosterConfigTool } from "./rosterConfig";
-import { CombatConfigTool } from "./combatConfig";
+import { configRigsAnyOpen, installConfigRigHotkeys } from "./configRigs";
 import { LOAD_TIPS } from "./tips";
 import { preloadArt, prepareArt, extractBiomeTiles, bakeHeliHudWireTexture, bakeHurtVignetteTexture, gunLayout, heliHudWireUv, rotorLayout, shadowAlpha, shadowKey, shadowOff, spriteUvPos, tankLayout, FX_VARIANTS, nameGameTexture, nameGeneratedTextures, spritePivot, PLAYER_DMG_POIS, type HeliHudWireBake } from "./sprites";
 import {
@@ -88,23 +86,120 @@ const CRASH_DMG_UV: { u: number; v: number }[] = [
 let bloodStampScratch: HTMLCanvasElement | null = null;
 
 export class BootScene extends Phaser.Scene {
+  private bootSub!: Phaser.GameObjects.Text;
+  private bootBar!: Phaser.GameObjects.Graphics;
+  private bootBarW = 320;
+  private bootBarH = 8;
+  private bootBarX = 0;
+  private bootBarY = 0;
+
   constructor() {
     super("boot");
   }
+
+  init(): void {
+    this.cameras.main.setBackgroundColor("#1c1812");
+    // Phaser canvas is up — drop the HTML shell so the in-game bar is visible.
+    hideHtmlBoot();
+  }
+
   preload(): void {
+    const { width: w, height: h } = this.scale;
+    this.bootBarW = Math.min(320, w - 80);
+    this.bootBarX = w / 2 - this.bootBarW / 2;
+    this.bootBarY = h * 0.58;
+
+    this.add
+      .text(w / 2, h * 0.38, "HELISTRIKE", {
+        fontFamily: "Black Ops One, Impact, sans-serif",
+        fontSize: "64px",
+        color: "#e8b84a",
+        stroke: "#1c1812",
+        strokeThickness: 6,
+      })
+      .setOrigin(0.5);
+
+    this.bootSub = this.add
+      .text(w / 2, h * 0.5, "LOADING ASSETS  ·  0%", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "14px",
+        color: "#8a8470",
+      })
+      .setOrigin(0.5);
+
+    this.bootBar = this.add.graphics();
+    this.drawBootBar(0);
+
+    this.load.on("progress", (v: number) => {
+      // Leave headroom for CPU bake after fetch.
+      this.drawBootBar(v * 0.72, `LOADING ASSETS  ·  ${Math.round(v * 100)}%`);
+    });
+
     preloadArt(this);
   }
-  create(): void {
-    bakeAll(this.textures);
-    try {
-      prepareArt(this.textures);
-    } catch {
-      /* keep baked placeholders */
+
+  async create(): Promise<void> {
+    const steps: { label: string; run: () => void; t: number }[] = [
+      { label: "BAKING BASE", t: 0.78, run: () => bakeAll(this.textures) },
+      {
+        label: "PREPARING ART",
+        t: 0.88,
+        run: () => {
+          try {
+            prepareArt(this.textures);
+          } catch {
+            /* keep baked placeholders */
+          }
+        },
+      },
+      { label: "ROSTER ART", t: 0.94, run: () => bakeRosterArt(this.textures) },
+      { label: "CAMO", t: 0.99, run: () => bakeCamo(this.textures) },
+    ];
+
+    for (const step of steps) {
+      this.drawBootBar(step.t, `${step.label}  ·  ${Math.round(step.t * 100)}%`);
+      await waitFrame();
+      step.run();
+      await waitFrame();
     }
-    bakeRosterArt(this.textures);
-    bakeCamo(this.textures);
+
+    this.drawBootBar(1, "READY  ·  100%");
+    await waitFrame();
     this.scene.start("menu");
   }
+
+  private drawBootBar(t: number, label?: string): void {
+    const u = Phaser.Math.Clamp(t, 0, 1);
+    if (label) this.bootSub.setText(label);
+    const g = this.bootBar;
+    const { bootBarX: x, bootBarY: y, bootBarW: w, bootBarH: h } = this;
+    g.clear();
+    g.fillStyle(0x12100c, 1);
+    g.fillRect(x, y, w, h);
+    g.fillStyle(0xe8b84a, 1);
+    g.fillRect(x, y, w * u, h);
+    g.lineStyle(1, 0x3a3428, 1);
+    g.strokeRect(x - 0.5, y - 0.5, w + 1, h + 1);
+    g.lineStyle(1, 0x5c5344, 0.55);
+    for (let i = 1; i < 10; i++) {
+      const px = x + (w * i) / 10;
+      const long = i === 5;
+      g.lineBetween(px, y - (long ? 4 : 2), px, y + h + (long ? 4 : 2));
+    }
+  }
+}
+
+function waitFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+}
+
+function hideHtmlBoot(): void {
+  const splash = document.getElementById("boot-splash");
+  if (!splash || splash.classList.contains("is-done")) return;
+  splash.classList.add("is-done");
+  window.setTimeout(() => splash.remove(), 400);
 }
 
 export class MenuScene extends Phaser.Scene {
@@ -150,7 +245,7 @@ export class MenuScene extends Phaser.Scene {
       .text(
         w / 2,
         h * 0.54,
-        "WASD  thrust & strafe\nMOUSE  turn  ·  CLICK  fire  ·  1-4 / WHEEL  weapons\nSPACE  pop-up  ·  SHIFT  nap-of-earth  ·  M  map\n+ / -  time scale",
+        "WASD  thrust & strafe\nMOUSE  turn  ·  CLICK  fire  ·  1-4 / WHEEL  weapons\nSPACE  pop-up  ·  SHIFT  nap-of-earth  ·  M  map\n+ / -  time scale  ·  ` config rigs",
         {
           fontFamily: "Share Tech Mono, monospace",
           fontSize: "15px",
@@ -179,6 +274,7 @@ export class MenuScene extends Phaser.Scene {
     go.on("pointerdown", () => this.scene.start("load"));
     this.input.keyboard?.once("keydown-ENTER", () => this.scene.start("load"));
     this.input.keyboard?.once("keydown-SPACE", () => this.scene.start("load"));
+    installConfigRigHotkeys(this);
     nameGeneratedTextures(this);
   }
 }
@@ -424,9 +520,6 @@ export class MissionScene extends Phaser.Scene {
   showHeightMap = false;
   debugGfx!: Phaser.GameObjects.Graphics;
   timeScale = 1;
-  spriteCfg!: SpriteConfigTool;
-  rosterCfg!: RosterConfigTool;
-  combatCfg!: CombatConfigTool;
   debugOpen = false;
   debugRoot!: Phaser.GameObjects.Container;
   debugPanel!: Phaser.GameObjects.Graphics;
@@ -937,19 +1030,15 @@ export class MissionScene extends Phaser.Scene {
       if (this.editOpen) this.nudgeEditOff(1, 0);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.OPEN_BRACKET).on("down", () => {
+      if (configRigsAnyOpen(this)) return;
       if (this.debugSpawnOpen) this.nudgeDebugSpawn(-1);
       else if (this.debugCamOpen) this.nudgeDebugCam(-1);
-      else if (this.combatCfg?.open) this.combatCfg.cycle(-1);
-      else if (this.rosterCfg?.open) this.rosterCfg.cycle(-1);
-      else if (this.spriteCfg?.open) this.spriteCfg.cycle(-1);
       else if (this.editOpen) this.nudgeEditSize(-1);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.CLOSED_BRACKET).on("down", () => {
+      if (configRigsAnyOpen(this)) return;
       if (this.debugSpawnOpen) this.nudgeDebugSpawn(1);
       else if (this.debugCamOpen) this.nudgeDebugCam(1);
-      else if (this.combatCfg?.open) this.combatCfg.cycle(1);
-      else if (this.rosterCfg?.open) this.rosterCfg.cycle(1);
-      else if (this.spriteCfg?.open) this.spriteCfg.cycle(1);
       else if (this.editOpen) this.nudgeEditSize(1);
     });
     this.input.keyboard!.addKey("SEMICOLON").on("down", () => {
@@ -973,76 +1062,48 @@ export class MissionScene extends Phaser.Scene {
       else if (this.over) this.scene.start("load");
     });
     const bumpTime = (dir: number) => {
-      if (this.rosterCfg?.open) this.rosterCfg.nudgeZoom(dir);
-      else if (this.combatCfg?.open) this.combatCfg.nudgeZoom(dir);
-      else if (this.debugCamOpen) this.nudgeDebugCam(dir);
+      if (configRigsAnyOpen(this)) return;
+      if (this.debugCamOpen) this.nudgeDebugCam(dir);
       else this.nudgeTimeScale(dir);
     };
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.PLUS).on("down", () => bumpTime(1));
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_ADD).on("down", () => bumpTime(1));
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.MINUS).on("down", () => bumpTime(-1));
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_SUBTRACT).on("down", () => bumpTime(-1));
-    const markHudRoot = (root: Phaser.GameObjects.Container) => {
-      const mark = (obj: Phaser.GameObjects.GameObject) => {
-        this.bindHud(obj);
-        const list = (obj as Phaser.GameObjects.Container).list;
-        if (list) for (const ch of list) mark(ch);
-      };
-      mark(root);
-    };
-    this.spriteCfg = new SpriteConfigTool(this, (key) => this.spriteOrigin(key), markHudRoot);
-    this.rosterCfg = new RosterConfigTool(this, markHudRoot);
-    this.combatCfg = new CombatConfigTool(this, markHudRoot);
-    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.F9).on("down", () => this.spriteCfg.toggle());
-    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.BACKTICK).on("down", () => this.cycleDebugRigs());
+    installConfigRigHotkeys(this);
     this.input.keyboard!.addKey("F").on("down", () => this.toggleTestFx());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.UP).on("down", () => {
+      if (configRigsAnyOpen(this)) return;
       if (this.debugSpawnOpen) this.nudgeDebugSpawn(-1);
       else if (this.debugCamOpen) this.nudgeDebugCamSel(-1);
       else if (this.debugOpen) this.nudgeDebugMenu(-1);
-      else if (this.combatCfg?.open) this.combatCfg.cycle(-1);
-      else if (this.rosterCfg?.open) this.rosterCfg.cycle(-1);
-      else if (this.spriteCfg?.open) this.spriteCfg.cycle(-1);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN).on("down", () => {
+      if (configRigsAnyOpen(this)) return;
       if (this.debugSpawnOpen) this.nudgeDebugSpawn(1);
       else if (this.debugCamOpen) this.nudgeDebugCamSel(1);
       else if (this.debugOpen) this.nudgeDebugMenu(1);
-      else if (this.combatCfg?.open) this.combatCfg.cycle(1);
-      else if (this.rosterCfg?.open) this.rosterCfg.cycle(1);
-      else if (this.spriteCfg?.open) this.spriteCfg.cycle(1);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT).on("down", () => {
+      if (configRigsAnyOpen(this)) return;
       if (this.debugCamOpen) this.nudgeDebugCam(-1);
-      else if (this.spriteCfg?.open) this.spriteCfg.cycleFrame(-1);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT).on("down", () => {
+      if (configRigsAnyOpen(this)) return;
       if (this.debugCamOpen) this.nudgeDebugCam(1);
-      else if (this.spriteCfg?.open) this.spriteCfg.cycleFrame(1);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER).on("down", () => {
       if (this.debugSpawnOpen) this.debugSpawnSelected();
       else if (this.debugOpen && !this.debugCamOpen) this.activateDebugRow(this.debugMenuIdx);
     });
     this.input.on("wheel", (_p: Phaser.Input.Pointer, _dx: number, dy: number) => {
+      if (configRigsAnyOpen(this)) return;
       if (this.debugCamOpen) {
         this.nudgeDebugCam(dy > 0 ? -1 : 1);
         return;
       }
       if (this.debugSpawnOpen) {
         this.nudgeDebugSpawn(dy > 0 ? 1 : -1);
-        return;
-      }
-      if (this.combatCfg?.open) {
-        this.combatCfg.cycle(dy > 0 ? 1 : -1);
-        return;
-      }
-      if (this.rosterCfg?.open) {
-        this.rosterCfg.cycle(dy > 0 ? 1 : -1);
-        return;
-      }
-      if (this.spriteCfg?.open) {
-        this.spriteCfg.cycle(dy > 0 ? 1 : -1);
         return;
       }
       if (this.editOpen) {
@@ -1443,30 +1504,10 @@ export class MissionScene extends Phaser.Scene {
     return spritePivot(key);
   }
 
-  /** ` cycles closed → sprite → roster → combat → closed. */
-  cycleDebugRigs(): void {
-    if (this.spriteCfg?.open) {
-      this.spriteCfg.toggle();
-      this.rosterCfg.toggle();
-      return;
-    }
-    if (this.rosterCfg?.open) {
-      this.rosterCfg.toggle();
-      this.combatCfg.toggle();
-      return;
-    }
-    if (this.combatCfg?.open) {
-      this.combatCfg.toggle();
-      return;
-    }
-    this.spriteCfg.toggle();
-  }
+  /** ` cycles closed → sprite → roster → combat → closed — owned by ConfigRigsScene. */
 
   update(_t: number, dms: number): void {
-    if (this.spriteCfg?.open || this.rosterCfg?.open || this.combatCfg?.open) {
-      if (this.spriteCfg?.open) this.spriteCfg.update();
-      if (this.rosterCfg?.open) this.rosterCfg.update();
-      if (this.combatCfg?.open) this.combatCfg.update(Math.min(dms / 1000, 0.05));
+    if (configRigsAnyOpen(this)) {
       this.reticle.setVisible(false);
       this.reticleMark.setVisible(false);
       this.reticleMark.clear();
@@ -1675,7 +1716,7 @@ export class MissionScene extends Phaser.Scene {
       u.y = at.y;
       return;
     }
-    const r = radius(post.kind);
+    const r = crew.leashR ?? radius(post.kind);
     const dx = u.x - post.x;
     const dy = u.y - post.y;
     const d = Math.hypot(dx, dy);
@@ -7097,9 +7138,6 @@ export class MissionScene extends Phaser.Scene {
       const list = (obj as Phaser.GameObjects.Container).list;
       if (list) for (const ch of list) markHudTree(ch);
     };
-    markHudTree(this.spriteCfg.root);
-    markHudTree(this.rosterCfg.root);
-    markHudTree(this.combatCfg.root);
     markHudTree(this.debugRoot);
     if (this.editRoot) markHudTree(this.editRoot);
     this.children.each((obj) => {

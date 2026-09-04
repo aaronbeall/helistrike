@@ -90,10 +90,8 @@ export const PLAYER_WPNS: Record<Wpn, PlayerWpnSpec> = {
   },
 };
 
-export const WPN_LIST: { id: Wpn; name: string; ammo: number }[] = (
-  ["cannon", "rocket", "hellfire", "tow"] as const
-).map((id) => {
-  const w = PLAYER_WPNS[id];
+export const WPN_LIST: { id: Wpn; name: string; ammo: number }[] = (Object.keys(PLAYER_WPNS) as Wpn[]).map((id) => {
+  const w = PLAYER_WPNS[id]!;
   return { id: w.id, name: w.name, ammo: w.ammo };
 });
 

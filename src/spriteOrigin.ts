@@ -20,6 +20,7 @@ export const SPRITE_ORIGIN: Record<string, { x: number; y: number }> = {
   enemy_troop_stinger: { x: 0.452, y: 0.647 },
   enemy_motorcycle: { x: 0.5, y: 0.48 },
   enemy_troop_mounted_mg: { x: 0.5, y: 0.72 },
+  building_lookout: { x: 0.501, y: 0.394 },
 };
 
 function bareKey(key: string): string {

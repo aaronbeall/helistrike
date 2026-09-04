@@ -110,7 +110,7 @@ export interface UnitSpec {
   spawnYaw?: number;
   /**
    * Optional pinned crew seats on this hull.
-   * `snap` = glued to mount UV (moving vehicles); `leash` = roam within host radius (static posts).
+   * `snap` = glued to mount UV (moving vehicles); `leash` = roam within leashR (static posts).
    */
   crew?: CrewSpec;
 }
@@ -122,6 +122,8 @@ export interface CrewSpec {
   mode: PinMode;
   /** Fill probability per mount (default 1). */
   chance?: number;
+  /** Leash roam radius; defaults to host unit radius when omitted. */
+  leashR?: number;
 }
 
 const gun = (
@@ -170,8 +172,9 @@ const small = (over: Partial<WeaponSpec> = {}): WeaponSpec => ({
   ...over,
 });
 
-const WPN_ARTY = shell({ fireCd: 1.35, range: 860, speed: 480, dmg: 16, blast: 22, muzzleLen: 32 });
-const WPN_AA = small({
+/** Shared named presets — same object refs as SPECS / roll tables (combat rig scans these). */
+export const WPN_ARTY = shell({ fireCd: 1.35, range: 860, speed: 480, dmg: 16, blast: 22, muzzleLen: 32 });
+export const WPN_AA = small({
   fireCd: 3.1,
   range: 680,
   speed: 820,
@@ -183,50 +186,125 @@ const WPN_AA = small({
   muzzleLen: 18,
   jitter: 0.04,
 });
-const WPN_SAM = {
+export const WPN_SAM: WeaponSpec = {
   fireCd: 2.8,
   range: 820,
   speed: 300,
   dmg: 18,
   blast: 22,
-  tracer: "shell" as const,
-  shot: "hellfire" as const,
+  tracer: "shell",
+  shot: "hellfire",
   jitter: 0.02,
   muzzleLen: 16,
 };
+/** Tower “arty” roll + default tower body — not WPN_ARTY. */
+export const WPN_TOWER_CANNON = shell({
+  fireCd: 0.5,
+  range: 700,
+  speed: 920,
+  dmg: 12,
+  blast: 10,
+  tracer: "aa",
+  muzzleLen: 24,
+});
 
-type GunVar = "arty" | "aa" | "sam";
+/** Factory templates (fresh objects — SPECS usually call shell/small with overrides). */
+export const WPN_SHELL_DEFAULT = shell();
+export const WPN_SMALL_DEFAULT = small();
 
-function pickGunVar(): GunVar {
+export type GunRollId = "arty" | "aa" | "sam";
+
+export type GunRollSpec = { tex: string; originY: number; w: WeaponSpec };
+
+/** Tower `rollParts` options — weapon refs drive combat-rig “used by”. */
+export const TOWER_GUN_ROLLS: Record<GunRollId, GunRollSpec> = {
+  arty: { tex: "building_tower_gun", originY: 1.39, w: WPN_TOWER_CANNON },
+  aa: { tex: "building_tower_aa", originY: 1.36, w: WPN_AA },
+  sam: { tex: "building_tower_sam", originY: 1.25, w: WPN_SAM },
+};
+
+/** Battleship fixed mounts / `shipGun` options. */
+export const SHIP_GUN_ROLLS: Record<GunRollId, GunRollSpec> = {
+  arty: { tex: "enemy_battleship_gun", originY: 0.8, w: WPN_ARTY },
+  aa: { tex: "enemy_battleship_gun_aa", originY: 0.72, w: WPN_AA },
+  sam: { tex: "enemy_battleship_gun_sam", originY: 0.7, w: WPN_SAM },
+};
+
+/** Battleship mount order (indices match SPRITE_MOUNT.enemy_battleship). */
+export const BATTLESHIP_MOUNT_ROLLS: GunRollId[] = ["arty", "aa", "sam", "arty"];
+
+/** Named enemy weapon presets shown in the combat rig (stats + live used-by). */
+export const ENEMY_WPN_PRESETS: { id: string; label: string; w: WeaponSpec }[] = [
+  { id: "shell", label: "SHELL (default)", w: WPN_SHELL_DEFAULT },
+  { id: "small", label: "SMALL (default)", w: WPN_SMALL_DEFAULT },
+  { id: "arty", label: "ARTY", w: WPN_ARTY },
+  { id: "aa", label: "AA BURST", w: WPN_AA },
+  { id: "sam", label: "SAM", w: WPN_SAM },
+  { id: "tower_cannon", label: "TOWER CANNON", w: WPN_TOWER_CANNON },
+];
+
+/**
+ * Where this exact WeaponSpec object is referenced (SPECS body/guns + roll tables).
+ * Empty → factory template / unused shared ref.
+ */
+export function usesOfWeapon(w: WeaponSpec): string[] {
+  const uses: string[] = [];
+  for (const kind of Object.keys(SPECS) as UnitKind[]) {
+    const sp = SPECS[kind];
+    if (sp.weapon === w) uses.push(`${kind} body`);
+    sp.guns.forEach((g, i) => {
+      if (g.weapon === w) uses.push(`${kind} gun[${i}]`);
+    });
+  }
+  for (const id of Object.keys(TOWER_GUN_ROLLS) as GunRollId[]) {
+    if (TOWER_GUN_ROLLS[id]!.w === w) uses.push(`tower roll:${id}`);
+  }
+  for (const id of Object.keys(SHIP_GUN_ROLLS) as GunRollId[]) {
+    if (SHIP_GUN_ROLLS[id]!.w === w) {
+      const mounts = BATTLESHIP_MOUNT_ROLLS.map((r, i) => (r === id ? i : -1)).filter((i) => i >= 0);
+      uses.push(
+        mounts.length
+          ? `battleship mount:${id} [${mounts.join(",")}]`
+          : `battleship mount:${id}`
+      );
+    }
+  }
+  return uses;
+}
+
+/** Projectile texture for a WeaponSpec / shot kind (combat + roster previews). */
+export function shotTexture(shot: WeaponSpec["shot"], tracer?: WeaponSpec["tracer"]): string {
+  if (shot === "rocket") return "rocket";
+  if (shot === "hellfire") return "hellfire";
+  if (tracer === "aa") return "tracer_aa";
+  if (tracer === "small") return "tracer_sm";
+  if (tracer === "shell") return "shell";
+  if (tracer === "chain") return "cannon";
+  return "cannon";
+}
+
+function pickGunVar(): GunRollId {
   const r = Math.random();
   if (r < 0.34) return "arty";
   if (r < 0.67) return "aa";
   return "sam";
 }
 
-function shipGun(v: GunVar, mount: { x: number; y: number }): PartMount {
-  if (v === "aa") return gun("enemy_battleship_gun_aa", 0.72, mount, undefined, WPN_AA);
-  if (v === "sam") return gun("enemy_battleship_gun_sam", 0.7, mount, undefined, WPN_SAM);
-  return gun("enemy_battleship_gun", 0.8, mount, undefined, WPN_ARTY);
+function shipGun(v: GunRollId, mount: { x: number; y: number }): PartMount {
+  const r = SHIP_GUN_ROLLS[v]!;
+  return gun(r.tex, r.originY, mount, undefined, r.w);
 }
 
-function towerGun(v: GunVar): PartMount {
-  const mount = { ...SPRITE_MOUNT.building_tower };
-  if (v === "aa") return gun("building_tower_aa", 1.36, mount, undefined, WPN_AA);
-  if (v === "sam") return gun("building_tower_sam", 1.25, mount, undefined, WPN_SAM);
-  return gun("building_tower_gun", 1.39, mount, undefined, shell({ fireCd: 0.5, range: 700, speed: 920, dmg: 12, blast: 10, tracer: "aa", muzzleLen: 24 }));
+function towerGun(v: GunRollId): PartMount {
+  const r = TOWER_GUN_ROLLS[v]!;
+  return gun(r.tex, r.originY, { ...SPRITE_MOUNT.building_tower }, undefined, r.w);
 }
 
 export function rollParts(kind: UnitKind): PartMount[] | undefined {
   if (kind === "tower") return [towerGun(pickGunVar())];
   if (kind === "battleship") {
     const m = SPRITE_MOUNT.enemy_battleship;
-    return [
-      shipGun("arty", { ...m[0]! }),
-      shipGun("aa", { ...m[1]! }),
-      shipGun("sam", { ...m[2]! }),
-      shipGun("arty", { ...m[3]! }),
-    ];
+    return BATTLESHIP_MOUNT_ROLLS.map((roll, i) => shipGun(roll, { ...m[i]! }));
   }
   return undefined;
 }
@@ -309,7 +387,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     building: true,
     throwGuns: true,
     spawnYaw: (5 * Math.PI) / 180,
-    weapon: shell({ fireCd: 0.5, range: 700, speed: 920, dmg: 12, blast: 10, tracer: "aa", muzzleLen: 24 }),
+    weapon: WPN_TOWER_CANNON,
     guns: [gun("building_tower_gun", 1.39, { ...SPRITE_MOUNT.building_tower })],
     rotors: [],
   },
@@ -326,7 +404,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     spawnYaw: (45 * Math.PI) / 180,
     guns: [],
     rotors: [],
-    crew: { mounts: [...SPRITE_MOUNT.building_bunker], mode: "leash" },
+    crew: { mounts: [...SPRITE_MOUNT.building_bunker], mode: "leash", leashR: 38 },
   },
   radar: {
     health: 200,
@@ -432,7 +510,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     weapon: WPN_AA,
     guns: [
       {
-        ...gun("building_tower_aa", 0.9, { ...SPRITE_MOUNT.enemy_lav }, undefined, WPN_AA),
+        ...gun("building_tower_aa", 0.9, { ...SPRITE_MOUNT.enemy_lav }),
         scale: 0.83,
       },
     ],
@@ -685,7 +763,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     spawnYaw: (5 * Math.PI) / 180,
     guns: [],
     rotors: [],
-    crew: { mounts: [{ ...SPRITE_MOUNT.building_lookout }], mode: "leash" },
+    crew: { mounts: [{ ...SPRITE_MOUNT.building_lookout }], mode: "leash", leashR: 17 },
   },
   drone: {
     health: 22,
@@ -889,7 +967,7 @@ const KIND_LABEL: Record<UnitKind, string> = {
 };
 
 export function labelOf(kind: UnitKind): string {
-  return KIND_LABEL[kind];
+  return KIND_LABEL[kind] ?? kind.replace(/_/g, " ").toUpperCase();
 }
 
 export function driveOf(kind: UnitKind): DriveSpec {

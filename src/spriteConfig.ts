@@ -1,12 +1,13 @@
 import Phaser from "phaser";
 import { allSpecs } from "./roster";
 import { lookupSpriteMuzzles } from "./spriteOrigin";
+import { makeConfigText, setStackedTexts, CFG_VALUE, CFG_INFO, CFG_LIVE, kv, kvs, row, rowCont } from "./configUi";
 import { rotorLayout, tankLayout, gunLayout, isUuidTexture, nameGameTexture, nameGeneratedTextures, spritePivot, PLAYER_DMG_POIS } from "./sprites";
 
 const DEPTH = 9200;
 const MONO = "Share Tech Mono, monospace";
 const GOLD = "#e8b84a";
-const PAPER = "#f0e6c8";
+const PAPER = CFG_VALUE;
 
 const SKIP = /^(src_|__)|_sh[0-3]$/;
 const GENERATED = /^(hud_|ui_|debug_|edit_|wpn_|hv_|lock_|map_|ai_label|menu_|load_|terrain|heightmap|wreck|wrecks|brush_|impact_|gen_)/;
@@ -37,8 +38,14 @@ export class SpriteConfigTool {
   private frameThumbs: Phaser.GameObjects.Image[] = [];
   private listTxt!: Phaser.GameObjects.Text;
   private statsTxt!: Phaser.GameObjects.Text;
+  private liveTxt!: Phaser.GameObjects.Text;
+  private infoTxt!: Phaser.GameObjects.Text;
   private hintTxt!: Phaser.GameObjects.Text;
   private mountLabels: Phaser.GameObjects.Text[] = [];
+  private pendingStats: string[] = [];
+  private pendingLive: string[] = [];
+  private pendingInfo: string[] = [];
+  private statsXY = { x: LIST_X + LIST_W + 20, y: LIST_Y };
   private originOf: (key: string) => { x: number; y: number };
   private onBuilt?: (root: Phaser.GameObjects.Container) => void;
   private uiCam!: Phaser.Cameras.Scene2D.Camera;
@@ -89,27 +96,11 @@ export class SpriteConfigTool {
       this.frameThumbs.push(im);
     }
     this.overlay = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH + 3).setVisible(false);
-    this.listTxt = scene.add
-      .text(LIST_X, LIST_Y, "", {
-        fontFamily: MONO,
-        fontSize: "13px",
-        color: PAPER,
-        lineSpacing: 3,
-      })
-      .setScrollFactor(0)
-      .setDepth(DEPTH + 4)
-      .setVisible(false);
-    this.statsTxt = scene.add
-      .text(0, 0, "", {
-        fontFamily: MONO,
-        fontSize: "13px",
-        color: PAPER,
-        lineSpacing: 5,
-        wordWrap: { width: STATS_W - 8 },
-      })
-      .setScrollFactor(0)
-      .setDepth(DEPTH + 4)
-      .setVisible(false);
+    this.listTxt = makeConfigText(scene, DEPTH + 4, { fontSize: "13px", lineSpacing: 3, color: PAPER });
+    this.listTxt.setPosition(LIST_X, LIST_Y);
+    this.statsTxt = makeConfigText(scene, DEPTH + 4, { fontSize: "13px", lineSpacing: 5, color: PAPER, wrapW: STATS_W - 8 });
+    this.liveTxt = makeConfigText(scene, DEPTH + 4, { fontSize: "13px", lineSpacing: 5, color: CFG_LIVE, wrapW: STATS_W - 8 });
+    this.infoTxt = makeConfigText(scene, DEPTH + 4, { fontSize: "13px", lineSpacing: 5, color: CFG_INFO, wrapW: STATS_W - 8 });
     this.hintTxt = scene.add
       .text(18, 14, "", { fontFamily: MONO, fontSize: "12px", color: GOLD })
       .setScrollFactor(0)
@@ -117,6 +108,8 @@ export class SpriteConfigTool {
       .setVisible(false);
     nameGameTexture(scene, this.listTxt, "ui_rig_list");
     nameGameTexture(scene, this.statsTxt, "ui_rig_stats");
+    nameGameTexture(scene, this.liveTxt, "ui_rig_live");
+    nameGameTexture(scene, this.infoTxt, "ui_rig_info");
     nameGameTexture(scene, this.hintTxt, "ui_rig_hint");
     for (let i = 0; i < 16; i++) {
       const t = scene.add
@@ -142,6 +135,8 @@ export class SpriteConfigTool {
       this.overlay,
       this.listTxt,
       this.statsTxt,
+      this.liveTxt,
+      this.infoTxt,
       this.hintTxt,
       ...this.mountLabels,
     ]);
@@ -223,6 +218,8 @@ export class SpriteConfigTool {
     this.overlay.setVisible(this.open);
     this.listTxt.setVisible(this.open);
     this.statsTxt.setVisible(this.open);
+    this.liveTxt.setVisible(this.open);
+    this.infoTxt.setVisible(this.open);
     this.hintTxt.setVisible(this.open);
     this.scene.input.setDefaultCursor(this.open ? "default" : "none");
     this.uiCam.setVisible(this.open);
@@ -293,6 +290,7 @@ export class SpriteConfigTool {
     const frame = frames[this.frameIdx]!;
     const p = this.scene.input.activePointer;
     const uv = this.uvAt(p);
+    this.scene.input.setDefaultCursor(uv ? "crosshair" : "default");
     const origin = this.originOf(key);
     const tex = this.scene.textures.get(key);
     const fr = tex.get(frame);
@@ -301,7 +299,7 @@ export class SpriteConfigTool {
 
     const frameHint = frames.length > 1 ? `   ← → frame ${this.frameIdx + 1}/${frames.length}` : "";
     this.hintTxt.setText(
-      `SPRITE RIG   \` cycle   F9 close   [ ] cycle   , . page   G art-only ${this.artOnly ? "ON" : "OFF"}${frameHint}   gold origin · green gun · cyan rotor · gold dish · violet troop · red dmg · orange muzzle`
+      `SPRITE RIG   \` cycle / close   [ ] cycle   , . page   G art-only ${this.artOnly ? "ON" : "OFF"}${frameHint}   gold origin · green gun · cyan rotor · gold dish · violet troop · red dmg · orange muzzle`
     );
     const size = this.pageSize();
     const pages = Math.max(1, Math.ceil(keys.length / size));
@@ -321,50 +319,79 @@ export class SpriteConfigTool {
     );
 
     const hover = uv
-      ? `CURSOR   uv  ${uv.uvx.toFixed(3)}  ${uv.uvy.toFixed(3)}\n         px  ${uv.px.toFixed(1)}  ${uv.py.toFixed(1)}\n         from origin  ${((uv.uvx - origin.x) * tw).toFixed(1)}  ${((uv.uvy - origin.y) * th).toFixed(1)}`
-      : "CURSOR   off board";
+      ? [
+          row(
+            "CURSOR",
+            kvs(
+              ["uv", fmt(uv)],
+              ["px", `${uv.px.toFixed(1)}, ${uv.py.toFixed(1)}`],
+              [
+                "fromOrigin",
+                `${((uv.uvx - origin.x) * tw).toFixed(1)}, ${((uv.uvy - origin.y) * th).toFixed(1)}`,
+              ]
+            )
+          ),
+        ]
+      : [row("CURSOR", "off board")];
     const pin = this.pinned
-      ? `PIN      uv  ${this.pinned.uvx.toFixed(3)}  ${this.pinned.uvy.toFixed(3)}\n         copied  ${this.copied}`
-      : "PIN      click the sprite to copy name / uv / px";
+      ? [row("PIN", kvs(["uv", fmt(this.pinned)], ["copied", this.copied || "—"]))]
+      : [row("PIN", "click sprite to copy name / uv / px")];
     const marks = rigMarks(key);
     const mountLines = marks.mounts.length
-      ? marks.mounts
-          .map((p, i) => `${i === 0 ? "MOUNT   " : "        "} ${p.label.padEnd(10)} ${fmt(p)}`)
-          .join("\n")
-      : "MOUNT    —";
+      ? marks.mounts.map((p, i) =>
+          i === 0
+            ? row("MOUNT", kvs(["role", p.label], ["uv", fmt(p)]))
+            : rowCont(kvs(["role", p.label], ["uv", fmt(p)]))
+        )
+      : [row("MOUNT", "—")];
     const muzLines = marks.muzzles.length
-      ? marks.muzzles
-          .map((p, i) => {
-            const tag = marks.muzzles.length > 1 ? `muzzle ${i + 1}` : "muzzle";
-            return `${i === 0 ? "MUZZLE  " : "        "} ${tag.padEnd(10)} ${fmt(p)}`;
-          })
-          .join("\n")
-      : "MUZZLE   —";
+      ? marks.muzzles.map((p, i) => {
+          const tag = marks.muzzles.length > 1 ? i + 1 : 1;
+          return i === 0
+            ? row("MUZZLE", kvs(["n", tag], ["uv", fmt(p)]))
+            : rowCont(kvs(["n", tag], ["uv", fmt(p)]));
+        })
+      : [row("MUZZLE", "—")];
     const frameLine =
       frames.length > 1
-        ? `FRAME    ${this.frameIdx + 1} / ${frames.length}  (${String(frame)})   ← → / click strip`
-        : `FRAME    —`;
-    this.statsTxt.setText(
-      [
-        `KEY      ${key}`,
-        `TEX      ${tw} × ${th}`,
-        frameLine,
-        `ORIGIN   ${origin.x.toFixed(3)}  ${origin.y.toFixed(3)}`,
-        `         px  ${(origin.x * tw).toFixed(1)}  ${(origin.y * th).toFixed(1)}`,
-        layoutLine(key),
-        spawnYawLine(key),
-        mountLines,
-        muzLines,
-        "",
-        hover,
-        pin,
-        "",
-        "texture space · nose-up · roles from unit roster (not a flat UV dump)",
-        "spawn yaw any unless listed",
-      ].join("\n")
-    );
+        ? row(
+            "FRAME",
+            `${this.frameIdx + 1}/${frames.length} ${kvs(["name", String(frame)], ["nav", "← → / click strip"])}`
+          )
+        : row("FRAME", "—");
+    this.pendingStats = [
+      row("KEY", key),
+      row("TEX", `${tw}×${th}`),
+      frameLine,
+      row(
+        "ORIGIN",
+        `${fmt(origin)} ${kv("px", `${(origin.x * tw).toFixed(1)}, ${(origin.y * th).toFixed(1)}`)}`
+      ),
+      layoutLine(key),
+      spawnYawLine(key),
+      ...mountLines,
+      ...muzLines,
+    ];
+    this.pendingLive = [...hover, ...pin];
+    this.pendingInfo = [
+      "texture space · nose-up · roles from unit roster (not a flat UV dump)",
+      "spawn yaw any unless listed",
+    ];
+    this.applyStatsPanel();
 
     this.drawOverlay(key, origin);
+  }
+
+  private applyStatsPanel(): void {
+    setStackedTexts(
+      [
+        { txt: this.statsTxt, lines: this.pendingStats },
+        { txt: this.liveTxt, lines: this.pendingLive },
+        { txt: this.infoTxt, lines: this.pendingInfo },
+      ],
+      this.statsXY.x,
+      this.statsXY.y
+    );
   }
 
   private pageSize(): number {
@@ -427,7 +454,8 @@ export class SpriteConfigTool {
     const bh = this.preview.displayHeight;
     const bx = this.preview.x - bw * this.preview.originX;
     const by = this.preview.y - bh * this.preview.originY;
-    this.statsTxt.setPosition(bx + bw + gap, Math.max(LIST_Y, by));
+    this.statsXY = { x: bx + bw + gap, y: Math.max(LIST_Y, by) };
+    this.applyStatsPanel();
 
     this.board.clear();
     const cell = 14;
@@ -663,8 +691,8 @@ function spawnYawLine(key: string): string {
     const tex = sp.texture.replace(/__(woodland|desert|urban|snow|digital)$/, "");
     const hulk = sp.hulk.replace(/__(woodland|desert|urban|snow|digital)$/, "");
     if (tex === k || hulk === k) {
-      if (sp.spawnYaw == null) return "SPAWN    yaw  any";
-      return `SPAWN    yaw  ${deg(sp.spawnYaw)}  around as-drawn`;
+      if (sp.spawnYaw == null) return row("SPAWN", "any");
+      return row("SPAWN", `${deg(sp.spawnYaw)} ${kv("around", "as-drawn")}`);
     }
   }
   for (const sp of allSpecs()) {
@@ -673,26 +701,35 @@ function spawnYawLine(key: string): string {
       sp.rotors.some((r) => r.tex === k) ||
       sp.dish?.tex === k;
     if (!part || sp.spawnYaw == null) continue;
-    return `SPAWN    yaw  ${deg(sp.spawnYaw)}  follows body`;
+    return row("SPAWN", `${deg(sp.spawnYaw)} ${kv("follows", "body")}`);
   }
-  return "SPAWN    yaw  any";
+  return row("SPAWN", "any");
 }
 
 function layoutLine(key: string): string {
   if (key === "heli_body")
-    return `LAYOUT   rotor ${fmt(rotorLayout.player)}  gun mount ${fmt(gunLayout.mount)}  dmg×${PLAYER_DMG_POIS.length}`;
-  if (key === "enemy_heli")
-    return `LAYOUT   rotorLayout.enemy   ${fmt(rotorLayout.enemy)}`;
-  if (key === "heli_rotor" || key === "enemy_heli_rotor") return "LAYOUT   origin 0.5 0.5  (spin hub)";
+    return row(
+      "LAYOUT",
+      kvs(
+        ["rotor", fmt(rotorLayout.player)],
+        ["gunMount", fmt(gunLayout.mount)],
+        ["dmg", PLAYER_DMG_POIS.length]
+      )
+    );
+  if (key === "enemy_heli") return row("LAYOUT", kv("rotor", fmt(rotorLayout.enemy)));
+  if (key === "heli_rotor" || key === "enemy_heli_rotor")
+    return row("LAYOUT", `${kv("origin", "0.500, 0.500")} spin hub`);
   if (key === "heli_gun")
-    return `LAYOUT   gun origin ${fmt(gunLayout.origin)}  mount on body ${fmt(gunLayout.mount)}`;
-  if (key === "enemy_tank") return `LAYOUT   mountOrigin  ${fmt(tankLayout.mountOrigin)}`;
-  if (key === "enemy_tank_gun") return `LAYOUT   turretOrigin  ${fmt(tankLayout.turretOrigin)}`;
+    return row("LAYOUT", kvs(["origin", fmt(gunLayout.origin)], ["mount", fmt(gunLayout.mount)]));
+  if (key === "enemy_tank") return row("LAYOUT", kv("mountOrigin", fmt(tankLayout.mountOrigin)));
+  if (key === "enemy_tank_gun") return row("LAYOUT", kv("turretOrigin", fmt(tankLayout.turretOrigin)));
   if (key === "enemy_tank_gun_hulk")
-    return `LAYOUT   hulkTurretOrigin  ${fmt(tankLayout.hulkTurretOrigin)}`;
-  return `LAYOUT   origin  ${fmt(spritePivot(key))}`;
+    return row("LAYOUT", kv("hulkTurretOrigin", fmt(tankLayout.hulkTurretOrigin)));
+  return row("LAYOUT", kv("origin", fmt(spritePivot(key))));
 }
 
-function fmt(p: { x: number; y: number }): string {
-  return `${p.x.toFixed(3)}  ${p.y.toFixed(3)}`;
+function fmt(p: { x?: number; y?: number; uvx?: number; uvy?: number }): string {
+  const x = p.uvx ?? p.x ?? 0;
+  const y = p.uvy ?? p.y ?? 0;
+  return `${x.toFixed(3)}, ${y.toFixed(3)}`;
 }

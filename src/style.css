@@ -18,3 +18,64 @@ body {
 canvas {
   display: block;
 }
+
+#boot-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: #1c1812;
+  color: #e8b84a;
+  pointer-events: none;
+  transition: opacity 0.35s ease;
+}
+
+#boot-splash.is-done {
+  opacity: 0;
+}
+
+.boot-splash__title {
+  font-family: "Black Ops One", Impact, sans-serif;
+  font-size: clamp(42px, 8vw, 72px);
+  letter-spacing: 0.04em;
+  text-shadow: 0 2px 0 #1c1812;
+}
+
+.boot-splash__sub {
+  font-family: "Share Tech Mono", monospace;
+  font-size: 14px;
+  color: #8a8470;
+  letter-spacing: 0.18em;
+}
+
+.boot-splash__bar {
+  width: min(320px, 70vw);
+  height: 8px;
+  margin-top: 8px;
+  background: #12100c;
+  border: 1px solid #3a3428;
+  overflow: hidden;
+}
+
+.boot-splash__fill {
+  height: 100%;
+  width: 8%;
+  background: #e8b84a;
+  animation: boot-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes boot-pulse {
+  0%,
+  100% {
+    width: 8%;
+    opacity: 0.55;
+  }
+  50% {
+    width: 42%;
+    opacity: 1;
+  }
+}

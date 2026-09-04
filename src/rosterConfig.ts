@@ -13,14 +13,25 @@ import {
   type UnitKind,
   type UnitSpec,
   type WeaponSpec,
+  shotTexture,
 } from "./roster";
 import { lookupSpriteMuzzles } from "./spriteOrigin";
 import { nameGameTexture, spritePivot } from "./sprites";
+import {
+  CFG_INFO,
+  CFG_LIVE,
+  CFG_VALUE,
+  kv,
+  kvs,
+  makeConfigText,
+  row,
+  rowCont,
+  setStackedTexts,
+} from "./configUi";
 
 const DEPTH = 9250;
 const MONO = "Share Tech Mono, monospace";
 const GOLD = "#e8b84a";
-const PAPER = "#f0e6c8";
 
 const LIST_X = 16;
 const LIST_Y = 40;
@@ -29,6 +40,7 @@ const STATS_W = 400;
 const LINE_H = 16;
 const PART_SLOTS = 10;
 const LABEL_SLOTS = 16;
+const SHOT_SLOTS = 4;
 
 type Filter = "all" | "ground" | "air" | "water" | "building" | "troop";
 const FILTERS: Filter[] = ["all", "ground", "air", "water", "building", "troop"];
@@ -55,14 +67,22 @@ export class RosterConfigTool {
   private zoom = 2;
   /** Radius / height / mount / muzzle overlay markers. */
   private showMarks = true;
+  private pinned: { uvx: number; uvy: number } | null = null;
+  private copied = "";
+  private statsXY = { x: 0, y: 0 };
+  private pendingStats: string[] = [];
+  private pendingInfo: string[] = [];
   root: Phaser.GameObjects.Container;
   private dim!: Phaser.GameObjects.Rectangle;
   private board!: Phaser.GameObjects.Graphics;
   private hull!: Phaser.GameObjects.Image;
   private parts: Phaser.GameObjects.Image[] = [];
+  private shots: Phaser.GameObjects.Image[] = [];
   private overlay!: Phaser.GameObjects.Graphics;
   private listTxt!: Phaser.GameObjects.Text;
   private statsTxt!: Phaser.GameObjects.Text;
+  private liveTxt!: Phaser.GameObjects.Text;
+  private infoTxt!: Phaser.GameObjects.Text;
   private hintTxt!: Phaser.GameObjects.Text;
   private mountLabels: Phaser.GameObjects.Text[] = [];
   private onBuilt?: (root: Phaser.GameObjects.Container) => void;
@@ -103,28 +123,21 @@ export class RosterConfigTool {
         .setVisible(false);
       this.parts.push(im);
     }
+    for (let i = 0; i < SHOT_SLOTS; i++) {
+      const im = scene.add
+        .image(0, 0, "__DEFAULT")
+        .setName(`ui_roster_shot_${i}`)
+        .setScrollFactor(0)
+        .setDepth(DEPTH + 3)
+        .setVisible(false);
+      this.shots.push(im);
+    }
     this.overlay = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH + 4).setVisible(false);
-    this.listTxt = scene.add
-      .text(LIST_X, LIST_Y, "", {
-        fontFamily: MONO,
-        fontSize: "13px",
-        color: PAPER,
-        lineSpacing: 3,
-      })
-      .setScrollFactor(0)
-      .setDepth(DEPTH + 5)
-      .setVisible(false);
-    this.statsTxt = scene.add
-      .text(0, 0, "", {
-        fontFamily: MONO,
-        fontSize: "12px",
-        color: PAPER,
-        lineSpacing: 4,
-        wordWrap: { width: STATS_W - 8 },
-      })
-      .setScrollFactor(0)
-      .setDepth(DEPTH + 5)
-      .setVisible(false);
+    this.listTxt = makeConfigText(scene, DEPTH + 5, { fontSize: "13px", lineSpacing: 3, color: CFG_VALUE });
+    this.listTxt.setPosition(LIST_X, LIST_Y);
+    this.statsTxt = makeConfigText(scene, DEPTH + 5, { fontSize: "12px", lineSpacing: 4, color: CFG_VALUE, wrapW: STATS_W - 8 });
+    this.liveTxt = makeConfigText(scene, DEPTH + 5, { fontSize: "12px", lineSpacing: 4, color: CFG_LIVE, wrapW: STATS_W - 8 });
+    this.infoTxt = makeConfigText(scene, DEPTH + 5, { fontSize: "12px", lineSpacing: 4, color: CFG_INFO, wrapW: STATS_W - 8 });
     this.hintTxt = scene.add
       .text(18, 14, "", { fontFamily: MONO, fontSize: "12px", color: GOLD })
       .setScrollFactor(0)
@@ -132,6 +145,8 @@ export class RosterConfigTool {
       .setVisible(false);
     nameGameTexture(scene, this.listTxt, "ui_roster_list");
     nameGameTexture(scene, this.statsTxt, "ui_roster_stats");
+    nameGameTexture(scene, this.liveTxt, "ui_roster_live");
+    nameGameTexture(scene, this.infoTxt, "ui_roster_info");
     nameGameTexture(scene, this.hintTxt, "ui_roster_hint");
     for (let i = 0; i < LABEL_SLOTS; i++) {
       const t = scene.add
@@ -153,9 +168,12 @@ export class RosterConfigTool {
       this.board,
       this.hull,
       ...this.parts,
+      ...this.shots,
       this.overlay,
       this.listTxt,
       this.statsTxt,
+      this.liveTxt,
+      this.infoTxt,
       this.hintTxt,
       ...this.mountLabels,
     ]);
@@ -191,6 +209,7 @@ export class RosterConfigTool {
         const i = FILTERS.indexOf(this.filter);
         this.filter = FILTERS[(i + 1) % FILTERS.length]!;
         this.idx = 0;
+        this.pinned = null;
         this.refreshPreview();
       });
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.O).on("down", () => {
@@ -202,7 +221,18 @@ export class RosterConfigTool {
 
     scene.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
       if (!this.open || !p.leftButtonDown()) return;
-      if (p.x >= LIST_X && p.x < LIST_X + LIST_W) this.pickFromList(p.y);
+      if (p.x >= LIST_X && p.x < LIST_X + LIST_W) {
+        this.pickFromList(p.y);
+        return;
+      }
+      const uv = this.uvAt(p);
+      if (!uv) return;
+      this.pinned = uv;
+      const kinds = this.kinds();
+      const kind = kinds[this.idx];
+      const tex = kind ? specOf(kind).texture : "";
+      this.copied = `${tex} ${uv.uvx.toFixed(3)} ${uv.uvy.toFixed(3)}  px ${uv.px.toFixed(1)} ${uv.py.toFixed(1)}`;
+      copyText(this.copied);
     });
 
     this.onBuilt?.(this.root);
@@ -218,6 +248,8 @@ export class RosterConfigTool {
     this.overlay.setVisible(this.open);
     this.listTxt.setVisible(this.open);
     this.statsTxt.setVisible(this.open);
+    this.liveTxt.setVisible(this.open);
+    this.infoTxt.setVisible(this.open);
     this.hintTxt.setVisible(this.open);
     this.scene.input.setDefaultCursor(this.open ? "default" : "none");
     this.uiCam.setVisible(this.open);
@@ -225,6 +257,7 @@ export class RosterConfigTool {
     else {
       this.overlay.clear();
       for (const p of this.parts) p.setVisible(false);
+      for (const s of this.shots) s.setVisible(false);
       for (const t of this.mountLabels) t.setVisible(false);
     }
   }
@@ -234,6 +267,7 @@ export class RosterConfigTool {
     const n = this.kinds().length;
     if (!n) return;
     this.idx = (this.idx + dir + n) % n;
+    this.pinned = null;
     this.refreshPreview();
   }
 
@@ -250,6 +284,7 @@ export class RosterConfigTool {
       }
     }
     this.zoom = steps[Phaser.Math.Clamp(i + dir, 0, steps.length - 1)]!;
+    this.pinned = null;
     this.refreshPreview();
   }
 
@@ -260,6 +295,7 @@ export class RosterConfigTool {
     const pages = Math.max(1, Math.ceil(kinds.length / size));
     const next = (((this.pageOf(this.idx) + dir) % pages) + pages) % pages;
     this.idx = Math.min(kinds.length - 1, next * size);
+    this.pinned = null;
     this.refreshPreview();
   }
 
@@ -272,6 +308,7 @@ export class RosterConfigTool {
     const i = this.pageOf(this.idx) * size + row;
     if (i < 0 || i >= kinds.length) return;
     this.idx = i;
+    this.pinned = null;
     this.refreshPreview();
   }
 
@@ -284,7 +321,7 @@ export class RosterConfigTool {
     const sp = specOf(kind);
 
     this.hintTxt.setText(
-      `ROSTER RIG   \` cycle / close   [ ] cycle   , . page   - + zoom ${fmtZoom(this.zoom)}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   gold origin · green gun · cyan rotor · violet troop · orange muzzle`
+      `ROSTER RIG   \` cycle / close   [ ] cycle   , . page   - + zoom ${fmtZoom(this.zoom)}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   gold origin · green gun · cyan rotor/radius · violet troop/leash · orange muzzle`
     );
 
     const size = this.pageSize();
@@ -303,8 +340,8 @@ export class RosterConfigTool {
       ].join("\n")
     );
 
-    this.statsTxt.setText(formatSpec(kind, sp));
     this.layoutPreview(kind, sp);
+    this.scene.input.setDefaultCursor(this.uvAt(this.scene.input.activePointer) ? "crosshair" : "default");
   }
 
   private pageSize(): number {
@@ -334,10 +371,15 @@ export class RosterConfigTool {
     if (!this.scene.textures.exists(tex)) {
       this.hull.setVisible(false);
       for (const p of this.parts) p.setVisible(false);
+      for (const s of this.shots) s.setVisible(false);
       this.board.clear();
       this.overlay.clear();
       for (const t of this.mountLabels) t.setVisible(false);
-      this.statsTxt.setPosition(listRight, LIST_Y);
+      const block = formatSpec(kind, sp);
+      this.statsXY = { x: listRight, y: LIST_Y };
+      this.pendingStats = block.stats;
+      this.pendingInfo = block.info;
+      this.applyStatsPanel(sp);
       return;
     }
 
@@ -362,7 +404,11 @@ export class RosterConfigTool {
     const bx = cx - boxW * 0.5;
     const by = cy - boxH * 0.5;
     const statsX = Math.min(bx + boxW + gap, w - STATS_W - 16);
-    this.statsTxt.setPosition(statsX, Math.max(LIST_Y, by));
+    const block = formatSpec(kind, sp);
+    this.statsXY = { x: statsX, y: Math.max(LIST_Y, by) };
+    this.pendingStats = block.stats;
+    this.pendingInfo = block.info;
+    this.applyStatsPanel(sp);
 
     this.board.clear();
     const cell = 8;
@@ -427,7 +473,81 @@ export class RosterConfigTool {
     }
     for (; pi < this.parts.length; pi++) this.parts[pi]!.setVisible(false);
 
+    // Projectile previews for body + gun weapons (stats live on this unit).
+    const wpns: WeaponSpec[] = [];
+    if (sp.weapon) wpns.push(sp.weapon);
+    for (const g of sp.guns) {
+      if (g.weapon) wpns.push(g.weapon);
+    }
+    const shotGap = 12;
+    let shotX = bx;
+    const shotY = by + boxH + pad + 22;
+    for (let i = 0; i < this.shots.length; i++) {
+      const im = this.shots[i]!;
+      const wpn = wpns[i];
+      if (!wpn) {
+        im.setVisible(false);
+        continue;
+      }
+      const key = shotTexture(wpn.shot, wpn.tracer);
+      if (!this.scene.textures.exists(key)) {
+        im.setVisible(false);
+        continue;
+      }
+      im.setVisible(true).setTexture(key).setOrigin(0.5, 0.5);
+      const sc = Math.min(2.5, (36 * this.zoom) / Math.max(im.width, im.height, 1));
+      im.setScale(sc)
+        .setRotation(wpn.shot === "cannon" ? 0 : Math.PI / 2)
+        .setPosition(shotX + Math.max(im.displayWidth, 28) * 0.5, shotY);
+      shotX += Math.max(im.displayWidth, 28) + shotGap;
+    }
+
     this.drawMarks(kind, sp, pivot, cx, cy, s);
+  }
+
+  private applyStatsPanel(sp: UnitSpec): void {
+    const origin = spritePivot(sp.texture);
+    const tw = this.hull.visible && this.hull.width ? this.hull.width : 1;
+    const th = this.hull.visible && this.hull.height ? this.hull.height : 1;
+    const uv = this.uvAt(this.scene.input.activePointer);
+    const hover = uv
+      ? [
+          row(
+            "CURSOR",
+            kvs(
+              ["uv", fmt(uv)],
+              ["px", `${uv.px.toFixed(1)}, ${uv.py.toFixed(1)}`],
+              [
+                "fromOrigin",
+                `${((uv.uvx - origin.x) * tw).toFixed(1)}, ${((uv.uvy - origin.y) * th).toFixed(1)}`,
+              ]
+            )
+          ),
+        ]
+      : [row("CURSOR", "off board")];
+    const pin = this.pinned
+      ? [row("PIN", kvs(["uv", fmt(this.pinned)], ["copied", this.copied || "—"]))]
+      : [row("PIN", "click hull to copy name / uv / px")];
+    setStackedTexts(
+      [
+        { txt: this.statsTxt, lines: this.pendingStats },
+        { txt: this.liveTxt, lines: [...hover, ...pin] },
+        { txt: this.infoTxt, lines: this.pendingInfo },
+      ],
+      this.statsXY.x,
+      this.statsXY.y
+    );
+  }
+
+  private uvAt(p: Phaser.Input.Pointer): { uvx: number; uvy: number; px: number; py: number } | null {
+    if (!this.hull.visible || !this.hull.width || !this.hull.height) return null;
+    const lp = this.hull.getLocalPoint(p.x, p.y, undefined, this.uiCam);
+    if (lp.x < -0.5 || lp.y < -0.5 || lp.x > this.hull.width + 0.5 || lp.y > this.hull.height + 0.5) {
+      return null;
+    }
+    const px = lp.x;
+    const py = lp.y;
+    return { uvx: px / this.hull.width, uvy: py / this.hull.height, px, py };
   }
 
   private drawMarks(
@@ -441,7 +561,6 @@ export class RosterConfigTool {
     const g = this.overlay;
     g.clear();
     for (const t of this.mountLabels) t.setVisible(false);
-    if (!this.showMarks) return;
 
     const hullDw = this.hull.displayWidth;
     const hullDh = this.hull.displayHeight;
@@ -454,8 +573,23 @@ export class RosterConfigTool {
       return { x: cx + mx * ca - my * sa, y: cy + mx * sa + my * ca };
     };
 
+    if (this.pinned) {
+      const p = hullUv(this.pinned.uvx, this.pinned.uvy);
+      g.fillStyle(0xff3a2a, 1);
+      g.fillCircle(p.x, p.y, 4);
+      g.lineStyle(1, 0xffffff, 0.9);
+      g.strokeCircle(p.x, p.y, 4);
+    }
+
+    if (!this.showMarks) return;
+
     g.lineStyle(1.5, 0x5ec8ff, 0.55);
     g.strokeCircle(cx, cy, sp.radius * s);
+    if (sp.crew?.mode === "leash") {
+      const leashR = sp.crew.leashR ?? sp.radius;
+      g.lineStyle(2.25, ROLE_COLOR.troop, 0.85);
+      g.strokeCircle(cx, cy, leashR * s);
+    }
     g.lineStyle(1.2, 0x6dbb4a, 0.55);
     g.lineBetween(cx, cy, cx, cy - sp.height * s);
 
@@ -537,6 +671,36 @@ export class RosterConfigTool {
   }
 }
 
+function copyText(text: string): void {
+  if (navigator.clipboard?.writeText) {
+    void navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+    return;
+  }
+  fallbackCopy(text);
+}
+
+function fallbackCopy(text: string): void {
+  const el = document.createElement("textarea");
+  el.value = text;
+  el.setAttribute("readonly", "");
+  el.style.position = "fixed";
+  el.style.left = "-9999px";
+  document.body.appendChild(el);
+  el.select();
+  try {
+    document.execCommand("copy");
+  } catch {
+    /* ignore */
+  }
+  document.body.removeChild(el);
+}
+
+function fmt(p: { x?: number; y?: number; uvx?: number; uvy?: number }): string {
+  const x = p.uvx ?? p.x ?? 0;
+  const y = p.uvy ?? p.y ?? 0;
+  return `${x.toFixed(3)}, ${y.toFixed(3)}`;
+}
+
 function hexColor(n: number): string {
   return `#${n.toString(16).padStart(6, "0")}`;
 }
@@ -567,15 +731,24 @@ function categoryTag(kind: UnitKind): string {
   return sp.move.slice(0, 3).toUpperCase();
 }
 
-function formatWeapon(w: WeaponSpec, indent = "         "): string[] {
-  const burst = w.burst ? `  burst ${w.burst}×${w.burstGap ?? "?"}` : "";
+function weaponBlocks(w: WeaponSpec): string[] {
   return [
-    `${indent}${w.shot}  dmg ${w.dmg}  blast ${w.blast}  spd ${w.speed}`,
-    `${indent}cd ${w.fireCd}  range ${w.range}  ${w.tracer}${burst}`,
+    kvs(["shot", w.shot], ["dmg", w.dmg], ["blast", w.blast], ["spd", w.speed]),
+    kvs(
+      ["cd", w.fireCd],
+      ["range", w.range],
+      ["tracer", w.tracer],
+      w.burst != null && ["burst", `${w.burst}×${w.burstGap ?? "?"}`]
+    ),
   ];
 }
 
-function formatSpec(kind: UnitKind, sp: UnitSpec): string {
+function formatWeapon(w: WeaponSpec): string[] {
+  const [head, ...rest] = weaponBlocks(w);
+  return [row("WEAPON", head!), ...rest.map((l) => rowCont(l))];
+}
+
+function formatSpec(kind: UnitKind, sp: UnitSpec): { stats: string[]; info: string[] } {
   const flags = [
     sp.building && "building",
     sp.aerial && "aerial",
@@ -589,84 +762,121 @@ function formatSpec(kind: UnitKind, sp: UnitSpec): string {
     sp.wheels != null && `wheels:${sp.wheels}`,
   ].filter(Boolean) as string[];
 
-  const lines: string[] = [
-    `KIND     ${kind}`,
-    `LABEL    ${labelOf(kind)}`,
-    `HP       ${sp.health}    radius ${sp.radius}    height ${sp.height}${sp.flyZ != null ? `    flyZ ${sp.flyZ}` : ""}`,
-    `MOVE     ${sp.move}    frag ${sp.frag}    rotOff ${(sp.rotOff / Math.PI).toFixed(2)}π`,
-    `TEX      ${sp.texture}`,
-    `HULK     ${sp.hulk}`,
-    `FLAGS    ${flags.length ? flags.join(" · ") : "—"}`,
+  const stats: string[] = [
+    row("KIND", kind),
+    row("LABEL", labelOf(kind)),
+    row(
+      "HP",
+      `${sp.health} ${kvs(
+        ["radius", sp.radius],
+        ["height", sp.height],
+        sp.flyZ != null && ["flyZ", sp.flyZ]
+      )}`
+    ),
+    row(
+      "MOVE",
+      `${sp.move} ${kvs(["frag", sp.frag], ["rotOff", `${(sp.rotOff / Math.PI).toFixed(2)}π`])}`
+    ),
+    row("TEX", sp.texture),
+    row("HULK", sp.hulk),
+    row("FLAGS", flags.length ? flags.join(" · ") : "—"),
   ];
 
   if (sp.spawnYaw != null) {
-    lines.push(`SPAWN    yaw ±${((sp.spawnYaw * 180) / Math.PI).toFixed(1)}°`);
+    stats.push(row("SPAWN", `±${((sp.spawnYaw * 180) / Math.PI).toFixed(1)}°`));
   }
 
   const driveKinds: MoveKind[] = ["tank", "vehicle"];
   if (driveKinds.includes(sp.move)) {
     const d = driveOf(kind);
-    lines.push(
-      `DRIVE    spd ${d.maxSpd}  accel ${d.accel}  brake ${d.brake}  turn ${d.turn}`,
-      `         track ${d.track}  gap ${d.trackGap}  sc ${d.trackScale}`
+    stats.push(
+      row("DRIVE", kvs(["spd", d.maxSpd], ["accel", d.accel], ["brake", d.brake], ["turn", d.turn])),
+      rowCont(kvs(["track", d.track], ["gap", d.trackGap], ["sc", d.trackScale]))
     );
   }
 
   if (sp.weapon) {
-    lines.push(`WEAPON   (body)`);
-    lines.push(...formatWeapon(sp.weapon));
+    stats.push(...formatWeapon(sp.weapon));
   }
 
   if (sp.guns.length) {
-    lines.push(`GUNS     ${sp.guns.length}`);
+    stats.push(row("GUNS", sp.guns.length));
     sp.guns.forEach((g, i) => {
-      lines.push(
-        `  [${i}] ${g.tex}${g.hulk ? ` → ${g.hulk}` : ""}  sc ${g.scale ?? 1}`,
-        `       mount ${g.mount.x.toFixed(3)},${g.mount.y.toFixed(3)}  origin ${g.origin.x.toFixed(3)},${g.origin.y.toFixed(3)}`
+      const hulk = g.hulk ? ` → ${g.hulk}` : "";
+      stats.push(
+        rowCont(
+          `[${i}] ${g.tex}${hulk} ${kvs(
+            ["sc", g.scale ?? 1],
+            ["fire", g.weapon ? "own" : "→ weapon"]
+          )}`
+        ),
+        rowCont(
+          kvs(
+            ["mount", `${g.mount.x.toFixed(3)},${g.mount.y.toFixed(3)}`],
+            ["origin", `${g.origin.x.toFixed(3)},${g.origin.y.toFixed(3)}`]
+          )
+        )
       );
-      if (g.weapon) lines.push(...formatWeapon(g.weapon, "       "));
+      if (g.weapon) {
+        for (const block of weaponBlocks(g.weapon)) stats.push(rowCont(block));
+      }
     });
   } else {
-    lines.push(`GUNS     —`);
+    stats.push(row("GUNS", "—"));
   }
 
   if (sp.rotors.length) {
-    lines.push(`ROTORS   ${sp.rotors.length}`);
+    stats.push(row("ROTORS", sp.rotors.length));
     sp.rotors.forEach((r, i) => {
-      lines.push(
-        `  [${i}] ${r.tex}${r.hulk ? ` → ${r.hulk}` : ""}  sc ${r.scale ?? 1}`,
-        `       mount ${r.mount.x.toFixed(3)},${r.mount.y.toFixed(3)}`
+      const hulk = r.hulk ? ` → ${r.hulk}` : "";
+      stats.push(
+        rowCont(`[${i}] ${r.tex}${hulk} ${kv("sc", r.scale ?? 1)}`),
+        rowCont(kv("mount", `${r.mount.x.toFixed(3)},${r.mount.y.toFixed(3)}`))
       );
     });
   } else {
-    lines.push(`ROTORS   —`);
+    stats.push(row("ROTORS", "—"));
   }
 
   if (sp.dish) {
     const d = sp.dish;
-    lines.push(
-      `DISH     ${d.tex}${d.hulk ? ` → ${d.hulk}` : ""}  sc ${d.scale ?? 1}`,
-      `         mount ${d.mount.x.toFixed(3)},${d.mount.y.toFixed(3)}`
+    const hulk = d.hulk ? ` → ${d.hulk}` : "";
+    stats.push(
+      row("DISH", `${d.tex}${hulk} ${kv("sc", d.scale ?? 1)}`),
+      rowCont(kv("mount", `${d.mount.x.toFixed(3)},${d.mount.y.toFixed(3)}`))
     );
   } else {
-    lines.push(`DISH     —`);
+    stats.push(row("DISH", "—"));
   }
 
   if (sp.crew?.mounts.length) {
-    lines.push(`CREW     ${sp.crew.mode}  chance ${sp.crew.chance ?? 1}  seats ${sp.crew.mounts.length}`);
+    stats.push(
+      row(
+        "CREW",
+        `${sp.crew.mode} ${kvs(
+          ["chance", sp.crew.chance ?? 1],
+          ["seats", sp.crew.mounts.length],
+          sp.crew.mode === "leash" && ["leashR", sp.crew.leashR ?? sp.radius]
+        )}`
+      )
+    );
     sp.crew.mounts.forEach((m, i) => {
-      lines.push(`  [${i}] ${m.x.toFixed(3)},${m.y.toFixed(3)}`);
+      stats.push(rowCont(`[${i}] ${m.x.toFixed(3)},${m.y.toFixed(3)}`));
     });
   } else {
-    lines.push(`CREW     —`);
+    stats.push(row("CREW", "—"));
   }
 
   const splash = sp.building
-    ? `death splash  ${(sp.health * 0.05).toFixed(1)} dmg @ r×3`
+    ? `${(sp.health * 0.05).toFixed(1)} dmg @ r×3`
     : !sp.organic && (isGroundVehicle(kind) || sp.water || sp.aerial || sp.move === "tank")
-      ? `death splash  ${(sp.health * 0.1).toFixed(1)} dmg @ r×3`
-      : `death splash  —`;
-  lines.push("", splash, "", "source: roster.ts SPECS / driveOf / labelOf");
+      ? `${(sp.health * 0.1).toFixed(1)} dmg @ r×3`
+      : "—";
 
-  return lines.join("\n");
+  stats.push(row("SPLASH", splash));
+
+  return {
+    stats,
+    info: ["source: roster.ts SPECS / driveOf / labelOf"],
+  };
 }

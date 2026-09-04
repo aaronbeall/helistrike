@@ -56,8 +56,20 @@ export const DOODAD_ART: { key: string; size: number }[] = [
   { key: "snowrock", size: 34 },
 ];
 
-const FX_KINDS = ["spark", "flame", "smoke", "muzzle", "dirt", "splash"] as const;
+export const FX_KINDS = ["spark", "flame", "smoke", "muzzle", "dirt", "splash"] as const;
+export type FxKind = (typeof FX_KINDS)[number];
 export const FX_VARIANTS = 4;
+/** Bake cell size per FX sheet (putFxSheet). */
+export const FX_SHEET_SIZE: Record<FxKind, number> = {
+  spark: 22,
+  flame: 28,
+  smoke: 48,
+  muzzle: 34,
+  dirt: 22,
+  splash: 20,
+};
+/** Cells from src_blasts 2×2 grid → fx_blast_0..n-1. */
+export const FX_BLAST_CELLS = 4;
 
 export function preloadArt(scene: Phaser.Scene): void {
   scene.load.image("menu_splash", "helistrike-menu-splash.png");
@@ -668,12 +680,9 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   const blasts = sliceGrid(matteMagenta(copyToCanvas(blastSrc, blastSrc.width, blastSrc.height)), 2, 2);
   blasts.forEach((c, i) => put(textures, `fx_blast_${i}`, fit(c, 88)));
 
-  putFxSheet(textures, "spark", 22);
-  putFxSheet(textures, "flame", 28);
-  putFxSheet(textures, "smoke", 48);
-  putFxSheet(textures, "muzzle", 34);
-  putFxSheet(textures, "dirt", 22);
-  putFxSheet(textures, "splash", 20);
+  for (const kind of FX_KINDS) {
+    putFxSheet(textures, kind, FX_SHEET_SIZE[kind]);
+  }
 
   const shadowSrc = [
     "heli_body",
