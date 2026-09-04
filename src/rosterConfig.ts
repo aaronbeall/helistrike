@@ -16,7 +16,7 @@ import {
   type UnitKind,
   type UnitSpec,
   type WeaponSpec,
-  shotTexture,
+  isStreakShot,
 } from "./roster";
 import { lookupSpriteMuzzles } from "./spriteOrigin";
 import { nameGameTexture, spritePivot } from "./sprites";
@@ -59,7 +59,7 @@ const ROLE_COLOR: Record<MountRole, number> = {
 
 /**
  * Lazy debug browser for every roster UnitSpec — list, live preview (hull + parts),
- * and a stats dump derived from the real SPECS / driveOf source.
+ * and a stats dump derived from the real SPECS source (incl. drive).
  */
 export class RosterConfigTool {
   open = false;
@@ -492,7 +492,7 @@ export class RosterConfigTool {
         im.setVisible(false);
         continue;
       }
-      const key = shotTexture(wpn.shot, wpn.tracer);
+      const key = wpn.look;
       if (!this.scene.textures.exists(key)) {
         im.setVisible(false);
         continue;
@@ -500,7 +500,7 @@ export class RosterConfigTool {
       im.setVisible(true).setTexture(key).setOrigin(0.5, 0.5);
       const sc = Math.min(2.5, (36 * this.zoom) / Math.max(im.width, im.height, 1));
       im.setScale(sc)
-        .setRotation(wpn.shot === "cannon" ? 0 : Math.PI / 2)
+        .setRotation(isStreakShot(wpn.look) ? 0 : Math.PI / 2)
         .setPosition(shotX + Math.max(im.displayWidth, 28) * 0.5, shotY);
       shotX += Math.max(im.displayWidth, 28) + shotGap;
     }
@@ -736,11 +736,10 @@ function categoryTag(kind: UnitKind): string {
 
 function weaponBlocks(w: WeaponSpec): string[] {
   return [
-    kvs(["shot", w.shot], ["dmg", w.dmg], ["blast", w.blast], ["spd", w.speed]),
+    kvs(["look", w.look], ["dmg", w.dmg], ["blast", w.blast], ["spd", w.speed]),
     kvs(
       ["cd", w.fireCd],
       ["range", w.range],
-      ["tracer", w.tracer],
       w.burst != null && ["burst", `${w.burst}×${w.burstGap ?? "?"}`]
     ),
   ];
@@ -936,6 +935,6 @@ function formatSpec(kind: UnitKind, sp: UnitSpec): { stats: string[]; info: stri
 
   return {
     stats,
-    info: ["source: roster.ts SPECS (partsRoll / crew / driveOf)"],
+    info: ["source: roster.ts SPECS (partsRoll / crew / drive)"],
   };
 }

@@ -1,4 +1,4 @@
-import { specOf, type FragCat, type TracerStyle, type UnitKind, type PartMount } from "./roster";
+import { specOf, type FragCat, type ShotLook, type UnitKind, type PartMount } from "./roster";
 import type { CamoKind } from "./camo";
 
 export type { FragCat, UnitKind } from "./roster";
@@ -16,8 +16,8 @@ export interface PlayerWpnSpec {
   dmg: number;
   blast: number;
   life: number;
-  tracer?: TracerStyle;
-  tex: string;
+  /** Projectile texture key. */
+  look: ShotLook;
   notes: string[];
 }
 
@@ -31,8 +31,7 @@ export const PLAYER_WPNS: Record<Wpn, PlayerWpnSpec> = {
     dmg: 8,
     blast: 18,
     life: 0.08,
-    tracer: "chain",
-    tex: "cannon",
+    look: "shot_chain",
     notes: [
       "spread ±0.04 rad",
       "air life +0.55",
@@ -50,7 +49,7 @@ export const PLAYER_WPNS: Record<Wpn, PlayerWpnSpec> = {
     dmg: 110,
     blast: 140,
     life: 0.08,
-    tex: "rocket",
+    look: "shot_rocket",
     notes: ["ballistic to aim", "missile muzzle n12 200–520", "HE explode"],
   },
   hellfire: {
@@ -62,7 +61,7 @@ export const PLAYER_WPNS: Record<Wpn, PlayerWpnSpec> = {
     dmg: 185,
     blast: 175,
     life: 4.9,
-    tex: "hellfire",
+    look: "shot_hellfire",
     notes: [
       "kick speed then motor burn",
       "lock acquire 0.5s  pick r160",
@@ -80,7 +79,7 @@ export const PLAYER_WPNS: Record<Wpn, PlayerWpnSpec> = {
     dmg: 170,
     blast: 160,
     life: 5.2,
-    tex: "tow",
+    look: "shot_tow",
     notes: [
       "guided wire  cruise 300",
       "ignite MISSILE_IGNITE+0.06",
@@ -99,21 +98,6 @@ export const WPN_LIST: { id: Wpn; name: string; ammo: number }[] = (Object.keys(
 export const MISSILE_IGNITE = 0.525;
 export const HELLFIRE_LOCK_T = 0.5;
 export const HELLFIRE_SEEK_DELAY = 0.42;
-
-/** Gunship hardpoint missile (not on SPECS — scenes AI). */
-export const ENEMY_HELI_MISSILE = {
-  label: "GUNSHIP PYLON",
-  shot: "hellfire" as const,
-  speed: 300,
-  dmg: 18,
-  blast: 20,
-  fireCd: "5.5–9.5",
-  scale: 0.72,
-  tracer: "shell" as const,
-  range: 700,
-  motor: -0.06,
-  tex: "hellfire",
-};
 
 export interface Unit {
   id: number;
@@ -184,7 +168,7 @@ export interface Shot {
   cruise?: number;
   loft?: number;
   yaw?: number;
-  tracer?: TracerStyle;
+  look?: ShotLook;
   scale?: number;
   wire?: { x: number; y: number; z: number }[];
   wireSide?: number;

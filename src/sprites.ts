@@ -672,9 +672,9 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
 
   const wpn = sliceGrid(keyImage(src(textures, "src_weapons"), "magenta"), 2, 2);
   put(textures, "heli_gun", fit(wpn[0]!, 46));
-  put(textures, "rocket", fit(wpn[1]!, 28));
-  put(textures, "hellfire", fit(wpn[2]!, 36));
-  put(textures, "tow", fit(wpn[3]!, 34));
+  put(textures, "shot_rocket", fit(wpn[1]!, 28));
+  put(textures, "shot_hellfire", fit(wpn[2]!, 36));
+  put(textures, "shot_tow", fit(wpn[3]!, 34));
 
   const blastSrc = src(textures, "src_blasts");
   const blasts = sliceGrid(matteMagenta(copyToCanvas(blastSrc, blastSrc.width, blastSrc.height)), 2, 2);
@@ -689,12 +689,12 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     "heli_body_hulk",
     "enemy_heli",
     "enemy_heli_hulk",
-    "cannon",
-    "shell",
-    "tracer_sm",
-    "rocket",
-    "hellfire",
-    "tow",
+    "shot_chain",
+    "shot_shell",
+    "shot_small",
+    "shot_rocket",
+    "shot_hellfire",
+    "shot_tow",
     "enemy_tank",
     "enemy_tank_gun",
     "enemy_tank_gun_hulk",
@@ -739,7 +739,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     "building_tower_aa",
     "building_tower_sam",
     "enemy_drone_rotor",
-    "tracer_aa",
+    "shot_aa",
     "fx_frag_metal",
     ...["mech", "struct", "organic"].flatMap((cat) =>
       Array.from({ length: 12 }, (_, i) => `fx_frag_${cat}_${i}`)

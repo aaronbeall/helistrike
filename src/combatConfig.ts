@@ -1,13 +1,12 @@
 import Phaser from "phaser";
 import {
-  ENEMY_HELI_MISSILE,
   HELLFIRE_LOCK_T,
   HELLFIRE_SEEK_DELAY,
   MISSILE_IGNITE,
   PLAYER_WPNS,
   type PlayerWpnSpec,
 } from "./combat";
-import { ENEMY_WPN_PRESETS, shotTexture, usesOfWeapon, type WeaponSpec } from "./roster";
+import { ENEMY_WPNS, HELI_PYLON_AI, isStreakShot, usesOfWeapon, type WeaponSpec } from "./roster";
 import { CFG_INFO, CFG_VALUE, kv, kvs, makeConfigText, row, setStatsAndInfo } from "./configUi";
 import {
   FX_BLAST_CELLS,
@@ -52,7 +51,7 @@ export interface CombatEntry {
 
 /**
  * Lazy debug browser for shared combat sources: player weapons (PLAYER_WPNS),
- * ENEMY_WPN_PRESETS (+ usesOfWeapon), ENEMY_HELI_MISSILE, and FX_KINDS / blast cells.
+ * ENEMY_WPNS (+ usesOfWeapon / HELI_PYLON_AI), and FX_KINDS / blast cells.
  * Per-unit WeaponSpecs live on the roster rig, not here.
  */
 export class CombatConfigTool {
@@ -382,8 +381,8 @@ function playerEntries(): CombatEntry[] {
       cat: "player" as const,
       label: w.name,
       tag: "PLY",
-      tex: w.tex,
-      rotOff: w.id === "cannon" ? 0 : Math.PI / 2,
+      tex: w.look,
+      rotOff: isStreakShot(w.look) ? 0 : Math.PI / 2,
       stats: block.stats,
       info: block.info,
     };
@@ -400,8 +399,7 @@ function formatPlayer(w: PlayerWpnSpec): { stats: string[]; info: string[] } {
     row("SPEED", w.speed),
     row("DMG", `${w.dmg} ${kv("blast", w.blast)}`),
     row("LIFE", w.id === "cannon" ? `${w.life} (+0.55 air)` : w.life),
-    row("TRACER", w.tracer ?? "—"),
-    row("TEX", w.tex),
+    row("LOOK", w.look),
   ];
   if (w.id === "hellfire" || w.id === "tow") {
     stats.push(
@@ -423,71 +421,51 @@ function formatPlayer(w: PlayerWpnSpec): { stats: string[]; info: string[] } {
 
 /** Shared enemy weapon tables — not per-unit SPECS copies. */
 function presetEntries(): CombatEntry[] {
-  const out: CombatEntry[] = ENEMY_WPN_PRESETS.map((p) => {
-    const block = formatPreset(p.label, p.w);
+  return ENEMY_WPNS.map((p) => {
+    const block = formatPreset(p.id, p.label, p.w);
     return {
       id: `preset_${p.id}`,
       cat: "preset" as const,
       label: p.label,
       tag: "PRE",
-      tex: shotTexture(p.w.shot, p.w.tracer),
-      rotOff: p.w.shot === "cannon" ? 0 : Math.PI / 2,
+      tex: p.w.look,
+      rotOff: isStreakShot(p.w.look) ? 0 : Math.PI / 2,
       stats: block.stats,
       info: block.info,
     };
   });
-
-  const m = ENEMY_HELI_MISSILE;
-  out.push({
-    id: "preset_heli_pylon",
-    cat: "preset",
-    label: m.label,
-    tag: "PRE",
-    tex: m.tex,
-    rotOff: Math.PI / 2,
-    stats: [
-      row("KIND", "enemy hardpoint"),
-      row("LABEL", m.label),
-      row("SHOT", m.shot),
-      row("SPEED", m.speed),
-      row("DMG", `${m.dmg} ${kv("blast", m.blast)}`),
-      row("FIRE CD", `${m.fireCd}s`),
-      row("RANGE", `${m.range} (AI gate)`),
-      row("SCALE", m.scale),
-      row("TRACER", m.tracer),
-      row("MOTOR", m.motor),
-      row("HOME", "player"),
-    ],
-    info: ["scenes AI hardpoint — not SPECS", "source: combat.ts ENEMY_HELI_MISSILE"],
-  });
-  return out;
 }
 
-function formatPreset(label: string, w: WeaponSpec): { stats: string[]; info: string[] } {
+function formatPreset(id: string, label: string, w: WeaponSpec): { stats: string[]; info: string[] } {
   const uses = usesOfWeapon(w);
+  const pylon = id === "heli_pylon";
+  const fireCd = pylon
+    ? `${HELI_PYLON_AI.fireCdMin}–${HELI_PYLON_AI.fireCdMax}s (AI)`
+    : `${w.fireCd}s`;
+  const stats = [
+    row("KIND", `enemy preset / ${label}`),
+    row("LOOK", w.look),
+    row("FIRE CD", fireCd),
+    row("RANGE", w.range),
+    row("SPEED", w.speed),
+    row("DMG", `${w.dmg} ${kv("blast", w.blast)}`),
+    row("BURST", w.burst != null ? `${w.burst}×${w.burstGap ?? "?"}` : "—"),
+    row("MUZZLE", kvs(["len", w.muzzleLen], w.jitter != null && ["jitter", w.jitter])),
+  ];
+  if (pylon) {
+    stats.push(row("SCALE", HELI_PYLON_AI.scale), row("MOTOR", HELI_PYLON_AI.motor), row("HOME", "player"));
+  }
   return {
-    stats: [
-      row("KIND", `enemy preset / ${label}`),
-      row("SHOT", w.shot),
-      row("FIRE CD", `${w.fireCd}s`),
-      row("RANGE", w.range),
-      row("SPEED", w.speed),
-      row("DMG", `${w.dmg} ${kv("blast", w.blast)}`),
-      row(
-        "TRACER",
-        `${w.tracer}${w.burst != null ? ` ${kv("burst", `${w.burst}×${w.burstGap ?? "?"}`)}` : ""}`
-      ),
-      row(
-        "MUZZLE",
-        kvs(["len", w.muzzleLen], w.jitter != null && ["jitter", w.jitter])
-      ),
-      row("TEX", shotTexture(w.shot, w.tracer)),
-    ],
+    stats,
     info: [
-      uses.length
-        ? `used by: ${uses.join(" · ")}`
-        : "used by: — (base template; SPECS usually call wpn() with overrides)",
-      "source: roster.ts ENEMY_WPN_PRESETS / SPECS.partsRoll / usesOfWeapon",
+      pylon
+        ? "gunship wing AI — not SPECS.guns (chin gun separate)"
+        : uses.length
+          ? `used by: ${uses.join(" · ")}`
+          : "used by: —",
+      pylon
+        ? "source: roster.ts WPN.heli_pylon + HELI_PYLON_AI"
+        : "source: roster.ts ENEMY_WPNS / SPECS.partsRoll / usesOfWeapon",
     ],
   };
 }

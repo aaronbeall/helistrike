@@ -51,13 +51,13 @@ export function bakeAll(textures: Phaser.Textures.TextureManager): void {
   add(textures, "doodad_reed", drawReed());
   add(textures, "doodad_dead", drawDeadTree());
   add(textures, "doodad_snowrock", drawSnowRock());
-  add(textures, "cannon", drawTracer("chain"));
-  add(textures, "shell", drawTracer("shell"));
-  add(textures, "tracer_sm", drawTracer("small"));
-  add(textures, "tracer_aa", drawTracer("aa"));
-  add(textures, "rocket", drawRocket());
-  add(textures, "hellfire", drawMissile("#c45c1a"));
-  add(textures, "tow", drawMissile("#c8b45a"));
+  add(textures, "shot_chain", drawTracer("chain"));
+  add(textures, "shot_shell", drawTracer("shell"));
+  add(textures, "shot_small", drawTracer("small"));
+  add(textures, "shot_aa", drawTracer("aa"));
+  add(textures, "shot_rocket", drawRocket());
+  add(textures, "shot_hellfire", drawMissile("#c45c1a"));
+  add(textures, "shot_tow", drawMissile("#c8b45a"));
   add(textures, "fx_frag_metal", drawFrag("#6a7064"));
   add(textures, "fx_spark", drawSpark());
   add(textures, "fx_smoke", drawSmoke());
@@ -1482,11 +1482,11 @@ export function bakeRosterArt(textures: Phaser.Textures.TextureManager): void {
     ["enemy_heli_heavy", drawHeliHeavy()],
     ["enemy_heli_heavy_gun", drawMinigun()],
     ["enemy_heli_gun", drawHeliGunEnemy()],
-    ["tracer_aa", drawTracer("aa")],
+    ["shot_aa", drawTracer("aa")],
   ];
   for (const [key, c] of live) fill(key, c);
   for (const [key, c] of live) {
-    if (key === "tracer_aa" || key === "building_radar_disk") continue;
+    if (key === "shot_aa" || key === "building_radar_disk") continue;
     const hulk = `${key}_hulk`;
     if (!textures.exists(hulk)) add(textures, hulk, scorch(c));
   }
@@ -1533,9 +1533,10 @@ export function bakeRosterArt(textures: Phaser.Textures.TextureManager): void {
     "building_tower_aa",
     "building_tower_sam",
     "enemy_drone_rotor",
-    "tracer_aa",
-    "shell",
-    "tracer_sm",
+    "shot_aa",
+    "shot_shell",
+    "shot_small",
+    "shot_chain",
   ];
   for (const key of shadowKeys) {
     if (textures.exists(key)) bakeShadows(textures, key);

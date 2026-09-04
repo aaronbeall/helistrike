@@ -11,7 +11,8 @@ Short labels from the config rigs, plus terms used in code / design.
 | **dmg** | Damage |
 | **sc** | Scale |
 | **tex** | Texture key |
-| **wpn** | Weapon preset id |
+| **look** | Projectile texture key (`ShotLook`) |
+| **wpn** | Weapon preset id / `wpn()` fork helper |
 | **uv** | Texture coords 0–1 |
 | **px** | Pixel coords in the texture |
 | **n** | Index / count |
@@ -30,23 +31,42 @@ Short labels from the config rigs, plus terms used in code / design.
 | **AA** | Anti-air |
 | **SAM** | Surface-to-air missile |
 | **ARTY** | Artillery |
+| **HE** | High-explosive shell preset |
+| **MG / LMG** | Machine-gun preset |
 | **BLD / VEH / INF / AIR / SEA** | Roster tags |
 
 ## Combat / weapons
 
 | | |
 |---|---|
+| **ENEMY_WPNS** | Shared named enemy weapons (combat rig list) |
+| **WPN.\*** | Stable refs into that list (`WPN.aa`, …) |
+| **wpn(id, over)** | Fork a named preset (new object) |
+| **look** | Projectile art key (= Phaser texture) |
+| **shotKind(look)** | Behavior from texture: streaks → `cannon`, else rocket / hellfire / tow |
+| **shot_*** | Projectile texture prefix (streaks + missiles) |
+| **HELI_PYLON_AI** | Gunship wing-missile cadence / scale / motor (uses `WPN.heli_pylon`) |
 | **cooldown** | Delay before next shot |
 | **burst** | Rapid shots in one fire cycle |
 | **burstGap** | Delay between shots in a burst |
-| **tracer** | Visible projectile style |
 | **jitter** | Random aim spread |
 | **muzzle** | Barrel tip (flash / spawn point) |
 | **blast** | Explosion radius |
-| **shot** | Projectile type (`cannon` / `rocket` / `hellfire`) |
 | **lock** | Time-on-target before a guided shot fires |
 | **TOW** | Wire-guided missile (player steers) |
 | **Hellfire** | Homing missile |
+
+### Projectile textures (`look`)
+
+| Key | |
+|-----|---|
+| `shot_chain` | Player chain-gun streak |
+| `shot_shell` | HE / arty streak |
+| `shot_small` | Light MG streak |
+| `shot_aa` | AA burst streak |
+| `shot_rocket` | Unguided rocket |
+| `shot_hellfire` | Homing missile |
+| `shot_tow` | TOW missile |
 
 ## Sprites / art
 
@@ -66,11 +86,13 @@ Short labels from the config rigs, plus terms used in code / design.
 | | |
 |---|---|
 | **SPECS** | Per-kind unit config table |
+| **label** | Display name on the unit (`labelOf`) |
 | **partsRoll** | Declared gun roll (`pick` or `fixed`) |
 | **crew** | Pinned seats (`snap` or `leash`) |
 | **snap** | Crew glued to a mount UV |
 | **leash** | Crew roam within `leashR` |
 | **move** | Locomotion class (`tank`, `inf`, `heli`, …) |
+| **drive** | Ground vehicle physics (`maxSpd`, `accel`, `brake`, `turn`, `track`, …) |
 | **kite** | Fight while backing off |
 | **flee** | Run away (no engage) |
 | **orbit** | Circle the player |
