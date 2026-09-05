@@ -4847,31 +4847,30 @@ export class MissionScene extends Phaser.Scene {
       const fwdY = dy / (dist || 1);
       const latX = -fwdY * side;
       const latY = fwdX * side;
+      const fx = Math.cos(u.angle);
+      const fy = Math.sin(u.angle);
 
-      let moveX = 0;
-      let moveY = 0;
       if (flee) {
-        // Retreat: turn and fly away
         const awayAng = Math.atan2(-dy, -dx);
         u.angle = Phaser.Math.Angle.RotateTo(u.angle, awayAng, 2.8 * dt);
-        moveX = -fwdX * 170;
-        moveY = -fwdY * 170;
+        const face = Math.max(0, Math.cos(Phaser.Math.Angle.Wrap(awayAng - u.angle)));
+        u.vx += fx * 170 * face * dt;
+        u.vy += fy * 170 * face * dt;
       } else if (kite && dist < 900) {
-        // Kite: strafe laterally, face player
         u.angle = Phaser.Math.Angle.RotateTo(u.angle, toAng, 3.4 * dt);
+        const face = Math.max(0, Math.cos(Phaser.Math.Angle.Wrap(toAng - u.angle)));
         const radial = Phaser.Math.Clamp((dist - prefDist) * 0.4, -100, 100);
-        moveX = latX * 130 + fwdX * radial;
-        moveY = latY * 130 + fwdY * radial;
+        // Main thrust along nose; light strafe only once roughly facing.
+        u.vx += (fx * radial + latX * 130 * face) * face * dt;
+        u.vy += (fy * radial + latY * 130 * face) * face * dt;
       } else {
-        // Attack: turn and fly at player
         u.angle = Phaser.Math.Angle.RotateTo(u.angle, toAng, 2.8 * dt);
+        const face = Math.max(0, Math.cos(Phaser.Math.Angle.Wrap(toAng - u.angle)));
         const thrust = dist > prefDist ? 155 : 60;
-        moveX = fwdX * thrust;
-        moveY = fwdY * thrust;
+        u.vx += fx * thrust * face * dt;
+        u.vy += fy * thrust * face * dt;
         if (kite && dist > 1100) u.aiMood = undefined;
       }
-      u.vx += moveX * dt;
-      u.vy += moveY * dt;
     }
     const damp = flee ? 0.55 : kite ? 0.62 : 0.55;
     u.vx *= Math.pow(damp, dt);
@@ -4922,34 +4921,31 @@ export class MissionScene extends Phaser.Scene {
         const fwdY = dy / (dist || 1);
         const latX = -fwdY * side;
         const latY = fwdX * side;
+        const fx = Math.cos(u.angle);
+        const fy = Math.sin(u.angle);
 
-        let moveX = 0;
-        let moveY = 0;
         if (orbit) {
-          // Orbit: turn and circle around player
           u.orbit += 0.28 * dt;
           const ox = h.x + Math.cos(u.orbit) * orbitRing;
           const oy = h.y + Math.sin(u.orbit) * orbitRing;
           const to = Math.atan2(oy - u.y, ox - u.x);
           u.angle = Phaser.Math.Angle.RotateTo(u.angle, to, 1.6 * dt);
-          moveX = Math.cos(u.angle) * 78;
-          moveY = Math.sin(u.angle) * 78;
+          u.vx += fx * 78 * dt;
+          u.vy += fy * 78 * dt;
         } else if (kite && dist < 700) {
-          // Kite: strafe laterally, face player
           u.angle = Phaser.Math.Angle.RotateTo(u.angle, toAng, 1.85 * dt);
+          const face = Math.max(0, Math.cos(Phaser.Math.Angle.Wrap(toAng - u.angle)));
           const radial = Phaser.Math.Clamp((dist - closeDist) * 0.3, -65, 65);
-          moveX = latX * 72 + fwdX * radial;
-          moveY = latY * 72 + fwdY * radial;
+          u.vx += (fx * radial + latX * 72 * face) * face * dt;
+          u.vy += (fy * radial + latY * 72 * face) * face * dt;
         } else {
-          // Attack: turn and fly at player
           u.angle = Phaser.Math.Angle.RotateTo(u.angle, toAng, 1.6 * dt);
+          const face = Math.max(0, Math.cos(Phaser.Math.Angle.Wrap(toAng - u.angle)));
           const thrust = dist > closeDist ? 85 : 30;
-          moveX = fwdX * thrust;
-          moveY = fwdY * thrust;
+          u.vx += fx * thrust * face * dt;
+          u.vy += fy * thrust * face * dt;
           if (kite && dist > 900) u.aiMood = undefined;
         }
-        u.vx += moveX * dt;
-        u.vy += moveY * dt;
         u.aiState = orbit ? "ORBIT" : kite ? "KITE" : "ATTACK";
         u.aiTx = h.x;
         u.aiTy = h.y;
@@ -4965,62 +4961,23 @@ export class MissionScene extends Phaser.Scene {
     u.x += u.vx * dt;
     u.y += u.vy * dt;
   }
-  steerGround(u: Unit, wantX: number, wantY: number): { x: number; y: number } {
-    let wx = wantX;
-    let wy = wantY;
-    for (const o of this.units) {
-      if (o.dead || o.id === u.id || o.pinId != null) continue;
-      const osp = specOf(o.kind);
-      if (osp.aerial || osp.building || osp.water) continue;
-      if (!isGroundVehicle(o.kind) && osp.move !== "inf" && osp.move !== "flee") continue;
-      const dx = u.x - o.x;
-      const dy = u.y - o.y;
-      const d = Math.hypot(dx, dy);
-      const sep = radius(u.kind) + radius(o.kind) + 26;
-      if (d > 0.2 && d < sep) {
-        const push = (sep - d) * 1.35;
-        wx += (dx / d) * push;
-        wy += (dy / d) * push;
-      }
-    }
-    const hx = wx - u.x;
-    const hy = wy - u.y;
-    const hd = Math.hypot(hx, hy) || 1;
-    const nx = hx / hd;
-    const ny = hy / hd;
-    for (const dist of [28, 56, 90]) {
-      if (isWater(this.world, u.x + nx * dist, u.y + ny * dist)) {
-        wx -= nx * 22;
-        wy -= ny * 22;
-        wx += -ny * 18;
-        wy += nx * 18;
-        break;
-      }
-    }
-    if (isWater(this.world, u.x, u.y)) {
-      let lx = 0;
-      let ly = 0;
-      for (let i = 0; i < 8; i++) {
-        const a = (i / 8) * Math.PI * 2;
-        const x = u.x + Math.cos(a) * 36;
-        const y = u.y + Math.sin(a) * 36;
-        if (!isWater(this.world, x, y)) {
-          lx += Math.cos(a);
-          ly += Math.sin(a);
-        }
-      }
-      const ld = Math.hypot(lx, ly);
-      if (ld > 0.2) {
-        wx += (lx / ld) * 48;
-        wy += (ly / ld) * 48;
-      }
-    }
-    // Map rim overrides other wants — turn inland before leaving the theater.
-    return this.mapEdgeSteer(u.x, u.y, wx, wy);
+
+  /** 0 at inland → 1 deep in the map rim. */
+  mapEdgeWeight(x: number, y: number): number {
+    const lo = MAP_EDGE_PAD;
+    const hi = WORLD - MAP_EDGE_PAD;
+    const m = MAP_EDGE_MARGIN;
+    let px = 0;
+    let py = 0;
+    if (x < lo + m) px += 1 - Phaser.Math.Clamp((x - lo) / m, 0, 1);
+    if (x > hi - m) px -= 1 - Phaser.Math.Clamp((hi - x) / m, 0, 1);
+    if (y < lo + m) py += 1 - Phaser.Math.Clamp((y - lo) / m, 0, 1);
+    if (y > hi - m) py -= 1 - Phaser.Math.Clamp((hi - y) / m, 0, 1);
+    return Math.min(1, Math.hypot(px, py));
   }
 
-  /** Inward aim that overrides other steer wants near the map rim. */
-  mapEdgeSteer(x: number, y: number, wantX: number, wantY: number): { x: number; y: number } {
+  /** Inward unit vector from map rim (0,0 if inland). */
+  mapEdgeInland(x: number, y: number): { x: number; y: number; w: number } {
     const lo = MAP_EDGE_PAD;
     const hi = WORLD - MAP_EDGE_PAD;
     const m = MAP_EDGE_MARGIN;
@@ -5031,10 +4988,122 @@ export class MissionScene extends Phaser.Scene {
     if (y < lo + m) py += 1 - Phaser.Math.Clamp((y - lo) / m, 0, 1);
     if (y > hi - m) py -= 1 - Phaser.Math.Clamp((hi - y) / m, 0, 1);
     const w = Math.hypot(px, py);
-    if (w < 0.02) return { x: wantX, y: wantY };
-    const t = Math.min(1, w * 1.2);
-    const inlandX = x + (px / w) * (220 + t * 400);
-    const inlandY = y + (py / w) * (220 + t * 400);
+    if (w < 0.02) return { x: 0, y: 0, w: 0 };
+    return { x: px / w, y: py / w, w: Math.min(1, w) };
+  }
+
+  steerGround(u: Unit, wantX: number, wantY: number): { x: number; y: number } {
+    let wx = wantX;
+    let wy = wantY;
+    for (const o of this.units) {
+      if (o.dead || o.id === u.id || o.pinId != null) continue;
+      const osp = specOf(o.kind);
+      if (osp.aerial || osp.water || osp.move === "boat") continue;
+      // Buildings, statics, ground vehicles, and infantry all block.
+      const solid =
+        !!osp.building ||
+        osp.move === "static" ||
+        isGroundVehicle(o.kind) ||
+        osp.move === "inf" ||
+        osp.move === "flee";
+      if (!solid) continue;
+      const dx = u.x - o.x;
+      const dy = u.y - o.y;
+      const d = Math.hypot(dx, dy);
+      const pad = osp.building || osp.move === "static" ? 40 : 28;
+      const sep = radius(u.kind) + radius(o.kind) + pad;
+      if (d > 0.2 && d < sep) {
+        const strength = osp.building || osp.move === "static" ? 3.2 : 2.4;
+        const push = ((sep - d) / sep) * sep * strength;
+        wx += (dx / d) * push;
+        wy += (dy / d) * push;
+      }
+    }
+    // Short look-ahead: if heading into a solid, bias the want sideways.
+    const hx = wx - u.x;
+    const hy = wy - u.y;
+    const hd = Math.hypot(hx, hy) || 1;
+    const nx = hx / hd;
+    const ny = hy / hd;
+    const look = radius(u.kind) + 52;
+    const lx = u.x + nx * look;
+    const ly = u.y + ny * look;
+    for (const o of this.units) {
+      if (o.dead || o.id === u.id || o.pinId != null) continue;
+      const osp = specOf(o.kind);
+      if (!(osp.building || osp.move === "static" || isGroundVehicle(o.kind))) continue;
+      const d = Math.hypot(lx - o.x, ly - o.y);
+      const clear = radius(u.kind) + radius(o.kind) + 22;
+      if (d < clear) {
+        wx += -ny * 56;
+        wy += nx * 56;
+        wx -= nx * 28;
+        wy -= ny * 28;
+        break;
+      }
+    }
+    for (const dist of [28, 56, 90]) {
+      if (isWater(this.world, u.x + nx * dist, u.y + ny * dist)) {
+        wx -= nx * 22;
+        wy -= ny * 22;
+        wx += -ny * 18;
+        wy += nx * 18;
+        break;
+      }
+    }
+    if (isWater(this.world, u.x, u.y)) {
+      let lx2 = 0;
+      let ly2 = 0;
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        const x = u.x + Math.cos(a) * 36;
+        const y = u.y + Math.sin(a) * 36;
+        if (!isWater(this.world, x, y)) {
+          lx2 += Math.cos(a);
+          ly2 += Math.sin(a);
+        }
+      }
+      const ld = Math.hypot(lx2, ly2);
+      if (ld > 0.2) {
+        wx += (lx2 / ld) * 48;
+        wy += (ly2 / ld) * 48;
+      }
+    }
+    return this.mapEdgeSteer(u.x, u.y, wx, wy);
+  }
+
+  /** Soft depenetration vs buildings / other ground units after a move. */
+  separateGround(u: Unit): void {
+    for (const o of this.units) {
+      if (o.dead || o.id === u.id || o.pinId != null) continue;
+      const osp = specOf(o.kind);
+      if (osp.aerial || osp.water || osp.move === "boat") continue;
+      if (!(osp.building || osp.move === "static" || isGroundVehicle(o.kind) || osp.move === "inf" || osp.move === "flee"))
+        continue;
+      const dx = u.x - o.x;
+      const dy = u.y - o.y;
+      const d = Math.hypot(dx, dy);
+      const sep = radius(u.kind) + radius(o.kind) + (osp.building || osp.move === "static" ? 8 : 4);
+      if (d < 0.2 || d >= sep) continue;
+      const push = (sep - d) * (osp.building || osp.move === "static" ? 0.85 : 0.45);
+      u.x += (dx / d) * push;
+      u.y += (dy / d) * push;
+      // Kill residual closing speed into the obstacle.
+      const vn = u.vx * (dx / d) + u.vy * (dy / d);
+      if (vn < 0) {
+        u.vx -= (dx / d) * vn;
+        u.vy -= (dy / d) * vn;
+      }
+    }
+  }
+
+  /** Inward aim that overrides other steer wants near the map rim. */
+  mapEdgeSteer(x: number, y: number, wantX: number, wantY: number): { x: number; y: number } {
+    const edge = this.mapEdgeInland(x, y);
+    if (edge.w < 0.02) return { x: wantX, y: wantY };
+    const t = Math.min(1, edge.w * 1.2);
+    const inlandX = x + edge.x * (220 + t * 400);
+    const inlandY = y + edge.y * (220 + t * 400);
     return {
       x: Phaser.Math.Linear(wantX, inlandX, t),
       y: Phaser.Math.Linear(wantY, inlandY, t),
@@ -5052,23 +5121,32 @@ export class MissionScene extends Phaser.Scene {
     if (u.x > hi - m && u.vx > 0) u.vx *= Phaser.Math.Clamp((hi - u.x) / m, 0, 1);
     if (u.y < lo + m && u.vy < 0) u.vy *= Phaser.Math.Clamp((u.y - lo) / m, 0, 1);
     if (u.y > hi - m && u.vy > 0) u.vy *= Phaser.Math.Clamp((hi - u.y) / m, 0, 1);
-    // Aerial / boat: active inward bias when deep in the rim (no steerGround path).
-    if (sp.aerial || sp.water || sp.move === "boat") {
-      let px = 0;
-      let py = 0;
-      if (u.x < lo + m) px += 1 - Phaser.Math.Clamp((u.x - lo) / m, 0, 1);
-      if (u.x > hi - m) px -= 1 - Phaser.Math.Clamp((hi - u.x) / m, 0, 1);
-      if (u.y < lo + m) py += 1 - Phaser.Math.Clamp((u.y - lo) / m, 0, 1);
-      if (u.y > hi - m) py -= 1 - Phaser.Math.Clamp((hi - u.y) / m, 0, 1);
-      const w = Math.hypot(px, py);
-      if (w > 0.02) {
-        const t = Math.min(1, w);
+
+    const edge = this.mapEdgeInland(u.x, u.y);
+    if (edge.w > 0.02) {
+      const t = edge.w;
+      if (sp.aerial || sp.water || sp.move === "boat") {
+        // Aerial flee-out vs inland thrust: prefer divert, not a cancel equilibrium.
         const thrust = (sp.aerial ? 160 : 70) * t * t;
-        u.vx += (px / w) * thrust * dt;
-        u.vy += (py / w) * thrust * dt;
-        if (t > 0.45) {
-          const inland = Math.atan2(py, px);
-          u.angle = Phaser.Math.Angle.RotateTo(u.angle, inland, 2.6 * t * dt);
+        u.vx += edge.x * thrust * dt;
+        u.vy += edge.y * thrust * dt;
+        // Kill remaining outbound component so flee can't pin on the rim.
+        const out = u.vx * -edge.x + u.vy * -edge.y;
+        if (out > 0) {
+          u.vx += edge.x * out * Math.min(1, t * 1.4);
+          u.vy += edge.y * out * Math.min(1, t * 1.4);
+        }
+        if (t > 0.35) {
+          u.angle = Phaser.Math.Angle.RotateTo(u.angle, Math.atan2(edge.y, edge.x), 2.8 * t * dt);
+        }
+      } else if (isGroundVehicle(u.kind) || sp.move === "inf" || sp.move === "flee") {
+        // Ground: keep turning inland when braked at the rim (unlocks minTurnSpd trap).
+        if (t > 0.28) {
+          u.angle = Phaser.Math.Angle.RotateTo(u.angle, Math.atan2(edge.y, edge.x), 2.4 * t * dt);
+        }
+        if (t > 0.4 && Math.hypot(u.vx, u.vy) < 18) {
+          u.vx += edge.x * 55 * t * dt;
+          u.vy += edge.y * 55 * t * dt;
         }
       }
     }
@@ -5160,8 +5238,11 @@ export class MissionScene extends Phaser.Scene {
       if (dist < 980 && h.phase === "flight") {
         u.orbit += 0.24 * dt;
         const ring = 350 + (u.id % 5) * 28;
-        wantX = h.x + Math.cos(u.orbit) * ring;
-        wantY = h.y + Math.sin(u.orbit) * ring;
+        // Chase a lead point on the ring so we rarely sit on the waypoint
+        // (atan2 thrash there looks like instant hull snaps).
+        const lead = u.orbit + 0.55;
+        wantX = h.x + Math.cos(lead) * ring;
+        wantY = h.y + Math.sin(lead) * ring;
         drive = true;
         u.aiState = "ORBIT";
         u.aiTx = wantX;
@@ -5189,14 +5270,28 @@ export class MissionScene extends Phaser.Scene {
     const wantSteer = this.steerGround(u, wantX, wantY);
     wantX = wantSteer.x;
     wantY = wantSteer.y;
-    const want = Math.atan2(wantY - u.y, wantX - u.x);
+    const twx = wantX - u.x;
+    const twy = wantY - u.y;
+    const twd = Math.hypot(twx, twy);
     const spd = Math.hypot(u.vx, u.vy);
+    let want: number;
+    if (twd < 42) {
+      // Near chase point: don't use noisy atan2(ε,ε) — that flips want and snaps hull.
+      if (combat && drive) want = Math.atan2(u.y - h.y, u.x - h.x) + Math.PI / 2;
+      else if (spd > 6) want = Math.atan2(u.vy, u.vx);
+      else want = u.angle;
+    } else {
+      want = Math.atan2(twy, twx);
+    }
     const slow = 1 - Math.min(1, spd / Math.max(d.maxSpd, 1));
     const wheeled = d.track !== "tread";
     // Bikes can't pivot in place — need real forward speed, like trucks (trucks get it from low turn rate).
     const minTurnSpd = u.kind === "motorcycle" ? 24 : 7;
-    if (drive && (!wheeled || spd > minTurnSpd)) {
-      const turnGate = wheeled ? Phaser.Math.Clamp((spd - minTurnSpd) / 18, 0.15, 1) : 1;
+    const rim = this.mapEdgeWeight(u.x, u.y);
+    // Rim unlock: containOnMap brakes outbound speed → minTurnSpd gate used to freeze turn forever.
+    if (drive && (!wheeled || spd > minTurnSpd || rim > 0.28)) {
+      const turnGate =
+        wheeled && rim < 0.28 ? Phaser.Math.Clamp((spd - minTurnSpd) / 18, 0.15, 1) : 1;
       u.angle = Phaser.Math.Angle.RotateTo(
         u.angle,
         want,
@@ -5225,6 +5320,7 @@ export class MissionScene extends Phaser.Scene {
     u.vy = vy;
     u.x += vx * dt;
     u.y += vy * dt;
+    this.separateGround(u);
     const step = s * dt;
     if (s > 6 && !isWater(this.world, u.x, u.y)) {
       u.track += step;
@@ -5328,28 +5424,33 @@ export class MissionScene extends Phaser.Scene {
             const ox = h.x + Math.cos(away + Math.sin(u.orbit) * weave) * ring;
             const oy = h.y + Math.sin(away + Math.sin(u.orbit) * weave) * ring;
             const steered = this.steerGround(u, ox, oy);
-            const want = Math.atan2(steered.y - u.y, steered.x - u.x);
-            const face = fleeing ? want : Math.atan2(dy, dx);
-            u.angle = Phaser.Math.Angle.RotateTo(u.angle, face, (fleeing ? 2.4 : 2.1) * dt);
+            const twx = steered.x - u.x;
+            const twy = steered.y - u.y;
+            const twd = Math.hypot(twx, twy);
+            // Face the path we walk — never crab-step along want while facing elsewhere.
+            const want = twd < 12 ? u.angle : Math.atan2(twy, twx);
+            u.angle = Phaser.Math.Angle.RotateTo(u.angle, want, (fleeing ? 2.4 : 2.1) * dt);
             const limp = fleeing && wounded && sp.organic;
             const gaitHz = limp ? 0.0044 : fleeing ? 0.0128 : 0.0075;
             const walk = Math.sin(this.time.now * gaitHz + u.id * 2.1);
             const gait = 0.22 + 0.78 * Math.pow(0.5 + 0.5 * walk, 1.45);
             const base = sp.move === "flee" && !sp.organic ? (u.kind === "officer" ? 36 : 90) : fleeing ? 78 : 58;
-            const step = (limp ? 22 : base) * gait * dt;
-            u.x += Math.cos(want) * step;
-            u.y += Math.sin(want) * step;
+            const align = Math.max(0.15, Math.cos(Phaser.Math.Angle.Wrap(want - u.angle)));
+            const step = (limp ? 22 : base) * gait * align * dt;
+            u.x += Math.cos(u.angle) * step;
+            u.y += Math.sin(u.angle) * step;
+            this.separateGround(u);
             if (limp) {
               u.track += step;
               if (u.track > 0) {
                 const side = walk > 0 ? 1 : -1;
-                const px = -Math.sin(want);
-                const py = Math.cos(want);
+                const px = -Math.sin(u.angle);
+                const py = Math.cos(u.angle);
                 this.stampSoldierBlood(
                   u,
                   px * range(2.2, 5.5) * side,
                   py * range(2.2, 5.5) * side,
-                  want + range(-0.35, 0.35)
+                  u.angle + range(-0.35, 0.35)
                 );
                 u.track = -range(22, 48);
               }
@@ -5389,8 +5490,11 @@ export class MissionScene extends Phaser.Scene {
       const hullFlee =
         (sp.move === "inf" && u.aiMood === "flee" && !(sp.organic && u.health <= 1) && !this.snapHost(u)) ||
         (u.kind === "heli_small" && u.aiMood === "flee");
+      // Don't yank hull onto the player while kiting — that fought walk facing and looked like snaps.
+      const hullKite =
+        sp.move === "inf" && u.aiMood === "kite" && !(sp.organic && u.health <= 1) && !this.snapHost(u);
       const strafeHeli = sp.move === "heli" && u.kind !== "heli_heavy";
-      if (sp.fixedAim && !guns.length && wpn && inRange && !hullFlee && !strafeHeli) {
+      if (sp.fixedAim && !guns.length && wpn && inRange && !hullFlee && !hullKite && !strafeHeli) {
         const turn = sp.move === "heli" ? 1.7 : 2.2;
         u.angle = Phaser.Math.Angle.RotateTo(u.angle, aim, turn * dt);
       }
@@ -5410,7 +5514,9 @@ export class MissionScene extends Phaser.Scene {
       const aimFrom = guns.length ? this.gunMountPos(u, gunI) : { x: u.x, y: u.y };
       const gunAim = Math.atan2(h.y - aimFrom.y, h.x - aimFrom.x);
       const barrelAng = !guns.length ? u.angle : (u.turrets[gunI] ?? u.turret);
-      const facingOk = Math.abs(Phaser.Math.Angle.Wrap(gunAim - barrelAng)) < 0.16;
+      // Infantry kite faces the path; allow a wider fire cone so they still shoot while circling.
+      const aimCone = hullKite ? 0.85 : 0.16;
+      const facingOk = Math.abs(Phaser.Math.Angle.Wrap(gunAim - barrelAng)) < aimCone;
       if (wpn && u.fireCd <= 0 && !soldierFlee && !scoutFlee && facingOk && (inRange || continueBurst)) {
         const burstN = wpn.burst ?? 0;
         if (burstN) {
