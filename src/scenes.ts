@@ -13,6 +13,7 @@ import {
   WPN_LIST,
   PLAYER_WPNS,
   SHOT_ORIGIN,
+  SHOT_TAIL,
   MISSILE_IGNITE,
   HELLFIRE_LOCK_T,
   HELLFIRE_SEEK_DELAY,
@@ -30,6 +31,7 @@ import { lookupSpriteMuzzles, lookupSpriteOrigin } from "./spriteOrigin";
 import { craftDmgPois, craftGunMount, craftGunOrigin, craftOf, craftOrigin, craftSecondaryMounts } from "./craft";
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
 import { configRigsAnyOpen, installConfigRigHotkeys } from "./configRigs";
+import { applyEdgeLight, clearEdgeLight, ensureEdgeLightPipeline } from "./edgeLight";
 import { LOAD_TIPS } from "./tips";
 import { preloadArt, prepareArt, extractBiomeTiles, bakeHeliHudWireTexture, bakeHurtVignetteTexture, heliHudWireUv, shadowAlpha, shadowKey, shadowOff, spriteUvPos, FX_VARIANTS, nameGameTexture, nameGeneratedTextures, spritePivot, type HeliHudWireBake } from "./sprites";
 import {
@@ -625,6 +627,7 @@ export class MissionScene extends Phaser.Scene {
   }
 
   create(): void {
+    ensureEdgeLightPipeline(this.game);
     this.stampDecor();
     if (this.textures.exists("terrain")) this.textures.remove("terrain");
     this.textures.addCanvas("terrain", this.world.canvas);
@@ -1813,6 +1816,9 @@ export class MissionScene extends Phaser.Scene {
     this.rotor.setScale((this.liveRotorDrawPx("heli_rotor") / Math.max(this.rotor.width, 1)) * zs);
     this.gun.setScale(zs);
     this.rotor.setAlpha(1);
+    applyEdgeLight(this.body, h.angle + craft.rotOff);
+    applyEdgeLight(this.gun, h.gunAngle + Math.PI / 2);
+    clearEdgeLight(this.rotor);
     this.body.setDepth(worldDepth(h.z, ZOff.body));
     this.rotor.setDepth(worldDepth(h.z, ZOff.rotor));
     this.gun.setDepth(worldDepth(h.z, ZOff.gun));
@@ -2396,6 +2402,37 @@ export class MissionScene extends Phaser.Scene {
     return { x: Math.cos(angle) * d, y: Math.sin(angle) * d };
   }
 
+  /** Screen XY of a UV on the shot sprite (matches syncShotSprites scale/origin). */
+  shotUvScreenPos(
+    s: Shot,
+    uvx: number,
+    uvy: number,
+    x = s.x,
+    y = s.y,
+    z = s.z
+  ): { x: number; y: number } {
+    const look = shotLookOf(s);
+    const img = this.textures.exists(look)
+      ? (this.textures.get(look).getSourceImage() as { width: number; height: number })
+      : { width: 48, height: 10 };
+    const sc = s.scale ?? 1;
+    const zs = zScale(z);
+    const horiz = Math.hypot(s.vx, s.vy);
+    const pitchN = Phaser.Math.Clamp(Math.abs(s.vz) / Math.max(90, Math.hypot(horiz, s.vz)), 0, 1);
+    const along = 1 - pitchN * 0.52;
+    const across = 1 + pitchN * 0.06;
+    const dw = img.width * sc * zs * along;
+    const dh = img.height * sc * zs * across;
+    const lx = (uvx - SHOT_ORIGIN.x) * dw;
+    const ly = (uvy - SHOT_ORIGIN.y) * dh;
+    const ca = Math.cos(s.angle);
+    const sa = Math.sin(s.angle);
+    return {
+      x: x + lx * ca - ly * sa,
+      y: y - screenLift(z) + lx * sa + ly * ca,
+    };
+  }
+
   spawnSparks(
     x: number,
     y: number,
@@ -2910,17 +2947,17 @@ export class MissionScene extends Phaser.Scene {
     } else if (s.from === "player") {
       s.vz += 300;
     }
-    const sy = s.y - screenLift(s.z);
     const sc = shotTrailScale(s);
     const small = troopMissileTrail(s);
     const n = small ? Math.max(2, Math.round(5 * sc)) : Math.max(2, Math.round(8 * sc));
+    const tail = this.shotUvScreenPos(s, SHOT_TAIL.x, SHOT_TAIL.y);
     this.withTrailFx(sc, () => {
       const { fire, smoke } = this.pairFx(s.z, this.burn, this.fragSmoke, ZOff.fire, ZOff.smoke);
-      fire.emitParticleAt(s.x, sy, n);
-      smoke.emitParticleAt(s.x, sy, Math.max(1, Math.round((small ? 3 : 6) * sc)));
+      fire.emitParticleAt(tail.x, tail.y, n);
+      smoke.emitParticleAt(tail.x, tail.y, Math.max(1, Math.round((small ? 3 : 6) * sc)));
       if (!small) {
         this.blastFire.setDepth(worldDepth(s.z, ZOff.fire + 0.2));
-        this.blastFire.explode(Math.max(1, Math.round(4 * sc)), s.x, sy);
+        this.blastFire.explode(Math.max(1, Math.round(4 * sc)), tail.x, tail.y);
       }
     });
     this.spawnSparks(s.x, s.y, s.z, {
@@ -2945,18 +2982,15 @@ export class MissionScene extends Phaser.Scene {
     // Troop RPGs can sit above 0.6 scale — don't treat them as Hydra (smoke-only).
     const hydra = isRocket && !small && (s.scale ?? 1) > 0.6;
     const steps = 2;
-    const rot = s.angle + Math.PI / 2;
-    const vis = s.scale ?? 1;
-    const tail = (hydra ? 10 : 15) * vis;
     const sc = shotTrailScale(s) * (hydra ? 1.35 : 1);
     for (let i = 0; i < steps; i++) {
       const t = (i + range(0, 0.35)) / steps;
       const x = x0 + (s.x - x0) * t;
       const y = y0 + (s.y - y0) * t;
       const z = z0 + (s.z - z0) * t;
-      const sy = y - screenLift(z);
-      const tx = x - Math.sin(rot) * tail;
-      const ty = sy + Math.cos(rot) * tail;
+      const tail = this.shotUvScreenPos(s, SHOT_TAIL.x, SHOT_TAIL.y, x, y, z);
+      const tx = tail.x;
+      const ty = tail.y;
       this.withTrailFx(sc, () => {
         if (small) {
           const { fire, smoke } = this.pairFx(z, this.burn, this.lingerSmoke);
@@ -5479,6 +5513,7 @@ export class MissionScene extends Phaser.Scene {
         const grade = Phaser.Math.Clamp(sl.dx * Math.cos(u.angle) + sl.dy * Math.sin(u.angle), -0.4, 0.4);
         im.setScale((1 + Math.abs(grade) * 0.05) * zs, (1 - grade * 0.12) * zs);
       } else im.setScale(zs);
+      applyEdgeLight(im, rot);
       let pi = 0;
       const gunDepth = sp.move === "heli" ? ZOff.gun : ZOff.turret;
       const place = (
@@ -5488,7 +5523,8 @@ export class MissionScene extends Phaser.Scene {
         mount: { x: number; y: number },
         worldRot: number,
         depth: number,
-        sc = 1
+        sc = 1,
+        edgeLit = false
       ) => {
         if (!this.textures.exists(texKey)) return;
         this.unwrapTilt(part);
@@ -5503,6 +5539,8 @@ export class MissionScene extends Phaser.Scene {
           .setAlpha(1)
           .setScale(im.scaleX * sc, im.scaleY * sc)
           .setDepth(worldDepth(u.z, depth + zBias));
+        if (edgeLit) applyEdgeLight(part, worldRot);
+        else clearEdgeLight(part);
       };
       guns.forEach((g, gi) => {
         const part = parts[pi++];
@@ -5516,7 +5554,8 @@ export class MissionScene extends Phaser.Scene {
           gmount,
           gunWorldRot(g.tex, u.turrets[gi] ?? u.turret),
           gunDepth,
-          g.scale ?? 1
+          g.scale ?? 1,
+          true
         );
       });
       sp.rotors.forEach((r, ri) => {
@@ -5560,6 +5599,7 @@ export class MissionScene extends Phaser.Scene {
             .setRotation(0)
             .setAlpha(1)
             .setScale(1);
+          clearEdgeLight(part);
         }
       }
       if (u.muzzleT > 0 && (sp.weapon || guns.length)) {
@@ -5579,6 +5619,7 @@ export class MissionScene extends Phaser.Scene {
           .setScale((sp.organic ? 0.7 : 1.15) * zs * jitS)
           .setAlpha(Phaser.Math.Clamp(u.muzzleT / 0.07, 0, 1))
           .setDepth(worldDepth(u.z, gunDepth + 0.4 + zBias));
+        clearEdgeLight(flash);
       }
     });
   }

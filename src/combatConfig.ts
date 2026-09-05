@@ -5,6 +5,7 @@ import {
   MISSILE_IGNITE,
   PLAYER_WPNS,
   SHOT_ORIGIN,
+  SHOT_TAIL,
   type PlayerWpnSpec,
 } from "./combat";
 import { ENEMY_WPNS, usesOfWeapon } from "./roster";
@@ -23,10 +24,7 @@ const MONO = "Share Tech Mono, monospace";
 const GOLD = "#e8b84a";
 const PAPER = CFG_VALUE;
 const ORIGIN_COLOR = 0xe8b84a;
-const CENTER_COLOR = 0x5ec8ff;
-
-/** Geometric center of projectile art (UV). */
-const SHOT_CENTER = { x: 0.5, y: 0.5 } as const;
+const TAIL_COLOR = 0xff6a40;
 
 const LIST_X = 16;
 const LIST_Y = 40;
@@ -67,6 +65,7 @@ export class CombatConfigTool {
   private filter: Filter = "all";
   private zoom = 2;
   private frameT = 0;
+  private showMarks = true;
   private entries: CombatEntry[] = [];
   root: Phaser.GameObjects.Container;
   private dim!: Phaser.GameObjects.Rectangle;
@@ -165,6 +164,11 @@ export class CombatConfigTool {
         this.idx = 0;
         this.refreshPreview();
       });
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.O).on("down", () => {
+        if (!this.open) return;
+        this.showMarks = !this.showMarks;
+        this.refreshPreview();
+      });
     }
 
     scene.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
@@ -247,7 +251,7 @@ export class CombatConfigTool {
     const e = items[this.idx]!;
 
     this.hintTxt.setText(
-      `COMBAT RIG   \` cycle / close   [ ] cycle   , . page   - + zoom ${this.zoom}×   G filter ${this.filter.toUpperCase()}   gold origin · cyan center`
+      `COMBAT RIG   \` cycle / close   [ ] cycle   , . page   - + zoom ${this.zoom}×   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   gold origin · orange tail`
     );
 
     const size = this.pageSize();
@@ -355,8 +359,8 @@ export class CombatConfigTool {
     this.board.strokeRect(bx - pad, by - pad, boxW + pad * 2, boxH + pad * 2);
 
     this.overlay.clear();
-    if (e.cat !== "fx") {
-      this.drawShotMarks(rot);
+    if (e.cat !== "fx" && this.showMarks) {
+      this.drawShotMarks(rot, bx, by, boxW, boxH);
       // Rough blast ring at preview zoom (blast is world units).
       const blast = parseBlast(e);
       if (blast > 0) {
@@ -366,8 +370,8 @@ export class CombatConfigTool {
     }
   }
 
-  /** Center (cyan) + tip-biased origin (gold) on projectile art. */
-  private drawShotMarks(rot: number): void {
+  /** Edge ticks for tip origin / trail tail — no marks over the art. */
+  private drawShotMarks(rot: number, bx: number, by: number, boxW: number, boxH: number): void {
     const spr = this.preview;
     const uv = (u: number, v: number) => {
       const mx = (u - spr.originX) * spr.displayWidth;
@@ -377,17 +381,16 @@ export class CombatConfigTool {
       return { x: spr.x + mx * ca - my * sa, y: spr.y + mx * sa + my * ca };
     };
     const g = this.overlay;
-    const c = uv(SHOT_CENTER.x, SHOT_CENTER.y);
-    g.lineStyle(1.25, CENTER_COLOR, 0.9);
-    g.lineBetween(c.x - 10, c.y, c.x + 10, c.y);
-    g.lineBetween(c.x, c.y - 10, c.x, c.y + 10);
-    g.strokeCircle(c.x, c.y, 4);
-
-    const o = uv(SHOT_ORIGIN.x, SHOT_ORIGIN.y);
-    g.lineStyle(1.5, ORIGIN_COLOR, 0.95);
-    g.lineBetween(o.x - 14, o.y, o.x + 14, o.y);
-    g.lineBetween(o.x, o.y - 14, o.x, o.y + 14);
-    g.strokeCircle(o.x, o.y, 6);
+    const tick = 7;
+    const mark = (u: number, v: number, color: number) => {
+      const p = uv(u, v);
+      const x = Phaser.Math.Clamp(p.x, bx, bx + boxW);
+      g.lineStyle(1.5, color, 0.95);
+      g.lineBetween(x, by - 1, x, by - 1 - tick);
+      g.lineBetween(x, by + boxH + 1, x, by + boxH + 1 + tick);
+    };
+    mark(SHOT_ORIGIN.x, SHOT_ORIGIN.y, ORIGIN_COLOR);
+    mark(SHOT_TAIL.x, SHOT_TAIL.y, TAIL_COLOR);
   }
 }
 
@@ -401,8 +404,8 @@ function parseBlast(e: CombatEntry): number {
 
 function shotLayoutDump(): string[] {
   return dumpConfig({
-    center: { x: SHOT_CENTER.x, y: SHOT_CENTER.y },
     origin: { x: SHOT_ORIGIN.x, y: SHOT_ORIGIN.y },
+    tail: { x: SHOT_TAIL.x, y: SHOT_TAIL.y },
   });
 }
 
@@ -427,7 +430,7 @@ function playerEntries(): CombatEntry[] {
 }
 
 function formatPlayer(w: PlayerWpnSpec): { stats: string[]; info: string[] } {
-  const info = [...w.notes.map((n) => `· ${n}`), "source: combat.ts PLAYER_WPNS / SHOT_ORIGIN"];
+  const info = [...w.notes.map((n) => `· ${n}`), "source: combat.ts PLAYER_WPNS / SHOT_ORIGIN / SHOT_TAIL"];
   if (w.kind === "hellfire" || w.kind === "tow") {
     info.push(
       `MISSILE_IGNITE ${MISSILE_IGNITE}`,
@@ -457,6 +460,7 @@ function presetEntries(): CombatEntry[] {
         uses.length ? `used by: ${uses.join(" · ")}` : "used by: —",
         "source: roster.ts ENEMY_WPNS / SPECS / usesOfWeapon",
         "origin: combat.ts SHOT_ORIGIN",
+        "tail: combat.ts SHOT_TAIL (trail emit)",
       ],
     };
   });

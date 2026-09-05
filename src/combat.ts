@@ -6,6 +6,9 @@ export type { FragCat, UnitKind } from "./roster";
 /** Tip-biased UV origin for all projectile art (nose-along-+X). */
 export const SHOT_ORIGIN = { x: 0.84, y: 0.5 } as const;
 
+/** Exhaust / trail emit UV (rear of projectile art, nose-along-+X). */
+export const SHOT_TAIL = { x: 0.06, y: 0.5 } as const;
+
 /** Player loadout identity (slot / catalog key). */
 export type WpnId = string;
 
