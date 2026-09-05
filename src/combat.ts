@@ -164,6 +164,10 @@ export interface Unit {
   missileSide?: number;
   killDx?: number;
   killDy?: number;
+  /** Killing-shot vz (same frame as killDx/Dy). */
+  killDz?: number;
+  /** Damage that finished the unit (direct or splash falloff). */
+  killDmg?: number;
   /** Indices into live damage interest points (center, guns, rotors). */
   dmgSites?: { poi: number; scale: number }[];
 }

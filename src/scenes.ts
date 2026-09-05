@@ -2457,7 +2457,7 @@ export class MissionScene extends Phaser.Scene {
       expBias?: number;
     }
   ): void {
-    const extra = this.sparks.length + opt.n - 280;
+    const extra = this.sparks.length + opt.n - 280 * BURST_COUNT_MUL;
     if (extra > 0) this.sparks.splice(0, extra);
     const biome = sampleBiome(this.world, x, y);
     const k = opt.expBias;
@@ -3204,7 +3204,7 @@ export class MissionScene extends Phaser.Scene {
     this.shake = Math.min(8, this.shake + blast * (he ? 0.055 : 0.028));
     if (!he) this.spawnImpactFlash(x, sy, z, 0xffc878, 34, 0.85, 160);
     // HE already splashed — skip a second death splash. Chain gun should still run vehicle death splash.
-    this.applyBlastDamage(x, y, z, blast, dmg, direct, dx, dy, he);
+    this.applyBlastDamage(x, y, z, blast, dmg, direct, dx, dy, dz, he);
   }
 
   /** Splash hurt to units in radius (and light heli damage when low/close). */
@@ -3217,6 +3217,7 @@ export class MissionScene extends Phaser.Scene {
     direct: Unit | undefined,
     dx: number,
     dy: number,
+    dz: number,
     skipDeathSplash = false
   ): void {
     this.pushBlastRing(x, y, z, blast);
@@ -3226,7 +3227,9 @@ export class MissionScene extends Phaser.Scene {
       if (u === direct || d < blast) {
         u.killDx = dx;
         u.killDy = dy;
+        u.killDz = dz;
         const fall = u === direct ? dmg : dmg * (1 - d / blast);
+        u.killDmg = fall;
         this.hurt(u, fall, skipDeathSplash);
       }
     }
@@ -3283,25 +3286,43 @@ export class MissionScene extends Phaser.Scene {
     blast: number,
     soft = false,
     waveMul = 1,
-    size01 = Phaser.Math.Clamp(blast / 140, 0.18, 1)
+    size01 = Phaser.Math.Clamp(blast / 140, 0.18, 1),
+    /** Extra eject power from unit/shot influence (1 = baseline). */
+    power = 1
   ): void {
     const sy = y - screenLift(z);
     const mul = (soft ? 0.32 : 1) * Phaser.Math.Linear(0.45, 1.15, size01);
+    const p = Phaser.Math.Clamp(power, 0.5, 2.4);
+    const t = Math.min(1, (p - 0.5) / 1.9);
+    const spdBoost = Phaser.Math.Linear(0.95, 1.35, t);
+    const biasLen = Math.hypot(dx, dy, dz);
+    const expK = soft ? undefined : biasLen > 40 ? Phaser.Math.Linear(1.85, 2.7, t) : 1.5;
     this.spawnSparks(x, y, z + 10, {
       style: "object",
-      n: Math.max(4, Math.round(22 * mul)),
-      spdMin: 140,
-      spdMax: 480,
+      n: Math.max(4, Math.round(22 * mul)) * BURST_COUNT_MUL,
+      spdMin: 140 * spdBoost,
+      spdMax: 480 * spdBoost,
       bx: dx,
       by: dy,
       bz: dz,
-      tight: 0.2,
+      tight: Phaser.Math.Linear(0.48, 0.72, t),
       forceKind: "flame",
       scaleMul: (soft ? 0.42 : 1) * Phaser.Math.Linear(0.4, 1.35, size01),
-      expBias: 2.2,
+      expBias: expK,
     });
     this.blastFire.setDepth(worldDepth(z, ZOff.fire + 1));
-    this.blastFire.explode(Math.max(3, Math.round(26 * mul)), x, sy);
+    // Aim a cone along impact; stronger kills tighten.
+    const horiz = Math.hypot(dx, dy);
+    if (!soft && horiz > 8) {
+      const deg = Phaser.Math.RadToDeg(Math.atan2(dy, dx));
+      const cone = Phaser.Math.Linear(88, 42, t);
+      this.blastFire.particleAngle = { min: deg - cone, max: deg + cone };
+      this.blastFire.speed = { min: 170 * spdBoost, max: 500 * spdBoost };
+    } else {
+      this.blastFire.particleAngle = { min: 0, max: 360 };
+      this.blastFire.speed = { min: 180, max: 480 };
+    }
+    this.blastFire.explode(Math.max(3, Math.round(26 * mul)) * BURST_COUNT_MUL, x, sy);
     this.spawnImpactFlash(
       x,
       sy,
@@ -3311,7 +3332,7 @@ export class MissionScene extends Phaser.Scene {
       0.9,
       180
     );
-    this.spawnBlastTrails(x, y, z, dx, dy, dz, soft, size01);
+    this.spawnBlastTrails(x, y, z, dx, dy, dz, soft, size01, p);
     const wave = (soft ? 0.45 : 1) * waveMul;
     const ring = this.add.circle(x, sy, 6, 0xff9a40, 0.85).setDepth(worldDepth(z, 2)).setBlendMode(Phaser.BlendModes.ADD);
     this.tweens.add({
@@ -3324,8 +3345,33 @@ export class MissionScene extends Phaser.Scene {
     });
   }
 
-  spawnBlastTrails(x: number, y: number, z: number, dx: number, dy: number, dz: number, soft = false, size01 = 0.7): void {
-    const extra = this.frags.filter((f) => f.trailOnly).length + 8 - 40;
+  /** Mech death FX bias: shot vel × (killDmg/maxHp) boost + unit velocity. */
+  deathBurstImpulse(u: Unit): { dx: number; dy: number; dz: number; power: number } {
+    // Finishing blow relative to toughness — chain-gun chip on a bunker ≈ 0; same shot on a jeep ≈ 1+.
+    const dmgScale = Phaser.Math.Clamp((u.killDmg ?? 0) / Math.max(1, u.max), 0, 1.5);
+    // Stronger kill-impact pull than unit coasting.
+    const shotPush = dmgScale * 2.4;
+    const dx = (u.killDx ?? 0) * shotPush + u.vx;
+    const dy = (u.killDy ?? 0) * shotPush + u.vy;
+    const dz = (u.killDz ?? 0) * shotPush + 48;
+    const impact = Math.hypot(dx, dy, dz);
+    if (impact < 24) return { dx: 0, dy: 0, dz: 1, power: 0.55 };
+    const power = Phaser.Math.Clamp(impact / 340, 0.55, 2.4);
+    return { dx, dy, dz, power };
+  }
+
+  spawnBlastTrails(
+    x: number,
+    y: number,
+    z: number,
+    dx: number,
+    dy: number,
+    dz: number,
+    soft = false,
+    size01 = 0.7,
+    power = 1
+  ): void {
+    const extra = this.frags.filter((f) => f.trailOnly).length + 8 - 40 * BURST_COUNT_MUL;
     if (extra > 0) {
       let drop = extra;
       this.frags = this.frags.filter((f) => {
@@ -3336,19 +3382,25 @@ export class MissionScene extends Phaser.Scene {
         return false;
       });
     }
-    const n = Math.max(2, Math.round(Phaser.Math.Linear(soft ? 2 : 4, soft ? 5 : 11, size01))) + ((Math.random() * 2) | 0);
+    const p = Phaser.Math.Clamp(power, 0.5, 2.4);
+    const t = Math.min(1, (p - 0.5) / 1.9);
+    const n =
+      (Math.max(2, Math.round(Phaser.Math.Linear(soft ? 2 : 4, soft ? 5 : 11, size01))) + ((Math.random() * 2) | 0)) *
+      BURST_COUNT_MUL;
+    const spdMul = Phaser.Math.Linear(0.95, 1.4, t);
+    const tight = soft ? 0.18 : Phaser.Math.Linear(0.45, 0.7, t);
     for (let i = 0; i < n; i++) {
-      const reverse = Math.random() < 0.35;
-      const d = biasedDir(dx, dy, Math.max(40, dz), 0.18, reverse);
-      const sp = range(70, 250);
-      const jit = 0.55;
+      const reverse = Math.random() < (soft ? 0.35 : 0.14);
+      const d = biasedDir(dx, dy, dz, tight, reverse);
+      const sp = range(70, 250) * spdMul;
+      const jit = soft ? 0.55 : 0.3;
       this.frags.push({
         x,
         y,
         z: z + range(6, 18),
         vx: d.x * sp + range(-sp * jit * 0.5, sp * jit * 0.5),
         vy: d.y * sp + range(-sp * jit * 0.5, sp * jit * 0.5),
-        vz: range(140, 300) + d.z * 40,
+        vz: range(140, 300) * Phaser.Math.Linear(0.95, 1.15, t) + d.z * 40,
         angle: 0,
         spin: 0,
         life: range(1.6, 3),
@@ -3440,7 +3492,25 @@ export class MissionScene extends Phaser.Scene {
           Phaser.Math.Clamp(1.2 - near / 1100, 0.18, 0.62) * Phaser.Math.Linear(0.55, 1.15, boom);
         this.pulseTestBarrel(killPulse);
       }
-      this.heFireBurst(u.x, u.y, hz, 0, 0, 1, blast, !!sp.organic, building ? 2.25 : 1, boom);
+      let burst: { dx: number; dy: number; dz: number; power: number } | null = null;
+      if (sp.organic) {
+        this.heFireBurst(u.x, u.y, hz, 0, 0, 1, blast, true, building ? 2.25 : 1, boom);
+      } else {
+        burst = this.deathBurstImpulse(u);
+        this.heFireBurst(
+          u.x,
+          u.y,
+          hz,
+          burst.dx,
+          burst.dy,
+          burst.dz,
+          blast,
+          false,
+          building ? 2.25 : 1,
+          boom,
+          burst.power
+        );
+      }
       if (building) this.emitDustShock(u.x, u.y, 1);
       this.smoke.setDepth(worldDepth(u.z, 0.2));
       this.smoke.emitParticleAt(u.x, u.y - screenLift(u.z) + 12, 16);
@@ -3464,15 +3534,18 @@ export class MissionScene extends Phaser.Scene {
             undefined,
             u.killDx ?? 0,
             u.killDy ?? 0,
+            u.killDz ?? 0,
             false
           );
         }
       }
-      const n = Math.max(2, Math.round((sp.organic ? 4 : building ? 16 : 10) * Phaser.Math.Linear(0.4, 1.2, boom)));
+      const n =
+        Math.max(2, Math.round((sp.organic ? 4 : building ? 16 : 10) * Phaser.Math.Linear(0.4, 1.2, boom))) *
+        BURST_COUNT_MUL;
       const keys = fragKeys(u.kind);
+      const debrisSpdMul = burst ? Phaser.Math.Linear(0.98, 1.35, Math.min(1, (burst.power - 0.5) / 1.9)) : 1;
+      const debrisTight = burst ? Phaser.Math.Linear(0.48, 0.72, Math.min(1, (burst.power - 0.5) / 1.9)) : 0;
       for (let i = 0; i < n; i++) {
-        const a = Math.random() * Math.PI * 2;
-        const spd = range(55, 255);
         const key = this.textures.exists(keys[i % keys.length]!)
           ? keys[i % keys.length]!
           : "fx_frag_metal";
@@ -3480,15 +3553,35 @@ export class MissionScene extends Phaser.Scene {
         // HV buildings were throwing outsized chunks; keep mid/vehicle debris as-is.
         const maxSc = u.hv && !organic ? 1.18 : 1.5;
         const maxTrail = u.hv && !organic ? 1.12 : 1.4;
+        let vx: number;
+        let vy: number;
+        let vz: number;
+        let angle: number;
+        if (burst) {
+          const reverse = Math.random() < 0.14;
+          const d = biasedDir(burst.dx, burst.dy, burst.dz, debrisTight, reverse);
+          const spd = range(55, 255) * debrisSpdMul;
+          const jit = 0.28;
+          vx = d.x * spd + range(-spd * jit * 0.5, spd * jit * 0.5);
+          vy = d.y * spd + range(-spd * jit * 0.5, spd * jit * 0.5);
+          vz = range(170, 330) * Phaser.Math.Linear(0.95, 1.12, Math.min(1, (burst.power - 0.5) / 1.9)) + d.z * 35;
+          angle = Math.atan2(vy, vx);
+        } else {
+          angle = Math.random() * Math.PI * 2;
+          const spd = range(55, 255);
+          vx = Math.cos(angle) * spd;
+          vy = Math.sin(angle) * spd;
+          vz = range(170, 330);
+        }
         // Organic debris sprite scale stays varied; flame size is a fixed mid band (see emitFragTrail).
         this.frags.push({
           x: u.x,
           y: u.y,
           z: u.z + range(8, 22),
-          vx: Math.cos(a) * spd,
-          vy: Math.sin(a) * spd,
-          vz: range(170, 330),
-          angle: a,
+          vx,
+          vy,
+          vz,
+          angle,
           spin: range(-5, 5),
           life: range(0.45, 0.85),
           key,
@@ -6235,7 +6328,8 @@ export class MissionScene extends Phaser.Scene {
     const cx = 18 + 88;
     const cy = this.scale.height - 18 - 88;
     const mapR = 84;
-    const span = 1700;
+    // World diameter shown in the ring (larger = zoomed out / wider coverage).
+    const span = 2600;
     const s = (mapR * 2) / span;
     this.miniTerrain.setDisplaySize(WORLD * s, WORLD * s);
     const tp = this.hudLocal(cx - (this.heli.x - WORLD / 2) * s, cy - (this.heli.y - WORLD / 2) * s);
