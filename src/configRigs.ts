@@ -6,12 +6,16 @@ import { spritePivot } from "./sprites";
 
 /**
  * Overlay scene for sprite / roster / combat config rigs.
- * Not started at boot — launched on first ` via ensureConfigRigs().
+ * Launched lazily (first ` or installConfigRigHotkeys warm-up).
  */
 export class ConfigRigsScene extends Phaser.Scene {
   spriteCfg!: SpriteConfigTool;
   rosterCfg!: RosterConfigTool;
   combatCfg!: CombatConfigTool;
+  /** True after create() finishes constructing tools. */
+  ready = false;
+  /** Open sprite rig once create() finishes (first ` raced launch). */
+  private pendingOpen = false;
 
   constructor() {
     super("configRigs");
@@ -21,42 +25,43 @@ export class ConfigRigsScene extends Phaser.Scene {
     this.spriteCfg = new SpriteConfigTool(this, (key) => spritePivot(key));
     this.rosterCfg = new RosterConfigTool(this);
     this.combatCfg = new CombatConfigTool(this);
+    this.ready = true;
 
     const kb = this.input.keyboard;
-    if (!kb) return;
+    if (kb) {
+      // Navigation only while a rig is open (open/cycle hotkeys live on menu/mission).
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.OPEN_BRACKET).on("down", () => {
+        if (!this.anyOpen()) return;
+        this.activeRig()?.cycle(-1);
+      });
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.CLOSED_BRACKET).on("down", () => {
+        if (!this.anyOpen()) return;
+        this.activeRig()?.cycle(1);
+      });
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.UP).on("down", () => {
+        if (!this.anyOpen()) return;
+        this.activeRig()?.cycle(-1);
+      });
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN).on("down", () => {
+        if (!this.anyOpen()) return;
+        this.activeRig()?.cycle(1);
+      });
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT).on("down", () => {
+        if (this.spriteCfg.open) this.spriteCfg.cycleFrame(-1);
+      });
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT).on("down", () => {
+        if (this.spriteCfg.open) this.spriteCfg.cycleFrame(1);
+      });
 
-    // Navigation only while a rig is open (open/cycle hotkeys live on menu/mission).
-    kb.addKey(Phaser.Input.Keyboard.KeyCodes.OPEN_BRACKET).on("down", () => {
-      if (!this.anyOpen()) return;
-      this.activeRig()?.cycle(-1);
-    });
-    kb.addKey(Phaser.Input.Keyboard.KeyCodes.CLOSED_BRACKET).on("down", () => {
-      if (!this.anyOpen()) return;
-      this.activeRig()?.cycle(1);
-    });
-    kb.addKey(Phaser.Input.Keyboard.KeyCodes.UP).on("down", () => {
-      if (!this.anyOpen()) return;
-      this.activeRig()?.cycle(-1);
-    });
-    kb.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN).on("down", () => {
-      if (!this.anyOpen()) return;
-      this.activeRig()?.cycle(1);
-    });
-    kb.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT).on("down", () => {
-      if (this.spriteCfg.open) this.spriteCfg.cycleFrame(-1);
-    });
-    kb.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT).on("down", () => {
-      if (this.spriteCfg.open) this.spriteCfg.cycleFrame(1);
-    });
-
-    const bumpZoom = (dir: number) => {
-      if (this.rosterCfg.open) this.rosterCfg.nudgeZoom(dir);
-      else if (this.combatCfg.open) this.combatCfg.nudgeZoom(dir);
-    };
-    kb.addKey(Phaser.Input.Keyboard.KeyCodes.PLUS).on("down", () => bumpZoom(1));
-    kb.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_ADD).on("down", () => bumpZoom(1));
-    kb.addKey(Phaser.Input.Keyboard.KeyCodes.MINUS).on("down", () => bumpZoom(-1));
-    kb.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_SUBTRACT).on("down", () => bumpZoom(-1));
+      const bumpZoom = (dir: number) => {
+        if (this.rosterCfg.open) this.rosterCfg.nudgeZoom(dir);
+        else if (this.combatCfg.open) this.combatCfg.nudgeZoom(dir);
+      };
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.PLUS).on("down", () => bumpZoom(1));
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_ADD).on("down", () => bumpZoom(1));
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.MINUS).on("down", () => bumpZoom(-1));
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_SUBTRACT).on("down", () => bumpZoom(-1));
+    }
 
     this.input.on("wheel", (_p: unknown, _over: unknown, _dx: number, dy: number) => {
       if (!this.anyOpen() || Math.abs(dy) < 1) return;
@@ -64,6 +69,10 @@ export class ConfigRigsScene extends Phaser.Scene {
     });
 
     this.bringFront();
+    if (this.pendingOpen) {
+      this.pendingOpen = false;
+      this.spriteCfg.toggle();
+    }
   }
 
   update(_t: number, dms: number): void {
@@ -74,11 +83,16 @@ export class ConfigRigsScene extends Phaser.Scene {
   }
 
   anyOpen(): boolean {
+    if (!this.ready) return false;
     return this.spriteCfg.open || this.rosterCfg.open || this.combatCfg.open;
   }
 
   /** ` cycles closed → sprite → roster → combat → closed. */
   cycle(): void {
+    if (!this.ready) {
+      this.pendingOpen = true;
+      return;
+    }
     if (this.spriteCfg.open) {
       this.spriteCfg.toggle();
       this.rosterCfg.toggle();
@@ -101,6 +115,7 @@ export class ConfigRigsScene extends Phaser.Scene {
   }
 
   private activeRig(): SpriteConfigTool | RosterConfigTool | CombatConfigTool | undefined {
+    if (!this.ready) return undefined;
     if (this.spriteCfg.open) return this.spriteCfg;
     if (this.rosterCfg.open) return this.rosterCfg;
     if (this.combatCfg.open) return this.combatCfg;
@@ -108,7 +123,7 @@ export class ConfigRigsScene extends Phaser.Scene {
   }
 }
 
-/** Launch once on first use; returns the shared scene. */
+/** Launch once; returns the shared scene (may still be booting). */
 export function ensureConfigRigs(from: Phaser.Scene): ConfigRigsScene {
   let s = from.scene.get("configRigs") as ConfigRigsScene | null;
   if (!s || !s.sys.isActive()) {
@@ -131,11 +146,13 @@ export function configRigsAnyOpen(from: Phaser.Scene): boolean {
 
 const HOTKEY_FLAG = "__configRigHotkeys";
 
-/** ` on menu or mission — launches the shared scene only when used. */
+/** ` on menu or mission — warm-launches the overlay so the first press isn't a no-op. */
 export function installConfigRigHotkeys(from: Phaser.Scene): void {
   const kb = from.input.keyboard;
   if (!kb || (from as unknown as Record<string, boolean>)[HOTKEY_FLAG]) return;
   (from as unknown as Record<string, boolean>)[HOTKEY_FLAG] = true;
+
+  ensureConfigRigs(from);
 
   kb.addKey(Phaser.Input.Keyboard.KeyCodes.BACKTICK).on("down", () => {
     const rigs = ensureConfigRigs(from);

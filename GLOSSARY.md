@@ -1,31 +1,16 @@
 # Glossary
 
-Short labels from the config rigs, plus terms used in code / design.
+Config rigs label rows with **code field names** (`kind`, `fireCd`, `look`, …). Tags below are for HUD / design talk.
 
-## Rig abbreviations
+## Short tags
 
 | | |
 |---|---|
-| **cd** | Cooldown (`fireCd`) — time between shots |
-| **spd** | Speed (projectile or drive) |
-| **dmg** | Damage |
-| **sc** | Scale |
-| **tex** | Texture key |
-| **look** | Projectile texture key (`ShotLook`) |
-| **wpn** | Weapon preset id / `wpn()` fork helper |
 | **uv** | Texture coords 0–1 |
 | **px** | Pixel coords in the texture |
 | **n** | Index / count |
 | **p** | Probability (% of roll weight) |
 | **w** | Raw roll weight |
-| **len** | Muzzle length |
-| **gap** | Spacing (track gap, or burst interval) |
-| **accel** | Acceleration |
-| **leashR** | Crew roam radius |
-| **flyZ** | Flight height offset |
-| **rotOff** | Sprite rotation offset |
-| **frag** | Death debris category |
-| **HP** | Health |
 | **HV** | High-value map objective |
 | **FX** | Visual effects |
 | **AA** | Anti-air |
@@ -42,18 +27,20 @@ Short labels from the config rigs, plus terms used in code / design.
 | **ENEMY_WPNS** | Shared named enemy weapons (combat rig list) |
 | **WPN.\*** | Stable refs into that list (`WPN.aa`, …) |
 | **wpn(id, over)** | Fork a named preset (new object) |
+| **kind** | Flight class: `cannon` / `rocket` / `hellfire` / `tow` |
 | **look** | Projectile art key (= Phaser texture) |
-| **shotKind(look)** | Behavior from texture: streaks → `cannon`, else rocket / hellfire / tow |
-| **shot_*** | Projectile texture prefix (streaks + missiles) |
+| **scale** | Projectile draw scale on the weapon preset |
+| **fireCd** | Cooldown between shots |
+| **shot_*** | Projectile texture prefix (all nose-along-+X) |
 | **seeker** | Homing missile preset (`WPN.seeker` — body or secondary) |
 | **secondary** | Hull hardpoint weapon / mounts (`SPECS.secondary`, craft `secondary` UVs) |
-| **cooldown** | Delay before next shot |
 | **burst** | Rapid shots in one fire cycle |
 | **burstGap** | Delay between shots in a burst |
 | **jitter** | Random aim spread |
 | **muzzle** | Barrel tip (flash / spawn point) |
 | **blast** | Explosion radius |
 | **lock** | Time-on-target before a guided shot fires |
+| **motor** | Pre-ignite / burn timer on guided shots |
 | **TOW** | Wire-guided missile (player steers) |
 | **Hellfire** | Homing missile |
 
@@ -91,13 +78,17 @@ Short labels from the config rigs, plus terms used in code / design.
 | **SPECS** | Per-kind unit config table |
 | **CRAFTS** | Playable heli catalog (`craftOf` / `selectCraft`) |
 | **craft** | Selected player helicopter id (`CraftId`) |
-| **label** | Display name on the unit (`labelOf`) |
+| **label** | Display name on the unit |
 | **partsRoll** | Declared gun roll (`pick` or `fixed`) |
 | **crew** | Pinned seats (`snap` or `leash`) |
 | **snap** | Crew glued to a mount UV |
 | **leash** | Crew roam within `leashR` |
 | **move** | Locomotion class (`tank`, `inf`, `heli`, …) |
 | **drive** | Ground vehicle physics (`maxSpd`, `accel`, `brake`, `turn`, `track`, …) |
+| **rotOff** | Sprite rotation offset |
+| **frag** | Death debris category |
+| **flyZ** | Flight height offset |
+| **spawnYaw** | Preferred spawn facing window |
 | **kite** | Fight while backing off |
 | **flee** | Run away (no engage) |
 | **orbit** | Circle the player |

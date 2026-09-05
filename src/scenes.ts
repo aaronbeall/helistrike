@@ -25,14 +25,9 @@ import {
 import { Layer, ZOff, Z_GRAVITY, worldDepth } from "./depth";
 import { range } from "./rng";
 import { CRUISE_AGL, Heli, MAX_AGL } from "./heli";
-import { isAerial, isGroundVehicle, isOrganic, hasSoftBlood, specOf, driveOf, spawnAngle, pickTroop, labelOf, allKinds, gunsOf, rollParts, crewOf, shotKind, isStreakShot, shotDrawScale, type ShotLook } from "./roster";
+import { isAerial, isGroundVehicle, isOrganic, hasSoftBlood, specOf, driveOf, spawnAngle, pickTroop, labelOf, allKinds, gunsOf, rollParts, crewOf, type ShotLook } from "./roster";
 import { lookupSpriteMuzzles, lookupSpriteOrigin } from "./spriteOrigin";
 import { craftDmgPois, craftGunMount, craftGunOrigin, craftOf, craftOrigin, craftSecondaryMounts } from "./craft";
-
-/** Overlay guns are drawn barrel-up (same as hulls). World aim 0 is +X, so +90°. */
-function gunWorldRot(_tex: string, aim: number): number {
-  return aim + Math.PI / 2;
-}
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
 import { configRigsAnyOpen, installConfigRigHotkeys } from "./configRigs";
 import { LOAD_TIPS } from "./tips";
@@ -64,6 +59,22 @@ import {
   type WorldData,
   type Biome,
 } from "./world";
+
+/** Overlay guns are drawn barrel-up (same as hulls). World aim 0 is +X, so +90°. */
+function gunWorldRot(_tex: string, aim: number): number {
+  return aim + Math.PI / 2;
+}
+
+/** Tip-biased origin for all projectile art (nose-along-+X). */
+const SHOT_ORIGIN_X = 0.84;
+
+function shotLookOf(s: Shot): ShotLook {
+  if (s.look) return s.look;
+  if (s.kind === "rocket") return "shot_rocket";
+  if (s.kind === "hellfire") return "shot_hellfire";
+  if (s.kind === "tow") return "shot_tow";
+  return "shot_chain";
+}
 
 /** Soft rim where map-edge steering ramps up. */
 const MAP_EDGE_MARGIN = 280;
@@ -1929,7 +1940,7 @@ export class MissionScene extends Phaser.Scene {
     this.reticle.setPosition(p.x, p.y);
     const h = this.heli;
     const aim = this.worldPointer();
-    const wpn = WPN_LIST[h.weapon]!.id;
+    const wpn = WPN_LIST[h.weapon]!.kind;
     const missile = wpn !== "cannon";
     this.reticle.setTexture(missile && this.textures.exists("reticle_sq") ? "reticle_sq" : "reticle");
     this.drawReticleTally(p.x, p.y, missile ? (this.ammo[h.weapon] ?? 0) : 0, WPN_LIST[h.weapon]!.ammo);
@@ -2128,7 +2139,7 @@ export class MissionScene extends Phaser.Scene {
   handleFire(dt: number): void {
     const h = this.heli;
     if (h.phase !== "flight" || !this.canFire || this.debugOpen || this.editOpen) return;
-    const wpn = WPN_LIST[h.weapon]!.id;
+    const wpn = WPN_LIST[h.weapon]!.kind;
     const spec = PLAYER_WPNS[wpn];
     const ptr = this.worldPointer();
     const down = this.input.activePointer.isDown;
@@ -2149,7 +2160,7 @@ export class MissionScene extends Phaser.Scene {
       const ty = tipY + Math.sin(ang) * dist;
       const tz = air ? air.z + heightOf(air.kind) * 0.5 : groundZ(this.world, tx, ty);
       this.spawnShot({
-        kind: "cannon",
+        kind: spec.kind,
         from: "player",
         x: tip.x,
         y: tipY,
@@ -2162,6 +2173,7 @@ export class MissionScene extends Phaser.Scene {
         blast: spec.blast,
         dmg: spec.dmg,
         look: spec.look,
+        scale: spec.scale,
       });
       this.spawnSparks(tip.x, tipY, h.z, {
         style: "muzzle",
@@ -2190,7 +2202,7 @@ export class MissionScene extends Phaser.Scene {
       const ty = py + Math.sin(h.angle) * dist;
       const tz = air ? air.z + heightOf(air.kind) * 0.5 : groundZ(this.world, tx, ty);
       this.spawnShot({
-        kind: "rocket",
+        kind: spec.kind,
         from: "player",
         x: px,
         y: py,
@@ -2203,6 +2215,7 @@ export class MissionScene extends Phaser.Scene {
         blast: spec.blast,
         dmg: spec.dmg,
         look: spec.look,
+        scale: spec.scale,
       });
       this.missileMuzzle(px, py, h.z, h.angle);
     }
@@ -2220,7 +2233,7 @@ export class MissionScene extends Phaser.Scene {
         this.spendAmmo(2);
         const kick = spec.speed;
         this.spawnShot({
-          kind: "hellfire",
+          kind: spec.kind,
           from: "player",
           x: px,
           y: py,
@@ -2234,6 +2247,7 @@ export class MissionScene extends Phaser.Scene {
           blast: spec.blast,
           dmg: spec.dmg,
           look: spec.look,
+          scale: spec.scale,
           motor: -MISSILE_IGNITE,
           yaw: side * (1.05 + Math.random() * 0.45),
         });
@@ -2246,7 +2260,7 @@ export class MissionScene extends Phaser.Scene {
       const { x: px, y: py, side } = this.missilePylon();
       this.spendAmmo(3);
       this.spawnShot({
-        kind: "tow",
+        kind: spec.kind,
         from: "player",
         x: px,
         y: py,
@@ -2259,6 +2273,7 @@ export class MissionScene extends Phaser.Scene {
         blast: spec.blast,
         dmg: spec.dmg,
         look: spec.look,
+        scale: spec.scale,
         guided: true,
         motor: -(MISSILE_IGNITE + 0.06),
         cruise: 300,
@@ -2338,7 +2353,27 @@ export class MissionScene extends Phaser.Scene {
   }
 
   spawnShot(s: Shot): void {
+    const look = shotLookOf(s);
+    const nudge = this.shotTipNudge(look, s.angle, s.z, s.scale ?? 1);
+    s.x += nudge.x;
+    s.y += nudge.y;
+    if (!s.look) s.look = look;
     this.shots.push(s);
+  }
+
+  /** Forward shift so tip-origin art clears the barrel (ox × streak length). */
+  shotTipNudge(
+    look: ShotLook,
+    angle: number,
+    z: number,
+    scale = 1
+  ): { x: number; y: number } {
+    const sc = scale * zScale(z);
+    const img = this.textures.exists(look)
+      ? (this.textures.get(look).getSourceImage() as { width: number; height: number })
+      : { width: 48, height: 10 };
+    const d = SHOT_ORIGIN_X * img.width * sc;
+    return { x: Math.cos(angle) * d, y: Math.sin(angle) * d };
   }
 
   spawnSparks(
@@ -5282,19 +5317,9 @@ export class MissionScene extends Phaser.Scene {
             }
           }
         }
-        const home = shotKind(wpn.look) === "hellfire";
-        const troopRocket = u.kind === "rpg" || u.kind === "stinger";
-        let shotScale = troopRocket
-          ? u.kind === "rpg"
-            ? 0.66
-            : 0.7
-          : u.kind === "gunner" || u.kind === "mounted_mg"
-            ? 0.4
-            : undefined;
-        // Plain infantry tracers (soldier, etc.) — slight bump vs vehicle/AA small rounds.
-        if (shotScale == null && sp.organic && sp.weapon) shotScale = 1.15;
+        const home = wpn.kind === "hellfire";
         this.spawnShot({
-          kind: shotKind(wpn.look),
+          kind: wpn.kind,
           from: "enemy",
           x: muzzle.x,
           y: muzzle.y,
@@ -5310,7 +5335,7 @@ export class MissionScene extends Phaser.Scene {
           guided: false,
           homePlayer: home,
           motor: home ? -0.06 : undefined,
-          scale: shotScale,
+          scale: wpn.scale,
         });
       }
       const sec = sp.secondary;
@@ -5346,7 +5371,7 @@ export class MissionScene extends Phaser.Scene {
             const missileT = Math.max(0.25, dist / pw.speed);
             const home = sec.homePlayer !== false;
             this.spawnShot({
-              kind: shotKind(pw.look),
+              kind: pw.kind,
               from: "enemy",
               x: px,
               y: py,
@@ -5361,7 +5386,7 @@ export class MissionScene extends Phaser.Scene {
               look: pw.look,
               homePlayer: home,
               motor: sec.motor,
-              scale: sec.scale,
+              scale: pw.scale * (sec.scale ?? 1),
             });
             this.missileMuzzle(px, py, u.z, fireAng);
           }
@@ -5556,9 +5581,7 @@ export class MissionScene extends Phaser.Scene {
         const muz = bodyTips[tipIdx % bodyTips.length]!;
         return atUv(hullPivot, muz, hullImg.width, hullImg.height, u.x, u.y, hullRot);
       }
-      const len = wpn?.muzzleLen ?? 10;
-      const a = u.angle;
-      return { x: u.x + Math.cos(a) * len, y: u.y + Math.sin(a) * len };
+      return { x: u.x, y: u.y };
     }
     const origin = lookupSpriteOrigin(gun.tex) ?? gun.origin;
     const mount = gun.mount;
@@ -5590,20 +5613,10 @@ export class MissionScene extends Phaser.Scene {
     this.shots.forEach((s, i) => {
       const sh = kids[i * 2]!;
       const im = kids[i * 2 + 1]!;
-      const key: ShotLook =
-        s.look ??
-        (s.kind === "cannon"
-          ? "shot_chain"
-          : s.kind === "rocket"
-            ? "shot_rocket"
-            : s.kind === "hellfire"
-              ? "shot_hellfire"
-              : "shot_tow");
-      const tracer = isStreakShot(key);
-      const rot = tracer ? s.angle : s.angle + Math.PI / 2;
-      const ox = tracer ? 0.84 : 0.5;
-      const vis = s.scale ?? 1;
-      const sc = shotDrawScale(key) * vis;
+      const key = shotLookOf(s);
+      const rot = s.angle;
+      const ox = SHOT_ORIGIN_X;
+      const sc = s.scale ?? 1;
       const zs = zScale(s.z);
       // Foreshorten along the barrel when climbing/diving (non-zero vz).
       const horiz = Math.hypot(s.vx, s.vy);
@@ -5759,7 +5772,7 @@ export class MissionScene extends Phaser.Scene {
     if (h.hellfireLock && !this.unitById(h.hellfireLock.id)) h.hellfireLock = null;
     if (h.hellfireSeek && !this.unitById(h.hellfireSeek.id)) h.hellfireSeek = null;
 
-    if (WPN_LIST[h.weapon]!.id !== "hellfire") return;
+    if (WPN_LIST[h.weapon]!.kind !== "hellfire") return;
 
     const tgt = this.hellfirePickTarget(ptr.x, ptr.y, 160);
     if (!tgt || (h.hellfireLock && tgt.id === h.hellfireLock.id)) {
@@ -5855,7 +5868,7 @@ export class MissionScene extends Phaser.Scene {
     this.lockTxt.setVisible(false);
     this.lockInbdTxt.setVisible(false);
 
-    const hellfire = WPN_LIST[h.weapon]!.id === "hellfire";
+    const hellfire = WPN_LIST[h.weapon]!.kind === "hellfire";
     const inbound = this.inboundHellfireTargets();
     const locked = hellfire && h.hellfireLock ? this.unitById(h.hellfireLock.id) : undefined;
     const seeking = hellfire && h.hellfireSeek ? this.unitById(h.hellfireSeek.id) : undefined;
@@ -7331,7 +7344,7 @@ export class MissionScene extends Phaser.Scene {
     const cam = this.cameras.main;
     const p = this.input.activePointer;
     const z = Math.max(cam.zoom, 0.001);
-    const wpn = WPN_LIST[this.heli.weapon]!.id;
+    const wpn = WPN_LIST[this.heli.weapon]!.kind;
     const look =
       wpn === "hellfire"
         ? { pull: 0.86, max: 360, rate: 5.2 }
@@ -7742,7 +7755,7 @@ function pickSparkKind(style: "muzzle" | "ground" | "water" | "object", sparkFra
 }
 
 function troopMissileTrail(s: Shot): boolean {
-  // Enemy RPG (~0.66) / Stinger (~0.7) — keep below player Hydra (~1).
+  // Troop / hardpoint missiles (RPG 0.66, Stinger 0.7, heli secondary ×0.72) vs player Hydra (~1).
   return s.from === "enemy" && (s.scale ?? 1) <= 0.75;
 }
 

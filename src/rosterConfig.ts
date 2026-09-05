@@ -31,7 +31,6 @@ import {
   type UnitKind,
   type UnitSpec,
   type WeaponSpec,
-  isStreakShot,
 } from "./roster";
 import { lookupSpriteMuzzles } from "./spriteOrigin";
 import { nameGameTexture, spritePivot } from "./sprites";
@@ -637,7 +636,7 @@ export class RosterConfigTool {
       im.setVisible(true).setTexture(key).setOrigin(0.5, 0.5);
       const sc = Math.min(2.5, (36 * this.zoom) / Math.max(im.width, im.height, 1));
       im.setScale(sc)
-        .setRotation(isStreakShot(wpn.look) ? 0 : Math.PI / 2)
+        .setRotation(0)
         .setPosition(shotX + Math.max(im.displayWidth, 28) * 0.5, shotY);
       shotX += Math.max(im.displayWidth, 28) + shotGap;
     }
@@ -664,7 +663,7 @@ export class RosterConfigTool {
     const hover = uv
       ? [
           row(
-            "CURSOR",
+            "cursor",
             kvs(
               ["uv", fmt(uv)],
               ["px", `${uv.px.toFixed(1)}, ${uv.py.toFixed(1)}`],
@@ -675,10 +674,10 @@ export class RosterConfigTool {
             )
           ),
         ]
-      : [row("CURSOR", "off board")];
+      : [row("cursor", "off board")];
     const pin = this.pinned
-      ? [row("PIN", kvs(["uv", fmt(this.pinned)], ["copied", this.copied || "—"]))]
-      : [row("PIN", "click hull to copy name / uv / px")];
+      ? [row("pin", kvs(["uv", fmt(this.pinned)], ["copied", this.copied || "—"]))]
+      : [row("pin", "click hull to copy name / uv / px")];
     setStackedTexts(
       [
         { txt: this.statsTxt, lines: this.pendingStats },
@@ -873,9 +872,9 @@ function categoryTag(kind: UnitKind): string {
 
 function weaponBlocks(w: WeaponSpec): string[] {
   return [
-    kvs(["look", w.look], ["dmg", w.dmg], ["blast", w.blast], ["spd", w.speed]),
+    kvs(["kind", w.kind], ["look", w.look], ["scale", w.scale], ["dmg", w.dmg], ["blast", w.blast], ["speed", w.speed]),
     kvs(
-      ["cd", w.fireCd],
+      ["fireCd", w.fireCd],
       ["range", w.range],
       w.burst != null && ["burst", `${w.burst}×${w.burstGap ?? "?"}`]
     ),
@@ -884,7 +883,7 @@ function weaponBlocks(w: WeaponSpec): string[] {
 
 function formatWeapon(w: WeaponSpec): string[] {
   const [head, ...rest] = weaponBlocks(w);
-  return [row("WEAPON", head!), ...rest.map((l) => rowCont(l))];
+  return [row("weapon", head!), ...rest.map((l) => rowCont(l))];
 }
 
 function weightPct(w: number, total: number): string {
@@ -898,7 +897,7 @@ function formatPartsRoll(kind: UnitKind): string[] {
   if (roll.mode === "pick") {
     const total = roll.weights.reduce((s, [, w]) => s + w, 0);
     const lines = [
-      row("ROLL", `pick ${kvs(["via", "partsRoll"], ["n", roll.weights.length])}`),
+      row("partsRoll", `pick ${kvs(["n", roll.weights.length])}`),
     ];
     for (const [id, w] of roll.weights) {
       const opt = roll.options[id]!;
@@ -917,7 +916,7 @@ function formatPartsRoll(kind: UnitKind): string[] {
     return lines;
   }
   const lines = [
-    row("ROLL", `fixed ${kvs(["via", "partsRoll"], ["n", roll.slots.length])}`),
+    row("partsRoll", `fixed ${kvs(["n", roll.slots.length])}`),
   ];
   roll.slots.forEach((s, i) => {
     const opt = roll.options[s.id]!;
@@ -943,22 +942,22 @@ function formatTroopRoll(): string[] {
 function formatCraft(craft: CraftSpec): { stats: string[]; info: string[] } {
   const active = craft.id === craftId();
   const stats: string[] = [
-    row("KIND", `craft / ${craft.id}`),
-    row("LABEL", craft.label),
-    row("HP", `${craft.health} ${kvs(["radius", craft.radius], ["height", craft.height])}`),
-    row("ACTIVE", active ? "yes ★" : "no"),
-    row("TEX", craft.body),
-    row("HULK", craft.hulk),
-    row("GUN", craft.gun),
-    row("ROT OFF", `${(craft.rotOff / Math.PI).toFixed(2)}π`),
-    row("ORIGIN", `${craftOrigin(craft).x.toFixed(3)}, ${craftOrigin(craft).y.toFixed(3)}`),
-    row("GUN MOUNT", `${craftGunMount(craft).x.toFixed(3)}, ${craftGunMount(craft).y.toFixed(3)}`),
-    row("GUN ORIGIN", `${craftGunOrigin(craft).x.toFixed(3)}, ${craftGunOrigin(craft).y.toFixed(3)}`),
-    row("DMG POIS", craftDmgPois(craft).length),
+    row("id", craft.id),
+    row("label", craft.label),
+    row("health", `${craft.health} ${kvs(["radius", craft.radius], ["height", craft.height])}`),
+    row("selected", active ? "yes ★" : "no"),
+    row("body", craft.body),
+    row("hulk", craft.hulk),
+    row("gun", craft.gun),
+    row("rotOff", `${(craft.rotOff / Math.PI).toFixed(2)}π`),
+    row("origin", `${craftOrigin(craft).x.toFixed(3)}, ${craftOrigin(craft).y.toFixed(3)}`),
+    row("gunMount", `${craftGunMount(craft).x.toFixed(3)}, ${craftGunMount(craft).y.toFixed(3)}`),
+    row("gunOrigin", `${craftGunOrigin(craft).x.toFixed(3)}, ${craftGunOrigin(craft).y.toFixed(3)}`),
+    row("dmgPois", craftDmgPois(craft).length),
     ...craftDmgPois(craft).map(
       (p, i) => rowCont(`[${i}] ${p.x.toFixed(3)}, ${p.y.toFixed(3)}`)
     ),
-    row("SECONDARY", craftSecondaryMounts(craft).length),
+    row("secondary", craftSecondaryMounts(craft).length),
     ...craftSecondaryMounts(craft).map(
       (p, i) => rowCont(`[${i}] ${p.x.toFixed(3)}, ${p.y.toFixed(3)}`)
     ),
@@ -987,10 +986,10 @@ function formatSpec(kind: UnitKind, sp: UnitSpec): { stats: string[]; info: stri
   ].filter(Boolean) as string[];
 
   const stats: string[] = [
-    row("KIND", kind),
-    row("LABEL", labelOf(kind)),
+    row("kind", kind),
+    row("label", sp.label),
     row(
-      "HP",
+      "health",
       `${sp.health} ${kvs(
         ["radius", sp.radius],
         ["height", sp.height],
@@ -998,24 +997,24 @@ function formatSpec(kind: UnitKind, sp: UnitSpec): { stats: string[]; info: stri
       )}`
     ),
     row(
-      "MOVE",
+      "move",
       `${sp.move} ${kvs(["frag", sp.frag], ["rotOff", `${(sp.rotOff / Math.PI).toFixed(2)}π`])}`
     ),
-    row("TEX", sp.texture),
-    row("HULK", sp.hulk),
-    row("FLAGS", flags.length ? flags.join(" · ") : "—"),
+    row("texture", sp.texture),
+    row("hulk", sp.hulk),
+    row("flags", flags.length ? flags.join(" · ") : "—"),
   ];
 
   if (sp.spawnYaw != null) {
-    stats.push(row("SPAWN", `±${((sp.spawnYaw * 180) / Math.PI).toFixed(1)}°`));
+    stats.push(row("spawnYaw", `±${((sp.spawnYaw * 180) / Math.PI).toFixed(1)}°`));
   }
 
   const driveKinds: MoveKind[] = ["tank", "vehicle"];
   if (driveKinds.includes(sp.move)) {
     const d = driveOf(kind);
     stats.push(
-      row("DRIVE", kvs(["spd", d.maxSpd], ["accel", d.accel], ["brake", d.brake], ["turn", d.turn])),
-      rowCont(kvs(["track", d.track], ["gap", d.trackGap], ["sc", d.trackScale]))
+      row("drive", kvs(["maxSpd", d.maxSpd], ["accel", d.accel], ["brake", d.brake], ["turn", d.turn])),
+      rowCont(kvs(["track", d.track], ["trackGap", d.trackGap], ["trackScale", d.trackScale]))
     );
   }
 
@@ -1028,20 +1027,21 @@ function formatSpec(kind: UnitKind, sp: UnitSpec): { stats: string[]; info: stri
     const home = s.homePlayer !== false;
     stats.push(
       row(
-        "SECONDARY",
+        "secondary",
         kvs(
           ["wpn", weaponPresetId(s.wpn)],
-          ["cd", `${s.fireCdMin}–${s.fireCdMax}s`],
+          ["fireCdMin", s.fireCdMin],
+          ["fireCdMax", s.fireCdMax],
           ["mounts", s.mounts.length]
         )
       ),
       rowCont(
         kvs(
-          s.scale != null && ["sc", s.scale],
+          s.scale != null && ["scale", s.scale],
           s.motor != null && ["motor", s.motor],
-          ["home", home ? "yes" : "no"],
-          ["minR", s.minRange ?? 80],
-          ["aim", s.aimCone ?? "π/2"]
+          ["homePlayer", home ? "yes" : "no"],
+          ["minRange", s.minRange ?? 80],
+          ["aimCone", s.aimCone ?? "π/2"]
         )
       )
     );
@@ -1054,14 +1054,14 @@ function formatSpec(kind: UnitKind, sp: UnitSpec): { stats: string[]; info: stri
   stats.push(...formatPartsRoll(kind));
 
   if (sp.guns.length) {
-    stats.push(row("GUNS", sp.guns.length));
+    stats.push(row("guns", sp.guns.length));
     sp.guns.forEach((g, i) => {
       const hulk = g.hulk ? ` → ${g.hulk}` : "";
       stats.push(
         rowCont(
           `[${i}] ${g.tex}${hulk} ${kvs(
-            ["sc", g.scale ?? 1],
-            ["fire", g.weapon ? "own" : "→ weapon"]
+            ["scale", g.scale ?? 1],
+            ["weapon", g.weapon ? "own" : "→ weapon"]
           )}`
         ),
         rowCont(
@@ -1076,37 +1076,37 @@ function formatSpec(kind: UnitKind, sp: UnitSpec): { stats: string[]; info: stri
       }
     });
   } else {
-    stats.push(row("GUNS", "—"));
+    stats.push(row("guns", "—"));
   }
 
   if (sp.rotors.length) {
-    stats.push(row("ROTORS", sp.rotors.length));
+    stats.push(row("rotors", sp.rotors.length));
     sp.rotors.forEach((r, i) => {
       const hulk = r.hulk ? ` → ${r.hulk}` : "";
       stats.push(
-        rowCont(`[${i}] ${r.tex}${hulk} ${kv("sc", r.scale ?? 1)}`),
+        rowCont(`[${i}] ${r.tex}${hulk} ${kv("scale", r.scale ?? 1)}`),
         rowCont(kv("mount", `${r.mount.x.toFixed(3)},${r.mount.y.toFixed(3)}`))
       );
     });
   } else {
-    stats.push(row("ROTORS", "—"));
+    stats.push(row("rotors", "—"));
   }
 
   if (sp.dish) {
     const d = sp.dish;
     const hulk = d.hulk ? ` → ${d.hulk}` : "";
     stats.push(
-      row("DISH", `${d.tex}${hulk} ${kv("sc", d.scale ?? 1)}`),
+      row("dish", `${d.tex}${hulk} ${kv("scale", d.scale ?? 1)}`),
       rowCont(kv("mount", `${d.mount.x.toFixed(3)},${d.mount.y.toFixed(3)}`))
     );
   } else {
-    stats.push(row("DISH", "—"));
+    stats.push(row("dish", "—"));
   }
 
   if (sp.crew?.mounts.length) {
     stats.push(
       row(
-        "CREW",
+        "crew",
         `${sp.crew.mode} ${kvs(
           ["chance", sp.crew.chance ?? 1],
           ["seats", sp.crew.mounts.length],
@@ -1119,7 +1119,7 @@ function formatSpec(kind: UnitKind, sp: UnitSpec): { stats: string[]; info: stri
     });
     stats.push(...formatTroopRoll());
   } else {
-    stats.push(row("CREW", "—"));
+    stats.push(row("crew", "—"));
   }
 
   const splash = sp.building
@@ -1128,7 +1128,7 @@ function formatSpec(kind: UnitKind, sp: UnitSpec): { stats: string[]; info: stri
       ? `${(sp.health * 0.1).toFixed(1)} dmg @ r×3`
       : "—";
 
-  stats.push(row("SPLASH", splash));
+  stats.push(row("splash", splash));
 
   return {
     stats,

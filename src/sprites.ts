@@ -641,9 +641,10 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
 
   const wpn = sliceGrid(keyImage(src(textures, "src_weapons"), "magenta"), 2, 2);
   put(textures, "heli_gun", fit(wpn[0]!, 46));
-  put(textures, "shot_rocket", fit(wpn[1]!, 28));
-  put(textures, "shot_hellfire", fit(wpn[2]!, 36));
-  put(textures, "shot_tow", fit(wpn[3]!, 34));
+  // Weapons sheet is nose-up; rotate to nose-along-+X like tracer shots.
+  put(textures, "shot_rocket", fit(rotateCw90(wpn[1]!), 28));
+  put(textures, "shot_hellfire", fit(rotateCw90(wpn[2]!), 36));
+  put(textures, "shot_tow", fit(rotateCw90(wpn[3]!), 34));
 
   const blastSrc = src(textures, "src_blasts");
   const blasts = sliceGrid(matteMagenta(copyToCanvas(blastSrc, blastSrc.width, blastSrc.height)), 2, 2);
@@ -1167,6 +1168,18 @@ function fit(src: HTMLCanvasElement, max: number): HTMLCanvasElement {
   g.imageSmoothingEnabled = true;
   g.imageSmoothingQuality = "high";
   g.drawImage(src, 0, 0, c.width, c.height);
+  return c;
+}
+
+/** Nose-up sheet art → nose-along-+X (same as tracer shots). */
+function rotateCw90(src: HTMLCanvasElement): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = src.height;
+  c.height = src.width;
+  const g = c.getContext("2d")!;
+  g.translate(c.width, 0);
+  g.rotate(Math.PI / 2);
+  g.drawImage(src, 0, 0);
   return c;
 }
 

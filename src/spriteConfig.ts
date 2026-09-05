@@ -337,7 +337,7 @@ export class SpriteConfigTool {
     const hover = uv
       ? [
           row(
-            "CURSOR",
+            "cursor",
             kvs(
               ["uv", fmt(uv)],
               ["px", `${uv.px.toFixed(1)}, ${uv.py.toFixed(1)}`],
@@ -348,39 +348,39 @@ export class SpriteConfigTool {
             )
           ),
         ]
-      : [row("CURSOR", "off board")];
+      : [row("cursor", "off board")];
     const pin = this.pinned
-      ? [row("PIN", kvs(["uv", fmt(this.pinned)], ["copied", this.copied || "—"]))]
-      : [row("PIN", "click sprite to copy name / uv / px")];
+      ? [row("pin", kvs(["uv", fmt(this.pinned)], ["copied", this.copied || "—"]))]
+      : [row("pin", "click sprite to copy name / uv / px")];
     const marks = rigMarks(key);
     const mountLines = marks.mounts.length
       ? marks.mounts.map((p, i) =>
           i === 0
-            ? row("MOUNT", kvs(["role", p.label], ["uv", fmt(p)]))
+            ? row("mount", kvs(["role", p.label], ["uv", fmt(p)]))
             : rowCont(kvs(["role", p.label], ["uv", fmt(p)]))
         )
-      : [row("MOUNT", "—")];
+      : [row("mount", "—")];
     const muzLines = marks.muzzles.length
       ? marks.muzzles.map((p, i) => {
           const tag = marks.muzzles.length > 1 ? i + 1 : 1;
           return i === 0
-            ? row("MUZZLE", kvs(["n", tag], ["uv", fmt(p)]))
+            ? row("muzzle", kvs(["n", tag], ["uv", fmt(p)]))
             : rowCont(kvs(["n", tag], ["uv", fmt(p)]));
         })
-      : [row("MUZZLE", "—")];
+      : [row("muzzle", "—")];
     const frameLine =
       frames.length > 1
         ? row(
-            "FRAME",
+            "frame",
             `${this.frameIdx + 1}/${frames.length} ${kvs(["name", String(frame)], ["nav", "← → / click strip"])}`
           )
-        : row("FRAME", "—");
+        : row("frame", "—");
     this.pendingStats = [
-      row("KEY", key),
-      row("TEX", `${tw}×${th}`),
+      row("key", key),
+      row("size", `${tw}×${th}`),
       frameLine,
       row(
-        "ORIGIN",
+        "origin",
         `${fmt(origin)} ${kv("px", `${(origin.x * tw).toFixed(1)}, ${(origin.y * th).toFixed(1)}`)}`
       ),
       layoutLine(key),
@@ -684,8 +684,8 @@ function spawnYawLine(key: string): string {
     const tex = sp.texture.replace(/__(woodland|desert|urban|snow|digital)$/, "");
     const hulk = sp.hulk.replace(/__(woodland|desert|urban|snow|digital)$/, "");
     if (tex === k || hulk === k) {
-      if (sp.spawnYaw == null) return row("SPAWN", "any");
-      return row("SPAWN", `${deg(sp.spawnYaw)} ${kv("around", "as-drawn")}`);
+      if (sp.spawnYaw == null) return row("spawnYaw", "any");
+      return row("spawnYaw", `${deg(sp.spawnYaw)} ${kv("around", "as-drawn")}`);
     }
   }
   for (const sp of allSpecs()) {
@@ -694,16 +694,16 @@ function spawnYawLine(key: string): string {
       sp.rotors.some((r) => r.tex === k) ||
       sp.dish?.tex === k;
     if (!part || sp.spawnYaw == null) continue;
-    return row("SPAWN", `${deg(sp.spawnYaw)} ${kv("follows", "body")}`);
+    return row("spawnYaw", `${deg(sp.spawnYaw)} ${kv("follows", "body")}`);
   }
-  return row("SPAWN", "any");
+  return row("spawnYaw", "any");
 }
 
 function layoutLine(key: string): string {
   const craft = craftByTexture(key);
   if (craft && (craft.body === key || craft.hulk === key)) {
     return row(
-      "LAYOUT",
+      "layout",
       kvs(
         ["craft", craft.id],
         ["rotor", fmt(craftOrigin(craft))],
@@ -713,10 +713,10 @@ function layoutLine(key: string): string {
     );
   }
   if (craft && craft.gun === key) {
-    return row("LAYOUT", kvs(["craft", craft.id], ["origin", fmt(craftGunOrigin(craft))], ["mount", fmt(craftGunMount(craft))]));
+    return row("layout", kvs(["craft", craft.id], ["origin", fmt(craftGunOrigin(craft))], ["mount", fmt(craftGunMount(craft))]));
   }
   if (key === "heli_rotor" || key === "enemy_heli_rotor")
-    return row("LAYOUT", `${kv("origin", "0.500, 0.500")} spin hub`);
+    return row("layout", `${kv("origin", "0.500, 0.500")} spin hub`);
   const sp = spriteSpecOf(key);
   if (sp) {
     const bits: [string, string | number][] = [];
@@ -728,9 +728,9 @@ function layoutLine(key: string): string {
       if (pts.length === 1) bits.push([role, fmt(pts[0]!)]);
       else bits.push([role, pts.length]);
     }
-    if (bits.length) return row("LAYOUT", kvs(...bits));
+    if (bits.length) return row("layout", kvs(...bits));
   }
-  return row("LAYOUT", kv("origin", fmt(spritePivot(key))));
+  return row("layout", kv("origin", fmt(spritePivot(key))));
 }
 
 function fmt(p: { x?: number; y?: number; uvx?: number; uvy?: number }): string {

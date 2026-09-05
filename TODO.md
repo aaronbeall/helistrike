@@ -9,10 +9,12 @@
   * Little Bird (faster, fixed aim guns, less arms, less armor)
   * Cobra
   * Stealthhawk
-  * Cyberhawk (control time)
+  * Cyberhawk (controls time)
   * VTOL
+  * Cheyenne II
+  * Warthog
   * Gunship (high flying)
-  * (Secret) Alien Spacecraft (cloaking)
+  * (Secret) Prometheus (alien, cloaking)
 * [ ] Single player progress, mission/vehicle unlocks, weapon/upgrade purchases
 * [ ] Additional weapon options (current: chain gun, rockets, hellfires, TOWs), loadout options specific to heli type
   * Miniguns (auto shoot at enemies)
@@ -22,11 +24,15 @@
   * Napalm
   * Laser beam
   * Tesla coil
+  * Hellstorm (3 mini hellfies, rapid fire, target prioritization and distribution)
   * Nuke
   * MIRV
   * Flak cannon
   * Drone (drive and detonate)
-  * Orbital strike (uses map to target)
+  * Target painter/Orbital strike
+  * Artillery (use map to designate, wait)
+  * Airstrike (use map)
+  * Predator strike (switch to high up view)
   * (Hidden) Rave Cannon
 * [ ] Counter-measures
 * [ ] Last stand / base defense game mode
@@ -77,6 +83,7 @@
 * [ ] Generated art height map
   * [ ] Whole image generation
   * [ ] Asset composition generation
+* Circular map?
 
 ## Fix
 

@@ -6,7 +6,7 @@ import {
   PLAYER_WPNS,
   type PlayerWpnSpec,
 } from "./combat";
-import { ENEMY_WPNS, isStreakShot, usesOfWeapon, type WeaponSpec } from "./roster";
+import { ENEMY_WPNS, usesOfWeapon, type WeaponSpec } from "./roster";
 import { CFG_INFO, CFG_VALUE, kv, kvs, makeConfigText, row, setStatsAndInfo } from "./configUi";
 import {
   FX_BLAST_CELLS,
@@ -377,12 +377,12 @@ function playerEntries(): CombatEntry[] {
   return Object.values(PLAYER_WPNS).map((w) => {
     const block = formatPlayer(w);
     return {
-      id: `player_${w.id}`,
+      id: `player_${w.kind}`,
       cat: "player" as const,
       label: w.name,
       tag: "PLY",
       tex: w.look,
-      rotOff: isStreakShot(w.look) ? 0 : Math.PI / 2,
+      rotOff: 0,
       stats: block.stats,
       info: block.info,
     };
@@ -392,19 +392,20 @@ function playerEntries(): CombatEntry[] {
 function formatPlayer(w: PlayerWpnSpec): { stats: string[]; info: string[] } {
   const ammo = w.ammo === Infinity ? "∞" : String(w.ammo);
   const stats = [
-    row("KIND", `player / ${w.id}`),
-    row("LABEL", w.name),
-    row("AMMO", ammo),
-    row("FIRE CD", `${w.fireCd}s`),
-    row("SPEED", w.speed),
-    row("DMG", `${w.dmg} ${kv("blast", w.blast)}`),
-    row("LIFE", w.id === "cannon" ? `${w.life} (+0.55 air)` : w.life),
-    row("LOOK", w.look),
+    row("kind", w.kind),
+    row("name", w.name),
+    row("ammo", ammo),
+    row("fireCd", `${w.fireCd}s`),
+    row("speed", w.speed),
+    row("dmg", `${w.dmg} ${kv("blast", w.blast)}`),
+    row("life", w.kind === "cannon" ? `${w.life} (+0.55 air)` : w.life),
+    row("look", w.look),
+    row("scale", w.scale),
   ];
-  if (w.id === "hellfire" || w.id === "tow") {
+  if (w.kind === "hellfire" || w.kind === "tow") {
     stats.push(
       row(
-        "TIMING",
+        "timing",
         kvs(
           ["MISSILE_IGNITE", MISSILE_IGNITE],
           ["HELLFIRE_LOCK_T", HELLFIRE_LOCK_T],
@@ -422,32 +423,35 @@ function formatPlayer(w: PlayerWpnSpec): { stats: string[]; info: string[] } {
 /** Shared enemy weapon tables — not per-unit SPECS copies. */
 function presetEntries(): CombatEntry[] {
   return ENEMY_WPNS.map((p) => {
-    const block = formatPreset(p.label, p.w);
+    const block = formatPreset(p.id, p.label, p.w);
     return {
       id: `preset_${p.id}`,
       cat: "preset" as const,
       label: p.label,
       tag: "PRE",
       tex: p.w.look,
-      rotOff: isStreakShot(p.w.look) ? 0 : Math.PI / 2,
+      rotOff: 0,
       stats: block.stats,
       info: block.info,
     };
   });
 }
 
-function formatPreset(label: string, w: WeaponSpec): { stats: string[]; info: string[] } {
+function formatPreset(id: string, label: string, w: WeaponSpec): { stats: string[]; info: string[] } {
   const uses = usesOfWeapon(w);
   return {
     stats: [
-      row("KIND", `enemy preset / ${label}`),
-      row("LOOK", w.look),
-      row("FIRE CD", `${w.fireCd}s`),
-      row("RANGE", w.range),
-      row("SPEED", w.speed),
-      row("DMG", `${w.dmg} ${kv("blast", w.blast)}`),
-      row("BURST", w.burst != null ? `${w.burst}×${w.burstGap ?? "?"}` : "—"),
-      row("MUZZLE", kvs(["len", w.muzzleLen], w.jitter != null && ["jitter", w.jitter])),
+      row("id", id),
+      row("label", label),
+      row("kind", w.kind),
+      row("look", w.look),
+      row("scale", w.scale),
+      row("fireCd", `${w.fireCd}s`),
+      row("range", w.range),
+      row("speed", w.speed),
+      row("dmg", `${w.dmg} ${kv("blast", w.blast)}`),
+      row("burst", w.burst != null ? `${w.burst}×${w.burstGap ?? "?"}` : "—"),
+      row("jitter", w.jitter != null ? w.jitter : "—"),
     ],
     info: [
       uses.length ? `used by: ${uses.join(" · ")}` : "used by: —",
@@ -466,10 +470,10 @@ function fxEntries(): CombatEntry[] {
     tag: "FX",
     tex: "fx_blast_0",
     stats: [
-      row("KIND", "wreck-map blast stamp"),
-      row("TEX", `fx_blast_0..${FX_BLAST_CELLS - 1}`),
-      row("CELLS", FX_BLAST_CELLS),
-      row("BAKE", "fit 88 from src_blasts 2×2"),
+      row("kind", "blast"),
+      row("tex", `fx_blast_0..${FX_BLAST_CELLS - 1}`),
+      row("cells", FX_BLAST_CELLS),
+      row("bake", "fit 88 from src_blasts 2×2"),
     ],
     info: ["source: sprites.ts prepareArt / src_blasts"],
   });
@@ -486,11 +490,11 @@ function fxSheetEntry(kind: FxKind): CombatEntry {
     tex: key,
     frames: FX_VARIANTS,
     stats: [
-      row("KIND", `fx sheet / ${kind}`),
-      row("TEX", key),
-      row("FRAMES", FX_VARIANTS),
-      row("BAKE", FX_SHEET_SIZE[kind]),
-      row("SRC", `src_fx_${kind}_0..${FX_VARIANTS - 1}`),
+      row("kind", kind),
+      row("tex", key),
+      row("frames", FX_VARIANTS),
+      row("bake", FX_SHEET_SIZE[kind]),
+      row("src", `src_fx_${kind}_0..${FX_VARIANTS - 1}`),
     ],
     info: ["source: sprites.ts FX_KINDS / putFxSheet"],
   };

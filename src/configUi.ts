@@ -8,16 +8,16 @@ export const CFG_INFO = "#8a8470";
 export const CFG_LIVE = "#7eb8a0";
 
 const MONO = "Share Tech Mono, monospace";
-const ROW_PAD = 11;
+/** Column width for `row` labels — sized for camelCase field names (`homePlayer`, …). */
+const ROW_PAD = 14;
 
 type KvPair = [string, string | number];
 type KvArg = KvPair | false | null | undefined;
 
-/** Row label + value: `LABEL    value`. */
+/** Row label + value: `fieldName    value` (label = code field name, preserved as-is). */
 export function row(label: string, value: string | number = ""): string {
-  const lab = label.toUpperCase();
-  if (value === "" || value === undefined) return lab;
-  return `${lab.padEnd(Math.max(ROW_PAD, lab.length + 1))}${value}`;
+  if (value === "" || value === undefined) return label;
+  return `${label.padEnd(Math.max(ROW_PAD, label.length + 1))}${value}`;
 }
 
 /** Indented continuation under a row (sub-value block). */
@@ -51,6 +51,8 @@ export function makeConfigText(
       fontSize: opts.fontSize ?? "12px",
       color: opts.color ?? CFG_VALUE,
       lineSpacing: opts.lineSpacing ?? 4,
+      // Share Tech Mono’s `_` sits below the default canvas metrics and gets clipped → reads as a space.
+      padding: { bottom: 3 },
       ...(opts.wrapW != null ? { wordWrap: { width: opts.wrapW } } : {}),
     })
     .setScrollFactor(0)

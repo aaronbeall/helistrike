@@ -1,13 +1,13 @@
-import { specOf, type FragCat, type ShotLook, type UnitKind, type PartMount } from "./roster";
+import { specOf, type FragCat, type ShotKind, type ShotLook, type UnitKind, type PartMount } from "./roster";
 import type { CamoKind } from "./camo";
 
 export type { FragCat, UnitKind } from "./roster";
 
-export type Wpn = "cannon" | "rocket" | "hellfire" | "tow";
+/** Player weapon slot / flight class (`ShotKind`). */
+export type Wpn = ShotKind;
 
 /** Player loadout — shared by fire logic and the combat config browser. */
 export interface PlayerWpnSpec {
-  id: Wpn;
   name: string;
   ammo: number;
   fireCd: number;
@@ -16,14 +16,17 @@ export interface PlayerWpnSpec {
   dmg: number;
   blast: number;
   life: number;
+  /** Flight behavior (= `PLAYER_WPNS` key / slot id). */
+  kind: ShotKind;
   /** Projectile texture key. */
   look: ShotLook;
+  /** Projectile draw scale. */
+  scale: number;
   notes: string[];
 }
 
 export const PLAYER_WPNS: Record<Wpn, PlayerWpnSpec> = {
   cannon: {
-    id: "cannon",
     name: "M230 CHAIN",
     ammo: Infinity,
     fireCd: 0.07,
@@ -31,7 +34,9 @@ export const PLAYER_WPNS: Record<Wpn, PlayerWpnSpec> = {
     dmg: 8,
     blast: 18,
     life: 0.08,
+    kind: "cannon",
     look: "shot_chain",
+    scale: 0.58,
     notes: [
       "spread ±0.04 rad",
       "air life +0.55",
@@ -41,7 +46,6 @@ export const PLAYER_WPNS: Record<Wpn, PlayerWpnSpec> = {
     ],
   },
   rocket: {
-    id: "rocket",
     name: "HYDRA PODS",
     ammo: 38,
     fireCd: 0.22,
@@ -49,11 +53,12 @@ export const PLAYER_WPNS: Record<Wpn, PlayerWpnSpec> = {
     dmg: 110,
     blast: 140,
     life: 0.08,
+    kind: "rocket",
     look: "shot_rocket",
+    scale: 1,
     notes: ["ballistic to aim", "missile muzzle n12 200–520", "HE explode"],
   },
   hellfire: {
-    id: "hellfire",
     name: "HELLFIRE",
     ammo: 8,
     fireCd: 0.55,
@@ -61,7 +66,9 @@ export const PLAYER_WPNS: Record<Wpn, PlayerWpnSpec> = {
     dmg: 185,
     blast: 175,
     life: 4.9,
+    kind: "hellfire",
     look: "shot_hellfire",
+    scale: 1,
     notes: [
       "kick speed then motor burn",
       "lock acquire 0.5s  pick r160",
@@ -71,7 +78,6 @@ export const PLAYER_WPNS: Record<Wpn, PlayerWpnSpec> = {
     ],
   },
   tow: {
-    id: "tow",
     name: "TOW WIRE",
     ammo: 6,
     fireCd: 1.1,
@@ -79,7 +85,9 @@ export const PLAYER_WPNS: Record<Wpn, PlayerWpnSpec> = {
     dmg: 170,
     blast: 160,
     life: 5.2,
+    kind: "tow",
     look: "shot_tow",
+    scale: 1,
     notes: [
       "guided wire  cruise 300",
       "ignite MISSILE_IGNITE+0.06",
@@ -89,9 +97,9 @@ export const PLAYER_WPNS: Record<Wpn, PlayerWpnSpec> = {
   },
 };
 
-export const WPN_LIST: { id: Wpn; name: string; ammo: number }[] = (Object.keys(PLAYER_WPNS) as Wpn[]).map((id) => {
-  const w = PLAYER_WPNS[id]!;
-  return { id: w.id, name: w.name, ammo: w.ammo };
+export const WPN_LIST: { kind: Wpn; name: string; ammo: number }[] = (Object.keys(PLAYER_WPNS) as Wpn[]).map((kind) => {
+  const w = PLAYER_WPNS[kind]!;
+  return { kind: w.kind, name: w.name, ammo: w.ammo };
 });
 
 /** Shared missile timing (player hellfire / TOW). */
@@ -169,6 +177,7 @@ export interface Shot {
   loft?: number;
   yaw?: number;
   look?: ShotLook;
+  /** Draw scale from weapon preset (× secondary mul when applicable). */
   scale?: number;
   wire?: { x: number; y: number; z: number }[];
   wireSide?: number;
