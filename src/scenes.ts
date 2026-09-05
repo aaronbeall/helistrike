@@ -50,6 +50,8 @@ import {
   applyTerrainLight,
   sampleBiome,
   waterSurfaceZ,
+  GROUND_H_ZERO,
+  GROUND_Z_SCALE,
   SCALE,
   WORLD,
   WRECK_TEX,
@@ -64,6 +66,11 @@ import {
 function gunWorldRot(_tex: string, aim: number): number {
   return aim + Math.PI / 2;
 }
+
+/** Absolute world-Z shot band (not AGL). Fade from ×1 → remove at ×1.2 of (peak + MAX_AGL). */
+const SHOT_Z_REF = (1 - GROUND_H_ZERO) * GROUND_Z_SCALE + MAX_AGL;
+const SHOT_Z_FADE = SHOT_Z_REF;
+const SHOT_Z_MAX = SHOT_Z_REF * 1.2;
 
 function shotLookOf(s: Shot): ShotLook {
   if (s.look) return s.look;
@@ -1355,20 +1362,22 @@ export class MissionScene extends Phaser.Scene {
     this.stampBrush.setBlendMode(Phaser.BlendModes.NORMAL);
   }
 
-  /** Screen scale matching live sprites (`zScale` + optional ground slope). */
+  /** Screen scale matching live sprites (`zScale` + optional travel-grade squash). */
   wreckDrawScale(
     x: number,
     y: number,
     z: number,
     scale = 1,
-    slope = false
+    slope = false,
+    angle = 0
   ): { sx: number; sy: number } {
     const zs = zScale(z);
     if (!slope) return { sx: scale * zs, sy: scale * zs };
     const sl = groundSlope(this.world, x, y);
+    const grade = Phaser.Math.Clamp(sl.dx * Math.cos(angle) + sl.dy * Math.sin(angle), -0.4, 0.4);
     return {
-      sx: scale * (1 + Phaser.Math.Clamp(Math.abs(sl.dx), 0, 0.4) * 0.22) * zs,
-      sy: scale * (1 - Phaser.Math.Clamp(sl.dy, -0.45, 0.45) * 0.2) * zs,
+      sx: scale * (1 + Math.abs(grade) * 0.05) * zs,
+      sy: scale * (1 - grade * 0.12) * zs,
     };
   }
 
@@ -2359,6 +2368,19 @@ export class MissionScene extends Phaser.Scene {
     this.shots.push(s);
   }
 
+  /** XY after tip-origin nudge — use for flight time so aim matches spawn. */
+  shotSpawnXY(
+    x: number,
+    y: number,
+    angle: number,
+    z: number,
+    look: ShotLook,
+    scale = 1
+  ): { x: number; y: number } {
+    const n = this.shotTipNudge(look, angle, z, scale);
+    return { x: x + n.x, y: y + n.y };
+  }
+
   /** Forward shift so tip-origin art clears the barrel (ox × streak length). */
   shotTipNudge(
     look: ShotLook,
@@ -2684,8 +2706,14 @@ export class MissionScene extends Phaser.Scene {
     ) {
       return true;
     }
-    const ceil = groundZ(this.world, s.x, s.y) + MAX_AGL + 28;
-    return s.z > ceil;
+    return false;
+  }
+
+  /** Alpha while climbing through the absolute ceiling fade band (1 → 0). */
+  shotCeilAlpha(z: number): number {
+    if (z <= SHOT_Z_FADE) return 1;
+    if (z >= SHOT_Z_MAX) return 0;
+    return 1 - (z - SHOT_Z_FADE) / (SHOT_Z_MAX - SHOT_Z_FADE);
   }
 
   updateShots(dt: number): void {
@@ -2795,14 +2823,14 @@ export class MissionScene extends Phaser.Scene {
       s.x += s.vx * dt;
       s.y += s.vy * dt;
       s.z += s.vz * dt;
-      if (s.kind === "hellfire") {
-        const zCeil = groundZ(this.world, s.x, s.y) + MAX_AGL + 70;
-        if (s.z > zCeil) {
-          s.z = zCeil;
-          if (s.vz > 0) s.vz = 0;
-        }
-      }
+      if (s.z >= SHOT_Z_MAX) continue;
       s.life -= dt;
+      const ceilFading = s.z > SHOT_Z_FADE;
+      if (ceilFading) {
+        this.emitShotTrail(s, x0, y0, z0);
+        remain.push(s);
+        continue;
+      }
       if (s.kind === "tow" && s.from === "player") this.simulateTowWire(s, dt);
       // Repel Hellfire/TOW off ground during pre-ignition instead of detonating
       const preIgnite = (s.kind === "hellfire" || s.kind === "tow") && s.from === "player" && s.motor != null && s.motor < 0;
@@ -3474,7 +3502,7 @@ export class MissionScene extends Phaser.Scene {
       if (throwGuns || throwRotors || throwDish) {
         const hullKey = resolveSkin(this.textures, sp.hulk, u.camo);
         const hp = spritePivot(hullKey);
-        const hs = this.wreckDrawScale(u.x, u.y, u.z, 1, !sp.aerial);
+        const hs = this.wreckDrawScale(u.x, u.y, u.z, 1, isGroundVehicle(u.kind), u.angle);
         // Match live hull screen Y (perspective lift); stamp without it snaps south of the body.
         this.stampWreck(hullKey, u.x, u.y - screenLift(u.z), u.angle + Math.PI / 2, hs.sx, 0.95, hp.x, hp.y, hs.sy);
         const throwOff = (key: string, ang: number, x: number, y: number, scale = 1, extra: Partial<Frag> = {}) => {
@@ -3579,7 +3607,7 @@ export class MissionScene extends Phaser.Scene {
       } else {
         const hulkKey = resolveSkin(this.textures, hulkOf(u.kind), u.camo);
         const hp = spritePivot(hulkKey);
-        const hs = this.wreckDrawScale(u.x, u.y, u.z, 1, !sp.aerial);
+        const hs = this.wreckDrawScale(u.x, u.y, u.z, 1, isGroundVehicle(u.kind), u.angle);
         this.stampWreck(
           this.textures.exists(hulkKey) ? hulkKey : "hulk_crater",
           u.x,
@@ -5281,7 +5309,9 @@ export class MissionScene extends Phaser.Scene {
         const fireAng = barrelAng + jitter;
         const muzzleZ = u.z + heightOf(u.kind) * 0.7 + ZOff.shot;
         const tgtZ = h.z + h.height * 0.5;
-        const shotDist = Math.max(40, dist);
+        // Flight time from post-nudge tip (spawnShot advances by SHOT_ORIGIN).
+        const spawn = this.shotSpawnXY(muzzle.x, muzzle.y, fireAng, muzzleZ, wpn.look, wpn.scale);
+        const shotDist = Math.max(40, Math.hypot(h.x - spawn.x, h.y - spawn.y));
         const t = Math.max(0.12, shotDist / wpn.speed);
         u.muzzleT = 0.07;
         u.muzzleJitS = range(0.9, 1.12);
@@ -5366,7 +5396,15 @@ export class MissionScene extends Phaser.Scene {
             const jit = pw.jitter ?? 0.04;
             const fireAng = u.angle + (Math.random() - 0.5) * jit;
             const tgtZ = h.z + h.height * 0.5;
-            const missileT = Math.max(0.25, dist / pw.speed);
+            const spawn = this.shotSpawnXY(
+              px,
+              py,
+              fireAng,
+              muzzleZ,
+              pw.look,
+              pw.scale * (sec.scale ?? 1)
+            );
+            const missileT = Math.max(0.25, Math.hypot(h.x - spawn.x, h.y - spawn.y) / pw.speed);
             const home = sec.homePlayer !== false;
             this.spawnShot({
               kind: pw.kind,
@@ -5435,12 +5473,11 @@ export class MissionScene extends Phaser.Scene {
         .setPosition(u.x, u.y - lift)
         .setRotation(rot)
         .setDepth(worldDepth(u.z, ZOff.body + zBias));
-      if (!sp.aerial) {
+      if (isGroundVehicle(u.kind)) {
+        // Cheap pitch approx: squash hull length by slope along facing (same groundSlope sample as before).
         const sl = groundSlope(this.world, u.x, u.y);
-        im.setScale(
-          (1 + Phaser.Math.Clamp(Math.abs(sl.dx), 0, 0.4) * 0.22) * zs,
-          (1 - Phaser.Math.Clamp(sl.dy, -0.45, 0.45) * 0.2) * zs
-        );
+        const grade = Phaser.Math.Clamp(sl.dx * Math.cos(u.angle) + sl.dy * Math.sin(u.angle), -0.4, 0.4);
+        im.setScale((1 + Math.abs(grade) * 0.05) * zs, (1 - grade * 0.12) * zs);
       } else im.setScale(zs);
       let pi = 0;
       const gunDepth = sp.move === "heli" ? ZOff.gun : ZOff.turret;
@@ -5623,13 +5660,16 @@ export class MissionScene extends Phaser.Scene {
       const across = 1 + pitchN * 0.06;
       sh.setVisible(true).setOrigin(ox, 0.5);
       this.applyCastShadow(sh, s.x, s.y, s.z, key, rot, sc);
+      const fadeA = this.shotCeilAlpha(s.z);
       im.setVisible(true)
         .setTexture(key)
         .setOrigin(ox, 0.5)
         .setPosition(s.x, s.y - screenLift(s.z))
         .setRotation(rot)
         .setScale(sc * zs * along, sc * zs * across)
+        .setAlpha(fadeA)
         .setDepth(worldDepth(s.z));
+      if (fadeA < 1) sh.setAlpha(sh.alpha * fadeA);
     });
   }
 

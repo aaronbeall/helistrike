@@ -16,8 +16,8 @@
   * Gunship (high flying)
   * (Secret) Prometheus (alien, cloaking)
 * [ ] Single player progress, mission/vehicle unlocks, weapon/upgrade purchases
-* [ ] Additional weapon options (current: chain gun, rockets, hellfires, TOWs), loadout options specific to heli type
-  * Miniguns (auto shoot at enemies)
+* Additional weapon options (current: chain gun, rockets, hellfires, TOWs), loadout options specific to heli type
+  * [ ] Miniguns
   * Spike NLOS (long-range guided)
   * Sidewinder (air-to-air)
   * Cluster bomb
@@ -32,6 +32,7 @@
   * Target painter/Orbital strike
   * Artillery (use map to designate, wait)
   * Airstrike (use map)
+  * EMP (temporarily disables mechs)
   * Predator strike (switch to high up view)
   * (Hidden) Rave Cannon
 * [ ] Counter-measures
@@ -83,7 +84,8 @@
 * [ ] Generated art height map
   * [ ] Whole image generation
   * [ ] Asset composition generation
-* Circular map?
+* [ ] Circular map?
+* [ ] Hit force (knockback, torque)
 
 ## Fix
 
