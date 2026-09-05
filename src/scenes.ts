@@ -2457,7 +2457,7 @@ export class MissionScene extends Phaser.Scene {
       expBias?: number;
     }
   ): void {
-    const extra = this.sparks.length + opt.n - 280 * BURST_COUNT_MUL;
+    const extra = this.sparks.length + opt.n - 280;
     if (extra > 0) this.sparks.splice(0, extra);
     const biome = sampleBiome(this.world, x, y);
     const k = opt.expBias;
@@ -3299,7 +3299,7 @@ export class MissionScene extends Phaser.Scene {
     const expK = soft ? undefined : biasLen > 40 ? Phaser.Math.Linear(1.85, 2.7, t) : 1.5;
     this.spawnSparks(x, y, z + 10, {
       style: "object",
-      n: Math.max(4, Math.round(22 * mul)) * BURST_COUNT_MUL,
+      n: Math.max(4, Math.round(22 * mul)),
       spdMin: 140 * spdBoost,
       spdMax: 480 * spdBoost,
       bx: dx,
@@ -3322,7 +3322,7 @@ export class MissionScene extends Phaser.Scene {
       this.blastFire.particleAngle = { min: 0, max: 360 };
       this.blastFire.speed = { min: 180, max: 480 };
     }
-    this.blastFire.explode(Math.max(3, Math.round(26 * mul)) * BURST_COUNT_MUL, x, sy);
+    this.blastFire.explode(Math.max(3, Math.round(26 * mul)), x, sy);
     this.spawnImpactFlash(
       x,
       sy,
@@ -3371,7 +3371,7 @@ export class MissionScene extends Phaser.Scene {
     size01 = 0.7,
     power = 1
   ): void {
-    const extra = this.frags.filter((f) => f.trailOnly).length + 8 - 40 * BURST_COUNT_MUL;
+    const extra = this.frags.filter((f) => f.trailOnly).length + 8 - 40;
     if (extra > 0) {
       let drop = extra;
       this.frags = this.frags.filter((f) => {
@@ -3385,8 +3385,7 @@ export class MissionScene extends Phaser.Scene {
     const p = Phaser.Math.Clamp(power, 0.5, 2.4);
     const t = Math.min(1, (p - 0.5) / 1.9);
     const n =
-      (Math.max(2, Math.round(Phaser.Math.Linear(soft ? 2 : 4, soft ? 5 : 11, size01))) + ((Math.random() * 2) | 0)) *
-      BURST_COUNT_MUL;
+      Math.max(2, Math.round(Phaser.Math.Linear(soft ? 2 : 4, soft ? 5 : 11, size01))) + ((Math.random() * 2) | 0);
     const spdMul = Phaser.Math.Linear(0.95, 1.4, t);
     const tight = soft ? 0.18 : Phaser.Math.Linear(0.45, 0.7, t);
     for (let i = 0; i < n; i++) {
@@ -3539,9 +3538,7 @@ export class MissionScene extends Phaser.Scene {
           );
         }
       }
-      const n =
-        Math.max(2, Math.round((sp.organic ? 4 : building ? 16 : 10) * Phaser.Math.Linear(0.4, 1.2, boom))) *
-        BURST_COUNT_MUL;
+      const n = Math.max(2, Math.round((sp.organic ? 4 : building ? 16 : 10) * Phaser.Math.Linear(0.4, 1.2, boom)));
       const keys = fragKeys(u.kind);
       const debrisSpdMul = burst ? Phaser.Math.Linear(0.98, 1.35, Math.min(1, (burst.power - 0.5) / 1.9)) : 1;
       const debrisTight = burst ? Phaser.Math.Linear(0.48, 0.72, Math.min(1, (burst.power - 0.5) / 1.9)) : 0;
