@@ -29,6 +29,7 @@ Config rigs dump live config objects via `dumpConfig` (`configUi.ts`); row label
 | **wpn(id, over)** | Fork a named preset (new object) |
 | **kind** | Flight class: `cannon` / `rocket` / `hellfire` / `tow` |
 | **look** | Projectile art key (= Phaser texture) |
+| **SHOT_ORIGIN** | Tip-biased UV pivot for all shot art (`0.84, 0.5`) |
 | **scale** | Projectile draw scale on the weapon preset |
 | **fireCd** | Cooldown between shots |
 | **shot_*** | Projectile texture prefix (all nose-along-+X) |

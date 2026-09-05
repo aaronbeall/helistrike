@@ -12,6 +12,7 @@ import {
   wheelFragKeys,
   WPN_LIST,
   PLAYER_WPNS,
+  SHOT_ORIGIN,
   MISSILE_IGNITE,
   HELLFIRE_LOCK_T,
   HELLFIRE_SEEK_DELAY,
@@ -63,9 +64,6 @@ import {
 function gunWorldRot(_tex: string, aim: number): number {
   return aim + Math.PI / 2;
 }
-
-/** Tip-biased origin for all projectile art (nose-along-+X). */
-const SHOT_ORIGIN_X = 0.84;
 
 function shotLookOf(s: Shot): ShotLook {
   if (s.look) return s.look;
@@ -2372,7 +2370,7 @@ export class MissionScene extends Phaser.Scene {
     const img = this.textures.exists(look)
       ? (this.textures.get(look).getSourceImage() as { width: number; height: number })
       : { width: 48, height: 10 };
-    const d = SHOT_ORIGIN_X * img.width * sc;
+    const d = SHOT_ORIGIN.x * img.width * sc;
     return { x: Math.cos(angle) * d, y: Math.sin(angle) * d };
   }
 
@@ -5615,7 +5613,7 @@ export class MissionScene extends Phaser.Scene {
       const im = kids[i * 2 + 1]!;
       const key = shotLookOf(s);
       const rot = s.angle;
-      const ox = SHOT_ORIGIN_X;
+      const ox = SHOT_ORIGIN.x;
       const sc = s.scale ?? 1;
       const zs = zScale(s.z);
       // Foreshorten along the barrel when climbing/diving (non-zero vz).

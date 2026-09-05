@@ -4,6 +4,7 @@ import {
   HELLFIRE_SEEK_DELAY,
   MISSILE_IGNITE,
   PLAYER_WPNS,
+  SHOT_ORIGIN,
   type PlayerWpnSpec,
 } from "./combat";
 import { ENEMY_WPNS, usesOfWeapon } from "./roster";
@@ -14,7 +15,6 @@ import {
   FX_SHEET_SIZE,
   FX_VARIANTS,
   nameGameTexture,
-  spritePivot,
   type FxKind,
 } from "./sprites";
 
@@ -22,6 +22,11 @@ const DEPTH = 9300;
 const MONO = "Share Tech Mono, monospace";
 const GOLD = "#e8b84a";
 const PAPER = CFG_VALUE;
+const ORIGIN_COLOR = 0xe8b84a;
+const CENTER_COLOR = 0x5ec8ff;
+
+/** Geometric center of projectile art (UV). */
+const SHOT_CENTER = { x: 0.5, y: 0.5 } as const;
 
 const LIST_X = 16;
 const LIST_Y = 40;
@@ -242,7 +247,7 @@ export class CombatConfigTool {
     const e = items[this.idx]!;
 
     this.hintTxt.setText(
-      `COMBAT RIG   \` cycle / close   [ ] cycle   , . page   - + zoom ${this.zoom}×   G filter ${this.filter.toUpperCase()}`
+      `COMBAT RIG   \` cycle / close   [ ] cycle   , . page   - + zoom ${this.zoom}×   G filter ${this.filter.toUpperCase()}   gold origin · cyan center`
     );
 
     const size = this.pageSize();
@@ -306,8 +311,8 @@ export class CombatConfigTool {
       this.preview.setFrame(0);
     }
 
-    const pivot = spritePivot(tex);
-    this.preview.setOrigin(e.cat === "fx" ? 0.5 : pivot.x, e.cat === "fx" ? 0.5 : pivot.y);
+    const pivot = { x: 0.5, y: 0.5 };
+    this.preview.setOrigin(pivot.x, pivot.y);
     const s = this.zoom;
     this.preview.setScale(s);
     const rot = e.rotOff ?? (e.cat === "fx" ? 0 : Math.PI / 2);
@@ -351,6 +356,7 @@ export class CombatConfigTool {
 
     this.overlay.clear();
     if (e.cat !== "fx") {
+      this.drawShotMarks(rot);
       // Rough blast ring at preview zoom (blast is world units).
       const blast = parseBlast(e);
       if (blast > 0) {
@@ -359,14 +365,45 @@ export class CombatConfigTool {
       }
     }
   }
+
+  /** Center (cyan) + tip-biased origin (gold) on projectile art. */
+  private drawShotMarks(rot: number): void {
+    const spr = this.preview;
+    const uv = (u: number, v: number) => {
+      const mx = (u - spr.originX) * spr.displayWidth;
+      const my = (v - spr.originY) * spr.displayHeight;
+      const ca = Math.cos(rot);
+      const sa = Math.sin(rot);
+      return { x: spr.x + mx * ca - my * sa, y: spr.y + mx * sa + my * ca };
+    };
+    const g = this.overlay;
+    const c = uv(SHOT_CENTER.x, SHOT_CENTER.y);
+    g.lineStyle(1.25, CENTER_COLOR, 0.9);
+    g.lineBetween(c.x - 10, c.y, c.x + 10, c.y);
+    g.lineBetween(c.x, c.y - 10, c.x, c.y + 10);
+    g.strokeCircle(c.x, c.y, 4);
+
+    const o = uv(SHOT_ORIGIN.x, SHOT_ORIGIN.y);
+    g.lineStyle(1.5, ORIGIN_COLOR, 0.95);
+    g.lineBetween(o.x - 14, o.y, o.x + 14, o.y);
+    g.lineBetween(o.x, o.y - 14, o.x, o.y + 14);
+    g.strokeCircle(o.x, o.y, 6);
+  }
 }
 
 function parseBlast(e: CombatEntry): number {
   for (const line of e.stats) {
-    const m = line.match(/\(blast:\s*(\d+(?:\.\d+)?)\)/i);
+    const m = line.match(/\bblast:\s*(\d+(?:\.\d+)?)/i);
     if (m) return Number(m[1]);
   }
   return 0;
+}
+
+function shotLayoutDump(): string[] {
+  return dumpConfig({
+    center: { x: SHOT_CENTER.x, y: SHOT_CENTER.y },
+    origin: { x: SHOT_ORIGIN.x, y: SHOT_ORIGIN.y },
+  });
 }
 
 export function buildCombatCatalog(): CombatEntry[] {
@@ -390,7 +427,7 @@ function playerEntries(): CombatEntry[] {
 }
 
 function formatPlayer(w: PlayerWpnSpec): { stats: string[]; info: string[] } {
-  const info = [...w.notes.map((n) => `· ${n}`), "source: combat.ts PLAYER_WPNS"];
+  const info = [...w.notes.map((n) => `· ${n}`), "source: combat.ts PLAYER_WPNS / SHOT_ORIGIN"];
   if (w.kind === "hellfire" || w.kind === "tow") {
     info.push(
       `MISSILE_IGNITE ${MISSILE_IGNITE}`,
@@ -399,7 +436,7 @@ function formatPlayer(w: PlayerWpnSpec): { stats: string[]; info: string[] } {
     );
   }
   return {
-    stats: dumpConfig(w, { skip: ["notes"] }),
+    stats: [...dumpConfig(w, { skip: ["notes"] }), ...shotLayoutDump()],
     info,
   };
 }
@@ -415,10 +452,11 @@ function presetEntries(): CombatEntry[] {
       tag: "PRE",
       tex: p.w.look,
       rotOff: 0,
-      stats: dumpConfig({ id: p.id, label: p.label, ...p.w }),
+      stats: [...dumpConfig({ id: p.id, label: p.label, ...p.w }), ...shotLayoutDump()],
       info: [
         uses.length ? `used by: ${uses.join(" · ")}` : "used by: —",
         "source: roster.ts ENEMY_WPNS / SPECS / usesOfWeapon",
+        "origin: combat.ts SHOT_ORIGIN",
       ],
     };
   });
