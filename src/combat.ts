@@ -8,6 +8,8 @@ export type Wpn = ShotKind;
 
 /** Player loadout — shared by fire logic and the combat config browser. */
 export interface PlayerWpnSpec {
+  /** Loadout identity (slot / catalog). May diverge from `kind` later (e.g. upgraded cannon). */
+  id: string;
   name: string;
   ammo: number;
   fireCd: number;
@@ -16,7 +18,7 @@ export interface PlayerWpnSpec {
   dmg: number;
   blast: number;
   life: number;
-  /** Flight behavior (= `PLAYER_WPNS` key / slot id). */
+  /** Flight / seek behavior (`ShotKind`). */
   kind: ShotKind;
   /** Projectile texture key. */
   look: ShotLook;
@@ -27,6 +29,7 @@ export interface PlayerWpnSpec {
 
 export const PLAYER_WPNS: Record<Wpn, PlayerWpnSpec> = {
   cannon: {
+    id: "cannon",
     name: "M230 CHAIN",
     ammo: Infinity,
     fireCd: 0.07,
@@ -46,6 +49,7 @@ export const PLAYER_WPNS: Record<Wpn, PlayerWpnSpec> = {
     ],
   },
   rocket: {
+    id: "rocket",
     name: "HYDRA PODS",
     ammo: 38,
     fireCd: 0.22,
@@ -59,6 +63,7 @@ export const PLAYER_WPNS: Record<Wpn, PlayerWpnSpec> = {
     notes: ["ballistic to aim", "missile muzzle n12 200–520", "HE explode"],
   },
   hellfire: {
+    id: "hellfire",
     name: "HELLFIRE",
     ammo: 8,
     fireCd: 0.55,
@@ -78,6 +83,7 @@ export const PLAYER_WPNS: Record<Wpn, PlayerWpnSpec> = {
     ],
   },
   tow: {
+    id: "tow",
     name: "TOW WIRE",
     ammo: 6,
     fireCd: 1.1,
@@ -97,9 +103,11 @@ export const PLAYER_WPNS: Record<Wpn, PlayerWpnSpec> = {
   },
 };
 
-export const WPN_LIST: { kind: Wpn; name: string; ammo: number }[] = (Object.keys(PLAYER_WPNS) as Wpn[]).map((kind) => {
-  const w = PLAYER_WPNS[kind]!;
-  return { kind: w.kind, name: w.name, ammo: w.ammo };
+export const WPN_LIST: { id: string; kind: Wpn; name: string; ammo: number }[] = (
+  Object.keys(PLAYER_WPNS) as Wpn[]
+).map((key) => {
+  const w = PLAYER_WPNS[key]!;
+  return { id: w.id, kind: w.kind, name: w.name, ammo: w.ammo };
 });
 
 /** Shared missile timing (player hellfire / TOW). */

@@ -377,7 +377,7 @@ function playerEntries(): CombatEntry[] {
   return Object.values(PLAYER_WPNS).map((w) => {
     const block = formatPlayer(w);
     return {
-      id: `player_${w.kind}`,
+      id: `player_${w.id}`,
       cat: "player" as const,
       label: w.name,
       tag: "PLY",
