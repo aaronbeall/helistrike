@@ -3473,7 +3473,7 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 
-  destroyUnit(u: Unit, quiet = false, skipSplash = false): void {
+  destroyUnit(u: Unit, quiet = false, skipSplash = false, skipAirCrash = false): void {
     if (u.dead) return;
     u.dead = true;
     for (const crew of this.units) {
@@ -3600,10 +3600,10 @@ export class MissionScene extends Phaser.Scene {
       }
     }
     const guns = gunsOf(u);
-    const isHeli = sp.move === "heli";
+    // Helis and drones: spinning hull falls then impacts — not on suicide/kamikaze pops.
     if (sp.move === "boat") {
       this.spawnBoatSink(u);
-    } else if (isHeli) {
+    } else if ((sp.move === "heli" || sp.move === "drone") && !skipAirCrash) {
       this.spawnHeliCrash({
         x: u.x,
         y: u.y,
@@ -4822,7 +4822,8 @@ export class MissionScene extends Phaser.Scene {
       u.aiTy = h.y;
       if (dist < 26) {
         this.heli.damage(38, u.vx, u.vy);
-        this.destroyUnit(u);
+        // Kamikaze: explode in place — no falling crash hull.
+        this.destroyUnit(u, false, false, true);
         return;
       }
     } else {
@@ -4992,6 +4993,116 @@ export class MissionScene extends Phaser.Scene {
     return { x: px / w, y: py / w, w: Math.min(1, w) };
   }
 
+  /**
+   * Bias a chase point toward dry land (`preferWater=false`) or open water (`true`).
+   * Samples look-ahead along want / facing and a local ring so units turn before crossing.
+   */
+  terrainSteer(
+    x: number,
+    y: number,
+    wantX: number,
+    wantY: number,
+    preferWater: boolean,
+    facing?: number
+  ): { x: number; y: number } {
+    let wx = wantX;
+    let wy = wantY;
+    const ok = (px: number, py: number) => {
+      const wet = isWater(this.world, px, py);
+      return preferWater ? wet : !wet;
+    };
+    const bad = (px: number, py: number) => !ok(px, py);
+
+    const hx = wantX - x;
+    const hy = wantY - y;
+    const hd = Math.hypot(hx, hy) || 1;
+    const dirs: { nx: number; ny: number }[] = [{ nx: hx / hd, ny: hy / hd }];
+    if (facing != null) dirs.push({ nx: Math.cos(facing), ny: Math.sin(facing) });
+
+    for (const { nx, ny } of dirs) {
+      for (const dist of [28, 52, 84, 120]) {
+        if (!bad(x + nx * dist, y + ny * dist)) continue;
+        const strength = Phaser.Math.Clamp(1.25 - dist / 150, 0.4, 1.15);
+        wx -= nx * 62 * strength;
+        wy -= ny * 62 * strength;
+        const leftOk = ok(x - ny * 44, y + nx * 44);
+        const rightOk = ok(x + ny * 44, y - nx * 44);
+        if (leftOk && !rightOk) {
+          wx += -ny * 78 * strength;
+          wy += nx * 78 * strength;
+        } else if (rightOk && !leftOk) {
+          wx += ny * 78 * strength;
+          wy += -nx * 78 * strength;
+        } else {
+          wx += -ny * 48 * strength;
+          wy += nx * 48 * strength;
+        }
+        break;
+      }
+    }
+
+    if (bad(x, y)) {
+      let gx = 0;
+      let gy = 0;
+      for (let i = 0; i < 12; i++) {
+        const a = (i / 12) * Math.PI * 2;
+        if (ok(x + Math.cos(a) * 52, y + Math.sin(a) * 52)) {
+          gx += Math.cos(a);
+          gy += Math.sin(a);
+        }
+      }
+      const gd = Math.hypot(gx, gy);
+      if (gd > 0.2) {
+        wx += (gx / gd) * 140;
+        wy += (gy / gd) * 140;
+      }
+    } else {
+      // Soft shore margin: ease away before the look-ahead hits.
+      let bx = 0;
+      let by = 0;
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        if (bad(x + Math.cos(a) * 40, y + Math.sin(a) * 40)) {
+          bx -= Math.cos(a);
+          by -= Math.sin(a);
+        }
+      }
+      const bd = Math.hypot(bx, by);
+      if (bd > 0.2) {
+        wx += (bx / bd) * 58;
+        wy += (by / bd) * 58;
+      }
+    }
+    return { x: wx, y: wy };
+  }
+
+  /** Step on preferred terrain only; slide on axes or brake if blocked. */
+  stepOnTerrain(u: Unit, dx: number, dy: number, preferWater: boolean): void {
+    const ok = (px: number, py: number) => {
+      const wet = isWater(this.world, px, py);
+      return preferWater ? wet : !wet;
+    };
+    const nx = u.x + dx;
+    const ny = u.y + dy;
+    if (ok(nx, ny)) {
+      u.x = nx;
+      u.y = ny;
+      return;
+    }
+    if (ok(u.x + dx, u.y)) {
+      u.x += dx;
+      u.vy *= 0.35;
+      return;
+    }
+    if (ok(u.x, u.y + dy)) {
+      u.y += dy;
+      u.vx *= 0.35;
+      return;
+    }
+    u.vx *= 0.15;
+    u.vy *= 0.15;
+  }
+
   steerGround(u: Unit, wantX: number, wantY: number): { x: number; y: number } {
     let wx = wantX;
     let wy = wantY;
@@ -5042,34 +5153,8 @@ export class MissionScene extends Phaser.Scene {
         break;
       }
     }
-    for (const dist of [28, 56, 90]) {
-      if (isWater(this.world, u.x + nx * dist, u.y + ny * dist)) {
-        wx -= nx * 22;
-        wy -= ny * 22;
-        wx += -ny * 18;
-        wy += nx * 18;
-        break;
-      }
-    }
-    if (isWater(this.world, u.x, u.y)) {
-      let lx2 = 0;
-      let ly2 = 0;
-      for (let i = 0; i < 8; i++) {
-        const a = (i / 8) * Math.PI * 2;
-        const x = u.x + Math.cos(a) * 36;
-        const y = u.y + Math.sin(a) * 36;
-        if (!isWater(this.world, x, y)) {
-          lx2 += Math.cos(a);
-          ly2 += Math.sin(a);
-        }
-      }
-      const ld = Math.hypot(lx2, ly2);
-      if (ld > 0.2) {
-        wx += (lx2 / ld) * 48;
-        wy += (ly2 / ld) * 48;
-      }
-    }
-    return this.mapEdgeSteer(u.x, u.y, wx, wy);
+    const dry = this.terrainSteer(u.x, u.y, wx, wy, false, u.angle);
+    return this.mapEdgeSteer(u.x, u.y, dry.x, dry.y);
   }
 
   /** Soft depenetration vs buildings / other ground units after a move. */
@@ -5157,9 +5242,31 @@ export class MissionScene extends Phaser.Scene {
   pickBoatWaypoint(u: Unit): void {
     const lo = MAP_EDGE_PAD + 80;
     const hi = WORLD - MAP_EDGE_PAD - 80;
-    for (let i = 0; i < 14; i++) {
+    for (let i = 0; i < 18; i++) {
       const a = Math.random() * Math.PI * 2;
-      const d = 140 + Math.random() * 260;
+      const d = 140 + Math.random() * 280;
+      const x = Phaser.Math.Clamp(u.x + Math.cos(a) * d, lo, hi);
+      const y = Phaser.Math.Clamp(u.y + Math.sin(a) * d, lo, hi);
+      const mx = (u.x + x) / 2;
+      const my = (u.y + y) / 2;
+      // Prefer open water: target, mid, and a ring around the target must stay wet.
+      if (
+        isWater(this.world, x, y) &&
+        isWater(this.world, mx, my) &&
+        isWater(this.world, x + 36, y) &&
+        isWater(this.world, x - 36, y) &&
+        isWater(this.world, x, y + 36) &&
+        isWater(this.world, x, y - 36)
+      ) {
+        u.aiTx = x;
+        u.aiTy = y;
+        return;
+      }
+    }
+    // Fallback: any wet point still clear of the shoreline look-ahead.
+    for (let i = 0; i < 10; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const d = 80 + Math.random() * 160;
       const x = Phaser.Math.Clamp(u.x + Math.cos(a) * d, lo, hi);
       const y = Phaser.Math.Clamp(u.y + Math.sin(a) * d, lo, hi);
       if (isWater(this.world, x, y) && isWater(this.world, (u.x + x) / 2, (u.y + y) / 2)) {
@@ -5176,53 +5283,35 @@ export class MissionScene extends Phaser.Scene {
     const yaw = u.kind === "ptboat" ? 1.55 : 0.85;
     const spd = u.kind === "ptboat" ? 38 : 22;
     if (!isWater(this.world, u.x, u.y)) {
-      let wx = 0;
-      let wy = 0;
-      for (let i = 0; i < 12; i++) {
-        const a = (i / 12) * Math.PI * 2;
-        const x = u.x + Math.cos(a) * 64;
-        const y = u.y + Math.sin(a) * 64;
-        if (isWater(this.world, x, y)) {
-          wx += Math.cos(a);
-          wy += Math.sin(a);
-        }
-      }
-      const wd = Math.hypot(wx, wy);
-      const want = wd > 0.2 ? Math.atan2(wy, wx) : u.angle;
-      u.angle = Phaser.Math.Angle.RotateTo(u.angle, want, yaw * dt);
-      const nx = Math.cos(u.angle);
-      const ny = Math.sin(u.angle);
+      const seek = this.terrainSteer(u.x, u.y, u.x + Math.cos(u.angle) * 80, u.y + Math.sin(u.angle) * 80, true, u.angle);
+      const want = Math.atan2(seek.y - u.y, seek.x - u.x);
+      u.angle = Phaser.Math.Angle.RotateTo(u.angle, want, yaw * 1.4 * dt);
       const step = spd * 0.35 * dt;
-      const px = u.x + nx * step;
-      const py = u.y + ny * step;
-      if (isWater(this.world, px, py) || wd > 0.2) {
-        u.x = px;
-        u.y = py;
-      }
-      u.vx = nx * spd * 0.35;
-      u.vy = ny * spd * 0.35;
+      // Stranded: crawl over land toward water (don't require wet cells yet).
+      u.x += Math.cos(u.angle) * step;
+      u.y += Math.sin(u.angle) * step;
+      u.vx = Math.cos(u.angle) * spd * 0.35;
+      u.vy = Math.sin(u.angle) * spd * 0.35;
       u.aiState = "SEEK WATER";
       return;
     }
     if (u.aiTx == null || u.aiTy == null || Math.hypot((u.aiTx ?? 0) - u.x, (u.aiTy ?? 0) - u.y) < 40) {
       this.pickBoatWaypoint(u);
     }
-    const ahead = 36;
     const hx = Math.cos(u.angle);
     const hy = Math.sin(u.angle);
-    if (!isWater(this.world, u.x + hx * ahead, u.y + hy * ahead) || !isWater(this.world, u.x + hx * 70, u.y + hy * 70)) {
+    if (
+      !isWater(this.world, u.x + hx * 36, u.y + hy * 36) ||
+      !isWater(this.world, u.x + hx * 70, u.y + hy * 70) ||
+      !isWater(this.world, u.x + hx * 110, u.y + hy * 110)
+    ) {
       this.pickBoatWaypoint(u);
     }
-    const want = Math.atan2((u.aiTy ?? u.y) - u.y, (u.aiTx ?? u.x) - u.x);
+    const steered = this.terrainSteer(u.x, u.y, u.aiTx ?? u.x, u.aiTy ?? u.y, true, u.angle);
+    const want = Math.atan2(steered.y - u.y, steered.x - u.x);
     u.angle = Phaser.Math.Angle.RotateTo(u.angle, want, yaw * dt);
-    const px = u.x + Math.cos(u.angle) * spd * dt;
-    const py = u.y + Math.sin(u.angle) * spd * dt;
-    if (isWater(this.world, px, py)) {
-      u.x = px;
-      u.y = py;
-    } else {
-      this.pickBoatWaypoint(u);
-    }
+    const step = spd * dt;
+    this.stepOnTerrain(u, Math.cos(u.angle) * step, Math.sin(u.angle) * step, true);
     u.vx = Math.cos(u.angle) * spd;
     u.vy = Math.sin(u.angle) * spd;
     u.aiState = "PATROL";
@@ -5318,11 +5407,17 @@ export class MissionScene extends Phaser.Scene {
     }
     u.vx = vx;
     u.vy = vy;
-    u.x += vx * dt;
-    u.y += vy * dt;
+    this.stepOnTerrain(u, vx * dt, vy * dt, false);
     this.separateGround(u);
-    const step = s * dt;
-    if (s > 6 && !isWater(this.world, u.x, u.y)) {
+    if (isWater(this.world, u.x, u.y)) {
+      const seek = this.terrainSteer(u.x, u.y, u.x, u.y, false, u.angle);
+      const sx = seek.x - u.x;
+      const sy = seek.y - u.y;
+      const sd = Math.hypot(sx, sy) || 1;
+      this.stepOnTerrain(u, (sx / sd) * 10, (sy / sd) * 10, false);
+    }
+    const step = Math.hypot(u.vx, u.vy) * dt;
+    if (Math.hypot(u.vx, u.vy) > 6 && !isWater(this.world, u.x, u.y)) {
       u.track += step;
       if (u.track > d.trackGap) {
         u.track -= d.trackGap;
@@ -5437,9 +5532,15 @@ export class MissionScene extends Phaser.Scene {
             const base = sp.move === "flee" && !sp.organic ? (u.kind === "officer" ? 36 : 90) : fleeing ? 78 : 58;
             const align = Math.max(0.15, Math.cos(Phaser.Math.Angle.Wrap(want - u.angle)));
             const step = (limp ? 22 : base) * gait * align * dt;
-            u.x += Math.cos(u.angle) * step;
-            u.y += Math.sin(u.angle) * step;
+            this.stepOnTerrain(u, Math.cos(u.angle) * step, Math.sin(u.angle) * step, false);
             this.separateGround(u);
+            if (isWater(this.world, u.x, u.y)) {
+              const seek = this.terrainSteer(u.x, u.y, u.x, u.y, false, u.angle);
+              const sx = seek.x - u.x;
+              const sy = seek.y - u.y;
+              const sd = Math.hypot(sx, sy) || 1;
+              this.stepOnTerrain(u, (sx / sd) * 8, (sy / sd) * 8, false);
+            }
             if (limp) {
               u.track += step;
               if (u.track > 0) {
