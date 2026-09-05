@@ -289,6 +289,10 @@ export interface Frag {
   rolling?: boolean;
   /** Distance accumulator for wreck-map tire prints while rolling. */
   track?: number;
+  /** Spent cannon casing: bounce with heavy friction, stamp on rest. */
+  shellEject?: boolean;
+  /** Draw under the firer (air craft). Ground casings omit this and draw above. */
+  shellUnder?: boolean;
   /** Patrol/PT boat hull: surface sink (scale down) with pre-baked blue hulk. */
   boatSink?: boolean;
   /** Elapsed / total sink duration for scale progress. */

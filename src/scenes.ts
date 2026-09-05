@@ -1637,6 +1637,7 @@ export class MissionScene extends Phaser.Scene {
     const sp = specOf(kind);
     const parts = rollParts(kind);
     const guns = gunsOf({ kind, parts });
+    const ang = spawnAngle(kind);
     return {
       id: nextId(),
       kind,
@@ -1645,8 +1646,8 @@ export class MissionScene extends Phaser.Scene {
       z: sp.aerial ? groundZ(this.world, x, y) + CRUISE_AGL : groundZ(this.world, x, y),
       vx: 0,
       vy: 0,
-      angle: spawnAngle(kind),
-      turret: Math.random() * Math.PI * 2,
+      angle: ang,
+      turret: ang,
       health: st.health,
       max: st.health,
       dead: false,
@@ -1664,6 +1665,16 @@ export class MissionScene extends Phaser.Scene {
       parts,
       camo: kind === "lav_aa" ? "digital" : camoForBiome(sampleBiome(this.world, x, y)),
     };
+  }
+
+  /** Fixed-sprite troops: `angle` = move base, `turret` = aim / draw facing. */
+  troopSoftTurret(u: Unit): boolean {
+    const sp = specOf(u.kind);
+    return !gunsOf(u).length && (sp.move === "inf" || sp.move === "flee");
+  }
+
+  troopDrawAng(u: Unit): number {
+    return this.troopSoftTurret(u) ? u.turret : u.angle;
   }
 
   mountAt(host: Unit, tex: string, mount: { x: number; y: number }): { x: number; y: number } {
@@ -2201,6 +2212,23 @@ export class MissionScene extends Phaser.Scene {
       this.tracer.setDepth(worldDepth(z0, ZOff.muzzle));
       this.tracer.emitParticleAt(tip.x, tip.y, 5);
       this.showMuzzle(tip.x, tip.y, ang, 0.78 * zScale(h.z), 0.1);
+      const lift = screenLift(h.z);
+      const craft = h.spec;
+      const side = this.shellEjectSide({
+        muzzleUv: lookupSpriteMuzzles(craft.gun)[0],
+        mountUv: craftGunMount(craft),
+      });
+      this.spawnShellEject({
+        x: this.gun.x,
+        y: this.gun.y + lift,
+        // Drop from under the chin / belly so casings read below the craft.
+        z: h.z - 12,
+        barrelAng: h.gunAngle,
+        dmg: spec.dmg,
+        side,
+        aerial: true,
+        fireCd: spec.fireCd,
+      });
     }
 
     if (wpn === "rocket" && down && h.fireCd <= 0 && this.hasAmmo(1)) {
@@ -2337,6 +2365,102 @@ export class MissionScene extends Phaser.Scene {
   /** Soft additive light bloom under a muzzle flash. */
   spawnMuzzleLight(x: number, y: number, z: number, size: number): void {
     this.spawnImpactFlash(x, y, z, 0xfff2c8, Math.max(14, size), 0.5, 70);
+  }
+
+  /** Spent casing size from projectile damage (call sites already gate to cannons). */
+  shellGirth(dmg: number): number {
+    // dmg 1 → ~0.34, player chain 8 → ~0.55, heavy 12–16 → ~0.7–0.8
+    return Phaser.Math.Clamp(0.3 + Math.sqrt(Math.max(0.25, dmg)) * 0.125, 0.3, 0.85);
+  }
+
+  /**
+   * +1 = eject barrel-right, −1 = barrel-left.
+   * Local UV only (muzzle on gun tex, else mount on hull) — never world space
+   * so bob / lift / aim sway can't flip the side.
+   */
+  shellEjectSide(opts: {
+    muzzleUv?: { x: number; y: number };
+    mountUv?: { x: number; y: number };
+  }): number {
+    const mid = 0.5;
+    const eps = 0.02;
+    if (opts.muzzleUv && Math.abs(opts.muzzleUv.x - mid) > eps) {
+      return opts.muzzleUv.x > mid ? 1 : -1;
+    }
+    if (opts.mountUv && Math.abs(opts.mountUv.x - mid) > eps) {
+      return opts.mountUv.x > mid ? 1 : -1;
+    }
+    return 1;
+  }
+
+  /** Enemy casing side for the gun/muzzle that just fired. */
+  enemyShellEjectSide(u: Unit, gunI: number): number {
+    const guns = gunsOf(u);
+    const gun = guns[gunI];
+    const tipIdx = u.muzzleFireTip ?? u.muzzleTip ?? 0;
+    let muzzleUv: { x: number; y: number } | undefined;
+    let mountUv: { x: number; y: number } | undefined;
+    if (gun) {
+      const tips = gun.muzzles?.length ? gun.muzzles : [gun.muzzle ?? { x: 0.5, y: 0.08 }];
+      muzzleUv = tips[tipIdx % tips.length];
+      mountUv = gun.mount;
+    } else {
+      const bodyTips = lookupSpriteMuzzles(textureOf(u.kind));
+      if (bodyTips.length) muzzleUv = bodyTips[tipIdx % bodyTips.length];
+    }
+    return this.shellEjectSide({ muzzleUv, mountUv });
+  }
+
+  /**
+   * Eject a spent casing sideways from a cannon mount (90° ± jitter).
+   * Falls with gravity, bounces with heavy friction, stamps onto the wreck layer.
+   */
+  spawnShellEject(opts: {
+    x: number;
+    y: number;
+    z: number;
+    barrelAng: number;
+    dmg: number;
+    /** +1 barrel-right / −1 barrel-left (from midline). Required for consistent eject. */
+    side: number;
+    /** Air craft: spawn/draw under hull. Ground: spawn/draw above. */
+    aerial?: boolean;
+    /** Weapon fire interval (s). Lower = faster = slightly harder eject. */
+    fireCd?: number;
+  }): void {
+    const girth = this.shellGirth(opts.dmg);
+    if (girth <= 0) return;
+    const side = opts.side >= 0 ? 1 : -1;
+    const ejectAng = opts.barrelAng + side * (Math.PI / 2) + range(-0.28, 0.28);
+    // Subtle cadence bias: chain (~0.07s) punches harder than slow AA (~2–3s).
+    const cd = Phaser.Math.Clamp(opts.fireCd ?? 0.45, 0.05, 3.2);
+    const rateMul = Phaser.Math.Linear(1.2, 0.82, Phaser.Math.Clamp((cd - 0.06) / 1.6, 0, 1));
+    const girthMul = Phaser.Math.Linear(1.05, 0.82, (girth - 0.28) / 0.44);
+    const spd = range(22, 48) * girthMul * rateMul;
+    const shellKeys = ["fx_shell", "fx_shell_1", "fx_shell_2", "fx_shell_3", "fx_shell_4"];
+    const available = shellKeys.filter((k) => this.textures.exists(k));
+    if (!available.length) return;
+    const key = available[(Math.random() * available.length) | 0]!;
+    const vzBase = opts.aerial ? range(-8, 14) : range(28, 58);
+    this.frags.push({
+      x: opts.x + range(-1.2, 1.2),
+      y: opts.y + range(-1.2, 1.2),
+      z: opts.z,
+      vx: Math.cos(ejectAng) * spd + range(-6, 6),
+      vy: Math.sin(ejectAng) * spd + range(-6, 6),
+      vz: vzBase * Phaser.Math.Linear(0.92, 1.08, (rateMul - 0.82) / 0.38),
+      angle: ejectAng + range(-0.6, 0.6),
+      spin: (Math.random() < 0.5 ? -1 : 1) * range(8, 42) * Phaser.Math.Linear(0.9, 1.12, (rateMul - 0.82) / 0.38),
+      life: 4,
+      key,
+      settled: false,
+      gravity: true,
+      bounces: 2 + ((Math.random() * 2) | 0),
+      trailR: 1.6 * girth,
+      scale: girth * 0.72,
+      shellEject: true,
+      shellUnder: !!opts.aerial,
+    });
   }
 
   spawnImpactFlash(
@@ -3628,7 +3752,17 @@ export class MissionScene extends Phaser.Scene {
         const hp = spritePivot(hullKey);
         const hs = this.wreckDrawScale(u.x, u.y, u.z, 1, isGroundVehicle(u.kind), u.angle);
         // Match live hull screen Y (perspective lift); stamp without it snaps south of the body.
-        this.stampWreck(hullKey, u.x, u.y - screenLift(u.z), u.angle + Math.PI / 2, hs.sx, 0.95, hp.x, hp.y, hs.sy);
+        this.stampWreck(
+          hullKey,
+          u.x,
+          u.y - screenLift(u.z),
+          this.troopDrawAng(u) + Math.PI / 2,
+          hs.sx,
+          0.95,
+          hp.x,
+          hp.y,
+          hs.sy
+        );
         const throwOff = (key: string, ang: number, x: number, y: number, scale = 1, extra: Partial<Frag> = {}) => {
           const a = Math.random() * Math.PI * 2;
           const throwSp = range(90, 200);
@@ -4009,7 +4143,9 @@ export class MissionScene extends Phaser.Scene {
       });
       const rotorSpan = this.texSpan(rk) * scale * 0.42;
       const rotorAng = ri % 2 ? -opts.rotor : opts.rotor;
-      if (Math.random() < 0.4) {
+      // Drones: all rotors always fly off — never pin to the falling hull.
+      const pin = opts.kind !== "drone" && Math.random() < 0.4;
+      if (pin) {
         const spinSign = rotorAng >= 0 ? 1 : -1;
         this.frags.push({
           x,
@@ -4278,17 +4414,31 @@ export class MissionScene extends Phaser.Scene {
         if (f.vz > 50) f.vz -= 480 * dt;
         else if (f.vz > -40) f.vz -= 70 * dt;
         else f.vz -= 1100 * dt;
-        const drag = f.heliCrash ? 0.94 : f.rotorThrow ? 0.88 : 0.78;
+        const drag = f.heliCrash ? 0.94 : f.shellEject ? 0.86 : f.rotorThrow ? 0.88 : 0.78;
         f.vx *= Math.pow(drag, dt);
         f.vy *= Math.pow(drag, dt);
-        if (f.z > groundZ(this.world, f.x, f.y) + 2) this.emitFragTrail(f, 1);
+        if (f.z > groundZ(this.world, f.x, f.y) + 2) {
+          if (!f.shellEject) this.emitFragTrail(f, 1);
+        }
         const g = groundZ(this.world, f.x, f.y);
         if (f.z <= g) {
           f.z = g;
-          if (!f.linger) this.stampDirtSmears(f.x, f.y, f.vx, f.vy);
+          if (!f.linger && !f.shellEject) this.stampDirtSmears(f.x, f.y, f.vx, f.vy);
           if (f.heliCrash) {
             this.impactHeliCrash(f);
             this.settleFrag(f);
+          } else if (f.shellEject) {
+            const spd = Math.hypot(f.vx, f.vy, f.vz);
+            if (f.bounces > 0 && spd > 35) {
+              f.bounces--;
+              this.bounceFragSlope(f, 0.45);
+              f.vx *= 0.22;
+              f.vy *= 0.22;
+              f.vz = Math.abs(f.vz) * 0.28;
+              f.spin *= 0.4;
+            } else {
+              this.settleFrag(f);
+            }
           } else if (f.rotorThrow) {
             f.spin *= 0.15;
             f.vx *= 0.2;
@@ -4551,7 +4701,7 @@ export class MissionScene extends Phaser.Scene {
       this.stampWreck(f.key, f.x, f.y - screenLift(f.z || 0), f.angle, sx, 0.92, o.x, o.y, sy);
       f.trailOnly = true;
     }
-    if (!f.heliCrash) this.beginFragTrailFade(f);
+    if (!f.heliCrash && !f.shellEject) this.beginFragTrailFade(f);
   }
 
   beginFragTrailFade(f: Frag): void {
@@ -4637,6 +4787,7 @@ export class MissionScene extends Phaser.Scene {
       return;
     }
     if (f.heliCrash) return;
+    if (f.shellEject) return;
     if (f.trailLx == null || f.trailLy == null) {
       const rad = Math.max(3, Math.min((this.texSpan(f.key) * (f.scale ?? 1)) * 0.42, f.trailR * 0.9));
       const a = Math.random() * Math.PI * 2;
@@ -5501,7 +5652,7 @@ export class MissionScene extends Phaser.Scene {
           const fleeing = !downed && u.aiMood === "flee";
           const kiting = canShoot && !downed && u.aiMood === "kite" && dist < seeR && dist > 36;
           if (downed) {
-            u.angle = Phaser.Math.Angle.RotateTo(u.angle, Math.atan2(dy, dx), 1.8 * dt);
+            u.turret = Phaser.Math.Angle.RotateTo(u.turret, Math.atan2(dy, dx), 1.8 * dt);
             u.aiState = (u.burstLeft ?? 0) > 0 ? "BURST" : "DOWN";
             u.aiTx = h.x;
             u.aiTy = h.y;
@@ -5522,8 +5673,8 @@ export class MissionScene extends Phaser.Scene {
             const twx = steered.x - u.x;
             const twy = steered.y - u.y;
             const twd = Math.hypot(twx, twy);
-            // Face the path we walk — never crab-step along want while facing elsewhere.
             const want = twd < 12 ? u.angle : Math.atan2(twy, twx);
+            // Invisible base faces / walks the path.
             u.angle = Phaser.Math.Angle.RotateTo(u.angle, want, (fleeing ? 2.4 : 2.1) * dt);
             const limp = fleeing && wounded && sp.organic;
             const gaitHz = limp ? 0.0044 : fleeing ? 0.0128 : 0.0075;
@@ -5591,11 +5742,16 @@ export class MissionScene extends Phaser.Scene {
       const hullFlee =
         (sp.move === "inf" && u.aiMood === "flee" && !(sp.organic && u.health <= 1) && !this.snapHost(u)) ||
         (u.kind === "heli_small" && u.aiMood === "flee");
-      // Don't yank hull onto the player while kiting — that fought walk facing and looked like snaps.
-      const hullKite =
-        sp.move === "inf" && u.aiMood === "kite" && !(sp.organic && u.health <= 1) && !this.snapHost(u);
       const strafeHeli = sp.move === "heli" && u.kind !== "heli_heavy";
-      if (sp.fixedAim && !guns.length && wpn && inRange && !hullFlee && !hullKite && !strafeHeli) {
+      const softTurret = this.troopSoftTurret(u);
+      if (softTurret) {
+        // Aim like a turret: track player when engaging, otherwise point where the base is going.
+        const aimTo =
+          !hullFlee && (inRange || (u.burstLeft ?? 0) > 0 || (sp.organic && u.health <= 1 && u.health < u.max))
+            ? aim
+            : u.angle;
+        u.turret = Phaser.Math.Angle.RotateTo(u.turret, aimTo, 2.4 * dt);
+      } else if (sp.fixedAim && !guns.length && wpn && inRange && !hullFlee && !strafeHeli) {
         const turn = sp.move === "heli" ? 1.7 : 2.2;
         u.angle = Phaser.Math.Angle.RotateTo(u.angle, aim, turn * dt);
       }
@@ -5614,10 +5770,8 @@ export class MissionScene extends Phaser.Scene {
       const scoutFlee = u.kind === "heli_small" && u.aiMood === "flee";
       const aimFrom = guns.length ? this.gunMountPos(u, gunI) : { x: u.x, y: u.y };
       const gunAim = Math.atan2(h.y - aimFrom.y, h.x - aimFrom.x);
-      const barrelAng = !guns.length ? u.angle : (u.turrets[gunI] ?? u.turret);
-      // Infantry kite faces the path; allow a wider fire cone so they still shoot while circling.
-      const aimCone = hullKite ? 0.85 : 0.16;
-      const facingOk = Math.abs(Phaser.Math.Angle.Wrap(gunAim - barrelAng)) < aimCone;
+      const barrelAng = softTurret ? u.turret : !guns.length ? u.angle : (u.turrets[gunI] ?? u.turret);
+      const facingOk = Math.abs(Phaser.Math.Angle.Wrap(gunAim - barrelAng)) < 0.16;
       if (wpn && u.fireCd <= 0 && !soldierFlee && !scoutFlee && facingOk && (inRange || continueBurst)) {
         const burstN = wpn.burst ?? 0;
         if (burstN) {
@@ -5696,6 +5850,22 @@ export class MissionScene extends Phaser.Scene {
           motor: home ? -0.06 : undefined,
           scale: wpn.scale,
         });
+        if (wpn.kind === "cannon") {
+          const ejectAt = guns.length ? this.gunMountPos(u, gunI) : { x: u.x, y: u.y };
+          const shellZ = sp.aerial
+            ? u.z - 10
+            : u.z + heightOf(u.kind) + 6;
+          this.spawnShellEject({
+            x: ejectAt.x,
+            y: ejectAt.y,
+            z: shellZ,
+            barrelAng: fireAng,
+            dmg: wpn.dmg,
+            side: this.enemyShellEjectSide(u, gunI),
+            aerial: !!sp.aerial,
+            fireCd: (wpn.burst ?? 0) > 0 ? (wpn.burstGap ?? 0.075) : wpn.fireCd,
+          });
+        }
       }
       const sec = sp.secondary;
       if (sec?.mounts.length && (!sp.aerial || h.phase === "flight")) {
@@ -5789,7 +5959,7 @@ export class MissionScene extends Phaser.Scene {
       const parts = kids.slice(i * SLOTS + 2, i * SLOTS + 8);
       const flash = kids[i * SLOTS + 8]!;
       const tex = resolveSkin(this.textures, textureOf(u.kind), u.camo);
-      const rot = u.angle + sp.rotOff;
+      const rot = this.troopDrawAng(u) + sp.rotOff;
       const lift = screenLift(u.z);
       const zs = zScale(u.z);
       const pivot = spritePivot(textureOf(u.kind));
@@ -5902,7 +6072,11 @@ export class MissionScene extends Phaser.Scene {
       }
       if (u.muzzleT > 0 && (sp.weapon || guns.length)) {
         const tip = this.enemyMuzzle(u, u.muzzleGun);
-        const ang = !guns.length ? u.angle : u.turrets[u.muzzleGun] ?? u.turret;
+        const ang = this.troopSoftTurret(u)
+          ? u.turret
+          : !guns.length
+            ? u.angle
+            : u.turrets[u.muzzleGun] ?? u.turret;
         const jitS = u.muzzleJitS ?? 1;
         const jitR = u.muzzleJitR ?? 0;
         flash
@@ -5928,7 +6102,7 @@ export class MissionScene extends Phaser.Scene {
     const wpn = guns[gunI]?.weapon ?? sp.weapon;
     const gun = guns[gunI];
     const zs = zScale(u.z);
-    const hullRot = u.angle + sp.rotOff;
+    const hullRot = this.troopDrawAng(u) + sp.rotOff;
     const hullPivot = spritePivot(textureOf(u.kind));
     const hullImg = this.textures.get(resolveSkin(this.textures, textureOf(u.kind), u.camo)).getSourceImage() as {
       width: number;
@@ -6043,7 +6217,11 @@ export class MissionScene extends Phaser.Scene {
       // Pinned rotors skip shadows (stay with hull). Thrown rotors / gun hulks need a baked atlas.
       const canShadow =
         !f.pinHost && !f.boatSink && this.textures.exists(shadowKey(f.key, cast));
-      const depth = f.settled ? Layer.HULK : worldDepth(z, ZOff.body + (f.pinHost ? 0.55 : 0.35));
+      const depth = f.settled
+        ? Layer.HULK
+        : f.shellEject
+          ? worldDepth(z, f.shellUnder ? ZOff.shot - 0.4 : ZOff.turret + 0.85)
+          : worldDepth(z, ZOff.body + (f.pinHost ? 0.55 : 0.35));
       const spd = Math.hypot(f.vx, f.vy);
       // Squash along travel; inner image keeps f.angle spin relative to heading.
       const wheelSquash = !!f.wheelRoll && !f.settled && spd > 8;

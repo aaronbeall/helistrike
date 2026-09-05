@@ -55,6 +55,11 @@ export function bakeAll(textures: Phaser.Textures.TextureManager): void {
   add(textures, "shot_shell", drawTracer("shell"));
   add(textures, "shot_small", drawTracer("small"));
   add(textures, "shot_aa", drawTracer("aa"));
+  add(textures, "fx_shell", drawShellCasing(0));
+  add(textures, "fx_shell_1", drawShellCasing(1));
+  add(textures, "fx_shell_2", drawShellCasing(2));
+  add(textures, "fx_shell_3", drawShellCasing(3));
+  add(textures, "fx_shell_4", drawShellCasing(4));
   add(textures, "shot_rocket", drawRocket());
   add(textures, "shot_hellfire", drawMissile("#c45c1a"));
   add(textures, "shot_tow", drawMissile("#c8b45a"));
@@ -673,6 +678,55 @@ function drawSnowRock(): HTMLCanvasElement {
   g.lineTo(16, 10);
   g.closePath();
   g.fill();
+  return c;
+}
+
+/** Tiny brass casing — length along X, girth along Y. Variants span bright → dark brass. */
+function drawShellCasing(variant: number): HTMLCanvasElement {
+  const w = 14;
+  const h = 6;
+  const c = canvas(w, h);
+  const g = ctxOf(c);
+  const cy = h / 2;
+  const palettes = [
+    { brass: [208, 162, 86], dark: [110, 78, 36], rim: [242, 214, 140] }, // bright
+    { brass: [196, 148, 72], dark: [92, 64, 28], rim: [232, 198, 120] },
+    { brass: [168, 124, 58], dark: [78, 54, 24], rim: [210, 172, 98] },
+    { brass: [138, 98, 48], dark: [62, 42, 20], rim: [178, 138, 78] }, // dark
+    { brass: [112, 78, 38], dark: [48, 32, 16], rim: [148, 110, 62] }, // darker
+  ];
+  const pal = palettes[variant % palettes.length]!;
+  const { brass, dark, rim } = pal;
+  const rgb = (ch: number[], a = 1) => `rgba(${ch[0]},${ch[1]},${ch[2]},${a})`;
+
+  // Body
+  g.fillStyle = rgb(brass);
+  roundRect(g, 1.5, 1.1, 10.5, h - 2.2, 1.2);
+  g.fill();
+  // Highlight strip (dimmer on darker variants)
+  const hiA = variant >= 3 ? 0.28 : variant >= 2 ? 0.4 : 0.55;
+  g.fillStyle = rgb(rim, hiA);
+  roundRect(g, 2.2, 1.4, 8.5, 1.2, 0.6);
+  g.fill();
+  // Primer / base rim (left)
+  g.fillStyle = rgb(dark);
+  g.beginPath();
+  g.ellipse(2.2, cy, 1.35, h * 0.38, 0, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = rgb(rim, variant >= 3 ? 0.4 : 0.7);
+  g.beginPath();
+  g.ellipse(2.2, cy, 0.55, h * 0.18, 0, 0, Math.PI * 2);
+  g.fill();
+  // Mouth (right)
+  g.fillStyle = rgb(dark, 0.85);
+  g.beginPath();
+  g.ellipse(12.2, cy, 0.95, h * 0.32, 0, 0, Math.PI * 2);
+  g.fill();
+  g.strokeStyle = rgb(brass, 0.9);
+  g.lineWidth = 0.6;
+  g.beginPath();
+  g.ellipse(12.2, cy, 0.95, h * 0.32, 0, 0, Math.PI * 2);
+  g.stroke();
   return c;
 }
 
