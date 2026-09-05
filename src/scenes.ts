@@ -5603,7 +5603,8 @@ export class MissionScene extends Phaser.Scene {
         const grade = Phaser.Math.Clamp(sl.dx * Math.cos(u.angle) + sl.dy * Math.sin(u.angle), -0.4, 0.4);
         im.setScale((1 + Math.abs(grade) * 0.05) * zs, (1 - grade * 0.12) * zs);
       } else im.setScale(zs);
-      applyEdgeLight(im, rot);
+      if (sp.building) clearEdgeLight(im);
+      else applyEdgeLight(im, rot);
       let pi = 0;
       const gunDepth = sp.move === "heli" ? ZOff.gun : ZOff.turret;
       const place = (
@@ -5629,7 +5630,7 @@ export class MissionScene extends Phaser.Scene {
           .setAlpha(1)
           .setScale(im.scaleX * sc, im.scaleY * sc)
           .setDepth(worldDepth(u.z, depth + zBias));
-        if (edgeLit) applyEdgeLight(part, worldRot);
+        if (edgeLit && !sp.building) applyEdgeLight(part, worldRot);
         else clearEdgeLight(part);
       };
       guns.forEach((g, gi) => {
