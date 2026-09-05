@@ -1315,16 +1315,53 @@ function drawDrone(): HTMLCanvasElement {
 }
 
 function drawHeliSmall(): HTMLCanvasElement {
-  const c = canvas(56, 44);
+  // Little Bird silhouette (nose-up): compact cabin, long boom, stub wings + fixed guns.
+  const c = canvas(64, 88);
   const g = ctxOf(c);
-  g.translate(28, 22);
-  g.fillStyle = "#4a3a28";
-  roundRect(g, -18, -8, 36, 16, 6);
+  g.translate(32, 40);
+  // Tail boom
+  g.fillStyle = "#3a3428";
+  roundRect(g, -3, 6, 6, 36, 2);
   g.fill();
-  g.fillStyle = "#2a2218";
-  g.fillRect(10, -3, 16, 6);
+  // Tail fin
+  g.fillStyle = "#2a261c";
+  g.beginPath();
+  g.moveTo(-2, 38);
+  g.lineTo(-10, 44);
+  g.lineTo(-2, 42);
+  g.closePath();
+  g.fill();
+  g.beginPath();
+  g.moveTo(2, 38);
+  g.lineTo(10, 44);
+  g.lineTo(2, 42);
+  g.closePath();
+  g.fill();
+  // Stub wings
+  g.fillStyle = "#4a4030";
+  roundRect(g, -22, -2, 16, 7, 2);
+  g.fill();
+  roundRect(g, 6, -2, 16, 7, 2);
+  g.fill();
+  // Wing guns (fixed barrels)
+  g.fillStyle = "#2a2e28";
+  roundRect(g, -20, -10, 3.2, 14, 1);
+  g.fill();
+  roundRect(g, 16.8, -10, 3.2, 14, 1);
+  g.fill();
+  // Cabin / body (compact)
+  g.fillStyle = "#5a4a32";
+  roundRect(g, -11, -18, 22, 28, 8);
+  g.fill();
   g.fillStyle = "#8ab0c8";
-  g.fillRect(-10, -5, 10, 10);
+  roundRect(g, -7, -16, 14, 10, 3);
+  g.fill();
+  // Skids
+  g.fillStyle = "#3a3e38";
+  g.fillRect(-14, 4, 2, 12);
+  g.fillRect(12, 4, 2, 12);
+  g.fillRect(-16, 14, 12, 2);
+  g.fillRect(4, 14, 12, 2);
   return c;
 }
 

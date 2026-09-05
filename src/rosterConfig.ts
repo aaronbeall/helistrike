@@ -5,7 +5,6 @@ import {
   craftGunMount,
   craftGunOrigin,
   craftKind,
-  craftMountsOf,
   craftOf,
   craftOrigin,
   craftSecondaryMounts,
@@ -14,7 +13,6 @@ import {
 } from "./craft";
 import {
   allKinds,
-  hullMountsOf,
   HULL_MOUNT_COLOR,
   isAerial,
   isBuilding,
@@ -22,13 +20,18 @@ import {
   isInfantry,
   isWaterCraft,
   labelOf,
+  numberMountLabels,
   specOf,
   TROOP_WEIGHTS,
+  type HullMountRole,
   type UnitKind,
   type UnitSpec,
   type WeaponSpec,
 } from "./roster";
-import { lookupSpriteMuzzles } from "./spriteOrigin";
+import {
+  lookupSpriteOrigin,
+  lookupSpritePoints,
+} from "./spriteOrigin";
 import { nameGameTexture, spritePivot } from "./sprites";
 import {
   CFG_INFO,
@@ -56,7 +59,20 @@ const SHOT_SLOTS = 4;
 type Filter = "all" | "ground" | "air" | "water" | "building" | "troop";
 const FILTERS: Filter[] = ["all", "ground", "air", "water", "building", "troop"];
 
+type Composition = "assembled" | "separated";
+
 const ORIGIN_COLOR = 0xe8b84a;
+
+type PreviewPart = {
+  tex: string;
+  origin: { x: number; y: number };
+  mount: { x: number; y: number };
+  rot: number;
+  scale: number;
+  muzzles?: { x: number; y: number }[];
+  /** Vertical foreshortening (radar dish). */
+  squashY?: number;
+};
 
 /** Roster list row — playable craft or enemy unit. */
 type RosterEntry = { cat: "craft"; kind: CraftKind } | { cat: "unit"; kind: UnitKind };
@@ -74,6 +90,8 @@ export class RosterConfigTool {
   private zoom = 2;
   /** Radius / height / mount / muzzle overlay markers. */
   private showMarks = true;
+  /** Assembled (mounted) vs parts laid out separately. */
+  private composition: Composition = "assembled";
   private pinned: { uvx: number; uvy: number } | null = null;
   private copied = "";
   private statsXY = { x: 0, y: 0 };
@@ -224,6 +242,12 @@ export class RosterConfigTool {
         this.showMarks = !this.showMarks;
         this.refreshPreview();
       });
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.C).on("down", () => {
+        if (!this.open) return;
+        this.composition = this.composition === "assembled" ? "separated" : "assembled";
+        this.pinned = null;
+        this.refreshPreview();
+      });
     }
 
     scene.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
@@ -331,7 +355,7 @@ export class RosterConfigTool {
     const ent = entries[this.idx]!;
 
     this.hintTxt.setText(
-      `ROSTER RIG   \` cycle / close   [ ] cycle   , . page   - + zoom ${fmtZoom(this.zoom)}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   gold origin · green gun · cyan rotor/radius · violet troop/leash · orange secondary/muzzle`
+      `ROSTER RIG   \` cycle / close   [ ] cycle   , . page   - + zoom ${fmtZoom(this.zoom)}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   C composition ${this.composition.toUpperCase()}`
     );
 
     const size = this.pageSize();
@@ -406,19 +430,55 @@ export class RosterConfigTool {
       return;
     }
 
-    this.hull.setVisible(true).setTexture(tex);
     const pivot = { ...craftOrigin(craft) };
-    this.hull.setOrigin(pivot.x, pivot.y);
     const s = this.zoom;
+    const parts: PreviewPart[] = [
+      {
+        tex: craft.gun,
+        origin: craftGunOrigin(craft),
+        mount: craftGunMount(craft),
+        rot: Math.PI / 2,
+        scale: 1,
+      },
+    ];
+    {
+      const spinKey = "heli_rotor_spin";
+      const rotorKey = this.scene.textures.exists(spinKey) ? spinKey : "heli_rotor";
+      parts.push({
+        tex: rotorKey,
+        origin: { x: 0.5, y: 0.5 },
+        mount: craftOrigin(craft),
+        rot: 0,
+        scale: 1,
+      });
+    }
+
+    if (this.composition === "separated") {
+      this.layoutSeparated({
+        hullTex: tex,
+        pivot,
+        rotOff: craft.rotOff,
+        parts,
+        radius: craft.radius,
+        height: craft.height,
+        listRight,
+        gap,
+        w,
+        h,
+        showShots: false,
+        wpns: [],
+      });
+      return;
+    }
+
+    this.hull.setVisible(true).setTexture(tex);
+    this.hull.setOrigin(pivot.x, pivot.y);
     this.hull.setScale(s);
     this.hull.setRotation(craft.rotOff);
 
     const bw = this.hull.displayWidth;
     const bh = this.hull.displayHeight;
-    const cos = Math.abs(Math.cos(craft.rotOff));
-    const sin = Math.abs(Math.sin(craft.rotOff));
-    const boxW = bw * cos + bh * sin;
-    const boxH = bw * sin + bh * cos;
+    const { boxW, boxH } = aabbOf(bw, bh, craft.rotOff);
     const pad = 10;
     const cx = listRight + pad + boxW * 0.5;
     const cy = Math.min(LIST_Y + pad + boxH * 0.5, h - pad - boxH * 0.5);
@@ -430,67 +490,20 @@ export class RosterConfigTool {
     this.statsXY = { x: statsX, y: Math.max(LIST_Y, by) };
     this.applyStatsPanel(tex);
 
-    this.board.clear();
-    const cell = 8;
-    this.board.fillStyle(0x2a2418, 1);
-    this.board.fillRect(bx - pad, by - pad, boxW + pad * 2, boxH + pad * 2);
-    for (let y = 0; y < boxH; y += cell) {
-      for (let x = 0; x < boxW; x += cell) {
-        if (((((x / cell) | 0) + ((y / cell) | 0)) & 1) === 1) this.board.fillStyle(0x3a3428, 1);
-        else this.board.fillStyle(0x241e16, 1);
-        this.board.fillRect(bx + x, by + y, Math.min(cell, boxW - x), Math.min(cell, boxH - y));
-      }
-    }
-    this.board.lineStyle(1, 0xe8b84a, 0.55);
-    this.board.strokeRect(bx - pad, by - pad, boxW + pad * 2, boxH + pad * 2);
+    this.drawPreviewBoard(bx, by, boxW, boxH, pad);
+    this.placeMountedParts(parts, pivot, craft.rotOff, cx, cy, s);
 
-    let pi = 0;
-    const place = (
-      part: Phaser.GameObjects.Image,
-      partTex: string,
-      origin: { x: number; y: number },
-      mount: { x: number; y: number },
-      worldRot: number,
-      sc = 1
-    ) => {
-      if (!this.scene.textures.exists(partTex)) {
-        part.setVisible(false);
-        return;
-      }
-      const mx = (mount.x - pivot.x) * this.hull.displayWidth;
-      const my = (mount.y - pivot.y) * this.hull.displayHeight;
-      const ca = Math.cos(craft.rotOff);
-      const sa = Math.sin(craft.rotOff);
-      part
-        .setVisible(true)
-        .setTexture(partTex)
-        .setOrigin(origin.x, origin.y)
-        .setPosition(cx + mx * ca - my * sa, cy + mx * sa + my * ca)
-        .setRotation(worldRot)
-        .setScale(s * sc);
-    };
-
-    const gunPart = this.parts[pi++];
-    if (gunPart) place(gunPart, craft.gun, craftGunOrigin(craft), craftGunMount(craft), Math.PI / 2, 1);
-    const rotorPart = this.parts[pi++];
-    if (rotorPart) {
-      const spinKey = "heli_rotor_spin";
-      const rotorKey = this.scene.textures.exists(spinKey) ? spinKey : "heli_rotor";
-      place(rotorPart, rotorKey, { x: 0.5, y: 0.5 }, craftOrigin(craft), 0, 1);
-    }
-    for (; pi < this.parts.length; pi++) this.parts[pi]!.setVisible(false);
     for (const im of this.shots) im.setVisible(false);
 
     this.drawHullMarks({
       radius: craft.radius,
       height: craft.height,
       rotOff: craft.rotOff,
-      mounts: craftMountsOf(craft),
       pivot,
       cx,
       cy,
       s,
-      guns: [{ tex: craft.gun, origin: craftGunOrigin(craft), mount: craftGunMount(craft), scale: 1 }],
+      hullTex: tex,
     });
   }
 
@@ -516,19 +529,80 @@ export class RosterConfigTool {
       return;
     }
 
-    this.hull.setVisible(true).setTexture(tex);
     const pivot = spritePivot(tex);
-    this.hull.setOrigin(pivot.x, pivot.y);
     const s = this.zoom;
+    const parts: PreviewPart[] = [];
+    for (const g of sp.guns) {
+      parts.push({
+        tex: g.tex,
+        origin: g.origin,
+        mount: g.mount,
+        rot: Math.PI / 2,
+        scale: g.scale ?? 1,
+        muzzles: g.muzzles,
+      });
+    }
+    for (const r of sp.rotors) {
+      const spinKey = `${r.tex}_spin`;
+      const rotorKey =
+        r.tex !== "enemy_drone_rotor" && this.scene.textures.exists(spinKey) ? spinKey : r.tex;
+      parts.push({
+        tex: rotorKey,
+        origin: r.origin,
+        mount: r.mount,
+        rot: 0,
+        scale: r.scale ?? 1,
+      });
+    }
+    if (sp.dish) {
+      const d = sp.dish;
+      parts.push({
+        tex: d.tex,
+        origin: d.origin,
+        mount: d.mount,
+        rot: 0,
+        scale: (d.scale ?? 1) * 1.04,
+        squashY: 0.52,
+      });
+    }
+
+    const wpns: WeaponSpec[] = [];
+    if (sp.weapon) wpns.push(sp.weapon);
+    for (const g of sp.guns) {
+      if (g.weapon) wpns.push(g.weapon);
+    }
+
+    const block = formatSpec(kind, sp);
+    this.pendingStats = block.stats;
+    this.pendingInfo = block.info;
+
+    if (this.composition === "separated") {
+      this.layoutSeparated({
+        hullTex: tex,
+        pivot,
+        rotOff: sp.rotOff,
+        parts,
+        radius: sp.radius,
+        height: sp.height,
+        leashR: sp.crew?.mode === "leash" ? (sp.crew.leashR ?? sp.radius) : undefined,
+        listRight,
+        gap,
+        w,
+        h,
+        showShots: true,
+        wpns,
+      });
+      return;
+    }
+
+    this.hull.setVisible(true).setTexture(tex);
+    this.hull.setOrigin(pivot.x, pivot.y);
     this.hull.setScale(s);
     this.hull.setRotation(sp.rotOff);
 
     const bw = this.hull.displayWidth;
     const bh = this.hull.displayHeight;
-    const cos = Math.abs(Math.cos(sp.rotOff));
-    const sin = Math.abs(Math.sin(sp.rotOff));
-    const boxW = bw * cos + bh * sin;
-    const boxH = bw * sin + bh * cos;
+    const { boxW, boxH } = aabbOf(bw, bh, sp.rotOff);
     const pad = 10;
     const cx = listRight + pad + boxW * 0.5;
     const cy = Math.min(LIST_Y + pad + boxH * 0.5, h - pad - boxH * 0.5);
@@ -537,12 +611,162 @@ export class RosterConfigTool {
     const bx = cx - boxW * 0.5;
     const by = cy - boxH * 0.5;
     const statsX = Math.min(bx + boxW + gap, w - STATS_W - 16);
-    const block = formatSpec(kind, sp);
     this.statsXY = { x: statsX, y: Math.max(LIST_Y, by) };
-    this.pendingStats = block.stats;
-    this.pendingInfo = block.info;
     this.applyStatsPanel(tex);
 
+    this.drawPreviewBoard(bx, by, boxW, boxH, pad);
+    this.placeMountedParts(parts, pivot, sp.rotOff, cx, cy, s);
+
+    this.placeShotPreviews(wpns, bx, by + boxH + pad + 22);
+
+    this.drawHullMarks({
+      radius: sp.radius,
+      height: sp.height,
+      rotOff: sp.rotOff,
+      leashR: sp.crew?.mode === "leash" ? (sp.crew.leashR ?? sp.radius) : undefined,
+      pivot,
+      cx,
+      cy,
+      s,
+      hullTex: tex,
+    });
+  }
+
+  private layoutSeparated(opts: {
+    hullTex: string;
+    pivot: { x: number; y: number };
+    rotOff: number;
+    parts: PreviewPart[];
+    radius: number;
+    height: number;
+    leashR?: number;
+    listRight: number;
+    gap: number;
+    w: number;
+    h: number;
+    showShots: boolean;
+    wpns: WeaponSpec[];
+  }): void {
+    const s = this.zoom;
+    const pad = 10;
+    const partGap = 18;
+    const maxX = opts.w - STATS_W - 24;
+
+    type Cell = {
+      im: Phaser.GameObjects.Image;
+      tex: string;
+      origin: { x: number; y: number };
+      rot: number;
+      scale: number;
+      boxW: number;
+      boxH: number;
+      isHull: boolean;
+      squashY?: number;
+      part?: PreviewPart;
+    };
+    const cells: Cell[] = [];
+
+    this.hull.setVisible(true).setTexture(opts.hullTex);
+    this.hull.setOrigin(opts.pivot.x, opts.pivot.y);
+    this.hull.setScale(s);
+    this.hull.setRotation(opts.rotOff);
+    {
+      const { boxW, boxH } = aabbOf(this.hull.displayWidth, this.hull.displayHeight, opts.rotOff);
+      cells.push({
+        im: this.hull,
+        tex: opts.hullTex,
+        origin: opts.pivot,
+        rot: opts.rotOff,
+        scale: 1,
+        boxW,
+        boxH,
+        isHull: true,
+      });
+    }
+
+    let pi = 0;
+    for (const p of opts.parts) {
+      const part = this.parts[pi++];
+      if (!part) break;
+      if (!this.scene.textures.exists(p.tex)) {
+        part.setVisible(false);
+        continue;
+      }
+      part.setVisible(true).setTexture(p.tex).setOrigin(p.origin.x, p.origin.y).setScale(s * p.scale).setRotation(p.rot);
+      if (p.squashY != null) part.setScale(part.scaleX, part.scaleY * p.squashY);
+      const { boxW, boxH } = aabbOf(part.displayWidth, part.displayHeight, p.rot);
+      cells.push({
+        im: part,
+        tex: p.tex,
+        origin: p.origin,
+        rot: p.rot,
+        scale: p.scale,
+        boxW,
+        boxH,
+        isHull: false,
+        squashY: p.squashY,
+        part: p,
+      });
+    }
+    for (; pi < this.parts.length; pi++) this.parts[pi]!.setVisible(false);
+
+    // Pack left→right, wrap downward.
+    let x = opts.listRight;
+    let y = LIST_Y;
+    let rowH = 0;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxRight = 0;
+    let maxBottom = 0;
+    let hullCx = 0;
+    let hullCy = 0;
+
+    for (const cell of cells) {
+      if (x + cell.boxW + pad * 2 > maxX && x > opts.listRight) {
+        x = opts.listRight;
+        y += rowH + partGap;
+        rowH = 0;
+      }
+      const cx = x + pad + cell.boxW * 0.5;
+      const cy = y + pad + cell.boxH * 0.5;
+      cell.im.setPosition(cx, cy);
+      if (cell.isHull) {
+        hullCx = cx;
+        hullCy = cy;
+      }
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxRight = Math.max(maxRight, x + cell.boxW + pad * 2);
+      maxBottom = Math.max(maxBottom, y + cell.boxH + pad * 2);
+      rowH = Math.max(rowH, cell.boxH + pad * 2);
+      x += cell.boxW + pad * 2 + partGap;
+    }
+
+    const boardW = Math.max(40, maxRight - minX);
+    const boardH = Math.max(40, maxBottom - minY);
+    this.drawPreviewBoard(minX, minY, boardW, boardH, 0);
+
+    const statsX = Math.min(maxRight + opts.gap, opts.w - STATS_W - 16);
+    this.statsXY = { x: statsX, y: Math.max(LIST_Y, minY) };
+    this.applyStatsPanel(opts.hullTex);
+
+    if (opts.showShots) this.placeShotPreviews(opts.wpns, minX, maxBottom + 22);
+    else for (const im of this.shots) im.setVisible(false);
+
+    this.drawHullMarks({
+      radius: opts.radius,
+      height: opts.height,
+      rotOff: opts.rotOff,
+      leashR: opts.leashR,
+      pivot: opts.pivot,
+      cx: hullCx,
+      cy: hullCy,
+      s,
+      hullTex: opts.hullTex,
+    });
+  }
+
+  private drawPreviewBoard(bx: number, by: number, boxW: number, boxH: number, pad: number): void {
     this.board.clear();
     const cell = 8;
     this.board.fillStyle(0x2a2418, 1);
@@ -556,65 +780,43 @@ export class RosterConfigTool {
     }
     this.board.lineStyle(1, 0xe8b84a, 0.55);
     this.board.strokeRect(bx - pad, by - pad, boxW + pad * 2, boxH + pad * 2);
+  }
 
+  private placeMountedParts(
+    parts: PreviewPart[],
+    pivot: { x: number; y: number },
+    rotOff: number,
+    cx: number,
+    cy: number,
+    s: number
+  ): void {
     let pi = 0;
-    const place = (
-      part: Phaser.GameObjects.Image,
-      partTex: string,
-      origin: { x: number; y: number },
-      mount: { x: number; y: number },
-      worldRot: number,
-      sc = 1
-    ) => {
-      if (!this.scene.textures.exists(partTex)) {
+    for (const p of parts) {
+      const part = this.parts[pi++];
+      if (!part) break;
+      if (!this.scene.textures.exists(p.tex)) {
         part.setVisible(false);
-        return;
+        continue;
       }
-      const mx = (mount.x - pivot.x) * this.hull.displayWidth;
-      const my = (mount.y - pivot.y) * this.hull.displayHeight;
-      const ca = Math.cos(sp.rotOff);
-      const sa = Math.sin(sp.rotOff);
+      const mx = (p.mount.x - pivot.x) * this.hull.displayWidth;
+      const my = (p.mount.y - pivot.y) * this.hull.displayHeight;
+      const ca = Math.cos(rotOff);
+      const sa = Math.sin(rotOff);
       part
         .setVisible(true)
-        .setTexture(partTex)
-        .setOrigin(origin.x, origin.y)
+        .setTexture(p.tex)
+        .setOrigin(p.origin.x, p.origin.y)
         .setPosition(cx + mx * ca - my * sa, cy + mx * sa + my * ca)
-        .setRotation(worldRot)
-        .setScale(s * sc);
-    };
-
-    for (const g of sp.guns) {
-      const part = this.parts[pi++];
-      if (!part) break;
-      place(part, g.tex, g.origin, g.mount, Math.PI / 2, g.scale ?? 1);
-    }
-    for (const r of sp.rotors) {
-      const part = this.parts[pi++];
-      if (!part) break;
-      const spinKey = `${r.tex}_spin`;
-      const rotorKey =
-        r.tex !== "enemy_drone_rotor" && this.scene.textures.exists(spinKey) ? spinKey : r.tex;
-      place(part, rotorKey, r.origin, r.mount, 0, r.scale ?? 1);
-    }
-    if (sp.dish) {
-      const part = this.parts[pi++];
-      if (part) {
-        const d = sp.dish;
-        place(part, d.tex, d.origin, d.mount, 0, (d.scale ?? 1) * 1.04);
-        part.setScale(part.scaleX, part.scaleY * 0.52);
-      }
+        .setRotation(p.rot)
+        .setScale(s * p.scale);
+      if (p.squashY != null) part.setScale(part.scaleX, part.scaleY * p.squashY);
     }
     for (; pi < this.parts.length; pi++) this.parts[pi]!.setVisible(false);
+  }
 
-    // Projectile previews for body + gun weapons (stats live on this unit).
-    const wpns: WeaponSpec[] = [];
-    if (sp.weapon) wpns.push(sp.weapon);
-    for (const g of sp.guns) {
-      if (g.weapon) wpns.push(g.weapon);
-    }
+  private placeShotPreviews(wpns: WeaponSpec[], shotX0: number, shotY: number): void {
     const shotGap = 12;
-    let shotX = bx;
-    const shotY = by + boxH + pad + 22;
+    let shotX = shotX0;
     for (let i = 0; i < this.shots.length; i++) {
       const im = this.shots[i]!;
       const wpn = wpns[i];
@@ -634,19 +836,6 @@ export class RosterConfigTool {
         .setPosition(shotX + Math.max(im.displayWidth, 28) * 0.5, shotY);
       shotX += Math.max(im.displayWidth, 28) + shotGap;
     }
-
-    this.drawHullMarks({
-      radius: sp.radius,
-      height: sp.height,
-      rotOff: sp.rotOff,
-      mounts: hullMountsOf(sp),
-      leashR: sp.crew?.mode === "leash" ? (sp.crew.leashR ?? sp.radius) : undefined,
-      pivot,
-      cx,
-      cy,
-      s,
-      guns: sp.guns,
-    });
   }
 
   private applyStatsPanel(tex: string): void {
@@ -695,48 +884,37 @@ export class RosterConfigTool {
     radius: number;
     height: number;
     rotOff: number;
-    mounts: ReturnType<typeof hullMountsOf>;
     leashR?: number;
     pivot: { x: number; y: number };
     cx: number;
     cy: number;
     s: number;
-    guns: {
-      tex: string;
-      origin: { x: number; y: number };
-      mount: { x: number; y: number };
-      scale?: number;
-      muzzle?: { x: number; y: number };
-      muzzles?: { x: number; y: number }[];
-    }[];
+    hullTex: string;
   }): void {
     const g = this.overlay;
     g.clear();
     for (const t of this.mountLabels) t.setVisible(false);
 
-    const hullDw = this.hull.displayWidth;
-    const hullDh = this.hull.displayHeight;
-    const rot = opts.rotOff;
-    const pivot = opts.pivot;
     const { cx, cy, s } = opts;
-    const hullUv = (u: number, v: number) => {
-      const mx = (u - pivot.x) * hullDw;
-      const my = (v - pivot.y) * hullDh;
-      const ca = Math.cos(rot);
-      const sa = Math.sin(rot);
-      return { x: cx + mx * ca - my * sa, y: cy + mx * sa + my * ca };
-    };
 
     if (this.pinned) {
-      const p = hullUv(this.pinned.uvx, this.pinned.uvy);
+      const hullDw = this.hull.displayWidth;
+      const hullDh = this.hull.displayHeight;
+      const mx = (this.pinned.uvx - opts.pivot.x) * hullDw;
+      const my = (this.pinned.uvy - opts.pivot.y) * hullDh;
+      const ca = Math.cos(opts.rotOff);
+      const sa = Math.sin(opts.rotOff);
+      const px = cx + mx * ca - my * sa;
+      const py = cy + mx * sa + my * ca;
       g.fillStyle(0xff3a2a, 1);
-      g.fillCircle(p.x, p.y, 4);
+      g.fillCircle(px, py, 4);
       g.lineStyle(1, 0xffffff, 0.9);
-      g.strokeCircle(p.x, p.y, 4);
+      g.strokeCircle(px, py, 4);
     }
 
     if (!this.showMarks) return;
 
+    // Combat extents from roster (not sprite UVs).
     g.lineStyle(1.5, 0x5ec8ff, 0.55);
     g.strokeCircle(cx, cy, opts.radius * s);
     if (opts.leashR != null) {
@@ -746,58 +924,85 @@ export class RosterConfigTool {
     g.lineStyle(1.2, 0x6dbb4a, 0.55);
     g.lineBetween(cx, cy, cx, cy - opts.height * s);
 
+    let labelI = 0;
+    const drawTex = (im: Phaser.GameObjects.Image, texKey: string) => {
+      if (!im.visible || !this.scene.textures.exists(texKey)) return;
+      labelI = this.drawSpriteSpecMarks(im, texKey, labelI);
+    };
+
+    drawTex(this.hull, opts.hullTex);
+    for (const part of this.parts) {
+      if (!part.visible) continue;
+      drawTex(part, markTexKey(part.texture.key));
+    }
+    for (; labelI < this.mountLabels.length; labelI++) this.mountLabels[labelI]!.setVisible(false);
+  }
+
+  /** Overlay SPRITE_SPECS points for a placed image. Returns next mount-label index. */
+  private drawSpriteSpecMarks(
+    im: Phaser.GameObjects.Image,
+    texKey: string,
+    labelStart: number
+  ): number {
+    const g = this.overlay;
+    // Phaser places the image by its setOrigin; UV→world must use that pivot.
+    const pivot = { x: im.originX, y: im.originY };
+    const dw = im.displayWidth;
+    const dh = im.displayHeight;
+    const rot = im.rotation;
+    const toWorld = (u: number, v: number) => {
+      const lx = (u - pivot.x) * dw;
+      const ly = (v - pivot.y) * dh;
+      const ca = Math.cos(rot);
+      const sa = Math.sin(rot);
+      return { x: im.x + lx * ca - ly * sa, y: im.y + lx * sa + ly * ca };
+    };
+
+    const catalogOrigin = lookupSpriteOrigin(texKey) ?? pivot;
+    const ox = toWorld(catalogOrigin.x, catalogOrigin.y);
     g.lineStyle(1.5, ORIGIN_COLOR, 0.95);
-    g.lineBetween(cx - 14, cy, cx + 14, cy);
-    g.lineBetween(cx, cy - 14, cx, cy + 14);
-    g.strokeCircle(cx, cy, 5);
+    g.lineBetween(ox.x - 14, ox.y, ox.x + 14, ox.y);
+    g.lineBetween(ox.x, ox.y - 14, ox.x, ox.y + 14);
+    g.strokeCircle(ox.x, ox.y, 5);
 
-    const mounts = opts.mounts;
+    const points = lookupSpritePoints(texKey);
+    const mounts = points
+      .filter((p) => p.role !== "muzzle")
+      .map((p) => ({
+        x: p.x,
+        y: p.y,
+        role: p.role as HullMountRole,
+        label: p.role,
+      }));
+    numberMountLabels(mounts);
 
-    for (let i = 0; i < this.mountLabels.length; i++) {
-      const lab = this.mountLabels[i]!;
-      const m = mounts[i];
-      if (!m) {
-        lab.setVisible(false);
-        continue;
-      }
-      const p = hullUv(m.x, m.y);
-      const color = HULL_MOUNT_COLOR[m.role];
+    let li = labelStart;
+    for (const m of mounts) {
+      const p = toWorld(m.x, m.y);
+      const color = pointColor(m.role);
       g.fillStyle(color, 0.95);
       g.fillRect(p.x - 4, p.y - 4, 8, 8);
       g.lineStyle(1, 0x101010, 0.9);
       g.strokeRect(p.x - 4, p.y - 4, 8, 8);
-      lab.setText(m.label);
-      lab.setColor(hexColor(color));
-      lab.setPosition(p.x + 7, p.y - 8);
-      lab.setVisible(true);
-    }
-
-    for (const gun of opts.guns) {
-      const muzzles = gun.muzzles?.length
-        ? gun.muzzles
-        : gun.muzzle
-          ? [gun.muzzle]
-          : lookupSpriteMuzzles(gun.tex);
-      if (!muzzles.length || !this.scene.textures.exists(gun.tex)) continue;
-      const gunSc = s * (gun.scale ?? 1);
-      const img = this.scene.textures.get(gun.tex).get();
-      const gdw = img.width * gunSc;
-      const gdh = img.height * gunSc;
-      const gunPos = hullUv(gun.mount.x, gun.mount.y);
-      const gunRot = Math.PI / 2;
-      for (const muz of muzzles) {
-        const lx = (muz.x - gun.origin.x) * gdw;
-        const ly = (muz.y - gun.origin.y) * gdh;
-        const ca = Math.cos(gunRot);
-        const sa = Math.sin(gunRot);
-        const x = gunPos.x + lx * ca - ly * sa;
-        const y = gunPos.y + lx * sa + ly * ca;
-        g.fillStyle(0xff7a2a, 0.95);
-        g.fillCircle(x, y, 5);
-        g.lineStyle(1.25, 0xffe8c0, 0.95);
-        g.strokeCircle(x, y, 5);
+      const lab = this.mountLabels[li++];
+      if (lab) {
+        lab.setText(m.label);
+        lab.setColor(hexColor(color));
+        lab.setPosition(p.x + 7, p.y - 8);
+        lab.setVisible(true);
       }
     }
+
+    for (const p of points) {
+      if (p.role !== "muzzle") continue;
+      const w = toWorld(p.x, p.y);
+      g.fillStyle(0xff7a2a, 0.95);
+      g.fillCircle(w.x, w.y, 5);
+      g.lineStyle(1.25, 0xffe8c0, 0.95);
+      g.strokeCircle(w.x, w.y, 5);
+    }
+
+    return li;
   }
 }
 
@@ -823,6 +1028,22 @@ function fallbackCopy(text: string): void {
     /* ignore */
   }
   document.body.removeChild(el);
+}
+
+function pointColor(role: string): number {
+  if (role === "muzzle") return 0xff7a2a;
+  return HULL_MOUNT_COLOR[role as HullMountRole] ?? 0x9a9480;
+}
+
+/** Spin bake shares the live rotor's UV catalog. */
+function markTexKey(key: string): string {
+  return key.endsWith("_spin") ? key.slice(0, -"_spin".length) : key;
+}
+
+function aabbOf(dw: number, dh: number, rot: number): { boxW: number; boxH: number } {
+  const cos = Math.abs(Math.cos(rot));
+  const sin = Math.abs(Math.sin(rot));
+  return { boxW: dw * cos + dh * sin, boxH: dw * sin + dh * cos };
 }
 
 function hexColor(n: number): string {

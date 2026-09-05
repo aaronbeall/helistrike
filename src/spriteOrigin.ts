@@ -58,8 +58,8 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     points: [
       { role: "rotor", x: 0.498, y: 0.453 },
       { role: "gun", x: 0.497, y: 0.174 },
-      // Wing hardpoints (left → right); ~former world span 22 on 120px body.
-      ...pts("secondary", [uv(0.315, 0.5), uv(0.681, 0.5)]),
+      // Wing hardpoints (left → right).
+      ...pts("secondary", [uv(0.112, 0.448), uv(0.859, 0.445)]),
       ...pts("dmg", [
         uv(0.282, 0.434),
         uv(0.616, 0.868),
@@ -87,10 +87,12 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     ],
   },
   enemy_heli_small: {
-    origin: uv(0.493, 0.426),
+    origin: uv(0.5, 0.42),
     points: [
-      { role: "rotor", x: 0.5, y: 0.42 },
-      { role: "muzzle", x: 0.498, y: 0.22 },
+      { role: "rotor", x: 0.5, y: 0.35 },
+      // Fixed wing gun tips (Little Bird pylons) — alternating burst L/R.
+      { role: "muzzle", x: 0.10, y: 0.38 },
+      { role: "muzzle", x: 0.90, y: 0.38 },
     ],
   },
   enemy_heli_heavy: {

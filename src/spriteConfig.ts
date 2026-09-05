@@ -315,7 +315,7 @@ export class SpriteConfigTool {
 
     const frameHint = frames.length > 1 ? `   ← → frame ${this.frameIdx + 1}/${frames.length}` : "";
     this.hintTxt.setText(
-      `SPRITE RIG   \` cycle / close   [ ] cycle   , . page   G art-only ${this.artOnly ? "ON" : "OFF"}${frameHint}   gold origin · green gun · cyan rotor · gold dish · violet troop · red dmg · orange muzzle`
+      `SPRITE RIG   \` cycle / close   [ ] cycle   , . page   G art-only ${this.artOnly ? "ON" : "OFF"}${frameHint}`
     );
     const size = this.pageSize();
     const pages = Math.max(1, Math.ceil(keys.length / size));
@@ -651,7 +651,6 @@ function rigMarks(key: string): { mounts: RigMount[]; muzzles: { x: number; y: n
     for (const g of sp.guns) {
       if (g.tex !== k) continue;
       if (g.muzzles?.length) muzzles.push(...g.muzzles);
-      else if (g.muzzle) muzzles.push({ ...g.muzzle });
     }
   }
   numberMountLabels(mounts);

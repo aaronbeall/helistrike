@@ -26,7 +26,7 @@ import {
 import { Layer, ZOff, Z_GRAVITY, worldDepth } from "./depth";
 import { range } from "./rng";
 import { CRUISE_AGL, Heli, MAX_AGL } from "./heli";
-import { isAerial, isGroundVehicle, isOrganic, hasSoftBlood, specOf, driveOf, spawnAngle, pickTroop, labelOf, allKinds, gunsOf, rollParts, crewOf, type ShotKind, type ShotLook } from "./roster";
+import { isAerial, isGroundVehicle, isOrganic, hasSoftBlood, specOf, driveOf, spawnAngle, pickTroop, labelOf, allKinds, gunsOf, rollParts, crewOf, muzzlesOfGun, type ShotKind, type ShotLook } from "./roster";
 import { lookupSpriteMuzzles, lookupSpriteOrigin } from "./spriteOrigin";
 import { craftDmgPois, craftGunMount, craftGunOrigin, craftOf, craftOrigin, craftSecondaryMounts } from "./craft";
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
@@ -2401,7 +2401,7 @@ export class MissionScene extends Phaser.Scene {
     let muzzleUv: { x: number; y: number } | undefined;
     let mountUv: { x: number; y: number } | undefined;
     if (gun) {
-      const tips = gun.muzzles?.length ? gun.muzzles : [gun.muzzle ?? { x: 0.5, y: 0.08 }];
+      const tips = muzzlesOfGun(gun);
       muzzleUv = tips[tipIdx % tips.length];
       mountUv = gun.mount;
     } else {
@@ -6142,7 +6142,7 @@ export class MissionScene extends Phaser.Scene {
     const gtex = this.textures.exists(gun.tex)
       ? (this.textures.get(gun.tex).getSourceImage() as { width: number; height: number })
       : { width: 24, height: 48 };
-    const tips = gun.muzzles?.length ? gun.muzzles : [gun.muzzle ?? { x: 0.5, y: 0.08 }];
+    const tips = muzzlesOfGun(gun);
     const tipIdx =
       u.muzzleT > 0 && u.muzzleFireTip != null ? u.muzzleFireTip : u.muzzleTip;
     const muz = tips[tipIdx % tips.length]!;

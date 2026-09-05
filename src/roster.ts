@@ -73,7 +73,7 @@ export interface PartMount {
   hulk?: string;
   origin: { x: number; y: number };
   mount: { x: number; y: number };
-  muzzle?: { x: number; y: number };
+  /** Emit tips on this part texture (gun) — empty/omit → default single tip. */
   muzzles?: { x: number; y: number }[];
   scale?: number;
   weapon?: WeaponSpec;
@@ -287,17 +287,21 @@ const gun = (
   hulk?: string,
   weapon?: WeaponSpec
 ): PartMount => {
-  const muzzles = lookupSpriteMuzzles(tex);
+  const tips = lookupSpriteMuzzles(tex);
   return {
     tex,
     hulk: hulk ?? `${tex}_hulk`,
     origin: lookupSpriteOrigin(tex) ?? { x: 0.5, y: originY },
     mount,
-    muzzle: muzzles[0] ?? { x: 0.5, y: 0.08 },
-    muzzles: muzzles.length ? muzzles : undefined,
+    muzzles: tips.length ? tips : [{ x: 0.5, y: 0.08 }],
     weapon
   };
 };
+
+/** Gun-part emit tips (always ≥1). */
+export function muzzlesOfGun(gun: Pick<PartMount, "muzzles">): { x: number; y: number }[] {
+  return gun.muzzles?.length ? gun.muzzles : [{ x: 0.5, y: 0.08 }];
+}
 
 export type EnemyWpnId = "he" | "mg" | "arty" | "aa" | "seeker" | "tower_cannon";
 
@@ -1060,12 +1064,13 @@ const SPECS: Record<UnitKind, UnitSpec> = {
       speed: 680,
       dmg: 3,
       blast: 8,
-      burst: 5,
-      burstGap: 0.1,
+      burst: 6,
+      burstGap: 0.09,
       look: "shot_chain",
       scale: 0.58,
       jitter: 0.04
     }),
+    // Fixed wing guns are baked into the hull; body muzzles alternate L/R.
     guns: [],
     rotors: [
       {
