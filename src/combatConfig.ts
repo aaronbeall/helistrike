@@ -6,8 +6,8 @@ import {
   PLAYER_WPNS,
   type PlayerWpnSpec,
 } from "./combat";
-import { ENEMY_WPNS, usesOfWeapon, type WeaponSpec } from "./roster";
-import { CFG_INFO, CFG_VALUE, kv, kvs, makeConfigText, row, setStatsAndInfo } from "./configUi";
+import { ENEMY_WPNS, usesOfWeapon } from "./roster";
+import { CFG_INFO, CFG_VALUE, dumpConfig, makeConfigText, setStatsAndInfo } from "./configUi";
 import {
   FX_BLAST_CELLS,
   FX_KINDS,
@@ -390,40 +390,24 @@ function playerEntries(): CombatEntry[] {
 }
 
 function formatPlayer(w: PlayerWpnSpec): { stats: string[]; info: string[] } {
-  const ammo = w.ammo === Infinity ? "∞" : String(w.ammo);
-  const stats = [
-    row("kind", w.kind),
-    row("name", w.name),
-    row("ammo", ammo),
-    row("fireCd", `${w.fireCd}s`),
-    row("speed", w.speed),
-    row("dmg", `${w.dmg} ${kv("blast", w.blast)}`),
-    row("life", w.kind === "cannon" ? `${w.life} (+0.55 air)` : w.life),
-    row("look", w.look),
-    row("scale", w.scale),
-  ];
+  const info = [...w.notes.map((n) => `· ${n}`), "source: combat.ts PLAYER_WPNS"];
   if (w.kind === "hellfire" || w.kind === "tow") {
-    stats.push(
-      row(
-        "timing",
-        kvs(
-          ["MISSILE_IGNITE", MISSILE_IGNITE],
-          ["HELLFIRE_LOCK_T", HELLFIRE_LOCK_T],
-          ["HELLFIRE_SEEK_DELAY", HELLFIRE_SEEK_DELAY]
-        )
-      )
+    info.push(
+      `MISSILE_IGNITE ${MISSILE_IGNITE}`,
+      `HELLFIRE_LOCK_T ${HELLFIRE_LOCK_T}`,
+      `HELLFIRE_SEEK_DELAY ${HELLFIRE_SEEK_DELAY}`
     );
   }
   return {
-    stats,
-    info: [...w.notes.map((n) => `· ${n}`), "source: combat.ts PLAYER_WPNS"],
+    stats: dumpConfig(w, { skip: ["notes"] }),
+    info,
   };
 }
 
 /** Shared enemy weapon tables — not per-unit SPECS copies. */
 function presetEntries(): CombatEntry[] {
   return ENEMY_WPNS.map((p) => {
-    const block = formatPreset(p.id, p.label, p.w);
+    const uses = usesOfWeapon(p.w);
     return {
       id: `preset_${p.id}`,
       cat: "preset" as const,
@@ -431,33 +415,13 @@ function presetEntries(): CombatEntry[] {
       tag: "PRE",
       tex: p.w.look,
       rotOff: 0,
-      stats: block.stats,
-      info: block.info,
+      stats: dumpConfig({ id: p.id, label: p.label, ...p.w }),
+      info: [
+        uses.length ? `used by: ${uses.join(" · ")}` : "used by: —",
+        "source: roster.ts ENEMY_WPNS / SPECS / usesOfWeapon",
+      ],
     };
   });
-}
-
-function formatPreset(id: string, label: string, w: WeaponSpec): { stats: string[]; info: string[] } {
-  const uses = usesOfWeapon(w);
-  return {
-    stats: [
-      row("id", id),
-      row("label", label),
-      row("kind", w.kind),
-      row("look", w.look),
-      row("scale", w.scale),
-      row("fireCd", `${w.fireCd}s`),
-      row("range", w.range),
-      row("speed", w.speed),
-      row("dmg", `${w.dmg} ${kv("blast", w.blast)}`),
-      row("burst", w.burst != null ? `${w.burst}×${w.burstGap ?? "?"}` : "—"),
-      row("jitter", w.jitter != null ? w.jitter : "—"),
-    ],
-    info: [
-      uses.length ? `used by: ${uses.join(" · ")}` : "used by: —",
-      "source: roster.ts ENEMY_WPNS / SPECS / usesOfWeapon",
-    ],
-  };
 }
 
 /** FX sheets + blast stamps from sprites.ts bake tables — no hand-maintained encyclopedia. */
@@ -469,12 +433,12 @@ function fxEntries(): CombatEntry[] {
     label: "BLAST STAMP",
     tag: "FX",
     tex: "fx_blast_0",
-    stats: [
-      row("kind", "blast"),
-      row("tex", `fx_blast_0..${FX_BLAST_CELLS - 1}`),
-      row("cells", FX_BLAST_CELLS),
-      row("bake", "fit 88 from src_blasts 2×2"),
-    ],
+    stats: dumpConfig({
+      kind: "blast",
+      tex: `fx_blast_0..${FX_BLAST_CELLS - 1}`,
+      cells: FX_BLAST_CELLS,
+      bake: "fit 88 from src_blasts 2×2",
+    }),
     info: ["source: sprites.ts prepareArt / src_blasts"],
   });
   return sheets;
@@ -489,13 +453,13 @@ function fxSheetEntry(kind: FxKind): CombatEntry {
     tag: "FX",
     tex: key,
     frames: FX_VARIANTS,
-    stats: [
-      row("kind", kind),
-      row("tex", key),
-      row("frames", FX_VARIANTS),
-      row("bake", FX_SHEET_SIZE[kind]),
-      row("src", `src_fx_${kind}_0..${FX_VARIANTS - 1}`),
-    ],
+    stats: dumpConfig({
+      kind,
+      tex: key,
+      frames: FX_VARIANTS,
+      bake: FX_SHEET_SIZE[kind],
+      src: `src_fx_${kind}_0..${FX_VARIANTS - 1}`,
+    }),
     info: ["source: sprites.ts FX_KINDS / putFxSheet"],
   };
 }

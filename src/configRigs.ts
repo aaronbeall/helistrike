@@ -16,6 +16,8 @@ export class ConfigRigsScene extends Phaser.Scene {
   ready = false;
   /** Open sprite rig once create() finishes (first ` raced launch). */
   private pendingOpen = false;
+  /** Ignore re-entrant cycle (duplicate listeners / same-frame doubles). */
+  private cycling = false;
 
   constructor() {
     super("configRigs");
@@ -75,6 +77,11 @@ export class ConfigRigsScene extends Phaser.Scene {
     }
   }
 
+  /** Queue sprite open when ` arrives before create() finishes. */
+  queueOpen(): void {
+    this.pendingOpen = true;
+  }
+
   update(_t: number, dms: number): void {
     if (!this.anyOpen()) return;
     if (this.spriteCfg.open) this.spriteCfg.update();
@@ -93,21 +100,30 @@ export class ConfigRigsScene extends Phaser.Scene {
       this.pendingOpen = true;
       return;
     }
-    if (this.spriteCfg.open) {
+    if (this.cycling) return;
+    this.cycling = true;
+    try {
+      // Open next before closing current so a throw doesn't leave the UI blank.
+      if (this.spriteCfg.open) {
+        this.rosterCfg.toggle();
+        this.spriteCfg.toggle();
+        return;
+      }
+      if (this.rosterCfg.open) {
+        this.combatCfg.toggle();
+        this.rosterCfg.toggle();
+        return;
+      }
+      if (this.combatCfg.open) {
+        this.combatCfg.toggle();
+        return;
+      }
       this.spriteCfg.toggle();
-      this.rosterCfg.toggle();
-      return;
+    } catch (e) {
+      console.error("[configRigs] cycle failed", e);
+    } finally {
+      this.cycling = false;
     }
-    if (this.rosterCfg.open) {
-      this.rosterCfg.toggle();
-      this.combatCfg.toggle();
-      return;
-    }
-    if (this.combatCfg.open) {
-      this.combatCfg.toggle();
-      return;
-    }
-    this.spriteCfg.toggle();
   }
 
   bringFront(): void {
@@ -156,6 +172,10 @@ export function installConfigRigHotkeys(from: Phaser.Scene): void {
 
   kb.addKey(Phaser.Input.Keyboard.KeyCodes.BACKTICK).on("down", () => {
     const rigs = ensureConfigRigs(from);
+    if (!rigs.ready) {
+      rigs.queueOpen();
+      return;
+    }
     rigs.cycle();
     rigs.bringFront();
   });

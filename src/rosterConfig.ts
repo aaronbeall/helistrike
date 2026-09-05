@@ -14,7 +14,6 @@ import {
 } from "./craft";
 import {
   allKinds,
-  driveOf,
   hullMountsOf,
   HULL_MOUNT_COLOR,
   isAerial,
@@ -23,11 +22,8 @@ import {
   isInfantry,
   isWaterCraft,
   labelOf,
-  partsRollOf,
   specOf,
   TROOP_WEIGHTS,
-  weaponPresetId,
-  type MoveKind,
   type UnitKind,
   type UnitSpec,
   type WeaponSpec,
@@ -38,11 +34,9 @@ import {
   CFG_INFO,
   CFG_LIVE,
   CFG_VALUE,
-  kv,
-  kvs,
+  dumpConfig,
+  formatRotOff,
   makeConfigText,
-  row,
-  rowCont,
   setStackedTexts,
 } from "./configUi";
 
@@ -660,28 +654,25 @@ export class RosterConfigTool {
     const tw = this.hull.visible && this.hull.width ? this.hull.width : 1;
     const th = this.hull.visible && this.hull.height ? this.hull.height : 1;
     const uv = this.uvAt(this.scene.input.activePointer);
-    const hover = uv
-      ? [
-          row(
-            "cursor",
-            kvs(
-              ["uv", fmt(uv)],
-              ["px", `${uv.px.toFixed(1)}, ${uv.py.toFixed(1)}`],
-              [
-                "fromOrigin",
-                `${((uv.uvx - origin.x) * tw).toFixed(1)}, ${((uv.uvy - origin.y) * th).toFixed(1)}`,
-              ]
-            )
-          ),
-        ]
-      : [row("cursor", "off board")];
-    const pin = this.pinned
-      ? [row("pin", kvs(["uv", fmt(this.pinned)], ["copied", this.copied || "—"]))]
-      : [row("pin", "click hull to copy name / uv / px")];
+    const live = dumpConfig({
+      cursor: uv
+        ? {
+            uv: { x: uv.uvx, y: uv.uvy },
+            px: { x: uv.px, y: uv.py },
+            fromOrigin: {
+              x: (uv.uvx - origin.x) * tw,
+              y: (uv.uvy - origin.y) * th,
+            },
+          }
+        : "off board",
+      pin: this.pinned
+        ? { uv: { x: this.pinned.uvx, y: this.pinned.uvy }, copied: this.copied || "—" }
+        : "click hull to copy name / uv / px",
+    });
     setStackedTexts(
       [
         { txt: this.statsTxt, lines: this.pendingStats },
-        { txt: this.liveTxt, lines: [...hover, ...pin] },
+        { txt: this.liveTxt, lines: live },
         { txt: this.infoTxt, lines: this.pendingInfo },
       ],
       this.statsXY.x,
@@ -834,12 +825,6 @@ function fallbackCopy(text: string): void {
   document.body.removeChild(el);
 }
 
-function fmt(p: { x?: number; y?: number; uvx?: number; uvy?: number }): string {
-  const x = p.uvx ?? p.x ?? 0;
-  const y = p.uvy ?? p.y ?? 0;
-  return `${x.toFixed(3)}, ${y.toFixed(3)}`;
-}
-
 function hexColor(n: number): string {
   return `#${n.toString(16).padStart(6, "0")}`;
 }
@@ -870,97 +855,25 @@ function categoryTag(kind: UnitKind): string {
   return sp.move.slice(0, 3).toUpperCase();
 }
 
-function weaponBlocks(w: WeaponSpec): string[] {
-  return [
-    kvs(["kind", w.kind], ["look", w.look], ["scale", w.scale], ["dmg", w.dmg], ["blast", w.blast], ["speed", w.speed]),
-    kvs(
-      ["fireCd", w.fireCd],
-      ["range", w.range],
-      w.burst != null && ["burst", `${w.burst}×${w.burstGap ?? "?"}`]
-    ),
-  ];
-}
-
-function formatWeapon(w: WeaponSpec): string[] {
-  const [head, ...rest] = weaponBlocks(w);
-  return [row("weapon", head!), ...rest.map((l) => rowCont(l))];
-}
-
-function weightPct(w: number, total: number): string {
-  return `${Math.round((w / total) * 100)}%`;
-}
-
-/** Live `partsRoll` on the unit SPECS (not a separate table). */
-function formatPartsRoll(kind: UnitKind): string[] {
-  const roll = partsRollOf(kind);
-  if (!roll) return [];
-  if (roll.mode === "pick") {
-    const total = roll.weights.reduce((s, [, w]) => s + w, 0);
-    const lines = [
-      row("partsRoll", `pick ${kvs(["n", roll.weights.length])}`),
-    ];
-    for (const [id, w] of roll.weights) {
-      const opt = roll.options[id]!;
-      lines.push(
-        rowCont(
-          `${id} ${kvs(
-            ["p", weightPct(w, total)],
-            ["tex", opt.tex],
-            ["wpn", opt.label ?? weaponPresetId(opt.w)]
-          )}`
-        )
-      );
-    }
-    const fb = roll.fallback ?? roll.weights[0]?.[0];
-    if (fb) lines.push(rowCont(`SPECS.guns fallback ${fb}`));
-    return lines;
-  }
-  const lines = [
-    row("partsRoll", `fixed ${kvs(["n", roll.slots.length])}`),
-  ];
-  roll.slots.forEach((s, i) => {
-    const opt = roll.options[s.id]!;
-    lines.push(
-      rowCont(
-        `[${i}] ${s.id} ${kvs(["tex", opt.tex], ["wpn", opt.label ?? weaponPresetId(opt.w)])}`
-      )
-    );
-  });
-  return lines;
-}
-
-function formatTroopRoll(): string[] {
-  const total = TROOP_WEIGHTS.reduce((s, [, w]) => s + w, 0);
-  return [
-    rowCont(`troop pick ${kvs(["via", "pickTroop"], ["n", TROOP_WEIGHTS.length])}`),
-    ...TROOP_WEIGHTS.map(
-      ([k, w]) => rowCont(`${k} ${kvs(["p", weightPct(w, total)], ["w", w])}`)
-    ),
-  ];
-}
-
 function formatCraft(craft: CraftSpec): { stats: string[]; info: string[] } {
-  const active = craft.id === craftId();
-  const stats: string[] = [
-    row("id", craft.id),
-    row("label", craft.label),
-    row("health", `${craft.health} ${kvs(["radius", craft.radius], ["height", craft.height])}`),
-    row("selected", active ? "yes ★" : "no"),
-    row("body", craft.body),
-    row("hulk", craft.hulk),
-    row("gun", craft.gun),
-    row("rotOff", `${(craft.rotOff / Math.PI).toFixed(2)}π`),
-    row("origin", `${craftOrigin(craft).x.toFixed(3)}, ${craftOrigin(craft).y.toFixed(3)}`),
-    row("gunMount", `${craftGunMount(craft).x.toFixed(3)}, ${craftGunMount(craft).y.toFixed(3)}`),
-    row("gunOrigin", `${craftGunOrigin(craft).x.toFixed(3)}, ${craftGunOrigin(craft).y.toFixed(3)}`),
-    row("dmgPois", craftDmgPois(craft).length),
-    ...craftDmgPois(craft).map(
-      (p, i) => rowCont(`[${i}] ${p.x.toFixed(3)}, ${p.y.toFixed(3)}`)
-    ),
-    row("secondary", craftSecondaryMounts(craft).length),
-    ...craftSecondaryMounts(craft).map(
-      (p, i) => rowCont(`[${i}] ${p.x.toFixed(3)}, ${p.y.toFixed(3)}`)
-    ),
+  const selected = craft.id === craftId();
+  const gunMounts = (() => {
+    try {
+      return craftGunMount(craft);
+    } catch {
+      return undefined;
+    }
+  })();
+  const stats = [
+    ...dumpConfig(craft, { format: formatRotOff }),
+    ...dumpConfig({
+      selected: selected ? "yes ★" : "no",
+      origin: craftOrigin(craft),
+      ...(gunMounts ? { gunMount: gunMounts } : {}),
+      gunOrigin: craftGunOrigin(craft),
+      dmgPois: craftDmgPois(craft),
+      secondaryMounts: craftSecondaryMounts(craft),
+    }),
   ];
   return {
     stats,
@@ -972,166 +885,16 @@ function formatCraft(craft: CraftSpec): { stats: string[]; info: string[] } {
 }
 
 function formatSpec(kind: UnitKind, sp: UnitSpec): { stats: string[]; info: string[] } {
-  const flags = [
-    sp.building && "building",
-    sp.aerial && "aerial",
-    sp.water && "water",
-    sp.organic && "organic",
-    sp.softBlood && "softBlood",
-    sp.hv && "hv",
-    sp.noCrater && "noCrater",
-    sp.throwGuns && "throwGuns",
-    sp.fixedAim && "fixedAim",
-    sp.wheels != null && `wheels:${sp.wheels}`,
-  ].filter(Boolean) as string[];
-
-  const stats: string[] = [
-    row("kind", kind),
-    row("label", sp.label),
-    row(
-      "health",
-      `${sp.health} ${kvs(
-        ["radius", sp.radius],
-        ["height", sp.height],
-        sp.flyZ != null && ["flyZ", sp.flyZ]
-      )}`
-    ),
-    row(
-      "move",
-      `${sp.move} ${kvs(["frag", sp.frag], ["rotOff", `${(sp.rotOff / Math.PI).toFixed(2)}π`])}`
-    ),
-    row("texture", sp.texture),
-    row("hulk", sp.hulk),
-    row("flags", flags.length ? flags.join(" · ") : "—"),
-  ];
-
-  if (sp.spawnYaw != null) {
-    stats.push(row("spawnYaw", `±${((sp.spawnYaw * 180) / Math.PI).toFixed(1)}°`));
-  }
-
-  const driveKinds: MoveKind[] = ["tank", "vehicle"];
-  if (driveKinds.includes(sp.move)) {
-    const d = driveOf(kind);
-    stats.push(
-      row("drive", kvs(["maxSpd", d.maxSpd], ["accel", d.accel], ["brake", d.brake], ["turn", d.turn])),
-      rowCont(kvs(["track", d.track], ["trackGap", d.trackGap], ["trackScale", d.trackScale]))
-    );
-  }
-
-  if (sp.weapon) {
-    stats.push(...formatWeapon(sp.weapon));
-  }
-
-  if (sp.secondary) {
-    const s = sp.secondary;
-    const home = s.homePlayer !== false;
-    stats.push(
-      row(
-        "secondary",
-        kvs(
-          ["wpn", weaponPresetId(s.wpn)],
-          ["fireCdMin", s.fireCdMin],
-          ["fireCdMax", s.fireCdMax],
-          ["mounts", s.mounts.length]
-        )
-      ),
-      rowCont(
-        kvs(
-          s.scale != null && ["scale", s.scale],
-          s.motor != null && ["motor", s.motor],
-          ["homePlayer", home ? "yes" : "no"],
-          ["minRange", s.minRange ?? 80],
-          ["aimCone", s.aimCone ?? "π/2"]
-        )
-      )
-    );
-    s.mounts.forEach((m, i) => {
-      stats.push(rowCont(`[${i}] ${m.x.toFixed(3)},${m.y.toFixed(3)}`));
-    });
-    for (const block of weaponBlocks(s.wpn)) stats.push(rowCont(block));
-  }
-
-  stats.push(...formatPartsRoll(kind));
-
-  if (sp.guns.length) {
-    stats.push(row("guns", sp.guns.length));
-    sp.guns.forEach((g, i) => {
-      const hulk = g.hulk ? ` → ${g.hulk}` : "";
-      stats.push(
-        rowCont(
-          `[${i}] ${g.tex}${hulk} ${kvs(
-            ["scale", g.scale ?? 1],
-            ["weapon", g.weapon ? "own" : "→ weapon"]
-          )}`
-        ),
-        rowCont(
-          kvs(
-            ["mount", `${g.mount.x.toFixed(3)},${g.mount.y.toFixed(3)}`],
-            ["origin", `${g.origin.x.toFixed(3)},${g.origin.y.toFixed(3)}`]
-          )
-        )
-      );
-      if (g.weapon) {
-        for (const block of weaponBlocks(g.weapon)) stats.push(rowCont(block));
-      }
-    });
-  } else {
-    stats.push(row("guns", "—"));
-  }
-
-  if (sp.rotors.length) {
-    stats.push(row("rotors", sp.rotors.length));
-    sp.rotors.forEach((r, i) => {
-      const hulk = r.hulk ? ` → ${r.hulk}` : "";
-      stats.push(
-        rowCont(`[${i}] ${r.tex}${hulk} ${kv("scale", r.scale ?? 1)}`),
-        rowCont(kv("mount", `${r.mount.x.toFixed(3)},${r.mount.y.toFixed(3)}`))
-      );
-    });
-  } else {
-    stats.push(row("rotors", "—"));
-  }
-
-  if (sp.dish) {
-    const d = sp.dish;
-    const hulk = d.hulk ? ` → ${d.hulk}` : "";
-    stats.push(
-      row("dish", `${d.tex}${hulk} ${kv("scale", d.scale ?? 1)}`),
-      rowCont(kv("mount", `${d.mount.x.toFixed(3)},${d.mount.y.toFixed(3)}`))
-    );
-  } else {
-    stats.push(row("dish", "—"));
-  }
-
+  const info = ["source: roster.ts SPECS + craft.ts CRAFTS (partsRoll / crew / drive / secondary)"];
   if (sp.crew?.mounts.length) {
-    stats.push(
-      row(
-        "crew",
-        `${sp.crew.mode} ${kvs(
-          ["chance", sp.crew.chance ?? 1],
-          ["seats", sp.crew.mounts.length],
-          sp.crew.mode === "leash" && ["leashR", sp.crew.leashR ?? sp.radius]
-        )}`
-      )
-    );
-    sp.crew.mounts.forEach((m, i) => {
-      stats.push(rowCont(`[${i}] ${m.x.toFixed(3)},${m.y.toFixed(3)}`));
-    });
-    stats.push(...formatTroopRoll());
-  } else {
-    stats.push(row("crew", "—"));
+    const total = TROOP_WEIGHTS.reduce((s, [, w]) => s + w, 0);
+    info.push(`pickTroop n=${TROOP_WEIGHTS.length}`);
+    for (const [k, w] of TROOP_WEIGHTS) {
+      info.push(`· ${k} ${Math.round((w / total) * 100)}% (w: ${w})`);
+    }
   }
-
-  const splash = sp.building
-    ? `${(sp.health * 0.05).toFixed(1)} dmg @ r×3`
-    : !sp.organic && (isGroundVehicle(kind) || sp.water || sp.aerial || sp.move === "tank")
-      ? `${(sp.health * 0.1).toFixed(1)} dmg @ r×3`
-      : "—";
-
-  stats.push(row("splash", splash));
-
   return {
-    stats,
-    info: ["source: roster.ts SPECS + craft.ts CRAFTS (partsRoll / crew / drive / secondary)"],
+    stats: dumpConfig({ kind, ...sp }, { format: formatRotOff }),
+    info,
   };
 }
