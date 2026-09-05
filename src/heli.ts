@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { CRAFTS, craftOf, type CraftId } from "./craft";
+import { CRAFTS, craftOf, type CraftKind } from "./craft";
 import { groundZ, WORLD, type WorldData } from "./world";
 
 export interface Stick {
@@ -38,7 +38,7 @@ const PAD_AGL = 5.5;
 export type Phase = "grounded" | "spool" | "ready" | "flight" | "dead";
 
 export class Heli {
-  craft: CraftId;
+  craft: CraftKind;
   x: number;
   y: number;
   z: number;
@@ -72,7 +72,7 @@ export class Heli {
   killDx = 0;
   killDy = 0;
 
-  constructor(x: number, y: number, world: WorldData, craft: CraftId = craftOf().id) {
+  constructor(x: number, y: number, world: WorldData, craft: CraftKind = craftOf().kind) {
     this.craft = craft;
     this.x = x;
     this.y = y;

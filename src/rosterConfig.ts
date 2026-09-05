@@ -1,15 +1,15 @@
 import Phaser from "phaser";
 import {
-  allCraftIds,
+  allCraftKinds,
   craftDmgPois,
   craftGunMount,
   craftGunOrigin,
-  craftId,
+  craftKind,
   craftMountsOf,
   craftOf,
   craftOrigin,
   craftSecondaryMounts,
-  type CraftId,
+  type CraftKind,
   type CraftSpec,
 } from "./craft";
 import {
@@ -59,7 +59,7 @@ const FILTERS: Filter[] = ["all", "ground", "air", "water", "building", "troop"]
 const ORIGIN_COLOR = 0xe8b84a;
 
 /** Roster list row — playable craft or enemy unit. */
-type RosterEntry = { cat: "craft"; id: CraftId } | { cat: "unit"; id: UnitKind };
+type RosterEntry = { cat: "craft"; kind: CraftKind } | { cat: "unit"; kind: UnitKind };
 
 /**
  * Lazy debug browser for CRAFTS + SPECS — list, live preview (hull + parts),
@@ -239,8 +239,8 @@ export class RosterConfigTool {
       const ent = entries[this.idx];
       const tex = ent
         ? ent.cat === "craft"
-          ? craftOf(ent.id).body
-          : specOf(ent.id).texture
+          ? craftOf(ent.kind).body
+          : specOf(ent.kind).texture
         : "";
       this.copied = `${tex} ${uv.uvx.toFixed(3)} ${uv.uvy.toFixed(3)}  px ${uv.px.toFixed(1)} ${uv.py.toFixed(1)}`;
       copyText(this.copied);
@@ -339,24 +339,24 @@ export class RosterConfigTool {
     const page = this.pageOf(this.idx);
     const start = page * size;
     const slice = entries.slice(start, start + size);
-    const totalN = allCraftIds().length + allKinds().length;
+    const totalN = allCraftKinds().length + allKinds().length;
     this.listTxt.setText(
       [
         `— ${this.filter.toUpperCase()}  ${page + 1} / ${pages}  (${entries.length}/${totalN}) —`,
         ...slice.map((e, i) => {
           const mark = start + i === this.idx ? "▸" : " ";
           if (e.cat === "craft") {
-            const c = craftOf(e.id);
-            const active = e.id === craftId() ? " ★" : "";
+            const c = craftOf(e.kind);
+            const active = e.kind === craftKind() ? " ★" : "";
             return `${mark} ${c.label.padEnd(16)} PLY${active}`;
           }
-          return `${mark} ${labelOf(e.id).padEnd(16)} ${categoryTag(e.id)}`;
+          return `${mark} ${labelOf(e.kind).padEnd(16)} ${categoryTag(e.kind)}`;
         }),
       ].join("\n")
     );
 
-    if (ent.cat === "craft") this.layoutCraftPreview(craftOf(ent.id));
-    else this.layoutPreview(ent.id, specOf(ent.id));
+    if (ent.cat === "craft") this.layoutCraftPreview(craftOf(ent.kind));
+    else this.layoutPreview(ent.kind, specOf(ent.kind));
     this.scene.input.setDefaultCursor(this.uvAt(this.scene.input.activePointer) ? "crosshair" : "default");
   }
 
@@ -371,11 +371,11 @@ export class RosterConfigTool {
   private entries(): RosterEntry[] {
     const crafts: RosterEntry[] =
       this.filter === "all" || this.filter === "air"
-        ? allCraftIds().map((id) => ({ cat: "craft" as const, id }))
+        ? allCraftKinds().map((kind) => ({ cat: "craft" as const, kind }))
         : [];
     const units: RosterEntry[] = allKinds()
       .filter((k) => matchesFilter(k, this.filter))
-      .map((id) => ({ cat: "unit" as const, id }));
+      .map((kind) => ({ cat: "unit" as const, kind }));
     return [...crafts, ...units];
   }
 
@@ -856,7 +856,7 @@ function categoryTag(kind: UnitKind): string {
 }
 
 function formatCraft(craft: CraftSpec): { stats: string[]; info: string[] } {
-  const selected = craft.id === craftId();
+  const selected = craft.kind === craftKind();
   const gunMounts = (() => {
     try {
       return craftGunMount(craft);
@@ -879,7 +879,7 @@ function formatCraft(craft: CraftSpec): { stats: string[]; info: string[] } {
     stats,
     info: [
       "source: craft.ts CRAFTS",
-      "select via selectCraft(id) — Heli / scenes read craftOf()",
+      "select via selectCraft(kind) — Heli / scenes read craftOf()",
     ],
   };
 }

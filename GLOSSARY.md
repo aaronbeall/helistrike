@@ -77,7 +77,7 @@ Config rigs dump live config objects via `dumpConfig` (`configUi.ts`); row label
 |---|---|
 | **SPECS** | Per-kind unit config table |
 | **CRAFTS** | Playable heli catalog (`craftOf` / `selectCraft`) |
-| **craft** | Selected player helicopter id (`CraftId`) |
+| **craft** | Selected player helicopter kind (`CraftKind`) |
 | **label** | Display name on the unit |
 | **partsRoll** | Declared gun roll (`pick` or `fixed`) |
 | **crew** | Pinned seats (`snap` or `leash`) |

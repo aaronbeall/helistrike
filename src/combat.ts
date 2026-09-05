@@ -3,13 +3,13 @@ import type { CamoKind } from "./camo";
 
 export type { FragCat, UnitKind } from "./roster";
 
-/** Player weapon slot / flight class (`ShotKind`). */
-export type Wpn = ShotKind;
+/** Player loadout identity (slot / catalog key). */
+export type WpnId = string;
 
 /** Player loadout — shared by fire logic and the combat config browser. */
 export interface PlayerWpnSpec {
-  /** Loadout identity (slot / catalog). May diverge from `kind` later (e.g. upgraded cannon). */
-  id: string;
+  /** Loadout identity (slot / catalog). May diverge from `kind` (e.g. upgraded cannon). */
+  id: WpnId;
   name: string;
   ammo: number;
   fireCd: number;
@@ -27,7 +27,7 @@ export interface PlayerWpnSpec {
   notes: string[];
 }
 
-export const PLAYER_WPNS: Record<Wpn, PlayerWpnSpec> = {
+export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   cannon: {
     id: "cannon",
     name: "M230 CHAIN",
@@ -103,12 +103,10 @@ export const PLAYER_WPNS: Record<Wpn, PlayerWpnSpec> = {
   },
 };
 
-export const WPN_LIST: { id: string; kind: Wpn; name: string; ammo: number }[] = (
-  Object.keys(PLAYER_WPNS) as Wpn[]
-).map((key) => {
-  const w = PLAYER_WPNS[key]!;
-  return { id: w.id, kind: w.kind, name: w.name, ammo: w.ammo };
-});
+/** Active player loadout order (HUD slots / fire index). */
+export const WPN_LIST: { id: WpnId; kind: ShotKind; name: string; ammo: number }[] = Object.values(PLAYER_WPNS).map(
+  (w) => ({ id: w.id, kind: w.kind, name: w.name, ammo: w.ammo })
+);
 
 /** Shared missile timing (player hellfire / TOW). */
 export const MISSILE_IGNITE = 0.525;
@@ -165,7 +163,7 @@ export interface Unit {
 }
 
 export interface Shot {
-  kind: Wpn;
+  kind: ShotKind;
   from: "player" | "enemy";
   x: number;
   y: number;

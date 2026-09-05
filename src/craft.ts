@@ -8,12 +8,12 @@ import {
 /**
  * Playable / selectable helicopter craft.
  * UV layout lives in SPRITE_SPECS for body/gun textures — craft only names textures
- * and gameplay fields. Pick via `selectCraft` / `craftOf(id)`.
+ * and gameplay fields. Pick via `selectCraft` / `craftOf(kind)`.
  */
-export type CraftId = "strike";
+export type CraftKind = "strike";
 
 export interface CraftSpec {
-  id: CraftId;
+  kind: CraftKind;
   label: string;
   health: number;
   /** Collision / silhouette radius (roster marks / future). */
@@ -32,9 +32,9 @@ export interface CraftSpec {
 }
 
 /** Catalog of player-selectable craft (expand with scout / heavy / …). */
-export const CRAFTS: Record<CraftId, CraftSpec> = {
+export const CRAFTS: Record<CraftKind, CraftSpec> = {
   strike: {
-    id: "strike",
+    kind: "strike",
     label: "STRIKE HELI",
     health: 100,
     radius: 20,
@@ -46,29 +46,29 @@ export const CRAFTS: Record<CraftId, CraftSpec> = {
   },
 };
 
-export const DEFAULT_CRAFT: CraftId = "strike";
+export const DEFAULT_CRAFT: CraftKind = "strike";
 
-let selected: CraftId = DEFAULT_CRAFT;
+let selected: CraftKind = DEFAULT_CRAFT;
 
-export function selectCraft(id: CraftId): void {
-  selected = id;
+export function selectCraft(kind: CraftKind): void {
+  selected = kind;
 }
 
-export function craftId(): CraftId {
+export function craftKind(): CraftKind {
   return selected;
 }
 
 /** Active craft, or a named one. */
-export function craftOf(id: CraftId = selected): CraftSpec {
-  return CRAFTS[id];
+export function craftOf(kind: CraftKind = selected): CraftSpec {
+  return CRAFTS[kind];
 }
 
 export function allCrafts(): CraftSpec[] {
   return Object.values(CRAFTS);
 }
 
-export function allCraftIds(): CraftId[] {
-  return Object.keys(CRAFTS) as CraftId[];
+export function allCraftKinds(): CraftKind[] {
+  return Object.keys(CRAFTS) as CraftKind[];
 }
 
 /** Craft whose body/gun/hulk texture matches `key` (bare, no camo suffix). */

@@ -20,12 +20,11 @@ import {
   type Spark,
   type SparkKind,
   type Unit,
-  type Wpn,
 } from "./combat";
 import { Layer, ZOff, Z_GRAVITY, worldDepth } from "./depth";
 import { range } from "./rng";
 import { CRUISE_AGL, Heli, MAX_AGL } from "./heli";
-import { isAerial, isGroundVehicle, isOrganic, hasSoftBlood, specOf, driveOf, spawnAngle, pickTroop, labelOf, allKinds, gunsOf, rollParts, crewOf, type ShotLook } from "./roster";
+import { isAerial, isGroundVehicle, isOrganic, hasSoftBlood, specOf, driveOf, spawnAngle, pickTroop, labelOf, allKinds, gunsOf, rollParts, crewOf, type ShotKind, type ShotLook } from "./roster";
 import { lookupSpriteMuzzles, lookupSpriteOrigin } from "./spriteOrigin";
 import { craftDmgPois, craftGunMount, craftGunOrigin, craftOf, craftOrigin, craftSecondaryMounts } from "./craft";
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
@@ -2139,8 +2138,9 @@ export class MissionScene extends Phaser.Scene {
   handleFire(dt: number): void {
     const h = this.heli;
     if (h.phase !== "flight" || !this.canFire || this.debugOpen || this.editOpen) return;
-    const wpn = WPN_LIST[h.weapon]!.kind;
-    const spec = PLAYER_WPNS[wpn];
+    const slot = WPN_LIST[h.weapon]!;
+    const spec = PLAYER_WPNS[slot.id]!;
+    const wpn = spec.kind;
     const ptr = this.worldPointer();
     const down = this.input.activePointer.isDown;
 
@@ -3031,7 +3031,7 @@ export class MissionScene extends Phaser.Scene {
     dy: number,
     dz: number,
     objectHit: boolean,
-    kind: Wpn
+    kind: ShotKind
   ): void {
     const water = isWater(this.world, x, y);
     const he = kind !== "cannon";

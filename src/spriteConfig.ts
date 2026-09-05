@@ -685,7 +685,7 @@ function layoutOf(key: string): Record<string, unknown> {
   const craft = craftByTexture(key);
   if (craft && (craft.body === key || craft.hulk === key)) {
     return {
-      craft: craft.id,
+      craft: craft.kind,
       rotor: craftOrigin(craft),
       gunMount: craftGunMount(craft),
       dmg: craftDmgPois(craft).length,
@@ -693,7 +693,7 @@ function layoutOf(key: string): Record<string, unknown> {
   }
   if (craft && craft.gun === key) {
     return {
-      craft: craft.id,
+      craft: craft.kind,
       origin: craftGunOrigin(craft),
       mount: craftGunMount(craft),
     };
