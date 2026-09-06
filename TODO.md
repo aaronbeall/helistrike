@@ -2,39 +2,43 @@
 
 ## Content
 
-* [ ] Mutliple terrain gen presets (current: full range, arctic: only ice->snow->rock->snowcaps, desert: lake->sand->rock, tropic: water->jungle->rock, coastal: water->beach->greenery->jungle)
-* [ ] Multiple map gen presets (current, islands: small land mass, lots of water, rugged: lots of steep mountains, coastal: mixed water and land, urban: lots of roads and buildings)
+* [ ] Mutliple terrain biome textures (current: full range, arctic: ice->snow->rock snow->snowcaps, desert: lake->sand->rock, tropic: water->jungle->rock, coastal: water->beach->greenery->jungle)
+* [ ] Multiple map gen presets (current, islands: small land mass and lots of water, rugged: lots of steep mountains, coastal: mixed water and land, urban: lots of roads and buildings)
 * [ ] Multiple helicopters:
-  * Apache (current)
-  * Little Bird (faster, fixed aim guns, less arms, less armor)
-  * Cobra
-  * Stealthhawk
-  * Cyberhawk (controls time)
-  * Ospray (VTOL)
-  * Cheyenne II (VTOL)
-  * Warthog (Jet)
-  * Gunship (high flying aircraft)
-  * (Secret) Prometheus (alien, cloaking)
+  * [ ] Apache (current)
+  * [ ] Little Bird (faster, fixed aim guns, less arms, less armor)
+  * [ ] Cobra
+  * [ ] Stealthhawk
+  * [ ] Cyberhawk (time warp ability)
+  * [ ] Ospray (VTOL)
+  * [ ] Cheyenne II (VTOL)
+  * [ ] Warthog (Jet)
+  * [ ] Gunship (high flying aircraft)
+  * [ ] (Secret) Prometheus (alien, cloaking)
 * [ ] Single player progress, mission/vehicle unlocks, weapon/upgrade purchases
-* Additional weapon options (current: chain gun, rockets, hellfires, TOWs), loadout options specific to heli type
+* [ ] Additional weapon options (current: chain gun, rockets, hellfires, TOWs), loadout options specific to heli type
   * [ ] Miniguns
-  * Spike NLOS (long-range guided)
-  * Sidewinder (air-to-air)
-  * Cluster bomb
-  * Napalm
-  * Laser beam
-  * Tesla coil
-  * Hellstorm (3 mini hellfies, rapid fire, target prioritization and distribution)
-  * Nuke
-  * MIRV
-  * Flak cannon
-  * Drone (drive and detonate)
-  * Target painter/Orbital strike
-  * Artillery (use map to designate, wait)
-  * Airstrike (use map)
-  * EMP (temporarily disables mechs)
-  * Predator strike (switch to high up view)
-  * (Hidden) Rave Cannon
+  * [ ] Spike NLOS (long-range guided)
+  * [ ] Sidewinder (air-to-air)
+  * [ ] Cluster bomb
+  * [ ] Napalm (sets things on fire)
+  * [ ] Laser beam
+  * [ ] Tesla coil
+  * [ ] Hellstorm (3 mini hellfies, rapid fire, target prioritization and distribution)
+  * [ ] Nuke
+  * [ ] MIRV
+  * [ ] Flak cannon (shotgun like spread, effective on troops)
+  * [ ] Drone (drive and detonate)
+  * [ ] Target painter/Orbital strike
+  * [ ] Artillery (use map to designate, wait)
+  * [ ] Airstrike (use map)
+  * [ ] EMP (temporarily disables mechs)
+  * [ ] Predator strike (switch to high up view)
+  * [ ] (Hidden) Rave Cannon
+  * [ ] (Alien) Plasma helix (like chain gun, shoots spiralling energy projectiles)
+  * [ ] (Alien) Photon missile (like hellfire, but energy weapon)
+  * [ ] (Alien) Refractor cannon (like rocket pod, but energy weapon)
+  * [ ] (Alien) Warp bomb (like TOW but also slows time to a crawl while moving)
 * [ ] Counter-measures
 * [ ] Last stand / base defense game mode
 * [ ] Enemy line-of-sight behavior (hide behind terrain, etc)
@@ -90,6 +94,7 @@
   * [ ] Tents -> troops
   * [ ] Hanger -> tanks
   * [ ] Docks -> boats
+* [ ] Rotors push smoke
 
 ## Fix
 
