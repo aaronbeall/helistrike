@@ -214,7 +214,7 @@ function fmtObjectInline(
   return parts.join(", ") || "—";
 }
 
-/** One `[i] value` line per index — value always on the same line (never field-expanded). */
+/** One line of comma-joined primitives, or `[i]` rows for object arrays. */
 function dumpArray(
   arr: unknown[],
   key: string,
@@ -225,6 +225,12 @@ function dumpArray(
   _maxDepth: number
 ): void {
   if (arr.length === 0) return;
+  if (arr.every(isPrimitive)) {
+    const list = arr.map((item) => fmtLeaf(item as string | number | boolean | null)).join(", ");
+    if (key) out.push(emitLine(key, list, depth));
+    else out.push(list);
+    return;
+  }
   arr.forEach((item, i) => {
     const body = `[${i}] ${fmtInline(item, skip, format, 0)}`;
     if (i === 0 && key) out.push(emitLine(key, body, depth));

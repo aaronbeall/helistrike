@@ -1,24 +1,19 @@
 import Phaser from "phaser";
+import { craftOf } from "./craft";
 import {
-  craftDmgPois,
-  craftGunMount,
-  craftGunOrigin,
-  craftMountsOf,
-  craftOf,
-  craftOrigin,
-  craftByTexture,
-} from "./craft";
-import {
-  allSpecs,
-  collectHullMounts,
   HULL_MOUNT_COLOR,
   numberMountLabels,
+  usesOfTexture,
   type HullMount,
   type HullMountRole,
 } from "./roster";
-import { lookupSpriteMuzzles, spriteSpecOf } from "./spriteOrigin";
+import {
+  lookupSpritePoints,
+  spriteSpecOf,
+  type SpritePointRole,
+} from "./spriteOrigin";
 import { makeConfigText, setStackedTexts, CFG_VALUE, CFG_INFO, CFG_LIVE, dumpConfig } from "./configUi";
-import { isUuidTexture, nameGameTexture, nameGeneratedTextures, spritePivot } from "./sprites";
+import { isUuidTexture, nameGameTexture, nameGeneratedTextures } from "./sprites";
 
 const DEPTH = 9200;
 const MONO = "Share Tech Mono, monospace";
@@ -335,6 +330,7 @@ export class SpriteConfigTool {
     );
 
     const marks = rigMarks(key);
+    const spec = spriteSpecOf(key);
     const stats: Record<string, unknown> = {
       key,
       size: `${tw}×${th}`,
@@ -343,9 +339,8 @@ export class SpriteConfigTool {
         y: origin.y,
         px: { x: origin.x * tw, y: origin.y * th },
       },
-      layout: layoutOf(key),
-      spawnYaw: spawnYawOf(key),
     };
+    if (spec?.originMode === "cupola") stats.originMode = "cupola";
     if (frames.length > 1) {
       stats.frame = { i: this.frameIdx + 1, n: frames.length, name: String(frame) };
     }
@@ -355,6 +350,9 @@ export class SpriteConfigTool {
     if (marks.muzzles.length) {
       stats.muzzles = marks.muzzles.map((p) => ({ x: p.x, y: p.y }));
     }
+    if (!spec) stats.spec = "—";
+    const usedBy = usesOfTexture(key);
+    stats.usedBy = usedBy.length ? usedBy : "—";
     this.pendingStats = dumpConfig(stats);
     this.pendingLive = dumpConfig({
       cursor: uv
@@ -371,10 +369,7 @@ export class SpriteConfigTool {
         ? { uv: { x: this.pinned.uvx, y: this.pinned.uvy }, copied: this.copied || "—" }
         : "click sprite to copy name / uv / px",
     });
-    this.pendingInfo = [
-      "texture space · nose-up · tagged mounts from SPECS (HULL_MOUNT_SOURCES)",
-      "spawn yaw any unless listed",
-    ];
+    this.pendingInfo = ["texture space · nose-up · SPRITE_SPECS points"];
     this.applyStatsPanel();
 
     this.drawOverlay(key, origin);
@@ -610,108 +605,33 @@ function fallbackCopy(text: string): void {
   document.body.removeChild(el);
 }
 
-function dedupeUv(list: { x: number; y: number }[]): { x: number; y: number }[] {
-  const out: { x: number; y: number }[] = [];
-  for (const p of list) {
-    if (!out.some((q) => Math.abs(q.x - p.x) < 1e-4 && Math.abs(q.y - p.y) < 1e-4)) out.push(p);
-  }
-  return out;
-}
-
 type RigMount = HullMount & { color: number };
 
-function mountColor(role: HullMountRole): number {
-  return HULL_MOUNT_COLOR[role] ?? 0x9a9480;
+function mountColor(role: SpritePointRole | HullMountRole): number {
+  if (role === "muzzle") return 0xff7a2a;
+  return HULL_MOUNT_COLOR[role as HullMountRole] ?? 0x9a9480;
 }
 
 function hexColor(n: number): string {
   return `#${n.toString(16).padStart(6, "0")}`;
 }
 
-function addMount(list: RigMount[], p: { x: number; y: number }, role: HullMountRole, label: string): void {
-  if (list.some((q) => Math.abs(q.x - p.x) < 1e-4 && Math.abs(q.y - p.y) < 1e-4 && q.role === role)) return;
-  list.push({ x: p.x, y: p.y, role, label, color: mountColor(role) });
-}
-
+/** Overlay marks from SPRITE_SPECS only (catalog view). */
 function rigMarks(key: string): { mounts: RigMount[]; muzzles: { x: number; y: number }[] } {
-  const k = key.replace(/__(woodland|desert|urban|snow|digital)$/, "");
-  const mounts: RigMount[] = [];
-  const muzzles = lookupSpriteMuzzles(k);
-  const craft = craftByTexture(k);
-  if (craft && (craft.body === k || craft.hulk === k)) {
-    for (const m of craftMountsOf(craft)) addMount(mounts, m, m.role, m.label);
-  }
-  for (const sp of allSpecs()) {
-    const tex = sp.texture.replace(/__(woodland|desert|urban|snow|digital)$/, "");
-    if (tex === k) {
-      for (const m of collectHullMounts(sp)) {
-        addMount(mounts, m, m.role, m.label);
-      }
-    }
-    for (const g of sp.guns) {
-      if (g.tex !== k) continue;
-      if (g.muzzles?.length) muzzles.push(...g.muzzles);
-    }
-  }
+  const points = lookupSpritePoints(key);
+  const mounts: RigMount[] = points
+    .filter((p) => p.role !== "muzzle")
+    .map((p) => ({
+      x: p.x,
+      y: p.y,
+      role: p.role as HullMountRole,
+      label: p.role,
+      color: mountColor(p.role),
+    }));
   numberMountLabels(mounts);
   for (const m of mounts) m.color = mountColor(m.role);
-  return { mounts, muzzles: dedupeUv(muzzles) };
-}
-
-function spawnYawOf(key: string): string | Record<string, unknown> {
-  const k = key.replace(/__(woodland|desert|urban|snow|digital)$/, "");
-  const span = (rad: number) => `±${Math.round((rad * 180) / Math.PI)}°`;
-  for (const sp of allSpecs()) {
-    const tex = sp.texture.replace(/__(woodland|desert|urban|snow|digital)$/, "");
-    const hulk = sp.hulk.replace(/__(woodland|desert|urban|snow|digital)$/, "");
-    if (tex === k || hulk === k) {
-      if (sp.spawnYaw == null) return "any";
-      return { span: span(sp.spawnYaw), around: "as-drawn" };
-    }
-  }
-  for (const sp of allSpecs()) {
-    const part =
-      sp.guns.some((g) => g.tex === k || g.hulk === k) ||
-      sp.rotors.some((r) => r.tex === k) ||
-      sp.dish?.tex === k;
-    if (!part || sp.spawnYaw == null) continue;
-    return { span: span(sp.spawnYaw), follows: "body" };
-  }
-  return "any";
-}
-
-function layoutOf(key: string): Record<string, unknown> {
-  const craft = craftByTexture(key);
-  if (craft && (craft.body === key || craft.hulk === key)) {
-    return {
-      craft: craft.kind,
-      rotor: craftOrigin(craft),
-      gunMount: craftGunMount(craft),
-      dmg: craftDmgPois(craft).length,
-    };
-  }
-  if (craft && craft.gun === key) {
-    return {
-      craft: craft.kind,
-      origin: craftGunOrigin(craft),
-      mount: craftGunMount(craft),
-    };
-  }
-  if (key === "heli_rotor" || key === "enemy_heli_rotor") {
-    return { origin: { x: 0.5, y: 0.5 }, note: "spin hub" };
-  }
-  const sp = spriteSpecOf(key);
-  if (sp) {
-    const out: Record<string, unknown> = {};
-    if (sp.origin) out.origin = sp.origin;
-    if (sp.originMode === "cupola") out.mode = "cupola";
-    for (const role of ["gun", "rotor", "dish", "troop", "secondary", "dmg", "muzzle"] as const) {
-      const pts = (sp.points ?? []).filter((p) => p.role === role);
-      if (!pts.length) continue;
-      if (pts.length === 1) out[role] = { x: pts[0]!.x, y: pts[0]!.y };
-      else out[role] = pts.length;
-    }
-    if (Object.keys(out).length) return out;
-  }
-  return { origin: spritePivot(key) };
+  return {
+    mounts,
+    muzzles: points.filter((p) => p.role === "muzzle").map((p) => ({ x: p.x, y: p.y })),
+  };
 }

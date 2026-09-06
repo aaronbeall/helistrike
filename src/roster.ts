@@ -118,8 +118,8 @@ export interface SecondaryWpnSpec {
 }
 
 /**
- * Tagged hull UV roles. Rigs collect via `hullMountsOf` / `HULL_MOUNT_SOURCES` —
- * add a source when SPECS gains a new mount kind; game code handles behavior.
+ * Tagged hull UV roles (SPRITE_SPECS point roles minus muzzle).
+ * Shared by craft mounts and rig overlays.
  */
 export type HullMountRole = "gun" | "rotor" | "dish" | "troop" | "secondary" | "dmg";
 
@@ -139,36 +139,6 @@ export const HULL_MOUNT_COLOR: Record<HullMountRole, number> = {
   secondary: 0xff8c42,
   dmg: 0xff4a4a
 };
-
-/**
- * SPECS fields that expose hull UVs for the sprite rig overlay
- * (usage view). Roster rig draws points from SPRITE_SPECS instead.
- */
-export const HULL_MOUNT_SOURCES: {
-  role: HullMountRole;
-  label: string;
-  uvs: (sp: UnitSpec) => readonly { x: number; y: number }[];
-}[] = [
-  { role: "gun", label: "gun", uvs: (sp) => sp.guns.map((g) => g.mount) },
-  { role: "rotor", label: "rotor", uvs: (sp) => sp.rotors.map((r) => r.mount) },
-  { role: "dish", label: "dish", uvs: (sp) => (sp.dish ? [sp.dish.mount] : []) },
-  { role: "troop", label: "troop", uvs: (sp) => sp.crew?.mounts ?? [] },
-  { role: "secondary", label: "secondary", uvs: (sp) => sp.secondary?.mounts ?? [] },
-];
-
-/** Collect tagged hull mounts from a unit spec (unnumbered). */
-export function collectHullMounts(sp: UnitSpec): HullMount[] {
-  const out: HullMount[] = [];
-  for (const src of HULL_MOUNT_SOURCES) {
-    for (const uv of src.uvs(sp)) {
-      if (out.some((q) => Math.abs(q.x - uv.x) < 1e-4 && Math.abs(q.y - uv.y) < 1e-4 && q.role === src.role)) {
-        continue;
-      }
-      out.push({ x: uv.x, y: uv.y, role: src.role, label: src.label });
-    }
-  }
-  return out;
-}
 
 /** Suffix labels when a role appears more than once (`gun 1`, `secondary 2`). */
 export function numberMountLabels(list: { role: string; label: string }[]): void {
@@ -486,6 +456,39 @@ export function usesOfWeapon(w: WeaponSpec): string[] {
   return uses;
 }
 
+const CAMO_SUFFIX = /__(woodland|desert|urban|snow|digital)$/;
+
+function texKeyBase(tex: string): string {
+  return tex.replace(CAMO_SUFFIX, "");
+}
+
+/**
+ * Roster unit labels that reference this texture (hull / hulk / gun / rotor / dish / partsRoll).
+ * Camo suffixes are stripped for matching. Empty → art-only / player craft / unused.
+ */
+export function usesOfTexture(tex: string): string[] {
+  const k = texKeyBase(tex);
+  const uses: string[] = [];
+  const hit = (t: string) => texKeyBase(t) === k;
+  /** Default hulk key when PartMount / GunRollSpec omits `hulk` (see `gun()`). */
+  const hitGun = (gunTex: string, hulk?: string) => hit(gunTex) || hit(hulk ?? `${gunTex}_hulk`);
+  for (const kind of Object.keys(UNIT_SPECS) as UnitKind[]) {
+    const sp = UNIT_SPECS[kind];
+    let used =
+      hit(sp.texture) ||
+      hit(sp.hulk) ||
+      sp.rotors.some((r) => hitGun(r.tex, r.hulk)) ||
+      !!(sp.dish && hitGun(sp.dish.tex, sp.dish.hulk));
+    if (!used && sp.partsRoll) {
+      used = Object.values(sp.partsRoll.options).some((opt) => hitGun(opt.tex));
+    } else if (!used) {
+      used = sp.guns.some((g) => hitGun(g.tex, g.hulk));
+    }
+    if (used) uses.push(sp.label);
+  }
+  return uses;
+}
+
 /** Live spawn guns from unit `partsRoll` (undefined → use SPECS.guns). */
 export function rollParts(kind: UnitKind): PartMount[] | undefined {
   const roll = partsRollOf(kind);
@@ -622,7 +625,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   bunker: {
     label: "BUNKER",
     health: 260,
-    radius: 48,
+    radius: 54,
     height: 32,
     texture: "building_bunker",
     hulk: "building_bunker_hulk",

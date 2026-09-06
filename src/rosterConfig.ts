@@ -505,7 +505,6 @@ export class RosterConfigTool {
       cy,
       s,
       hullTex: tex,
-      board: { bx, by, boxW, boxH, pad },
     });
   }
 
@@ -633,7 +632,6 @@ export class RosterConfigTool {
       cy,
       s,
       hullTex: tex,
-      board: { bx, by, boxW, boxH, pad },
     });
   }
 
@@ -771,7 +769,6 @@ export class RosterConfigTool {
       cy: hullCy,
       s,
       hullTex: opts.hullTex,
-      board: { bx: minX, by: minY, boxW: boardW, boxH: boardH, pad: 0 },
     });
   }
 
@@ -789,42 +786,6 @@ export class RosterConfigTool {
     }
     this.board.lineStyle(1, 0xe8b84a, 0.55);
     this.board.strokeRect(bx - pad, by - pad, boxW + pad * 2, boxH + pad * 2);
-  }
-
-  /** Chevron just outside the preview border — drawn on overlay (above hull / marks). */
-  private drawFacingArrow(
-    g: Phaser.GameObjects.Graphics,
-    bx: number,
-    by: number,
-    boxW: number,
-    boxH: number,
-    pad: number,
-    faceAng: number
-  ): void {
-    const left = bx - pad;
-    const top = by - pad;
-    const hw = boxW * 0.5 + pad;
-    const hh = boxH * 0.5 + pad;
-    const cx = left + hw;
-    const cy = top + hh;
-    const ux = Math.cos(faceAng);
-    const uy = Math.sin(faceAng);
-    const tx = Math.abs(ux) < 1e-6 ? Infinity : hw / Math.abs(ux);
-    const ty = Math.abs(uy) < 1e-6 ? Infinity : hh / Math.abs(uy);
-    // Sit fully outside the gold frame (gap past the border).
-    const out = 10;
-    const t = Math.min(tx, ty) + out;
-    const tipX = cx + ux * t;
-    const tipY = cy + uy * t;
-    const side = 8;
-    const bx1 = tipX - ux * side + -uy * side * 0.7;
-    const by1 = tipY - uy * side + ux * side * 0.7;
-    const bx2 = tipX - ux * side - -uy * side * 0.7;
-    const by2 = tipY - uy * side - ux * side * 0.7;
-    g.fillStyle(0xe8b84a, 0.95);
-    g.fillTriangle(tipX, tipY, bx1, by1, bx2, by2);
-    g.lineStyle(1.25, 0xfff0c0, 0.9);
-    g.strokeTriangle(tipX, tipY, bx1, by1, bx2, by2);
   }
 
   private placeMountedParts(
@@ -933,7 +894,6 @@ export class RosterConfigTool {
     cy: number;
     s: number;
     hullTex: string;
-    board?: { bx: number; by: number; boxW: number; boxH: number; pad: number };
   }): void {
     const g = this.overlay;
     g.clear();
@@ -954,20 +914,7 @@ export class RosterConfigTool {
       g.strokeCircle(px, py, 4);
     }
 
-    if (!this.showMarks) {
-      if (opts.board) {
-        this.drawFacingArrow(
-          g,
-          opts.board.bx,
-          opts.board.by,
-          opts.board.boxW,
-          opts.board.boxH,
-          opts.board.pad,
-          -opts.rotOff
-        );
-      }
-      return;
-    }
+    if (!this.showMarks) return;
 
     // Footprint in art space: facing = -rotOff so halfL aligns with nose-up sprites.
     const faceAng = -opts.rotOff;
@@ -1006,18 +953,6 @@ export class RosterConfigTool {
       drawTex(part, markTexKey(part.texture.key));
     }
     for (; labelI < this.mountLabels.length; labelI++) this.mountLabels[labelI]!.setVisible(false);
-
-    if (opts.board) {
-      this.drawFacingArrow(
-        g,
-        opts.board.bx,
-        opts.board.by,
-        opts.board.boxW,
-        opts.board.boxH,
-        opts.board.pad,
-        faceAng
-      );
-    }
   }
 
   /** Overlay SPRITE_SPECS points for a placed image. Returns next mount-label index. */
