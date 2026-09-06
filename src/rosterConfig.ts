@@ -7,7 +7,10 @@ import {
   craftKind,
   craftOf,
   craftOrigin,
+  craftRotorSpinTex,
+  craftRotorTex,
   craftSecondaryMounts,
+  selectCraft,
   type CraftKind,
   type CraftSpec,
 } from "./craft";
@@ -259,6 +262,14 @@ export class RosterConfigTool {
         if (!this.open) return;
         this.cyclePartsRoll(1);
       });
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER).on("down", () => {
+        if (!this.open) return;
+        const ent = this.entries()[this.idx];
+        if (ent?.cat === "craft") {
+          selectCraft(ent.kind);
+          this.refreshPreview();
+        }
+      });
     }
 
     scene.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
@@ -383,8 +394,9 @@ export class RosterConfigTool {
       pickIds.length > 1
         ? `   V roll ${this.rollPickIdx + 1}/${pickIds.length}`
         : "";
+    const craftHint = ent.cat === "craft" ? "   ENTER select craft" : "";
     this.hintTxt.setText(
-      `ROSTER RIG   \` cycle / close   [ ] cycle   , . page   - + zoom ${fmtZoom(this.zoom)}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   C composition ${this.composition.toUpperCase()}${rollHint}`
+      `ROSTER RIG   \` cycle / close   [ ] cycle   , . page   - + zoom ${fmtZoom(this.zoom)}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   C composition ${this.composition.toUpperCase()}${rollHint}${craftHint}`
     );
 
     const size = this.pageSize();
@@ -471,15 +483,19 @@ export class RosterConfigTool {
       },
     ];
     {
-      const spinKey = "heli_rotor_spin";
-      const rotorKey = this.scene.textures.exists(spinKey) ? spinKey : "heli_rotor";
-      parts.push({
-        tex: rotorKey,
-        origin: { x: 0.5, y: 0.5 },
-        mount: craftOrigin(craft),
-        rot: 0,
-        scale: 1,
-      });
+      const rotorTex = craftRotorTex(craft);
+      if (rotorTex) {
+        const spinKey = craftRotorSpinTex(craft);
+        const rotorKey =
+          spinKey && this.scene.textures.exists(spinKey) ? spinKey : rotorTex;
+        parts.push({
+          tex: rotorKey,
+          origin: { x: 0.5, y: 0.5 },
+          mount: craftOrigin(craft),
+          rot: 0,
+          scale: 1,
+        });
+      }
     }
 
     if (this.composition === "separated") {
@@ -1173,7 +1189,7 @@ function formatCraft(craft: CraftSpec): { stats: string[]; info: string[] } {
     stats,
     info: [
       "source: craft.ts CRAFTS",
-      "select via selectCraft(kind) — Heli / scenes read craftOf()",
+      "ENTER select craft — Heli / scenes read craftOf()",
     ],
   };
 }

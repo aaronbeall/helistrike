@@ -42,6 +42,32 @@ const SRC = {
   radarHulk: "sprites/helistrike-radar-hulk.png",
 } as const;
 
+/** Selectable craft body/hulk/rotor source sheets (magenta). */
+const CRAFT_ART: { key: string; file: string; fit: number; rotor?: boolean }[] = [
+  { key: "craft_littlebird", file: "sprites/helistrike-craft-littlebird.png", fit: 90 },
+  { key: "craft_littlebird_hulk", file: "sprites/helistrike-craft-littlebird-hulk.png", fit: 90 },
+  { key: "craft_cobra", file: "sprites/helistrike-craft-cobra.png", fit: 110 },
+  { key: "craft_cobra_hulk", file: "sprites/helistrike-craft-cobra-hulk.png", fit: 110 },
+  { key: "craft_cobra_rotor", file: "sprites/helistrike-craft-cobra-rotor.png", fit: 120, rotor: true },
+  { key: "craft_cobra_rotor_hulk", file: "sprites/helistrike-craft-cobra-rotor-hulk.png", fit: 80, rotor: true },
+  { key: "craft_osprey", file: "sprites/helistrike-craft-osprey.png", fit: 140 },
+  { key: "craft_osprey_hulk", file: "sprites/helistrike-craft-osprey-hulk.png", fit: 140 },
+  { key: "craft_osprey_rotor", file: "sprites/helistrike-craft-osprey-rotor.png", fit: 100, rotor: true },
+  { key: "craft_osprey_rotor_hulk", file: "sprites/helistrike-craft-osprey-rotor-hulk.png", fit: 70, rotor: true },
+  { key: "craft_stealthhawk", file: "sprites/helistrike-craft-stealthhawk.png", fit: 120 },
+  { key: "craft_stealthhawk_hulk", file: "sprites/helistrike-craft-stealthhawk-hulk.png", fit: 120 },
+  { key: "craft_cyberhawk", file: "sprites/helistrike-craft-cyberhawk.png", fit: 120 },
+  { key: "craft_cyberhawk_hulk", file: "sprites/helistrike-craft-cyberhawk-hulk.png", fit: 120 },
+  { key: "craft_cyberhawk_rotor", file: "sprites/helistrike-craft-cyberhawk-rotor.png", fit: 130, rotor: true },
+  { key: "craft_cyberhawk_rotor_hulk", file: "sprites/helistrike-craft-cyberhawk-rotor-hulk.png", fit: 80, rotor: true },
+  { key: "craft_prometheus", file: "sprites/helistrike-craft-prometheus.png", fit: 130 },
+  { key: "craft_prometheus_hulk", file: "sprites/helistrike-craft-prometheus-hulk.png", fit: 130 },
+  { key: "craft_gunship", file: "sprites/helistrike-craft-gunship.png", fit: 200 },
+  { key: "craft_gunship_hulk", file: "sprites/helistrike-craft-gunship-hulk.png", fit: 200 },
+  { key: "craft_warthog", file: "sprites/helistrike-craft-warthog.png", fit: 150 },
+  { key: "craft_warthog_hulk", file: "sprites/helistrike-craft-warthog-hulk.png", fit: 150 },
+];
+
 export const BIOME_TILE_NAMES = ["water", "sand", "grass", "forest", "rock", "peak"] as const;
 export const DOODAD_ART: { key: string; size: number }[] = [
   { key: "tree", size: 42 },
@@ -76,6 +102,7 @@ export function preloadArt(scene: Phaser.Scene): void {
   scene.load.image("menu_splash", "helistrike-menu-splash.png");
   scene.load.image("src_heli", SRC.heli);
   scene.load.image("src_enemy", SRC.enemy);
+  scene.load.image("src_heli_hulk", "sprites/helistrike-heli-player-hulk.png");
   scene.load.image("src_enemy_heli_hulk", "sprites/helistrike-heli-enemy-hulk.png");
   scene.load.image("src_tank_parts", SRC.tankParts);
   scene.load.image("src_bunker", SRC.bunker);
@@ -112,6 +139,9 @@ export function preloadArt(scene: Phaser.Scene): void {
   scene.load.image("src_radar_dish", SRC.radarDish);
   scene.load.image("src_radar_dish_hulk", SRC.radarDishHulk);
   scene.load.image("src_radar_hulk", SRC.radarHulk);
+  for (const art of CRAFT_ART) {
+    scene.load.image(`src_${art.key}`, art.file);
+  }
   for (const name of BIOME_TILE_NAMES) {
     scene.load.image(`src_biome_${name}`, `sprites/helistrike-biome-${name}.png`);
   }
@@ -425,10 +455,16 @@ export function spriteUvPos(
 }
 
 export function prepareArt(textures: Phaser.Textures.TextureManager): void {
-  const body = fit(keyImage(src(textures, "src_heli"), "studio"), 120);
+  const body = fit(keyImage(src(textures, "src_heli"), "magenta"), 120);
   const enemy = fit(keyImage(src(textures, "src_enemy"), "magenta"), 104);
   put(textures, "heli_body", body);
-  {
+  if (textures.exists("src_heli_hulk")) {
+    put(
+      textures,
+      "heli_body_hulk",
+      darkenWreck(fit(keyImage(src(textures, "src_heli_hulk"), "magenta"), 120))
+    );
+  } else {
     const hc = document.createElement("canvas");
     hc.width = body.width;
     hc.height = body.height;
@@ -451,6 +487,27 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   put(textures, "enemy_heli_rotor", enemyRotor);
   put(textures, "heli_rotor_spin", radialStampBlur(playerRotor));
   put(textures, "enemy_heli_rotor_spin", radialStampBlur(enemyRotor));
+
+  // Selectable craft bodies / custom rotors.
+  for (const art of CRAFT_ART) {
+    const srcKey = `src_${art.key}`;
+    if (!textures.exists(srcKey)) continue;
+    const keyed = keyImage(src(textures, srcKey), "magenta");
+    if (art.rotor) {
+      if (art.key.endsWith("_hulk")) {
+        put(textures, art.key, fit(stripBakedDropShadow(squareCenter(keyed)), art.fit));
+      } else {
+        const rotor = fit(squareCenter(keyed), art.fit);
+        put(textures, art.key, rotor);
+        put(textures, `${art.key}_spin`, radialStampBlur(rotor));
+      }
+    } else if (art.key.endsWith("_hulk")) {
+      put(textures, art.key, darkenWreck(fit(keyed, art.fit)));
+    } else {
+      put(textures, art.key, fit(keyed, art.fit));
+    }
+  }
+
   put(textures, "doodad_rock", fit(keyImage(src(textures, "src_rock"), "magenta"), 36));
 
   const parts = sliceGrid(keyImage(src(textures, "src_tank_parts"), "magenta"), 2, 1);
@@ -659,6 +716,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     "heli_body_hulk",
     "enemy_heli",
     "enemy_heli_hulk",
+    ...CRAFT_ART.map((a) => a.key),
     "shot_chain",
     "shot_shell",
     "shot_small",

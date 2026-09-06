@@ -77,6 +77,70 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     origin: uv(0.5, 0.7),
   },
 
+  // —— Selectable craft (stub mounts — tune in sprite/roster rig) ——
+  craft_littlebird: {
+    origin: uv(0.5, 0.48),
+    points: [
+      { role: "rotor", x: 0.5, y: 0.42 },
+      { role: "gun", x: 0.5, y: 0.22 },
+      ...pts("secondary", [uv(0.22, 0.52), uv(0.78, 0.52)]),
+    ],
+  },
+  craft_cobra: {
+    origin: uv(0.5, 0.45),
+    points: [
+      { role: "rotor", x: 0.5, y: 0.4 },
+      { role: "gun", x: 0.5, y: 0.16 },
+      ...pts("secondary", [uv(0.28, 0.5), uv(0.72, 0.5)]),
+    ],
+  },
+  craft_osprey: {
+    origin: uv(0.5, 0.5),
+    points: [
+      ...pts("rotor", [uv(0.18, 0.48), uv(0.82, 0.48)]),
+      { role: "gun", x: 0.5, y: 0.2 },
+      ...pts("secondary", [uv(0.35, 0.55), uv(0.65, 0.55)]),
+    ],
+  },
+  craft_stealthhawk: {
+    origin: uv(0.5, 0.45),
+    points: [
+      { role: "rotor", x: 0.5, y: 0.4 },
+      { role: "gun", x: 0.5, y: 0.16 },
+      ...pts("secondary", [uv(0.22, 0.48), uv(0.78, 0.48)]),
+    ],
+  },
+  craft_cyberhawk: {
+    origin: uv(0.5, 0.45),
+    points: [
+      { role: "rotor", x: 0.5, y: 0.4 },
+      { role: "gun", x: 0.5, y: 0.17 },
+      ...pts("secondary", [uv(0.18, 0.48), uv(0.82, 0.48)]),
+    ],
+  },
+  craft_prometheus: {
+    origin: uv(0.5, 0.5),
+    points: [
+      { role: "gun", x: 0.5, y: 0.28 },
+      ...pts("secondary", [uv(0.3, 0.55), uv(0.7, 0.55)]),
+      ...pts("dmg", [uv(0.4, 0.4), uv(0.6, 0.6), uv(0.45, 0.7)]),
+    ],
+  },
+  craft_gunship: {
+    origin: uv(0.5, 0.5),
+    points: [
+      { role: "gun", x: 0.28, y: 0.45 },
+      ...pts("secondary", [uv(0.35, 0.42), uv(0.35, 0.55), uv(0.35, 0.68)]),
+    ],
+  },
+  craft_warthog: {
+    origin: uv(0.5, 0.48),
+    points: [
+      { role: "gun", x: 0.5, y: 0.12 },
+      ...pts("secondary", [uv(0.22, 0.5), uv(0.78, 0.5)]),
+    ],
+  },
+
   // —— Enemy / building hulls ——
   enemy_heli: {
     origin: uv(0.497, 0.411),

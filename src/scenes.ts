@@ -35,7 +35,7 @@ import {
   strokeFootprint,
 } from "./footprint";
 import { lookupSpriteMuzzles, lookupSpriteOrigin } from "./spriteOrigin";
-import { craftDmgPois, craftGunMount, craftGunOrigin, craftOf, craftOrigin, craftSecondaryMounts } from "./craft";
+import { craftDmgPois, craftGunMount, craftGunOrigin, craftOf, craftOrigin, craftRotorSpinTex, craftRotorTex, craftSecondaryMounts } from "./craft";
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
 import { configRigsAnyOpen, installConfigRigHotkeys } from "./configRigs";
 import { applyEdgeLight, clearEdgeLight, ensureEdgeLightPipeline } from "./edgeLight";
@@ -324,9 +324,18 @@ export class LoadScene extends Phaser.Scene {
       .image(hx, this.heliY, craft.body)
       .setOrigin(craftOrigin(craft).x, craftOrigin(craft).y)
       .setScale(zs);
-    this.rotorDisc = this.add.image(hx, this.heliY, this.textures.exists("heli_rotor_spin") ? "heli_rotor_spin" : "heli_rotor").setOrigin(0.5, 0.5).setAlpha(0);
-    this.rotor = this.add.image(hx, this.heliY, "heli_rotor").setOrigin(0.5, 0.5);
-    const rotorScale = (124 / this.rotor.width) * 1.08 * zs;
+    const rotorTex = craftRotorTex(craft) ?? "heli_rotor";
+    const spinTex = craftRotorSpinTex(craft);
+    this.rotorDisc = this.add
+      .image(hx, this.heliY, spinTex && this.textures.exists(spinTex) ? spinTex : rotorTex)
+      .setOrigin(0.5, 0.5)
+      .setAlpha(0);
+    this.rotor = this.add.image(hx, this.heliY, rotorTex).setOrigin(0.5, 0.5);
+    if (!craft.rotor) {
+      this.rotor.setVisible(false);
+      this.rotorDisc.setVisible(false);
+    }
+    const rotorScale = (124 / Math.max(this.rotor.width, 1)) * 1.08 * zs;
     this.rotor.setScale(rotorScale);
     this.rotorDisc.setScale(rotorScale * 1.04);
     this.add
@@ -675,7 +684,9 @@ export class MissionScene extends Phaser.Scene {
     this.shadow = this.add.image(0, 0, "shadow").setDepth(Layer.SHADOW);
     this.gun = this.add.image(0, 0, craft.gun).setDepth(Layer.WORLD).setOrigin(craftGunOrigin(craft).x, craftGunOrigin(craft).y);
     this.body = this.add.image(0, 0, craft.body).setDepth(Layer.WORLD).setOrigin(craftOrigin(craft).x, craftOrigin(craft).y);
-    this.rotor = this.add.image(0, 0, "heli_rotor").setDepth(Layer.WORLD).setOrigin(0.5, 0.5);
+    const rotorTex = craftRotorTex(craft) ?? "heli_rotor";
+    this.rotor = this.add.image(0, 0, rotorTex).setDepth(Layer.WORLD).setOrigin(0.5, 0.5);
+    if (!craft.rotor) this.rotor.setVisible(false);
     this.muzzle = this.add
       .image(0, 0, "fx_muzzle")
       .setDepth(Layer.WORLD)
@@ -1827,13 +1838,19 @@ export class MissionScene extends Phaser.Scene {
     }
     this.rotor.setRotation(h.rotor);
     this.gun.setRotation(h.gunAngle + Math.PI / 2);
-    const spinKey = "heli_rotor_spin";
-    const useSpin = h.rotorSpd >= 16 && this.textures.exists(spinKey);
-    const rotorKey = useSpin ? spinKey : "heli_rotor";
-    if (this.rotor.texture.key !== rotorKey) this.rotor.setTexture(rotorKey);
-    this.rotor.setScale((this.liveRotorDrawPx("heli_rotor") / Math.max(this.rotor.width, 1)) * zs);
+    const liveRotor = craftRotorTex(craft);
+    if (!liveRotor) {
+      this.rotor.setVisible(false);
+    } else {
+      this.rotor.setVisible(true);
+      const spinKey = craftRotorSpinTex(craft);
+      const useSpin = !!spinKey && h.rotorSpd >= 16 && this.textures.exists(spinKey);
+      const rotorKey = useSpin ? spinKey! : liveRotor;
+      if (this.rotor.texture.key !== rotorKey) this.rotor.setTexture(rotorKey);
+      this.rotor.setScale((this.liveRotorDrawPx(liveRotor) / Math.max(this.rotor.width, 1)) * zs);
+      this.rotor.setAlpha(1);
+    }
     this.gun.setScale(zs);
-    this.rotor.setAlpha(1);
     applyEdgeLight(this.body, h.angle + craft.rotOff);
     applyEdgeLight(this.gun, h.gunAngle + Math.PI / 2);
     clearEdgeLight(this.rotor);
@@ -4092,14 +4109,16 @@ export class MissionScene extends Phaser.Scene {
     this.frags.push(hull);
 
     const rotors = player
-      ? [
-          {
-            tex: "heli_rotor",
-            hulk: "heli_rotor_hulk",
-            mount: { x: craftOrigin(craft!).x, y: craftOrigin(craft!).y },
-            scale: 1,
-          },
-        ]
+      ? craft!.rotor
+        ? [
+            {
+              tex: craft!.rotor,
+              hulk: craft!.rotorHulk ?? `${craft!.rotor}_hulk`,
+              mount: { x: craftOrigin(craft!).x, y: craftOrigin(craft!).y },
+              scale: 1,
+            },
+          ]
+        : []
       : (sp?.rotors ?? []).map((r) => ({
           tex: r.tex,
           hulk: this.textures.exists(r.hulk ?? "") ? r.hulk! : r.tex,
