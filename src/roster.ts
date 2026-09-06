@@ -141,8 +141,8 @@ export const HULL_MOUNT_COLOR: Record<HullMountRole, number> = {
 };
 
 /**
- * SPECS fields that expose hull UVs. One entry per mount kind —
- * both config rigs iterate this instead of hardcoding roles.
+ * SPECS fields that expose hull UVs for the sprite rig overlay
+ * (usage view). Roster rig draws points from SPRITE_SPECS instead.
  */
 export const HULL_MOUNT_SOURCES: {
   role: HullMountRole;
@@ -183,18 +183,17 @@ export function numberMountLabels(list: { role: string; label: string }[]): void
   }
 }
 
-/** Hull mounts for a unit, labels numbered for display. */
-export function hullMountsOf(sp: UnitSpec): HullMount[] {
-  const out = collectHullMounts(sp);
-  numberMountLabels(out);
-  return out;
-}
-
 export interface UnitSpec {
   /** Display name (roster / HUD). */
   label: string;
   health: number;
+  /** Visual / FX size (craters, death blast, UI). Hit uses `box` when set, else this. */
   radius: number;
+  /**
+   * Oriented rectangle footprint (length along facing). When set, shot/sep/reticle
+   * use this instead of a circle. Does not change `radius` (keep radius as visual size).
+   */
+  box?: { halfW: number; halfL: number };
   height: number;
   flyZ?: number;
   texture: string;
@@ -413,11 +412,8 @@ export function wpn(id: EnemyWpnId, over: Partial<WeaponSpec> = {}): WeaponSpec 
   return { ...WPN[id], ...over };
 }
 
-/** @deprecated Use ENEMY_WPNS */
-export const ENEMY_WPN_PRESETS = ENEMY_WPNS;
-
 export function partsRollOf(kind: UnitKind): PartsRoll | undefined {
-  return SPECS[kind].partsRoll;
+  return UNIT_SPECS[kind].partsRoll;
 }
 
 export function weaponPresetId(w: WeaponSpec): string {
@@ -461,8 +457,8 @@ export function defaultGunsFromRoll(kind: UnitKind): PartMount[] | undefined {
  */
 export function usesOfWeapon(w: WeaponSpec): string[] {
   const uses: string[] = [];
-  for (const kind of Object.keys(SPECS) as UnitKind[]) {
-    const sp = SPECS[kind];
+  for (const kind of Object.keys(UNIT_SPECS) as UnitKind[]) {
+    const sp = UNIT_SPECS[kind];
     if (sp.weapon === w) uses.push(`${kind} body`);
     if (sp.secondary?.wpn === w) uses.push(`${kind} secondary`);
     if (sp.partsRoll) {
@@ -502,14 +498,15 @@ export function rollParts(kind: UnitKind): PartMount[] | undefined {
 }
 
 export function gunsOf(u: { kind: UnitKind; parts?: PartMount[] }): PartMount[] {
-  return u.parts ?? defaultGunsFromRoll(u.kind) ?? SPECS[u.kind].guns;
+  return u.parts ?? defaultGunsFromRoll(u.kind) ?? UNIT_SPECS[u.kind].guns;
 }
 
-const SPECS: Record<UnitKind, UnitSpec> = {
+const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   tank: {
     label: "TANK",
     health: 90,
     radius: 22,
+    box: { halfW: 19, halfL: 34 },
     height: 20,
     texture: "enemy_tank",
     hulk: "enemy_tank_hulk",
@@ -575,6 +572,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     label: "PATROL BOAT",
     health: 70,
     radius: 28,
+    box: { halfW: 13, halfL: 44 },
     height: 16,
     texture: "enemy_boat",
     hulk: "enemy_boat_hulk",
@@ -592,6 +590,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     label: "AA TOWER",
     health: 110,
     radius: 28,
+    box: { halfW: 34, halfL: 37 },
     height: 48,
     texture: "building_tower",
     hulk: "building_tower_hulk",
@@ -640,6 +639,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     label: "RADAR",
     health: 200,
     radius: 72,
+    box: { halfW: 57, halfL: 104 },
     height: 56,
     texture: "building_radar",
     hulk: "building_radar_hulk",
@@ -662,6 +662,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     label: "PICKUP",
     health: 42,
     radius: 18,
+    box: { halfW: 11, halfL: 28 },
     height: 14,
     texture: "enemy_pickup",
     hulk: "enemy_pickup_hulk",
@@ -678,6 +679,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     label: "TRUCK",
     health: 55,
     radius: 20,
+    box: { halfW: 14, halfL: 32 },
     height: 16,
     texture: "enemy_truck",
     hulk: "enemy_truck_hulk",
@@ -693,6 +695,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     label: "TANKER",
     health: 70,
     radius: 22,
+    box: { halfW: 13, halfL: 33 },
     height: 16,
     texture: "enemy_tanker",
     hulk: "enemy_tanker_hulk",
@@ -724,6 +727,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     label: "LAV",
     health: 62,
     radius: 18,
+    box: { halfW: 13, halfL: 27 },
     height: 16,
     texture: "enemy_lav",
     hulk: "enemy_lav_hulk",
@@ -741,6 +745,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     label: "LAV-AA",
     health: 54,
     radius: 18,
+    box: { halfW: 13, halfL: 27 },
     height: 18,
     texture: "enemy_lav",
     hulk: "enemy_lav_hulk",
@@ -763,6 +768,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     label: "SAM",
     health: 80,
     radius: 22,
+    box: { halfW: 15, halfL: 32 },
     height: 20,
     texture: "enemy_sam",
     hulk: "enemy_sam_hulk",
@@ -785,6 +791,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     label: "PT BOAT",
     health: 48,
     radius: 14,
+    box: { halfW: 7, halfL: 24 },
     height: 12,
     texture: "enemy_ptboat",
     hulk: "enemy_ptboat_hulk",
@@ -802,6 +809,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     label: "BATTLESHIP",
     health: 420,
     radius: 92,
+    box: { halfW: 28, halfL: 133 },
     height: 40,
     texture: "enemy_battleship",
     hulk: "enemy_battleship_hulk",
@@ -965,6 +973,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     label: "BARN",
     health: 140,
     radius: 34,
+    box: { halfW: 23, halfL: 41 },
     height: 28,
     texture: "building_barn",
     hulk: "building_barn_hulk",
@@ -979,6 +988,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     label: "TENT",
     health: 40,
     radius: 20,
+    box: { halfW: 18, halfL: 30 },
     height: 14,
     texture: "building_tent",
     hulk: "building_tent_hulk",
@@ -993,6 +1003,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     label: "FOB",
     health: 220,
     radius: 52,
+    box: { halfW: 61, halfL: 53 },
     height: 28,
     texture: "building_fob",
     hulk: "building_fob_hulk",
@@ -1009,6 +1020,7 @@ const SPECS: Record<UnitKind, UnitSpec> = {
     label: "LOOKOUT",
     health: 90,
     radius: 22,
+    box: { halfW: 23, halfL: 25 },
     height: 56,
     texture: "building_lookout",
     hulk: "building_lookout_hulk",
@@ -1123,18 +1135,18 @@ const SPECS: Record<UnitKind, UnitSpec> = {
 };
 
 /** `partsRoll` owns SPECS.guns for those units (preview / gunsOf fallback). */
-for (const kind of Object.keys(SPECS) as UnitKind[]) {
+for (const kind of Object.keys(UNIT_SPECS) as UnitKind[]) {
   const guns = defaultGunsFromRoll(kind);
-  if (guns) SPECS[kind].guns = guns;
+  if (guns) UNIT_SPECS[kind].guns = guns;
 }
 
 export function specOf(kind: UnitKind): UnitSpec {
-  return SPECS[kind];
+  return UNIT_SPECS[kind];
 }
 
 /** World heading at spawn. Buildings with `spawnYaw` jitter around as-drawn facing. */
 export function spawnAngle(kind: UnitKind): number {
-  const sp = SPECS[kind];
+  const sp = UNIT_SPECS[kind];
   if (sp.spawnYaw == null) return Math.random() * Math.PI * 2;
   return -sp.rotOff + (Math.random() * 2 - 1) * sp.spawnYaw;
 }
@@ -1168,49 +1180,49 @@ export function pickPickupTroop(): UnitKind {
 }
 
 export function crewOf(kind: UnitKind): CrewSpec | undefined {
-  return SPECS[kind].crew;
+  return UNIT_SPECS[kind].crew;
 }
 
 export function allSpecs(): UnitSpec[] {
-  return Object.values(SPECS);
+  return Object.values(UNIT_SPECS);
 }
 
 export function allKinds(): UnitKind[] {
-  return Object.keys(SPECS) as UnitKind[];
+  return Object.keys(UNIT_SPECS) as UnitKind[];
 }
 
 export function isAerial(kind: UnitKind): boolean {
-  return !!SPECS[kind].aerial;
+  return !!UNIT_SPECS[kind].aerial;
 }
 
 export function isBuilding(kind: UnitKind): boolean {
-  return !!SPECS[kind].building;
+  return !!UNIT_SPECS[kind].building;
 }
 
 export function isOrganic(kind: UnitKind): boolean {
-  return !!SPECS[kind].organic;
+  return !!UNIT_SPECS[kind].organic;
 }
 
 /** Soft blood hit spray / death streaks (troops, or vehicles with a rider like motorcycle). */
 export function hasSoftBlood(kind: UnitKind): boolean {
-  return !!SPECS[kind].organic || !!SPECS[kind].softBlood;
+  return !!UNIT_SPECS[kind].organic || !!UNIT_SPECS[kind].softBlood;
 }
 
 export function isWaterCraft(kind: UnitKind): boolean {
-  return !!SPECS[kind].water;
+  return !!UNIT_SPECS[kind].water;
 }
 
 export function isInfantry(kind: UnitKind): boolean {
-  return SPECS[kind].move === "inf" || SPECS[kind].organic === true;
+  return UNIT_SPECS[kind].move === "inf" || UNIT_SPECS[kind].organic === true;
 }
 
 export function isGroundVehicle(kind: UnitKind): boolean {
-  const m = SPECS[kind].move;
+  const m = UNIT_SPECS[kind].move;
   return m === "tank" || m === "vehicle";
 }
 
 export function labelOf(kind: UnitKind): string {
-  return SPECS[kind].label;
+  return UNIT_SPECS[kind].label;
 }
 
 /** Fallback when a kind has no `drive` (non-ground movers). */
@@ -1225,12 +1237,12 @@ export const DEFAULT_DRIVE: DriveSpec = {
 };
 
 export function driveOf(kind: UnitKind): DriveSpec {
-  return SPECS[kind].drive ?? DEFAULT_DRIVE;
+  return UNIT_SPECS[kind].drive ?? DEFAULT_DRIVE;
 }
 
 export const ROSTER_TEX: string[] = [
   ...new Set(
-    Object.values(SPECS).flatMap((s) => [
+    Object.values(UNIT_SPECS).flatMap((s) => [
       s.texture,
       s.hulk,
       ...s.guns.flatMap((g) => [g.tex, g.hulk ?? ""]),

@@ -1,17 +1,19 @@
 import Phaser from "phaser";
 import { CombatConfigTool } from "./combatConfig";
+import { ToonBlastConfigTool } from "./toonBlastConfig";
 import { RosterConfigTool } from "./rosterConfig";
 import { SpriteConfigTool } from "./spriteConfig";
 import { spritePivot } from "./sprites";
 
 /**
- * Overlay scene for sprite / roster / combat config rigs.
+ * Overlay scene for sprite / roster / combat / toon-blast config rigs.
  * Launched lazily (first ` or installConfigRigHotkeys warm-up).
  */
 export class ConfigRigsScene extends Phaser.Scene {
   spriteCfg!: SpriteConfigTool;
   rosterCfg!: RosterConfigTool;
   combatCfg!: CombatConfigTool;
+  toonBlastCfg!: ToonBlastConfigTool;
   /** True after create() finishes constructing tools. */
   ready = false;
   /** Open sprite rig once create() finishes (first ` raced launch). */
@@ -27,6 +29,7 @@ export class ConfigRigsScene extends Phaser.Scene {
     this.spriteCfg = new SpriteConfigTool(this, (key) => spritePivot(key));
     this.rosterCfg = new RosterConfigTool(this);
     this.combatCfg = new CombatConfigTool(this);
+    this.toonBlastCfg = new ToonBlastConfigTool(this);
     this.ready = true;
 
     const kb = this.input.keyboard;
@@ -58,6 +61,7 @@ export class ConfigRigsScene extends Phaser.Scene {
       const bumpZoom = (dir: number) => {
         if (this.rosterCfg.open) this.rosterCfg.nudgeZoom(dir);
         else if (this.combatCfg.open) this.combatCfg.nudgeZoom(dir);
+        else if (this.toonBlastCfg.open) this.toonBlastCfg.nudgeZoom(dir);
       };
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.PLUS).on("down", () => bumpZoom(1));
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_ADD).on("down", () => bumpZoom(1));
@@ -84,17 +88,21 @@ export class ConfigRigsScene extends Phaser.Scene {
 
   update(_t: number, dms: number): void {
     if (!this.anyOpen()) return;
+    const dt = Math.min(dms / 1000, 0.05);
     if (this.spriteCfg.open) this.spriteCfg.update();
     if (this.rosterCfg.open) this.rosterCfg.update();
-    if (this.combatCfg.open) this.combatCfg.update(Math.min(dms / 1000, 0.05));
+    if (this.combatCfg.open) this.combatCfg.update(dt);
+    if (this.toonBlastCfg.open) this.toonBlastCfg.update(dt);
   }
 
   anyOpen(): boolean {
     if (!this.ready) return false;
-    return this.spriteCfg.open || this.rosterCfg.open || this.combatCfg.open;
+    return (
+      this.spriteCfg.open || this.rosterCfg.open || this.combatCfg.open || this.toonBlastCfg.open
+    );
   }
 
-  /** ` cycles closed → sprite → roster → combat → closed. */
+  /** ` cycles closed → sprite → roster → combat → toon blast → closed. */
   cycle(): void {
     if (!this.ready) {
       this.pendingOpen = true;
@@ -115,7 +123,12 @@ export class ConfigRigsScene extends Phaser.Scene {
         return;
       }
       if (this.combatCfg.open) {
+        this.toonBlastCfg.toggle();
         this.combatCfg.toggle();
+        return;
+      }
+      if (this.toonBlastCfg.open) {
+        this.toonBlastCfg.toggle();
         return;
       }
       this.spriteCfg.toggle();
@@ -130,11 +143,17 @@ export class ConfigRigsScene extends Phaser.Scene {
     this.scene.bringToTop();
   }
 
-  private activeRig(): SpriteConfigTool | RosterConfigTool | CombatConfigTool | undefined {
+  private activeRig():
+    | SpriteConfigTool
+    | RosterConfigTool
+    | CombatConfigTool
+    | ToonBlastConfigTool
+    | undefined {
     if (!this.ready) return undefined;
     if (this.spriteCfg.open) return this.spriteCfg;
     if (this.rosterCfg.open) return this.rosterCfg;
     if (this.combatCfg.open) return this.combatCfg;
+    if (this.toonBlastCfg.open) return this.toonBlastCfg;
     return undefined;
   }
 }

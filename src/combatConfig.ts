@@ -11,6 +11,13 @@ import {
 import { ENEMY_WPNS, usesOfWeapon } from "./roster";
 import { CFG_INFO, CFG_VALUE, dumpConfig, makeConfigText, setStatsAndInfo } from "./configUi";
 import {
+  TOON_BLAST_FRAMES,
+  TOON_BLAST_KEY,
+  TOON_BLAST_SIZE,
+  TOON_BLAST_VARIANTS,
+  toonBlastKey,
+} from "./toonBlast";
+import {
   FX_BLAST_CELLS,
   FX_KINDS,
   FX_SHEET_SIZE,
@@ -483,6 +490,30 @@ function fxEntries(): CombatEntry[] {
     }),
     info: ["source: sprites.ts prepareArt / src_blasts"],
   });
+  for (let v = 0; v < TOON_BLAST_VARIANTS; v++) {
+    const key = toonBlastKey(v);
+    sheets.push({
+      id: key,
+      cat: "fx",
+      label: `TOON BLAST ${v + 1}`,
+      tag: "FX",
+      tex: key,
+      frames: TOON_BLAST_FRAMES,
+      stats: dumpConfig({
+        kind: "toon_blast",
+        tex: key,
+        variant: v,
+        variants: TOON_BLAST_VARIANTS,
+        frames: TOON_BLAST_FRAMES,
+        size: TOON_BLAST_SIZE,
+        bake: "cel fire→smoke→dust cluster + cool",
+      }),
+      info: [
+        "source: toonBlast.ts / bakeToonBlast",
+        v === 0 ? `alias: ${TOON_BLAST_KEY}` : "unique jitter seed",
+      ],
+    });
+  }
   return sheets;
 }
 

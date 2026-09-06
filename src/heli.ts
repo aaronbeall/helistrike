@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { CRAFTS, craftOf, type CraftKind } from "./craft";
+import { craftOf, type CraftKind } from "./craft";
 import { groundZ, WORLD, type WorldData } from "./world";
 
 export interface Stick {
@@ -22,9 +22,6 @@ export const CRUISE_THRUST = 36;
 export const CRUISE_DAMP = 2.2;
 /** How fast cruise's ground reference tracks real terrain. Low = ignore rivers. */
 export const GND_FOLLOW = 0.55;
-
-/** @deprecated Prefer craftOf().height / heli.height */
-export const HELI_HEIGHT = CRAFTS.strike.height;
 
 /** Rotor spool before the lift-off prompt (seconds). */
 export const SPOOL_DUR = 2.35;

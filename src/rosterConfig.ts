@@ -32,6 +32,7 @@ import {
   lookupSpriteOrigin,
   lookupSpritePoints,
 } from "./spriteOrigin";
+import { footprintOf, strokeFootprint } from "./footprint";
 import { nameGameTexture, spritePivot } from "./sprites";
 import {
   CFG_INFO,
@@ -69,7 +70,6 @@ type PreviewPart = {
   mount: { x: number; y: number };
   rot: number;
   scale: number;
-  muzzles?: { x: number; y: number }[];
   /** Vertical foreshortening (radar dish). */
   squashY?: number;
 };
@@ -437,7 +437,7 @@ export class RosterConfigTool {
         tex: craft.gun,
         origin: craftGunOrigin(craft),
         mount: craftGunMount(craft),
-        rot: Math.PI / 2,
+        rot: 0,
         scale: 1,
       },
     ];
@@ -474,11 +474,12 @@ export class RosterConfigTool {
     this.hull.setVisible(true).setTexture(tex);
     this.hull.setOrigin(pivot.x, pivot.y);
     this.hull.setScale(s);
-    this.hull.setRotation(craft.rotOff);
+    this.hull.setRotation(0);
 
     const bw = this.hull.displayWidth;
     const bh = this.hull.displayHeight;
-    const { boxW, boxH } = aabbOf(bw, bh, craft.rotOff);
+    const boxW = bw;
+    const boxH = bh;
     const pad = 10;
     const cx = listRight + pad + boxW * 0.5;
     const cy = Math.min(LIST_Y + pad + boxH * 0.5, h - pad - boxH * 0.5);
@@ -491,7 +492,7 @@ export class RosterConfigTool {
     this.applyStatsPanel(tex);
 
     this.drawPreviewBoard(bx, by, boxW, boxH, pad);
-    this.placeMountedParts(parts, pivot, craft.rotOff, cx, cy, s);
+    this.placeMountedParts(parts, pivot, cx, cy, s);
 
     for (const im of this.shots) im.setVisible(false);
 
@@ -504,6 +505,7 @@ export class RosterConfigTool {
       cy,
       s,
       hullTex: tex,
+      board: { bx, by, boxW, boxH, pad },
     });
   }
 
@@ -537,9 +539,8 @@ export class RosterConfigTool {
         tex: g.tex,
         origin: g.origin,
         mount: g.mount,
-        rot: Math.PI / 2,
+        rot: 0,
         scale: g.scale ?? 1,
-        muzzles: g.muzzles,
       });
     }
     for (const r of sp.rotors) {
@@ -578,6 +579,7 @@ export class RosterConfigTool {
 
     if (this.composition === "separated") {
       this.layoutSeparated({
+        kind,
         hullTex: tex,
         pivot,
         rotOff: sp.rotOff,
@@ -598,11 +600,12 @@ export class RosterConfigTool {
     this.hull.setVisible(true).setTexture(tex);
     this.hull.setOrigin(pivot.x, pivot.y);
     this.hull.setScale(s);
-    this.hull.setRotation(sp.rotOff);
+    this.hull.setRotation(0);
 
     const bw = this.hull.displayWidth;
     const bh = this.hull.displayHeight;
-    const { boxW, boxH } = aabbOf(bw, bh, sp.rotOff);
+    const boxW = bw;
+    const boxH = bh;
     const pad = 10;
     const cx = listRight + pad + boxW * 0.5;
     const cy = Math.min(LIST_Y + pad + boxH * 0.5, h - pad - boxH * 0.5);
@@ -615,11 +618,12 @@ export class RosterConfigTool {
     this.applyStatsPanel(tex);
 
     this.drawPreviewBoard(bx, by, boxW, boxH, pad);
-    this.placeMountedParts(parts, pivot, sp.rotOff, cx, cy, s);
+    this.placeMountedParts(parts, pivot, cx, cy, s);
 
     this.placeShotPreviews(wpns, bx, by + boxH + pad + 22);
 
     this.drawHullMarks({
+      kind,
       radius: sp.radius,
       height: sp.height,
       rotOff: sp.rotOff,
@@ -629,10 +633,12 @@ export class RosterConfigTool {
       cy,
       s,
       hullTex: tex,
+      board: { bx, by, boxW, boxH, pad },
     });
   }
 
   private layoutSeparated(opts: {
+    kind?: UnitKind;
     hullTex: string;
     pivot: { x: number; y: number };
     rotOff: number;
@@ -669,14 +675,15 @@ export class RosterConfigTool {
     this.hull.setVisible(true).setTexture(opts.hullTex);
     this.hull.setOrigin(opts.pivot.x, opts.pivot.y);
     this.hull.setScale(s);
-    this.hull.setRotation(opts.rotOff);
+    this.hull.setRotation(0);
     {
-      const { boxW, boxH } = aabbOf(this.hull.displayWidth, this.hull.displayHeight, opts.rotOff);
+      const boxW = this.hull.displayWidth;
+      const boxH = this.hull.displayHeight;
       cells.push({
         im: this.hull,
         tex: opts.hullTex,
         origin: opts.pivot,
-        rot: opts.rotOff,
+        rot: 0,
         scale: 1,
         boxW,
         boxH,
@@ -754,6 +761,7 @@ export class RosterConfigTool {
     else for (const im of this.shots) im.setVisible(false);
 
     this.drawHullMarks({
+      kind: opts.kind,
       radius: opts.radius,
       height: opts.height,
       rotOff: opts.rotOff,
@@ -763,6 +771,7 @@ export class RosterConfigTool {
       cy: hullCy,
       s,
       hullTex: opts.hullTex,
+      board: { bx: minX, by: minY, boxW: boardW, boxH: boardH, pad: 0 },
     });
   }
 
@@ -782,10 +791,45 @@ export class RosterConfigTool {
     this.board.strokeRect(bx - pad, by - pad, boxW + pad * 2, boxH + pad * 2);
   }
 
+  /** Chevron just outside the preview border — drawn on overlay (above hull / marks). */
+  private drawFacingArrow(
+    g: Phaser.GameObjects.Graphics,
+    bx: number,
+    by: number,
+    boxW: number,
+    boxH: number,
+    pad: number,
+    faceAng: number
+  ): void {
+    const left = bx - pad;
+    const top = by - pad;
+    const hw = boxW * 0.5 + pad;
+    const hh = boxH * 0.5 + pad;
+    const cx = left + hw;
+    const cy = top + hh;
+    const ux = Math.cos(faceAng);
+    const uy = Math.sin(faceAng);
+    const tx = Math.abs(ux) < 1e-6 ? Infinity : hw / Math.abs(ux);
+    const ty = Math.abs(uy) < 1e-6 ? Infinity : hh / Math.abs(uy);
+    // Sit fully outside the gold frame (gap past the border).
+    const out = 10;
+    const t = Math.min(tx, ty) + out;
+    const tipX = cx + ux * t;
+    const tipY = cy + uy * t;
+    const side = 8;
+    const bx1 = tipX - ux * side + -uy * side * 0.7;
+    const by1 = tipY - uy * side + ux * side * 0.7;
+    const bx2 = tipX - ux * side - -uy * side * 0.7;
+    const by2 = tipY - uy * side - ux * side * 0.7;
+    g.fillStyle(0xe8b84a, 0.95);
+    g.fillTriangle(tipX, tipY, bx1, by1, bx2, by2);
+    g.lineStyle(1.25, 0xfff0c0, 0.9);
+    g.strokeTriangle(tipX, tipY, bx1, by1, bx2, by2);
+  }
+
   private placeMountedParts(
     parts: PreviewPart[],
     pivot: { x: number; y: number },
-    rotOff: number,
     cx: number,
     cy: number,
     s: number
@@ -800,13 +844,11 @@ export class RosterConfigTool {
       }
       const mx = (p.mount.x - pivot.x) * this.hull.displayWidth;
       const my = (p.mount.y - pivot.y) * this.hull.displayHeight;
-      const ca = Math.cos(rotOff);
-      const sa = Math.sin(rotOff);
       part
         .setVisible(true)
         .setTexture(p.tex)
         .setOrigin(p.origin.x, p.origin.y)
-        .setPosition(cx + mx * ca - my * sa, cy + mx * sa + my * ca)
+        .setPosition(cx + mx, cy + my)
         .setRotation(p.rot)
         .setScale(s * p.scale);
       if (p.squashY != null) part.setScale(part.scaleX, part.scaleY * p.squashY);
@@ -881,6 +923,7 @@ export class RosterConfigTool {
   }
 
   private drawHullMarks(opts: {
+    kind?: UnitKind;
     radius: number;
     height: number;
     rotOff: number;
@@ -890,6 +933,7 @@ export class RosterConfigTool {
     cy: number;
     s: number;
     hullTex: string;
+    board?: { bx: number; by: number; boxW: number; boxH: number; pad: number };
   }): void {
     const g = this.overlay;
     g.clear();
@@ -902,21 +946,47 @@ export class RosterConfigTool {
       const hullDh = this.hull.displayHeight;
       const mx = (this.pinned.uvx - opts.pivot.x) * hullDw;
       const my = (this.pinned.uvy - opts.pivot.y) * hullDh;
-      const ca = Math.cos(opts.rotOff);
-      const sa = Math.sin(opts.rotOff);
-      const px = cx + mx * ca - my * sa;
-      const py = cy + mx * sa + my * ca;
+      const px = cx + mx;
+      const py = cy + my;
       g.fillStyle(0xff3a2a, 1);
       g.fillCircle(px, py, 4);
       g.lineStyle(1, 0xffffff, 0.9);
       g.strokeCircle(px, py, 4);
     }
 
-    if (!this.showMarks) return;
+    if (!this.showMarks) {
+      if (opts.board) {
+        this.drawFacingArrow(
+          g,
+          opts.board.bx,
+          opts.board.by,
+          opts.board.boxW,
+          opts.board.boxH,
+          opts.board.pad,
+          -opts.rotOff
+        );
+      }
+      return;
+    }
 
-    // Combat extents from roster (not sprite UVs).
-    g.lineStyle(1.5, 0x5ec8ff, 0.55);
-    g.strokeCircle(cx, cy, opts.radius * s);
+    // Footprint in art space: facing = -rotOff so halfL aligns with nose-up sprites.
+    const faceAng = -opts.rotOff;
+    if (opts.kind) {
+      const fp = footprintOf({ kind: opts.kind, x: cx, y: cy, angle: faceAng });
+      if (fp.shape === "circle") {
+        strokeFootprint(g, { ...fp, r: fp.r * s }, 0x5ec8ff, 0.7);
+      } else {
+        strokeFootprint(
+          g,
+          { ...fp, halfW: fp.halfW * s, halfL: fp.halfL * s },
+          0x5ec8ff,
+          0.85
+        );
+      }
+    } else {
+      g.lineStyle(1.5, 0x5ec8ff, 0.55);
+      g.strokeCircle(cx, cy, opts.radius * s);
+    }
     if (opts.leashR != null) {
       g.lineStyle(2.25, HULL_MOUNT_COLOR.troop, 0.85);
       g.strokeCircle(cx, cy, opts.leashR * s);
@@ -936,6 +1006,18 @@ export class RosterConfigTool {
       drawTex(part, markTexKey(part.texture.key));
     }
     for (; labelI < this.mountLabels.length; labelI++) this.mountLabels[labelI]!.setVisible(false);
+
+    if (opts.board) {
+      this.drawFacingArrow(
+        g,
+        opts.board.bx,
+        opts.board.by,
+        opts.board.boxW,
+        opts.board.boxH,
+        opts.board.pad,
+        faceAng
+      );
+    }
   }
 
   /** Overlay SPRITE_SPECS points for a placed image. Returns next mount-label index. */

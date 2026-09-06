@@ -10,10 +10,10 @@
   * Cobra
   * Stealthhawk
   * Cyberhawk (controls time)
-  * VTOL
-  * Cheyenne II
-  * Warthog
-  * Gunship (high flying)
+  * Ospray (VTOL)
+  * Cheyenne II (VTOL)
+  * Warthog (Jet)
+  * Gunship (high flying aircraft)
   * (Secret) Prometheus (alien, cloaking)
 * [ ] Single player progress, mission/vehicle unlocks, weapon/upgrade purchases
 * Additional weapon options (current: chain gun, rockets, hellfires, TOWs), loadout options specific to heli type
@@ -86,6 +86,10 @@
   * [ ] Asset composition generation
 * [ ] Circular map?
 * [ ] Hit force (knockback, torque)
+* [ ] Unit spawners
+  * [ ] Tents -> troops
+  * [ ] Hanger -> tanks
+  * [ ] Docks -> boats
 
 ## Fix
 

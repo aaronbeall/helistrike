@@ -27,6 +27,13 @@ import { Layer, ZOff, Z_GRAVITY, worldDepth } from "./depth";
 import { range } from "./rng";
 import { CRUISE_AGL, Heli, MAX_AGL } from "./heli";
 import { isAerial, isGroundVehicle, isOrganic, hasSoftBlood, specOf, driveOf, spawnAngle, pickTroop, labelOf, allKinds, gunsOf, rollParts, crewOf, muzzlesOfGun, type ShotKind, type ShotLook } from "./roster";
+import {
+  distToFootprint,
+  footprintOf,
+  footprintOverlap,
+  pointInFootprint,
+  strokeFootprint,
+} from "./footprint";
 import { lookupSpriteMuzzles, lookupSpriteOrigin } from "./spriteOrigin";
 import { craftDmgPois, craftGunMount, craftGunOrigin, craftOf, craftOrigin, craftSecondaryMounts } from "./craft";
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
@@ -3034,7 +3041,7 @@ export class MissionScene extends Phaser.Scene {
       if (s.from === "player") {
         for (const u of this.units) {
           if (u.dead) continue;
-          if (Math.hypot(u.x - s.x, u.y - s.y) > radius(u.kind) + 8) continue;
+          if (!pointInFootprint(s.x, s.y, footprintOf(u, 8))) continue;
           const top = u.z + heightOf(u.kind);
           if (s.z > top + 2) continue;
           if (s.z < u.z - 2) continue;
@@ -3347,7 +3354,7 @@ export class MissionScene extends Phaser.Scene {
     this.pushBlastRing(x, y, z, blast);
     for (const u of this.units) {
       if (u.dead) continue;
-      const d = Math.hypot(u.x - x, u.y - y);
+      const d = distToFootprint(x, y, footprintOf(u));
       if (u === direct || d < blast) {
         u.killDx = dx;
         u.killDy = dy;
@@ -5257,6 +5264,7 @@ export class MissionScene extends Phaser.Scene {
   steerGround(u: Unit, wantX: number, wantY: number): { x: number; y: number } {
     let wx = wantX;
     let wy = wantY;
+    const uFp = footprintOf(u);
     for (const o of this.units) {
       if (o.dead || o.id === u.id || o.pinId != null) continue;
       const osp = specOf(o.kind);
@@ -5269,17 +5277,13 @@ export class MissionScene extends Phaser.Scene {
         osp.move === "inf" ||
         osp.move === "flee";
       if (!solid) continue;
-      const dx = u.x - o.x;
-      const dy = u.y - o.y;
-      const d = Math.hypot(dx, dy);
       const pad = osp.building || osp.move === "static" ? 40 : 28;
-      const sep = radius(u.kind) + radius(o.kind) + pad;
-      if (d > 0.2 && d < sep) {
-        const strength = osp.building || osp.move === "static" ? 3.2 : 2.4;
-        const push = ((sep - d) / sep) * sep * strength;
-        wx += (dx / d) * push;
-        wy += (dy / d) * push;
-      }
+      const ov = footprintOverlap(uFp, footprintOf(o, pad));
+      if (!ov.hit || ov.depth <= 0) continue;
+      const strength = osp.building || osp.move === "static" ? 3.2 : 2.4;
+      const push = ov.depth * strength;
+      wx += ov.nx * push;
+      wy += ov.ny * push;
     }
     // Short look-ahead: if heading into a solid, bias the want sideways.
     const hx = wx - u.x;
@@ -5294,9 +5298,8 @@ export class MissionScene extends Phaser.Scene {
       if (o.dead || o.id === u.id || o.pinId != null) continue;
       const osp = specOf(o.kind);
       if (!(osp.building || osp.move === "static" || isGroundVehicle(o.kind))) continue;
-      const d = Math.hypot(lx - o.x, ly - o.y);
-      const clear = radius(u.kind) + radius(o.kind) + 22;
-      if (d < clear) {
+      const clear = 22;
+      if (pointInFootprint(lx, ly, footprintOf(o, radius(u.kind) + clear))) {
         wx += -ny * 56;
         wy += nx * 56;
         wx -= nx * 28;
@@ -5316,19 +5319,17 @@ export class MissionScene extends Phaser.Scene {
       if (osp.aerial || osp.water || osp.move === "boat") continue;
       if (!(osp.building || osp.move === "static" || isGroundVehicle(o.kind) || osp.move === "inf" || osp.move === "flee"))
         continue;
-      const dx = u.x - o.x;
-      const dy = u.y - o.y;
-      const d = Math.hypot(dx, dy);
-      const sep = radius(u.kind) + radius(o.kind) + (osp.building || osp.move === "static" ? 8 : 4);
-      if (d < 0.2 || d >= sep) continue;
-      const push = (sep - d) * (osp.building || osp.move === "static" ? 0.85 : 0.45);
-      u.x += (dx / d) * push;
-      u.y += (dy / d) * push;
+      const pad = osp.building || osp.move === "static" ? 8 : 4;
+      const ov = footprintOverlap(footprintOf(u), footprintOf(o, pad));
+      if (!ov.hit || ov.depth <= 0) continue;
+      const push = ov.depth * (osp.building || osp.move === "static" ? 0.85 : 0.45);
+      u.x += ov.nx * push;
+      u.y += ov.ny * push;
       // Kill residual closing speed into the obstacle.
-      const vn = u.vx * (dx / d) + u.vy * (dy / d);
+      const vn = u.vx * ov.nx + u.vy * ov.ny;
       if (vn < 0) {
-        u.vx -= (dx / d) * vn;
-        u.vy -= (dy / d) * vn;
+        u.vx -= ov.nx * vn;
+        u.vy -= ov.ny * vn;
       }
     }
   }
@@ -6582,9 +6583,11 @@ export class MissionScene extends Phaser.Scene {
     let bd = Infinity;
     for (const u of this.units) {
       if (u.dead) continue;
-      const d = Math.hypot(u.x - x, u.y - screenLift(u.z) - y);
-      const hit = radius(u.kind) + 12;
-      if (d <= hit && d < bd) {
+      const uy = u.y - screenLift(u.z);
+      const fp = footprintOf({ kind: u.kind, x: u.x, y: uy, angle: u.angle }, 12);
+      if (!pointInFootprint(x, y, fp)) continue;
+      const d = Math.hypot(u.x - x, uy - y);
+      if (d < bd) {
         bd = d;
         best = u;
       }
@@ -6843,7 +6846,15 @@ export class MissionScene extends Phaser.Scene {
     mark(this.heli.x, this.heli.y, 24, this.heli.height, this.heli.z);
     for (const u of this.units) {
       if (u.dead) continue;
-      mark(u.x, u.y, radius(u.kind), heightOf(u.kind), u.z);
+      strokeFootprint(this.debugGfx, footprintOf(u));
+      const gnd = groundZ(this.world, u.x, u.y);
+      const agl = Math.max(0, u.z - gnd);
+      this.debugGfx.lineStyle(1.15, 0xe8e0c8, 0.4);
+      this.debugGfx.lineBetween(u.x, u.y, u.x, u.y + u.z);
+      this.debugGfx.lineStyle(2.2, 0xff8a3a, 0.95);
+      this.debugGfx.lineBetween(u.x, u.y, u.x, u.y + agl);
+      this.debugGfx.lineStyle(2, 0x6dbb4a, 0.95);
+      this.debugGfx.lineBetween(u.x, u.y, u.x, u.y - heightOf(u.kind));
     }
     for (const s of this.shots) {
       mark(s.x, s.y, 5, 4, s.z);
