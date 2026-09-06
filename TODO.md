@@ -95,6 +95,9 @@
   * [ ] Hanger -> tanks
   * [ ] Docks -> boats
 * [ ] Rotors push smoke
+* [ ] Unit speed impact by slope, slope limit
+* [ ] Tail rotor (with tilt)
+* [ ] Pseudo 3d tilt graphic
 
 ## Fix
 

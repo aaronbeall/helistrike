@@ -381,8 +381,10 @@ export function spritePivot(key: string): { x: number; y: number } {
   const k = key.replace(/__(woodland|desert|urban|snow|digital)$/, "");
   const craft = craftPivot(k);
   if (craft) return craft;
-  return lookupSpriteOrigin(k) ?? { x: 0.5, y: 0.5 };
+  return lookupSpriteOrigin(k) ?? DEFAULT_ORIGIN;
 }
+
+const DEFAULT_ORIGIN = { x: 0.5, y: 0.5 };
 
 const UUID_TEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -820,8 +822,13 @@ export function shadowKey(base: string, z: number): string {
   return `${bare}_sh${lvl}`;
 }
 
-export function shadowOff(z: number): { x: number; y: number } {
-  return { x: z * 0.24, y: z * 0.58 };
+const _shadowOff = { x: 0, y: 0 };
+
+/** Shadow screen offset — default `out` is shared scratch (do not store across calls). */
+export function shadowOff(z: number, out: { x: number; y: number } = _shadowOff): { x: number; y: number } {
+  out.x = z * 0.24;
+  out.y = z * 0.58;
+  return out;
 }
 
 export function shadowAlpha(z: number): number {

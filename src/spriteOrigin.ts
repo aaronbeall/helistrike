@@ -335,19 +335,18 @@ export function allSpriteSpecs(): { key: string; spec: SpriteSpec }[] {
 
 /** Live-sprite origin; `_hulk` inherits live counterpart unless listed alone. */
 export function lookupSpriteOrigin(key: string): Uv | undefined {
-  const sp = resolveSpec(key);
-  if (sp?.origin) return { ...sp.origin };
-  return undefined;
+  // Return shared refs — do not clone (hot path: spritePivot every unit/frag/frame).
+  return resolveSpec(key)?.origin;
 }
 
 export function lookupSpritePoints(key: string, role?: SpritePointRole): SpritePoint[] {
   const ptsList = resolveSpec(key)?.points ?? [];
-  if (!role) return ptsList.map((p) => ({ ...p }));
-  return ptsList.filter((p) => p.role === role).map((p) => ({ ...p }));
+  if (!role) return ptsList;
+  return ptsList.filter((p) => p.role === role);
 }
 
 export function lookupSpriteMuzzles(key: string): Uv[] {
-  return lookupSpritePoints(key, "muzzle").map((p) => ({ x: p.x, y: p.y }));
+  return lookupSpritePoints(key, "muzzle");
 }
 
 /** Mount UVs for a role (default: all non-muzzle points). */

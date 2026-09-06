@@ -262,21 +262,22 @@ function sampleBiomeId(world: WorldData, x: number, y: number): number {
 }
 
 /**
- * Shared perspective camera (mutable for debug tuning).
+ * Shared 2.5D perspective camera (mutable for debug tuning).
  *
- * Model: eye fixed at world Z = `cam`, looking down. An object at absolute Z has
- * depth `(cam - Z)`. Sprite scale grows as  cam/depth. Phaser zoom is the inverse
- * so a reference at the focus altitude keeps constant on-screen size while the
- * ground appears to fall away — same net effect as a chase cam rising with the
- * player. Screen Y lift is pitch foreshortening: height × that same scale.
+ * Model: eye at world Z = `cam`, looking down with a small pitch. Depth is
+ * `(cam - Z)`; sprite scale is `cam/depth`. Phaser zoom is the inverse so a
+ * reference at the focus altitude keeps constant on-screen size.
+ *
+ * Position uses the same depth for pitch: draw through `worldToScreen`, pick /
+ * aim through `screenToWorld*` — never ad-hoc Y offsets at call sites.
  */
 export const CamTune = {
   /** Eye height above world Z = 0 (also the Z where scale would diverge). */
   cam: 480,
   /** Phaser zoom when focus altitude is Z = 0. */
   zoom0: 1.45,
-  /** Pitch factor: world-Y lift per world-Z, multiplied by perspective scale. */
-  lift: 0.05,
+  /** Pitch: world-Y screen shift per world-Z, × perspective scale. */
+  pitch: 0.05,
 };
 /** Near-plane clamp so scale/zoom stay finite as Z → cam. */
 export const Z_SCALE_NEAR = 96;
@@ -284,6 +285,8 @@ export const Z_SCALE_NEAR = 96;
 export const GROUND_H_ZERO = 0.16;
 /** World Z per unit of height-map above GROUND_H_ZERO. Peak ≈ (0.94 - GROUND_H_ZERO) * this. */
 export const GROUND_Z_SCALE = 258;
+
+export type ScreenPos = { x: number; y: number; scale: number };
 
 /** Perspective depth from the eye to absolute Z. */
 export function camDepth(z: number): number {
@@ -295,9 +298,85 @@ export function zScale(z: number): number {
   return CamTune.cam / camDepth(z);
 }
 
-/** Screen-Y offset for absolute Z (perspective-weighted pitch). */
-export function screenLift(z: number): number {
-  return z * CamTune.lift * zScale(z);
+/** Pitch term: how far absolute Z shifts screen Y (north = smaller Y). */
+export function pitchLift(z: number): number {
+  return z * CamTune.pitch * zScale(z);
+}
+
+/** Zero-alloc projected screen Y (`worldToScreen(…).y`). Prefer this in hot loops. */
+export function projectY(y: number, z: number): number {
+  return y - pitchLift(z);
+}
+
+/**
+ * World → Phaser draw space. Sim/collision stay in world; sprites/FX use this.
+ * Pass `out` (or reuse the returned scratch) in hot paths — the default return
+ * is a shared mutable object and must not be stored across calls.
+ */
+const _scr: ScreenPos = { x: 0, y: 0, scale: 1 };
+
+export function worldToScreen(x: number, y: number, z: number, out: ScreenPos = _scr): ScreenPos {
+  const scale = zScale(z);
+  out.x = x;
+  out.y = y - z * CamTune.pitch * scale;
+  out.scale = scale;
+  return out;
+}
+
+/** Inverse of `worldToScreen` for a known absolute Z. */
+const _unproj = { x: 0, y: 0, z: 0 };
+
+export function screenToWorldAtZ(
+  sx: number,
+  sy: number,
+  z: number,
+  out: { x: number; y: number; z: number } = _unproj
+): { x: number; y: number; z: number } {
+  out.x = sx;
+  out.y = sy + pitchLift(z);
+  out.z = z;
+  return out;
+}
+
+/**
+ * Unproject Phaser coords onto the height-map surface (iterated ground Z).
+ * Use for cursor / reticle terrain aim. Default `out` is shared scratch.
+ */
+const _ground = { x: 0, y: 0, z: 0 };
+
+export function screenToWorldOnGround(
+  world: WorldData,
+  sx: number,
+  sy: number,
+  out: { x: number; y: number; z: number } = _ground
+): { x: number; y: number; z: number } {
+  let y = sy;
+  // Two passes is enough for the soft height field; was 4 (extra ground samples).
+  y = sy + pitchLift(groundZ(world, sx, y));
+  y = sy + pitchLift(groundZ(world, sx, y));
+  out.x = sx;
+  out.y = y;
+  out.z = groundZ(world, sx, y);
+  return out;
+}
+
+/**
+ * Screen-space velocity Y at altitude `z` (derivative of `projectY`).
+ * `d(pitchLift)/dz = pitch * zScale²`.
+ */
+export function screenVelY(vy: number, vz: number, z: number): number {
+  const s = zScale(z);
+  return vy - CamTune.pitch * s * s * vz;
+}
+
+/** @deprecated Prefer `screenVelY` in hot paths; this allocates. */
+export function screenVel(
+  vx: number,
+  vy: number,
+  vz: number,
+  z: number
+): { x: number; y: number } {
+  return { x: vx, y: screenVelY(vy, vz, z) };
 }
 
 /**

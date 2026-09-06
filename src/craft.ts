@@ -5,6 +5,8 @@ import {
   type HullMountRole,
 } from "./roster";
 
+const DEFAULT_ORIGIN = { x: 0.5, y: 0.5 };
+
 /**
  * Playable / selectable craft.
  * UV layout lives in SPRITE_SPECS for body/gun textures — craft only names textures
@@ -210,7 +212,7 @@ export function craftByTexture(key: string): CraftSpec | undefined {
 
 /** Body origin from SPRITE_SPECS. */
 export function craftOrigin(c: CraftSpec = craftOf()): { x: number; y: number } {
-  return lookupSpriteOrigin(c.body) ?? { x: 0.5, y: 0.5 };
+  return lookupSpriteOrigin(c.body) ?? DEFAULT_ORIGIN;
 }
 
 /** Chin gun attach UV on the body. */
@@ -220,7 +222,7 @@ export function craftGunMount(c: CraftSpec = craftOf()): { x: number; y: number 
 
 /** Pivot on the gun sprite. */
 export function craftGunOrigin(c: CraftSpec = craftOf()): { x: number; y: number } {
-  return lookupSpriteOrigin(c.gun) ?? { x: 0.5, y: 0.5 };
+  return lookupSpriteOrigin(c.gun) ?? DEFAULT_ORIGIN;
 }
 
 /** Damage-flame interest UVs on the body. */

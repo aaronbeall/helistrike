@@ -29,10 +29,34 @@ export type Footprint = FootprintCircle | FootprintRect;
 export type BodyPos = { kind: UnitKind; x: number; y: number; angle: number };
 
 /** Circumradius for broadphase / FX (rect → hypot of half-extents). */
-function circumRadiusOf(kind: UnitKind): number {
+export function circumRadiusOf(kind: UnitKind): number {
   const box = specOf(kind).box;
   if (box) return Math.hypot(box.halfW, box.halfL);
   return specOf(kind).radius;
+}
+
+const _fp0c: FootprintCircle = { shape: "circle", x: 0, y: 0, r: 0 };
+const _fp0r: FootprintRect = { shape: "rect", x: 0, y: 0, halfL: 0, halfW: 0, angle: 0 };
+const _fp1c: FootprintCircle = { shape: "circle", x: 0, y: 0, r: 0 };
+const _fp1r: FootprintRect = { shape: "rect", x: 0, y: 0, halfL: 0, halfW: 0, angle: 0 };
+
+/** Hot-path footprint into shared scratch (`slot` 0|1). Do not store across calls. */
+export function footprintInto(u: BodyPos, pad = 0, slot: 0 | 1 = 0): Footprint {
+  const sp = specOf(u.kind);
+  if (sp.box) {
+    const out = slot ? _fp1r : _fp0r;
+    out.x = u.x;
+    out.y = u.y;
+    out.halfL = sp.box.halfL + pad;
+    out.halfW = sp.box.halfW + pad;
+    out.angle = u.angle;
+    return out;
+  }
+  const out = slot ? _fp1c : _fp0c;
+  out.x = u.x;
+  out.y = u.y;
+  out.r = circumRadiusOf(u.kind) + pad;
+  return out;
 }
 
 export function footprintOf(u: BodyPos, pad = 0): Footprint {
