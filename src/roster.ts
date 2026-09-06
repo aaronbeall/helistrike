@@ -421,6 +421,26 @@ export function defaultGunsFromRoll(kind: UnitKind): PartMount[] | undefined {
   return roll ? gunsFromPartsRoll(roll) : undefined;
 }
 
+/** Pick-mode option ids in weight order (then any extras). Empty if no pick roll. */
+export function partsRollPickIds(kind: UnitKind): string[] {
+  const roll = partsRollOf(kind);
+  if (!roll || roll.mode !== "pick") return [];
+  const ids = roll.weights.map(([id]) => id);
+  for (const id of Object.keys(roll.options)) {
+    if (!ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
+/** Preview / inspect guns for one pick-mode option (undefined if missing). */
+export function gunsForPartsRollOption(kind: UnitKind, optionId: string): PartMount[] | undefined {
+  const roll = partsRollOf(kind);
+  if (!roll || roll.mode !== "pick") return undefined;
+  const opt = roll.options[optionId];
+  if (!opt) return undefined;
+  return [partFromOption(opt, { ...roll.mount })];
+}
+
 /**
  * Where this exact WeaponSpec object is referenced (SPECS body/secondary/guns + partsRoll).
  * Empty → factory template / unused shared ref.

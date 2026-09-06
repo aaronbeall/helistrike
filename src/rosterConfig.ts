@@ -13,6 +13,7 @@ import {
 } from "./craft";
 import {
   allKinds,
+  gunsForPartsRollOption,
   HULL_MOUNT_COLOR,
   isAerial,
   isBuilding,
@@ -21,9 +22,12 @@ import {
   isWaterCraft,
   labelOf,
   numberMountLabels,
+  partsRollOf,
+  partsRollPickIds,
   specOf,
   TROOP_WEIGHTS,
   type HullMountRole,
+  type PartMount,
   type UnitKind,
   type UnitSpec,
   type WeaponSpec,
@@ -92,6 +96,8 @@ export class RosterConfigTool {
   private showMarks = true;
   /** Assembled (mounted) vs parts laid out separately. */
   private composition: Composition = "assembled";
+  /** Index into `partsRollPickIds` for the current unit (pick-mode only). */
+  private rollPickIdx = 0;
   private pinned: { uvx: number; uvy: number } | null = null;
   private copied = "";
   private statsXY = { x: 0, y: 0 };
@@ -234,6 +240,7 @@ export class RosterConfigTool {
         const i = FILTERS.indexOf(this.filter);
         this.filter = FILTERS[(i + 1) % FILTERS.length]!;
         this.idx = 0;
+        this.rollPickIdx = 0;
         this.pinned = null;
         this.refreshPreview();
       });
@@ -247,6 +254,10 @@ export class RosterConfigTool {
         this.composition = this.composition === "assembled" ? "separated" : "assembled";
         this.pinned = null;
         this.refreshPreview();
+      });
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.V).on("down", () => {
+        if (!this.open) return;
+        this.cyclePartsRoll(1);
       });
     }
 
@@ -302,6 +313,18 @@ export class RosterConfigTool {
     const n = this.entries().length;
     if (!n) return;
     this.idx = (this.idx + dir + n) % n;
+    this.rollPickIdx = 0;
+    this.pinned = null;
+    this.refreshPreview();
+  }
+
+  /** Cycle pick-mode partsRoll options for the current unit. */
+  private cyclePartsRoll(dir: number): void {
+    const ent = this.entries()[this.idx];
+    if (!ent || ent.cat !== "unit") return;
+    const ids = partsRollPickIds(ent.kind);
+    if (ids.length < 2) return;
+    this.rollPickIdx = (this.rollPickIdx + dir + ids.length) % ids.length;
     this.pinned = null;
     this.refreshPreview();
   }
@@ -343,6 +366,7 @@ export class RosterConfigTool {
     const i = this.pageOf(this.idx) * size + row;
     if (i < 0 || i >= entries.length) return;
     this.idx = i;
+    this.rollPickIdx = 0;
     this.pinned = null;
     this.refreshPreview();
   }
@@ -354,8 +378,13 @@ export class RosterConfigTool {
     if (this.idx >= entries.length) this.idx = 0;
     const ent = entries[this.idx]!;
 
+    const pickIds = ent.cat === "unit" ? partsRollPickIds(ent.kind) : [];
+    const rollHint =
+      pickIds.length > 1
+        ? `   V roll ${this.rollPickIdx + 1}/${pickIds.length}`
+        : "";
     this.hintTxt.setText(
-      `ROSTER RIG   \` cycle / close   [ ] cycle   , . page   - + zoom ${fmtZoom(this.zoom)}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   C composition ${this.composition.toUpperCase()}`
+      `ROSTER RIG   \` cycle / close   [ ] cycle   , . page   - + zoom ${fmtZoom(this.zoom)}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   C composition ${this.composition.toUpperCase()}${rollHint}`
     );
 
     const size = this.pageSize();
@@ -532,8 +561,14 @@ export class RosterConfigTool {
 
     const pivot = spritePivot(tex);
     const s = this.zoom;
+    const pickIds = partsRollPickIds(kind);
+    if (pickIds.length && this.rollPickIdx >= pickIds.length) this.rollPickIdx = 0;
+    const pickId = pickIds[this.rollPickIdx];
+    const rollGuns = pickId ? gunsForPartsRollOption(kind, pickId) : undefined;
+    const guns: PartMount[] = rollGuns ?? sp.guns;
+
     const parts: PreviewPart[] = [];
-    for (const g of sp.guns) {
+    for (const g of guns) {
       parts.push({
         tex: g.tex,
         origin: g.origin,
@@ -568,13 +603,34 @@ export class RosterConfigTool {
 
     const wpns: WeaponSpec[] = [];
     if (sp.weapon) wpns.push(sp.weapon);
-    for (const g of sp.guns) {
+    for (const g of guns) {
       if (g.weapon) wpns.push(g.weapon);
     }
 
     const block = formatSpec(kind, sp);
     this.pendingStats = block.stats;
     this.pendingInfo = block.info;
+    if (pickId && pickIds.length > 1) {
+      const roll = partsRollOf(kind);
+      const opt = roll && roll.mode === "pick" ? roll.options[pickId] : undefined;
+      const tag = opt?.label ?? pickId;
+      const wt =
+        roll && roll.mode === "pick"
+          ? roll.weights.find(([id]) => id === pickId)?.[1]
+          : undefined;
+      this.pendingStats = [
+        ...dumpConfig({
+          partsRoll: {
+            pick: tag,
+            i: `${this.rollPickIdx + 1}/${pickIds.length}`,
+            ...(wt != null ? { weight: wt } : {}),
+            tex: opt?.tex,
+          },
+        }),
+        ...this.pendingStats,
+      ];
+      this.pendingInfo = [`V cycle partsRoll (${pickIds.length} options)`, ...this.pendingInfo];
+    }
 
     if (this.composition === "separated") {
       this.layoutSeparated({
