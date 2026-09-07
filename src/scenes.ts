@@ -88,6 +88,24 @@ const SHOT_Z_REF = (1 - GROUND_H_ZERO) * GROUND_Z_SCALE + MAX_AGL;
 const SHOT_Z_MAX = SHOT_Z_REF * 1.08;
 const HELLFIRE_Z_MAX = SHOT_Z_REF * 1.21;
 
+const PERF_LABELS = [
+  "frame",
+  "scene",
+  "player",
+  "unit sim",
+  "unit draw",
+  "shot sim",
+  "shot draw",
+  "frag sim",
+  "frag draw",
+  "spark sim",
+  "spark draw",
+  "target/fx",
+  "scene other",
+  "outside/vsync",
+] as const;
+const PERF_WINDOW = 300;
+
 function shotLookOf(s: Shot): ShotLook {
   if (s.look) return s.look;
   if (s.kind === "rocket") return "shot_rocket";
@@ -507,6 +525,15 @@ export class MissionScene extends Phaser.Scene {
   fxBarrelPulse = 0;
   fxHud!: Phaser.GameObjects.Text;
   fpsHud!: Phaser.GameObjects.Text;
+  perfHud!: Phaser.GameObjects.Text;
+  /** Opt-in CPU timings; buffers are allocated only when profiling is enabled. */
+  perfEnabled = false;
+  private perfSamples?: Float32Array[];
+  private perfCurrent?: Float64Array;
+  private perfSort?: Float32Array;
+  private perfSampleCount = 0;
+  private perfSampleWrite = 0;
+  private perfHudAt = 0;
   hud!: Phaser.GameObjects.Text;
   liftPrompt!: Phaser.GameObjects.Text;
   hvHud!: Phaser.GameObjects.Text;
@@ -1107,6 +1134,7 @@ export class MissionScene extends Phaser.Scene {
       else if (this.editOpen) this.nudgeEditOff(0, 1);
     });
     this.input.keyboard!.addKey("K").on("down", () => this.toggleHeightMap());
+    this.input.keyboard!.addKey("P").on("down", () => this.togglePerfMeasurements());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.FORWARD_SLASH).on("down", () => this.toggleDebugMenu());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ESC).on("down", () => {
       if (this.debugCamOpen) this.closeDebugCam();
@@ -1209,6 +1237,18 @@ export class MissionScene extends Phaser.Scene {
       .setOrigin(1, 1)
       .setScrollFactor(0)
       .setDepth(Layer.HUD + 5);
+    this.perfHud = this.add
+      .text(16, 72, "", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "12px",
+        color: "#8ee6ff",
+        align: "left",
+      })
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setDepth(Layer.HUD + 6)
+      .setStroke("#101418", 4)
+      .setVisible(false);
     this.syncTestFxHud();
     this.hvHud = this.add
       .text(this.scale.width - 16, 12, "", {
@@ -1348,6 +1388,7 @@ export class MissionScene extends Phaser.Scene {
     this.lockInbdHudTxt.setName("hud_fire_offscreen");
     this.hud.setName("hud_status");
     this.fpsHud.setName("hud_fps");
+    this.perfHud.setName("hud_perf");
     this.hvHud.setName("hud_hv");
     this.hvRows.forEach((t, i) => t.setName(`hv_row_${i}`));
     this.wpnSlots.forEach((t, i) => t.setName(`wpn_slot_${i}`));
@@ -1576,6 +1617,8 @@ export class MissionScene extends Phaser.Scene {
   /** ` cycles closed → sprite → roster → combat → closed — owned by ConfigRigsScene. */
 
   update(_t: number, dms: number): void {
+    const perfOn = this.perfEnabled;
+    const perfSceneStart = perfOn ? performance.now() : 0;
     if (configRigsAnyOpen(this)) {
       this.reticle.setVisible(false);
       this.reticleMark.setVisible(false);
@@ -1600,38 +1643,91 @@ export class MissionScene extends Phaser.Scene {
     this.updateTheaterCam(wallDt);
 
     if (!mapPause) {
-      const aim = this.worldPointer();
-      this.heli.update(
-        dt,
-        this.world,
-        {
-          up: this.keyW.isDown,
-          down: this.keyS.isDown,
-          left: this.keyA.isDown,
-          right: this.keyD.isDown,
-        },
-        aim.x,
-        aim.y,
-        this.keySpace.isDown,
-        this.keyShift.isDown
-      );
+      if (perfOn) {
+        const timings = this.perfCurrent!;
+        timings.fill(0);
+        let t = performance.now();
+        const aim = this.worldPointer();
+        this.heli.update(
+          dt,
+          this.world,
+          {
+            up: this.keyW.isDown,
+            down: this.keyS.isDown,
+            left: this.keyA.isDown,
+            right: this.keyD.isDown,
+          },
+          aim.x,
+          aim.y,
+          this.keySpace.isDown,
+          this.keyShift.isDown
+        );
+        this.syncHeliGfx(dt);
+        this.handleFire(dt);
+        if (this.muzzleLife > 0) {
+          this.muzzleLife -= dt;
+          if (this.muzzleLife <= 0) this.muzzle.setVisible(false);
+        }
+        timings[2] = performance.now() - t;
 
-      this.syncHeliGfx(dt);
-      this.handleFire(dt);
-      if (this.muzzleLife > 0) {
-        this.muzzleLife -= dt;
-        if (this.muzzleLife <= 0) this.muzzle.setVisible(false);
+        t = performance.now();
+        this.updateUnits(dt);
+        timings[3] = performance.now() - t - timings[4]!;
+
+        t = performance.now();
+        this.updateShots(dt);
+        timings[5] = performance.now() - t - timings[6]!;
+
+        if (this.heli.phase === "dead" && !this.playerCrashStarted) this.beginPlayerCrash();
+        t = performance.now();
+        this.updateFrags(dt);
+        timings[7] = performance.now() - t - timings[8]!;
+
+        t = performance.now();
+        this.updateSparks(dt);
+        timings[9] = performance.now() - t - timings[10]!;
+
+        t = performance.now();
+        this.updateLock();
+        this.drawUnitBars();
+        this.emitDamageFx();
+        this.emitHeliCrashDmgFlames();
+        this.drawDebugHits();
+        timings[11] = performance.now() - t;
+      } else {
+        const aim = this.worldPointer();
+        this.heli.update(
+          dt,
+          this.world,
+          {
+            up: this.keyW.isDown,
+            down: this.keyS.isDown,
+            left: this.keyA.isDown,
+            right: this.keyD.isDown,
+          },
+          aim.x,
+          aim.y,
+          this.keySpace.isDown,
+          this.keyShift.isDown
+        );
+
+        this.syncHeliGfx(dt);
+        this.handleFire(dt);
+        if (this.muzzleLife > 0) {
+          this.muzzleLife -= dt;
+          if (this.muzzleLife <= 0) this.muzzle.setVisible(false);
+        }
+        this.updateUnits(dt);
+        this.updateShots(dt);
+        if (this.heli.phase === "dead" && !this.playerCrashStarted) this.beginPlayerCrash();
+        this.updateFrags(dt);
+        this.updateSparks(dt);
+        this.updateLock();
+        this.drawUnitBars();
+        this.emitDamageFx();
+        this.emitHeliCrashDmgFlames();
+        this.drawDebugHits();
       }
-      this.updateUnits(dt);
-      this.updateShots(dt);
-      if (this.heli.phase === "dead" && !this.playerCrashStarted) this.beginPlayerCrash();
-      this.updateFrags(dt);
-      this.updateSparks(dt);
-      this.updateLock();
-      this.drawUnitBars();
-      this.emitDamageFx();
-      this.emitHeliCrashDmgFlames();
-      this.drawDebugHits();
     }
     this.tickDebugBlast(wallDt);
 
@@ -1689,6 +1785,9 @@ export class MissionScene extends Phaser.Scene {
         this.playerCrashEndT -= wallDt;
         if (this.playerCrashEndT <= 0) this.end(false);
       }
+    }
+    if (perfOn && !mapPause) {
+      this.recordPerfSample(dms, performance.now() - perfSceneStart);
     }
   }
 
@@ -2816,7 +2915,13 @@ export class MissionScene extends Phaser.Scene {
     if (bloodDirty && this.textures.exists("terrain")) {
       (this.textures.get("terrain") as Phaser.Textures.CanvasTexture).refresh();
     }
-    this.syncSparkSprites();
+    if (this.perfEnabled) {
+      const t = performance.now();
+      this.syncSparkSprites();
+      this.perfCurrent![10] = performance.now() - t;
+    } else {
+      this.syncSparkSprites();
+    }
   }
 
   syncSparkSprites(): void {
@@ -3137,7 +3242,13 @@ export class MissionScene extends Phaser.Scene {
       shots[w++] = s;
     }
     shots.length = w;
-    this.syncShotSprites();
+    if (this.perfEnabled) {
+      const t = performance.now();
+      this.syncShotSprites();
+      this.perfCurrent![6] = performance.now() - t;
+    } else {
+      this.syncShotSprites();
+    }
   }
 
   missileIgnite(s: Shot): void {
@@ -4574,7 +4685,13 @@ export class MissionScene extends Phaser.Scene {
       if (!(f.trailOnly && f.life <= 0 && !f.settled)) keep.push(f);
     }
     this.frags = keep;
-    this.syncFragSprites();
+    if (this.perfEnabled) {
+      const t = performance.now();
+      this.syncFragSprites();
+      this.perfCurrent![8] = performance.now() - t;
+    } else {
+      this.syncFragSprites();
+    }
   }
 
   tickPinnedRotor(f: Frag, dt: number): void {
@@ -6035,7 +6152,13 @@ export class MissionScene extends Phaser.Scene {
         }
       }
     }
-    this.syncUnitSprites();
+    if (this.perfEnabled) {
+      const t = performance.now();
+      this.syncUnitSprites();
+      this.perfCurrent![4] = performance.now() - t;
+    } else {
+      this.syncUnitSprites();
+    }
   }
 
   syncUnitSprites(): void {
@@ -6795,6 +6918,78 @@ export class MissionScene extends Phaser.Scene {
     const fps = Math.round(this.game.loop.actualFps);
     this.fpsHud.setText(`${fps} FPS`);
     this.fpsHud.setColor(fps >= 55 ? "#6dbb4a" : fps >= 30 ? "#e8b84a" : "#ff3a22");
+  }
+
+  togglePerfMeasurements(): void {
+    this.perfEnabled = !this.perfEnabled;
+    if (!this.perfEnabled) {
+      this.perfHud.setVisible(false);
+      return;
+    }
+    this.perfSamples ??= PERF_LABELS.map(() => new Float32Array(PERF_WINDOW));
+    this.perfCurrent ??= new Float64Array(PERF_LABELS.length);
+    this.perfSort ??= new Float32Array(PERF_WINDOW);
+    for (const samples of this.perfSamples) samples.fill(0);
+    this.perfCurrent.fill(0);
+    this.perfSampleCount = 0;
+    this.perfSampleWrite = 0;
+    this.perfHudAt = 0;
+    this.perfHud.setVisible(true).setText("PERF BASELINE\nwarming up…");
+  }
+
+  recordPerfSample(frameMs: number, sceneMs: number): void {
+    const timings = this.perfCurrent!;
+    timings[0] = frameMs;
+    timings[1] = sceneMs;
+    let measured = 0;
+    for (let i = 2; i <= 11; i++) measured += timings[i]!;
+    timings[12] = Math.max(0, sceneMs - measured);
+    // Includes Phaser/render work outside this scene and any vsync/idle time.
+    timings[13] = Math.max(0, frameMs - sceneMs);
+
+    const samples = this.perfSamples!;
+    const at = this.perfSampleWrite;
+    for (let i = 0; i < PERF_LABELS.length; i++) samples[i]![at] = timings[i]!;
+    this.perfSampleWrite = (at + 1) % PERF_WINDOW;
+    this.perfSampleCount = Math.min(PERF_WINDOW, this.perfSampleCount + 1);
+
+    const now = this.time.now;
+    if (now - this.perfHudAt < 1000) return;
+    this.perfHudAt = now;
+    this.refreshPerfHud();
+  }
+
+  refreshPerfHud(): void {
+    const n = this.perfSampleCount;
+    if (!n) return;
+    const samples = this.perfSamples!;
+    const sort = this.perfSort!;
+    const averages = new Float64Array(PERF_LABELS.length);
+    const p95s = new Float64Array(PERF_LABELS.length);
+    for (let bucket = 0; bucket < PERF_LABELS.length; bucket++) {
+      let sum = 0;
+      const source = samples[bucket]!;
+      for (let i = 0; i < n; i++) {
+        const value = source[i]!;
+        sum += value;
+        sort[i] = value;
+      }
+      sort.subarray(0, n).sort();
+      averages[bucket] = sum / n;
+      p95s[bucket] = sort[Math.ceil(n * 0.95) - 1]!;
+    }
+    const frameAvg = averages[0]!;
+    const lines = [
+      `PERF BASELINE  P: stop  n=${n}`,
+      `frame  ${frameAvg.toFixed(2)} avg  ${p95s[0]!.toFixed(2)} p95  ${(1000 / Math.max(frameAvg, 0.01)).toFixed(0)} fps`,
+      `scene  ${averages[1]!.toFixed(2)} avg  ${p95s[1]!.toFixed(2)} p95`,
+    ];
+    for (let i = 2; i < PERF_LABELS.length; i++) {
+      const avg = averages[i]!;
+      lines.push(`${PERF_LABELS[i]!.padEnd(9)} ${avg.toFixed(2)} avg  ${p95s[i]!.toFixed(2)} p95  ${((avg / Math.max(frameAvg, 0.01)) * 100).toFixed(1)}%`);
+    }
+    lines.push(`objects  u${this.units.length} s${this.shots.length} f${this.frags.length} k${this.sparks.length}`);
+    this.perfHud.setText(lines.join("\n"));
   }
 
   syncLiftPrompt(): void {
@@ -7874,6 +8069,7 @@ export class MissionScene extends Phaser.Scene {
       this.miniGfx,
       this.hud,
       this.fpsHud,
+      this.perfHud,
       this.liftPrompt,
       this.hvHud,
       ...this.hvRows,
