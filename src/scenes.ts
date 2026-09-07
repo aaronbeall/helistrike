@@ -6988,7 +6988,7 @@ export class MissionScene extends Phaser.Scene {
     this.perfHudAt = 0;
     this.perfCopyNoticeUntil = 0;
     this.perfCopyKeyAt = -Infinity;
-    this.perfHud.setVisible(true).setText("PERF OPTIMIZED\nwarming up…");
+    this.perfHud.setVisible(true).setText("PERFORMANCE\nwarming up…");
     this.syncDebugMenu();
   }
 
@@ -7070,7 +7070,7 @@ export class MissionScene extends Phaser.Scene {
     }
     const frameAvg = averages[0]!;
     const lines = [
-      `PERF OPTIMIZED  P: copy  n=${n}`,
+      `PERFORMANCE  P: copy  n=${n}`,
       `frame  ${frameAvg.toFixed(2)} avg  ${p95s[0]!.toFixed(2)} p95  ${(1000 / Math.max(frameAvg, 0.01)).toFixed(0)} fps`,
       `scene  ${averages[1]!.toFixed(2)} avg  ${p95s[1]!.toFixed(2)} p95`,
     ];
