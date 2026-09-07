@@ -551,6 +551,7 @@ export class MissionScene extends Phaser.Scene {
   private perfSampleCount = 0;
   private perfSampleWrite = 0;
   private perfHudAt = 0;
+  private perfCopyNoticeUntil = 0;
   hud!: Phaser.GameObjects.Text;
   liftPrompt!: Phaser.GameObjects.Text;
   hvHud!: Phaser.GameObjects.Text;
@@ -1254,7 +1255,20 @@ export class MissionScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(Layer.HUD + 6)
       .setStroke("#101418", 4)
+      .setInteractive({ useHandCursor: true })
       .setVisible(false);
+    this.perfHud.on(
+      "pointerdown",
+      (
+        _pointer: Phaser.Input.Pointer,
+        _localX: number,
+        _localY: number,
+        event: Phaser.Types.Input.EventData
+      ) => {
+        event.stopPropagation();
+        void this.copyPerfResults();
+      }
+    );
     this.syncTestFxHud();
     this.hvHud = this.add
       .text(this.scale.width - 16, 12, "", {
@@ -6941,8 +6955,28 @@ export class MissionScene extends Phaser.Scene {
     this.perfSampleCount = 0;
     this.perfSampleWrite = 0;
     this.perfHudAt = 0;
+    this.perfCopyNoticeUntil = 0;
     this.perfHud.setVisible(true).setText("PERF BASELINE\nwarming up…");
     this.syncDebugMenu();
+  }
+
+  async copyPerfResults(): Promise<void> {
+    if (!this.perfEnabled) return;
+    const report = this.perfHud.text;
+    try {
+      await navigator.clipboard.writeText(report);
+      this.perfCopyNoticeUntil = this.time.now + 800;
+      this.perfHud.setText(`COPIED\n${report}`);
+      this.time.delayedCall(800, () => {
+        if (this.perfEnabled) this.refreshPerfHud();
+      });
+    } catch {
+      this.perfCopyNoticeUntil = this.time.now + 1200;
+      this.perfHud.setText(`COPY FAILED\n${report}`);
+      this.time.delayedCall(1200, () => {
+        if (this.perfEnabled) this.refreshPerfHud();
+      });
+    }
   }
 
   recordPerfSample(frameMs: number, sceneMs: number): void {
@@ -6969,7 +7003,7 @@ export class MissionScene extends Phaser.Scene {
 
   refreshPerfHud(): void {
     const n = this.perfSampleCount;
-    if (!n) return;
+    if (!n || this.time.now < this.perfCopyNoticeUntil) return;
     const samples = this.perfSamples!;
     const sort = this.perfSort!;
     const averages = new Float64Array(PERF_LABELS.length);
