@@ -552,6 +552,7 @@ export class MissionScene extends Phaser.Scene {
   private perfSampleWrite = 0;
   private perfHudAt = 0;
   private perfCopyNoticeUntil = 0;
+  private perfCopyKeyAt = -Infinity;
   hud!: Phaser.GameObjects.Text;
   liftPrompt!: Phaser.GameObjects.Text;
   hvHud!: Phaser.GameObjects.Text;
@@ -1141,7 +1142,7 @@ export class MissionScene extends Phaser.Scene {
       else if (this.editOpen) this.nudgeEditOff(0, 1);
     });
     this.input.keyboard!.addKey("K").on("down", () => this.toggleHeightMap());
-    this.input.keyboard!.addKey("P").on("down", () => this.togglePerfMeasurements());
+    this.input.keyboard!.addKey("P").on("down", () => this.handlePerfKey());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.FORWARD_SLASH).on("down", () => this.toggleDebugMenu());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ESC).on("down", () => {
       if (this.debugCamOpen) this.closeDebugCam();
@@ -1245,7 +1246,7 @@ export class MissionScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(Layer.HUD + 5);
     this.perfHud = this.add
-      .text(370, 72, "", {
+      .text(16, 72, "", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "12px",
         color: "#8ee6ff",
@@ -1255,20 +1256,7 @@ export class MissionScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(Layer.HUD + 6)
       .setStroke("#101418", 4)
-      .setInteractive({ useHandCursor: true })
       .setVisible(false);
-    this.perfHud.on(
-      "pointerdown",
-      (
-        _pointer: Phaser.Input.Pointer,
-        _localX: number,
-        _localY: number,
-        event: Phaser.Types.Input.EventData
-      ) => {
-        event.stopPropagation();
-        void this.copyPerfResults();
-      }
-    );
     this.syncTestFxHud();
     this.hvHud = this.add
       .text(this.scale.width - 16, 12, "", {
@@ -6944,6 +6932,7 @@ export class MissionScene extends Phaser.Scene {
     this.perfEnabled = !this.perfEnabled;
     if (!this.perfEnabled) {
       this.perfHud.setVisible(false);
+      this.perfCopyKeyAt = -Infinity;
       this.syncDebugMenu();
       return;
     }
@@ -6956,8 +6945,23 @@ export class MissionScene extends Phaser.Scene {
     this.perfSampleWrite = 0;
     this.perfHudAt = 0;
     this.perfCopyNoticeUntil = 0;
+    this.perfCopyKeyAt = -Infinity;
     this.perfHud.setVisible(true).setText("PERF BASELINE\nwarming up…");
     this.syncDebugMenu();
+  }
+
+  handlePerfKey(): void {
+    if (!this.perfEnabled) {
+      this.togglePerfMeasurements();
+      return;
+    }
+    const now = performance.now();
+    if (now - this.perfCopyKeyAt < 900) {
+      this.togglePerfMeasurements();
+      return;
+    }
+    this.perfCopyKeyAt = now;
+    void this.copyPerfResults();
   }
 
   async copyPerfResults(): Promise<void> {
@@ -6965,12 +6969,14 @@ export class MissionScene extends Phaser.Scene {
     const report = this.perfHud.text;
     try {
       await navigator.clipboard.writeText(report);
+      if (!this.perfEnabled) return;
       this.perfCopyNoticeUntil = this.time.now + 800;
-      this.perfHud.setText(`COPIED\n${report}`);
+      this.perfHud.setText(`COPIED — P again to close\n${report}`);
       this.time.delayedCall(800, () => {
         if (this.perfEnabled) this.refreshPerfHud();
       });
     } catch {
+      if (!this.perfEnabled) return;
       this.perfCopyNoticeUntil = this.time.now + 1200;
       this.perfHud.setText(`COPY FAILED\n${report}`);
       this.time.delayedCall(1200, () => {
@@ -7022,7 +7028,7 @@ export class MissionScene extends Phaser.Scene {
     }
     const frameAvg = averages[0]!;
     const lines = [
-      `PERF BASELINE  P: stop  n=${n}`,
+      `PERF BASELINE  P: copy  n=${n}`,
       `frame  ${frameAvg.toFixed(2)} avg  ${p95s[0]!.toFixed(2)} p95  ${(1000 / Math.max(frameAvg, 0.01)).toFixed(0)} fps`,
       `scene  ${averages[1]!.toFixed(2)} avg  ${p95s[1]!.toFixed(2)} p95`,
     ];
