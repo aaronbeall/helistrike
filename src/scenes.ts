@@ -83,10 +83,10 @@ function gunWorldRot(_tex: string, aim: number): number {
   return aim + Math.PI / 2;
 }
 
-/** Absolute world-Z shot band (not AGL). Fade from ×1 → remove at ×1.2 of (peak + MAX_AGL). */
+/** Absolute world-Z shot ceilings (not AGL). Ballpark of old +28 / +70 AGL margins. */
 const SHOT_Z_REF = (1 - GROUND_H_ZERO) * GROUND_Z_SCALE + MAX_AGL;
-const SHOT_Z_FADE = SHOT_Z_REF;
-const SHOT_Z_MAX = SHOT_Z_REF * 1.2;
+const SHOT_Z_MAX = SHOT_Z_REF * 1.08;
+const HELLFIRE_Z_MAX = SHOT_Z_REF * 1.21;
 
 function shotLookOf(s: Shot): ShotLook {
   if (s.look) return s.look;
@@ -2942,14 +2942,9 @@ export class MissionScene extends Phaser.Scene {
     ) {
       return true;
     }
-    return false;
-  }
-
-  /** Alpha while climbing through the absolute ceiling fade band (1 → 0). */
-  shotCeilAlpha(z: number): number {
-    if (z <= SHOT_Z_FADE) return 1;
-    if (z >= SHOT_Z_MAX) return 0;
-    return 1 - (z - SHOT_Z_FADE) / (SHOT_Z_MAX - SHOT_Z_FADE);
+    // Hellfires use a soft clamp instead of a hard height cull.
+    if (s.kind === "hellfire") return false;
+    return s.z > SHOT_Z_MAX;
   }
 
   updateShots(dt: number): void {
@@ -3065,14 +3060,14 @@ export class MissionScene extends Phaser.Scene {
       s.x += s.vx * dt;
       s.y += s.vy * dt;
       s.z += s.vz * dt;
-      if (s.z >= SHOT_Z_MAX) continue;
-      s.life -= dt;
-      const ceilFading = s.z > SHOT_Z_FADE;
-      if (ceilFading) {
-        this.emitShotTrail(s, x0, y0, z0);
-        shots[w++] = s;
-        continue;
+      // Soft absolute ceiling for enemy Hellfires only — player missiles are uncapped.
+      if (s.kind === "hellfire" && s.from !== "player") {
+        if (s.z > HELLFIRE_Z_MAX) {
+          s.z = HELLFIRE_Z_MAX;
+          if (s.vz > 0) s.vz = 0;
+        }
       }
+      s.life -= dt;
       if (s.kind === "tow" && s.from === "player") this.simulateTowWire(s, dt);
       // Repel Hellfire/TOW off ground during pre-ignition instead of detonating
       const preIgnite = (s.kind === "hellfire" || s.kind === "tow") && s.from === "player" && s.motor != null && s.motor < 0;
@@ -4497,64 +4492,75 @@ export class MissionScene extends Phaser.Scene {
         if (f.vz > 50) f.vz -= 480 * dt;
         else if (f.vz > -40) f.vz -= 70 * dt;
         else f.vz -= 1100 * dt;
-        const drag = f.heliCrash ? 0.94 : f.shellEject ? 0.86 : f.rotorThrow ? 0.88 : 0.78;
-        f.vx *= Math.pow(drag, dt);
-        f.vy *= Math.pow(drag, dt);
-        if (f.z > groundZ(this.world, f.x, f.y) + 2) {
-          if (!f.shellEject) this.emitFragTrail(f, 1);
-        }
-        const g = groundZ(this.world, f.x, f.y);
-        if (f.z <= g) {
-          f.z = g;
-          if (!f.linger && !f.shellEject) this.stampDirtSmears(f.x, f.y, f.vx, f.vy);
-          if (f.heliCrash) {
-            this.impactHeliCrash(f);
-            this.settleFrag(f);
-          } else if (f.shellEject) {
-            const spd = Math.hypot(f.vx, f.vy, f.vz);
-            if (f.bounces > 0 && spd > 35) {
+        if (f.shellEject) {
+          // Casings: air drag + ground bounce only (sample ground when falling).
+          f.vx *= Math.pow(0.86, dt);
+          f.vy *= Math.pow(0.86, dt);
+          if (f.vz <= 0) {
+            const g = groundZ(this.world, f.x, f.y);
+            if (f.z <= g) {
+              f.z = g;
+              const spd = Math.hypot(f.vx, f.vy, f.vz);
+              if (f.bounces > 0 && spd > 35) {
+                f.bounces--;
+                this.bounceFragSlope(f, 0.45);
+                f.vx *= 0.22;
+                f.vy *= 0.22;
+                f.vz = Math.abs(f.vz) * 0.28;
+                f.spin *= 0.4;
+              } else {
+                this.settleFrag(f);
+              }
+            }
+          }
+        } else {
+          const drag = f.heliCrash ? 0.94 : f.rotorThrow ? 0.88 : 0.78;
+          f.vx *= Math.pow(drag, dt);
+          f.vy *= Math.pow(drag, dt);
+          if (f.z > groundZ(this.world, f.x, f.y) + 2) {
+            this.emitFragTrail(f, 1);
+          }
+          const g = groundZ(this.world, f.x, f.y);
+          if (f.z <= g) {
+            f.z = g;
+            if (!f.linger) this.stampDirtSmears(f.x, f.y, f.vx, f.vy);
+            if (f.heliCrash) {
+              this.impactHeliCrash(f);
+              this.settleFrag(f);
+            } else if (f.rotorThrow) {
+              f.spin *= 0.15;
+              f.vx *= 0.2;
+              f.vy *= 0.2;
+              this.settleFrag(f);
+            } else if (f.wheelRoll) {
+              if (f.bounces > 0 && f.vz < -40) {
+                f.bounces--;
+                this.bounceFragSlope(f, 1);
+                f.spin *= 0.65;
+                this.stampDirtSmears(f.x, f.y, f.vx, f.vy);
+                const bang = Math.hypot(f.vx, f.vy) > 8 ? Math.atan2(f.vy, f.vx) : f.angle;
+                this.stampWheelTrack(f.x, f.y, bang, range(0.7, 0.95), range(0.32, 0.48));
+              } else {
+                f.rolling = true;
+                f.vz = 0;
+                f.z = g;
+                const hang = Math.hypot(f.vx, f.vy) > 8 ? Math.atan2(f.vy, f.vx) : f.angle;
+                this.stampWheelTrack(f.x, f.y, hang, range(0.65, 0.9), range(0.28, 0.44));
+              }
+            } else if (
+              f.bounces > 0 &&
+              f.vz < -50 &&
+              Math.hypot(f.vx, f.vy, f.vz) > 120
+            ) {
               f.bounces--;
-              this.bounceFragSlope(f, 0.45);
-              f.vx *= 0.22;
-              f.vy *= 0.22;
-              f.vz = Math.abs(f.vz) * 0.28;
-              f.spin *= 0.4;
+              // Same elevation bounce as wheels, weaker so flight path barely turns.
+              this.bounceFragSlope(f, 0.32);
+              f.spin *= range(0.78, 1.22);
+              f.spin += range(-2.4, 2.4);
+              f.angle += range(-0.28, 0.28);
             } else {
               this.settleFrag(f);
             }
-          } else if (f.rotorThrow) {
-            f.spin *= 0.15;
-            f.vx *= 0.2;
-            f.vy *= 0.2;
-            this.settleFrag(f);
-          } else if (f.wheelRoll) {
-            if (f.bounces > 0 && f.vz < -40) {
-              f.bounces--;
-              this.bounceFragSlope(f, 1);
-              f.spin *= 0.65;
-              this.stampDirtSmears(f.x, f.y, f.vx, f.vy);
-              const bang = Math.hypot(f.vx, f.vy) > 8 ? Math.atan2(f.vy, f.vx) : f.angle;
-              this.stampWheelTrack(f.x, f.y, bang, range(0.7, 0.95), range(0.32, 0.48));
-            } else {
-              f.rolling = true;
-              f.vz = 0;
-              f.z = g;
-              const hang = Math.hypot(f.vx, f.vy) > 8 ? Math.atan2(f.vy, f.vx) : f.angle;
-              this.stampWheelTrack(f.x, f.y, hang, range(0.65, 0.9), range(0.28, 0.44));
-            }
-          } else if (
-            f.bounces > 0 &&
-            f.vz < -50 &&
-            Math.hypot(f.vx, f.vy, f.vz) > 120
-          ) {
-            f.bounces--;
-            // Same elevation bounce as wheels, weaker so flight path barely turns.
-            this.bounceFragSlope(f, 0.32);
-            f.spin *= range(0.78, 1.22);
-            f.spin += range(-2.4, 2.4);
-            f.angle += range(-0.28, 0.28);
-          } else {
-            this.settleFrag(f);
           }
         }
       } else {
@@ -6281,7 +6287,6 @@ export class MissionScene extends Phaser.Scene {
       const across = 1 + pitchN * 0.06;
       sh.setVisible(true).setOrigin(ox, 0.5);
       this.applyCastShadow(sh, s.x, s.y, s.z, key, rot, sc);
-      const fadeA = this.shotCeilAlpha(s.z);
       const shotDepth = worldDepth(s.z);
       im.setVisible(true);
       if (im.texture.key !== key) im.setTexture(key);
@@ -6289,9 +6294,8 @@ export class MissionScene extends Phaser.Scene {
         .setPosition(s.x, projectY(s.y, s.z))
         .setRotation(rot)
         .setScale(sc * zs * along, sc * zs * across)
-        .setAlpha(fadeA);
+        .setAlpha(1);
       if (im.depth !== shotDepth) im.setDepth(shotDepth);
-      if (fadeA < 1) sh.setAlpha(sh.alpha * fadeA);
     });
   }
 
@@ -6329,7 +6333,7 @@ export class MissionScene extends Phaser.Scene {
       const cast = castZ(this.world, f.x, f.y, z);
       // Pinned rotors skip shadows (stay with hull). Thrown rotors / gun hulks need a baked atlas.
       const canShadow =
-        !f.pinHost && !f.boatSink && this.textures.exists(shadowKey(f.key, cast));
+        !f.pinHost && !f.boatSink && !f.shellEject && this.textures.exists(shadowKey(f.key, cast));
       const depth = f.settled
         ? Layer.HULK
         : f.shellEject
@@ -6981,11 +6985,10 @@ export class MissionScene extends Phaser.Scene {
   drawDebugHits(): void {
     this.debugGfx.clear();
     if (!this.debugHit) return;
-    const mark = (x: number, y: number, r: number, hgt: number, z: number) => {
+    /** Altitude sticks only — not a collision volume. */
+    const altSticks = (x: number, y: number, hgt: number, z: number) => {
       const gnd = groundZ(this.world, x, y);
       const agl = Math.max(0, z - gnd);
-      this.debugGfx.lineStyle(1.25, 0x5ec8ff, 0.9);
-      this.debugGfx.strokeCircle(x, y, r);
       this.debugGfx.lineStyle(1.15, 0xe8e0c8, 0.4);
       this.debugGfx.lineBetween(x, y, x, y + z);
       this.debugGfx.lineStyle(2.2, 0xff8a3a, 0.95);
@@ -6993,24 +6996,34 @@ export class MissionScene extends Phaser.Scene {
       this.debugGfx.lineStyle(2, 0x6dbb4a, 0.95);
       this.debugGfx.lineBetween(x, y, x, y - hgt);
     };
-    mark(this.heli.x, this.heli.y, 24, this.heli.height, this.heli.z);
+    /** Point collider marker (shots / debris — XY tests are points). */
+    const markPoint = (x: number, y: number) => {
+      this.debugGfx.lineStyle(1.5, 0x5ec8ff, 0.95);
+      this.debugGfx.lineBetween(x - 3, y, x + 3, y);
+      this.debugGfx.lineBetween(x, y - 3, x, y + 3);
+      this.debugGfx.fillStyle(0x5ec8ff, 0.9);
+      this.debugGfx.fillCircle(x, y, 1.25);
+    };
+
+    // Player hull: enemy shots use XY radius 26 and Z in [heli.z, heli.z + height].
+    const heliR = 26;
+    this.debugGfx.lineStyle(1.25, 0x5ec8ff, 0.9);
+    this.debugGfx.strokeCircle(this.heli.x, this.heli.y, heliR);
+    altSticks(this.heli.x, this.heli.y, this.heli.height, this.heli.z);
+
     for (const u of this.units) {
       if (u.dead) continue;
       strokeFootprint(this.debugGfx, footprintOf(u));
-      const gnd = groundZ(this.world, u.x, u.y);
-      const agl = Math.max(0, u.z - gnd);
-      this.debugGfx.lineStyle(1.15, 0xe8e0c8, 0.4);
-      this.debugGfx.lineBetween(u.x, u.y, u.x, u.y + u.z);
-      this.debugGfx.lineStyle(2.2, 0xff8a3a, 0.95);
-      this.debugGfx.lineBetween(u.x, u.y, u.x, u.y + agl);
-      this.debugGfx.lineStyle(2, 0x6dbb4a, 0.95);
-      this.debugGfx.lineBetween(u.x, u.y, u.x, u.y - heightOf(u.kind));
+      altSticks(u.x, u.y, heightOf(u.kind), u.z);
     }
     for (const s of this.shots) {
-      mark(s.x, s.y, 5, 4, s.z);
+      markPoint(s.x, s.y);
+      altSticks(s.x, s.y, 0, s.z);
     }
     for (const f of this.frags) {
-      mark(f.x, f.y, 6, 6, f.z);
+      if (f.trailOnly) continue;
+      markPoint(f.x, f.y);
+      altSticks(f.x, f.y, 0, f.z);
     }
   }
 
