@@ -108,6 +108,7 @@ const PERF_WINDOW = 300;
 
 const DEBUG_MENU_ITEMS = [
   { section: "GAMEPLAY" },
+  { action: "seed", label: "Mission seed" },
   { action: "noDamage", label: "No damage" },
   { action: "infAmmo", label: "Infinite ammo" },
   { section: "DIAGNOSTICS" },
@@ -633,6 +634,7 @@ export class MissionScene extends Phaser.Scene {
   debugSpawnOpen = false;
   debugSpawnIdx = 0;
   debugSpawnRows: Phaser.GameObjects.Text[] = [];
+  private seedCopyNoticeUntil = 0;
   debugCamOpen = false;
   debugCamIdx = 0;
   debugCamRows: Phaser.GameObjects.Text[] = [];
@@ -7532,7 +7534,7 @@ export class MissionScene extends Phaser.Scene {
     this.debugRoot.setDepth(Layer.HUD + 180);
     this.debugRoot.setScrollFactor(0);
     this.debugPanel = this.add.graphics();
-    this.debugTitle = this.add.text(12, 10, "/  DEBUG    ↑↓ select   ENTER toggle", {
+    this.debugTitle = this.add.text(12, 10, "/  DEBUG    ↑↓ select   ENTER activate", {
       fontFamily: "Share Tech Mono, monospace",
       fontSize: "13px",
       color: "#e8b84a",
@@ -7699,6 +7701,13 @@ export class MissionScene extends Phaser.Scene {
       const focus = i === this.debugMenuIdx;
       const mark = focus ? "▸" : " ";
       const shortcut = "shortcut" in item ? `[${item.shortcut}]` : "";
+      if (item.action === "seed") {
+        const notice = this.time.now < this.seedCopyNoticeUntil ? "COPIED" : "COPY";
+        row
+          .setText(`${mark}  ${item.label}  ${this.world.seed}  [${notice}]`)
+          .setColor(focus ? "#e8b84a" : "#f0e6c8");
+        continue;
+      }
       const on =
         item.action === "noDamage"
           ? this.noDamage
@@ -7740,7 +7749,8 @@ export class MissionScene extends Phaser.Scene {
   activateDebugRow(i: number): void {
     const item = DEBUG_MENU_ITEMS[i];
     if (!item || !("action" in item)) return;
-    if (item.action === "noDamage") this.setNoDamage(!this.noDamage);
+    if (item.action === "seed") void this.copyMissionSeed();
+    else if (item.action === "noDamage") this.setNoDamage(!this.noDamage);
     else if (item.action === "infAmmo") this.setInfAmmo(!this.infAmmo);
     else if (item.action === "performance") this.togglePerfMeasurements();
     else if (item.action === "height") this.toggleHeightMap();
@@ -7751,6 +7761,17 @@ export class MissionScene extends Phaser.Scene {
     else if (item.action === "camera") this.openDebugCam();
     else if (item.action === "spawn") this.openDebugSpawn();
     this.syncDebugMenu();
+  }
+
+  async copyMissionSeed(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(String(this.world.seed));
+      this.seedCopyNoticeUntil = this.time.now + 900;
+      this.syncDebugMenu();
+      this.time.delayedCall(900, () => this.syncDebugMenu());
+    } catch {
+      // The seed remains visible for manual copying if clipboard access is denied.
+    }
   }
 
   nudgeCamPitch(dir: number): void {
