@@ -106,6 +106,23 @@ const PERF_LABELS = [
 ] as const;
 const PERF_WINDOW = 300;
 
+const DEBUG_MENU_ITEMS = [
+  { section: "GAMEPLAY" },
+  { action: "noDamage", label: "No damage" },
+  { action: "infAmmo", label: "Infinite ammo" },
+  { section: "DIAGNOSTICS" },
+  { action: "performance", label: "Performance", shortcut: "P" },
+  { action: "height", label: "Height + colliders", shortcut: "K" },
+  { action: "ai", label: "AI paths" },
+  { action: "blast", label: "Blast radii" },
+  { section: "RENDERING" },
+  { action: "fx", label: "Post FX", shortcut: "F" },
+  { section: "TOOLS" },
+  { action: "relief", label: "Terrain editor", shortcut: "E" },
+  { action: "camera", label: "Camera…" },
+  { action: "spawn", label: "Spawn…" },
+] as const;
+
 function shotLookOf(s: Shot): ShotLook {
   if (s.look) return s.look;
   if (s.kind === "rocket") return "shot_rocket";
@@ -1071,33 +1088,22 @@ export class MissionScene extends Phaser.Scene {
     this.keyShift = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT);
     this.input.keyboard!.addKey("ONE").on("down", () => {
       if (this.editOpen) this.setEditBrush(0);
-      else if (this.debugSpawnOpen || this.debugCamOpen) return;
-      else if (this.debugOpen) this.setNoDamage(!this.noDamage);
+      else if (this.debugOpen) return;
       else this.heli.weapon = 0;
     });
     this.input.keyboard!.addKey("TWO").on("down", () => {
       if (this.editOpen) this.setEditBrush(1);
-      else if (this.debugSpawnOpen || this.debugCamOpen) return;
-      else if (this.debugOpen) this.setInfAmmo(!this.infAmmo);
+      else if (this.debugOpen) return;
       else this.heli.weapon = 1;
     });
     this.input.keyboard!.addKey("THREE").on("down", () => {
       if (this.editOpen) this.setEditBrush(2);
-      else if (this.debugSpawnOpen || this.debugCamOpen) return;
-      else if (this.debugOpen) this.setDebugAi(!this.debugAi);
+      else if (this.debugOpen) return;
       else this.heli.weapon = 2;
     });
     this.input.keyboard!.addKey("FOUR").on("down", () => {
-      if (this.debugSpawnOpen || this.debugCamOpen) return;
-      if (this.debugOpen) this.setDebugBlast(!this.debugBlast);
+      if (this.debugOpen) return;
       else this.heli.weapon = 3;
-    });
-    this.input.keyboard!.addKey("FIVE").on("down", () => {
-      if (this.debugSpawnOpen || this.debugCamOpen) return;
-      if (this.debugOpen) this.openDebugCam();
-    });
-    this.input.keyboard!.addKey("SIX").on("down", () => {
-      if (this.debugOpen && !this.debugSpawnOpen && !this.debugCamOpen) this.openDebugSpawn();
     });
     this.input.keyboard!.addKey("E").on("down", () => this.toggleReliefEditor());
     this.input.keyboard!.addKey("I").on("down", () => {
@@ -1238,7 +1244,7 @@ export class MissionScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(Layer.HUD + 5);
     this.perfHud = this.add
-      .text(16, 72, "", {
+      .text(370, 72, "", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "12px",
         color: "#8ee6ff",
@@ -6924,6 +6930,7 @@ export class MissionScene extends Phaser.Scene {
     this.perfEnabled = !this.perfEnabled;
     if (!this.perfEnabled) {
       this.perfHud.setVisible(false);
+      this.syncDebugMenu();
       return;
     }
     this.perfSamples ??= PERF_LABELS.map(() => new Float32Array(PERF_WINDOW));
@@ -6935,6 +6942,7 @@ export class MissionScene extends Phaser.Scene {
     this.perfSampleWrite = 0;
     this.perfHudAt = 0;
     this.perfHud.setVisible(true).setText("PERF BASELINE\nwarming up…");
+    this.syncDebugMenu();
   }
 
   recordPerfSample(frameMs: number, sceneMs: number): void {
@@ -7437,41 +7445,32 @@ export class MissionScene extends Phaser.Scene {
   setupDebugMenu(): void {
     const x = 22;
     const y = 86;
-    const rowH = 26;
-    const labels = [
-      "NO DAMAGE",
-      "INFINITE AMMO",
-      "HEIGHT MAP   K",
-      "DEBUG AI",
-      "BLAST RADIUS",
-      "FX           F",
-      "RELIEF       E",
-      "CAMERA",
-      "SPAWN",
-    ];
+    const rowH = 22;
     this.debugRoot = this.add.container(x, y);
     this.debugRoot.setDepth(Layer.HUD + 180);
     this.debugRoot.setScrollFactor(0);
     this.debugPanel = this.add.graphics();
-    this.debugTitle = this.add.text(12, 10, "/  DEBUG", {
+    this.debugTitle = this.add.text(12, 10, "/  DEBUG    ↑↓ select   ENTER toggle", {
       fontFamily: "Share Tech Mono, monospace",
       fontSize: "13px",
       color: "#e8b84a",
     }).setName("debug_title");
-    this.debugRows = labels.map((_label, i) => {
+    this.debugRows = DEBUG_MENU_ITEMS.map((item, i) => {
       const t = this.add
         .text(12, 38 + i * rowH, "", {
           fontFamily: "Share Tech Mono, monospace",
           fontSize: "13px",
           color: "#f0e6c8",
         })
-        .setInteractive({ useHandCursor: true })
         .setName(`debug_row_${i}`);
-      t.on("pointerdown", () => {
-        if (this.debugSpawnOpen || this.debugCamOpen) return;
-        this.debugMenuIdx = i;
-        this.activateDebugRow(i);
-      });
+      if ("action" in item) {
+        t.setInteractive({ useHandCursor: true });
+        t.on("pointerdown", () => {
+          if (this.debugSpawnOpen || this.debugCamOpen) return;
+          this.debugMenuIdx = i;
+          this.activateDebugRow(i);
+        });
+      }
       return t;
     });
     this.debugSpawnHint = this.add
@@ -7527,13 +7526,14 @@ export class MissionScene extends Phaser.Scene {
       ...this.debugSpawnRows,
     ]);
     this.debugRoot.setVisible(false);
+    this.debugMenuIdx = DEBUG_MENU_ITEMS.findIndex((item) => "action" in item);
     this.syncDebugMenu();
   }
 
   syncDebugMenu(): void {
     if (!this.debugRows.length) return;
-    const w = 300;
-    const rowH = 26;
+    const w = 330;
+    const rowH = 22;
     if (this.debugCamOpen) {
       const n = this.debugCamRows.length;
       const hgt = 36 + n * 22 + 10;
@@ -7600,43 +7600,47 @@ export class MissionScene extends Phaser.Scene {
     this.debugSpawnHint.setVisible(false);
     for (const t of this.debugSpawnRows) t.setVisible(false);
     for (const t of this.debugCamRows) t.setVisible(false);
-    const flags = [
-      this.noDamage,
-      this.infAmmo,
-      this.showHeightMap,
-      this.debugAi,
-      this.debugBlast,
-      this.fxOn,
-      this.editOpen,
-    ];
-    const names = [
-      "NO DAMAGE",
-      "INFINITE AMMO",
-      "HEIGHT MAP   K",
-      "DEBUG AI",
-      "BLAST RADIUS",
-      "FX           F",
-      "RELIEF       E",
-    ];
-    // Number shortcuts only for rows without a letter hotkey.
-    const nums = ["1", "2", "", "3", "4", "", "", "5", "6"];
-    if (this.debugMenuIdx >= this.debugRows.length) this.debugMenuIdx = 0;
+    if (
+      this.debugMenuIdx >= DEBUG_MENU_ITEMS.length ||
+      !("action" in DEBUG_MENU_ITEMS[this.debugMenuIdx]!)
+    ) {
+      this.debugMenuIdx = DEBUG_MENU_ITEMS.findIndex((item) => "action" in item);
+    }
     for (let i = 0; i < this.debugRows.length; i++) {
       const row = this.debugRows[i]!;
+      const item = DEBUG_MENU_ITEMS[i]!;
       row.setVisible(true);
-      const num = nums[i]!;
+      if ("section" in item) {
+        row.setText(item.section).setColor("#6a8a62");
+        continue;
+      }
       const focus = i === this.debugMenuIdx;
       const mark = focus ? "▸" : " ";
-      const prefix = num ? `${mark}${num} ` : `${mark}  `;
-      if (i < 7) {
-        const on = flags[i]!;
-        row.setText(`${prefix}${names[i]!}            ${on ? "ON" : "OFF"}`);
+      const shortcut = "shortcut" in item ? `[${item.shortcut}]` : "";
+      const on =
+        item.action === "noDamage"
+          ? this.noDamage
+          : item.action === "infAmmo"
+            ? this.infAmmo
+            : item.action === "performance"
+              ? this.perfEnabled
+              : item.action === "height"
+                ? this.showHeightMap
+                : item.action === "ai"
+                  ? this.debugAi
+                  : item.action === "blast"
+                    ? this.debugBlast
+                    : item.action === "fx"
+                      ? this.fxOn
+                      : item.action === "relief"
+                        ? this.editOpen
+                        : undefined;
+      const label = `${item.label}${shortcut ? `  ${shortcut}` : ""}`;
+      if (on != null) {
+        row.setText(`${mark}  ${label.padEnd(25)} ${on ? "ON" : "OFF"}`);
         row.setColor(focus ? "#e8b84a" : on ? "#c8b87a" : "#8a8470");
-      } else if (i === 7) {
-        row.setText(`${prefix}CAMERA…`);
-        row.setColor(focus ? "#e8b84a" : "#f0e6c8");
       } else {
-        row.setText(`${prefix}SPAWN…`);
+        row.setText(`${mark}  ${label}`);
         row.setColor(focus ? "#e8b84a" : "#f0e6c8");
       }
     }
@@ -7645,20 +7649,25 @@ export class MissionScene extends Phaser.Scene {
   nudgeDebugMenu(dir: number): void {
     const n = this.debugRows.length;
     if (!n) return;
-    this.debugMenuIdx = (this.debugMenuIdx + dir + n) % n;
+    do {
+      this.debugMenuIdx = (this.debugMenuIdx + dir + n) % n;
+    } while (!("action" in DEBUG_MENU_ITEMS[this.debugMenuIdx]!));
     this.syncDebugMenu();
   }
 
   activateDebugRow(i: number): void {
-    if (i === 0) this.setNoDamage(!this.noDamage);
-    else if (i === 1) this.setInfAmmo(!this.infAmmo);
-    else if (i === 2) this.toggleHeightMap();
-    else if (i === 3) this.setDebugAi(!this.debugAi);
-    else if (i === 4) this.setDebugBlast(!this.debugBlast);
-    else if (i === 5) this.toggleTestFx();
-    else if (i === 6) this.toggleReliefEditor();
-    else if (i === 7) this.openDebugCam();
-    else if (i === 8) this.openDebugSpawn();
+    const item = DEBUG_MENU_ITEMS[i];
+    if (!item || !("action" in item)) return;
+    if (item.action === "noDamage") this.setNoDamage(!this.noDamage);
+    else if (item.action === "infAmmo") this.setInfAmmo(!this.infAmmo);
+    else if (item.action === "performance") this.togglePerfMeasurements();
+    else if (item.action === "height") this.toggleHeightMap();
+    else if (item.action === "ai") this.setDebugAi(!this.debugAi);
+    else if (item.action === "blast") this.setDebugBlast(!this.debugBlast);
+    else if (item.action === "fx") this.toggleTestFx();
+    else if (item.action === "relief") this.toggleReliefEditor();
+    else if (item.action === "camera") this.openDebugCam();
+    else if (item.action === "spawn") this.openDebugSpawn();
     this.syncDebugMenu();
   }
 
