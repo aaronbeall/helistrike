@@ -565,12 +565,6 @@ export class MissionScene extends Phaser.Scene {
   private ptrWorldX = 0;
   private ptrWorldY = 0;
   private ptrWorldReady = false;
-  /** Live unit id → unit (rebuilt each sim frame). */
-  private unitIdMap = new Map<number, Unit>();
-  /** Cached texture span / trail radius (key → px). */
-  private texSpanCache = new Map<string, number>();
-  private texTrailCache = new Map<string, number>();
-  private fpsHudAt = 0;
   debugHit = false;
   /** Draw fading rings for explosion damage / heli splash radii. */
   debugBlast = false;
@@ -1606,7 +1600,6 @@ export class MissionScene extends Phaser.Scene {
     this.updateTheaterCam(wallDt);
 
     if (!mapPause) {
-      this.rebuildUnitIdMap();
       const aim = this.worldPointer();
       this.heli.update(
         dt,
@@ -1792,15 +1785,15 @@ export class MissionScene extends Phaser.Scene {
   /** Host that snaps pinned crew to a mount UV (e.g. vehicle bed) — blocks flee/walk. */
   snapHost(u: Unit): Unit | undefined {
     if (u.pinId == null) return undefined;
-    const post = this.unitById(u.pinId);
-    if (!post) return undefined;
+    const post = this.units.find((p) => p.id === u.pinId);
+    if (!post || post.dead) return undefined;
     return crewOf(post.kind)?.mode === "snap" ? post : undefined;
   }
 
   leashPinned(u: Unit): void {
     if (u.pinId == null) return;
-    const post = this.unitById(u.pinId);
-    if (!post) {
+    const post = this.units.find((p) => p.id === u.pinId);
+    if (!post || post.dead) {
       u.pinId = undefined;
       u.pinMount = undefined;
       return;
@@ -1839,8 +1832,7 @@ export class MissionScene extends Phaser.Scene {
   ): void {
     const cast = castZ(this.world, x, y, z);
     const so = shadowOff(cast);
-    const want = shadowKey(tex, cast);
-    const sk = this.textures.exists(want) ? want : "shadow";
+    const sk = this.textures.exists(shadowKey(tex, cast)) ? shadowKey(tex, cast) : "shadow";
     if (sh.texture.key !== sk) sh.setTexture(sk);
     sh.setPosition(x + so.x, y + so.y)
       .setRotation(rot)
@@ -2978,7 +2970,7 @@ export class MissionScene extends Phaser.Scene {
         const spd = cur + accel * dt;
         const seeking = (s.loft ?? 0) <= 0;
         if (seeking) {
-          const u = s.targetId != null ? this.unitById(s.targetId) : undefined;
+          const u = this.units.find((q) => q.id === s.targetId && !q.dead);
           const tx = u ? u.x : s.x + s.vx;
           const ty = u ? u.y : s.y + s.vy;
           const tz = u ? u.z + heightOf(u.kind) * 0.5 : groundZ(this.world, s.x, s.y);
@@ -3432,7 +3424,7 @@ export class MissionScene extends Phaser.Scene {
     this.pushBlastRing(x, y, z, blast);
     for (const u of this.units) {
       if (u.dead) continue;
-      const d = distToFootprint(x, y, footprintInto(u, 0, 0));
+      const d = distToFootprint(x, y, footprintOf(u));
       if (u === direct || d < blast) {
         u.killDx = dx;
         u.killDy = dy;
@@ -3583,18 +3575,13 @@ export class MissionScene extends Phaser.Scene {
     const extra = this.frags.filter((f) => f.trailOnly).length + 8 - 40;
     if (extra > 0) {
       let drop = extra;
-      let w = 0;
-      const frags = this.frags;
-      for (let i = 0; i < frags.length; i++) {
-        const f = frags[i]!;
+      this.frags = this.frags.filter((f) => {
         // Never cull crash hulls — simmer drives the player death end screen.
-        if (f.heliCrash || f.playerCrash || !f.trailOnly || drop <= 0) {
-          frags[w++] = f;
-          continue;
-        }
+        if (f.heliCrash || f.playerCrash) return true;
+        if (!drop || !f.trailOnly) return true;
         drop--;
-      }
-      frags.length = w;
+        return false;
+      });
     }
     const p = Phaser.Math.Clamp(power, 0.5, 2.4);
     const t = Math.min(1, (p - 0.5) / 1.9);
@@ -3636,13 +3623,9 @@ export class MissionScene extends Phaser.Scene {
   }
 
   texTrailR(key: string): number {
-    const hit = this.texTrailCache.get(key);
-    if (hit != null) return hit;
     if (!this.textures.exists(key)) return 14;
     const src = this.textures.get(key).getSourceImage() as { width: number; height: number };
-    const v = Math.max(10, Math.max(src.width, src.height) * 0.32);
-    this.texTrailCache.set(key, v);
-    return v;
+    return Math.max(10, Math.max(src.width, src.height) * 0.32);
   }
 
   stampSoldierBlood(u: Unit, ox: number, oy: number, ang: number): void {
@@ -4044,13 +4027,9 @@ export class MissionScene extends Phaser.Scene {
   }
 
   texSpan(key: string): number {
-    const hit = this.texSpanCache.get(key);
-    if (hit != null) return hit;
     if (!this.textures.exists(key)) return 64;
     const src = this.textures.get(key).getSourceImage() as { width: number; height: number };
-    const v = Math.max(1, src.width, src.height);
-    this.texSpanCache.set(key, v);
-    return v;
+    return Math.max(1, src.width, src.height);
   }
 
   /** On-screen rotor span (pre-zScale), matching syncHeli / syncUnitSprites. */
@@ -5384,8 +5363,7 @@ export class MissionScene extends Phaser.Scene {
   steerGround(u: Unit, wantX: number, wantY: number): { x: number; y: number } {
     let wx = wantX;
     let wy = wantY;
-    const uR = circumRadiusOf(u.kind);
-    const uFp = footprintInto(u, 0, 0);
+    const uFp = footprintOf(u);
     for (const o of this.units) {
       if (o.dead || o.id === u.id || o.pinId != null) continue;
       const osp = specOf(o.kind);
@@ -5399,11 +5377,7 @@ export class MissionScene extends Phaser.Scene {
         osp.move === "flee";
       if (!solid) continue;
       const pad = osp.building || osp.move === "static" ? 40 : 28;
-      const maxR = uR + circumRadiusOf(o.kind) + pad + 2;
-      const dx = u.x - o.x;
-      const dy = u.y - o.y;
-      if (dx * dx + dy * dy > maxR * maxR) continue;
-      const ov = footprintOverlap(uFp, footprintInto(o, pad, 1));
+      const ov = footprintOverlap(uFp, footprintOf(o, pad));
       if (!ov.hit || ov.depth <= 0) continue;
       const strength = osp.building || osp.move === "static" ? 3.2 : 2.4;
       const push = ov.depth * strength;
@@ -5419,16 +5393,12 @@ export class MissionScene extends Phaser.Scene {
     const look = radius(u.kind) + 52;
     const lx = u.x + nx * look;
     const ly = u.y + ny * look;
-    const lookPad = radius(u.kind) + 22;
     for (const o of this.units) {
       if (o.dead || o.id === u.id || o.pinId != null) continue;
       const osp = specOf(o.kind);
       if (!(osp.building || osp.move === "static" || isGroundVehicle(o.kind))) continue;
-      const maxR = circumRadiusOf(o.kind) + lookPad + 2;
-      const odx = lx - o.x;
-      const ody = ly - o.y;
-      if (odx * odx + ody * ody > maxR * maxR) continue;
-      if (pointInFootprint(lx, ly, footprintInto(o, lookPad, 1))) {
+      const clear = 22;
+      if (pointInFootprint(lx, ly, footprintOf(o, radius(u.kind) + clear))) {
         wx += -ny * 56;
         wy += nx * 56;
         wx -= nx * 28;
@@ -6465,17 +6435,8 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 
-  rebuildUnitIdMap(): void {
-    const map = this.unitIdMap;
-    map.clear();
-    for (const u of this.units) {
-      if (!u.dead) map.set(u.id, u);
-    }
-  }
-
   unitById(id: number): Unit | undefined {
-    const u = this.unitIdMap.get(id);
-    return u && !u.dead ? u : undefined;
+    return this.units.find((q) => q.id === id && !q.dead);
   }
 
   tickHellfireLock(dt: number, ptr: { x: number; y: number }): void {
@@ -6831,9 +6792,6 @@ export class MissionScene extends Phaser.Scene {
 
   syncFpsHud(): void {
     if (!this.fpsHud) return;
-    const now = this.time.now;
-    if (now - this.fpsHudAt < 200) return;
-    this.fpsHudAt = now;
     const fps = Math.round(this.game.loop.actualFps);
     this.fpsHud.setText(`${fps} FPS`);
     this.fpsHud.setColor(fps >= 55 ? "#6dbb4a" : fps >= 30 ? "#e8b84a" : "#ff3a22");
