@@ -91,12 +91,9 @@ function drawTrack(kind: "tread" | "tire" | "dual" | "wide" | "mono" = "tread"):
   const dirt = (a: number) => `rgba(32,26,16,${a})`;
   if (kind === "tread") {
     g.fillStyle = dirt(0.5);
-    g.fillRect(2, 2, 10, 18);
-    g.fillRect(20, 2, 10, 18);
-    g.fillStyle = dirt(0.28);
-    for (let y = 3; y < 19; y += 4) {
-      g.fillRect(3, y, 8, 1.4);
-      g.fillRect(21, y, 8, 1.4);
+    for (let y = 2; y < 20; y += 4) {
+      g.fillRect(2, y, 10, 2.2);
+      g.fillRect(20, y, 10, 2.2);
     }
     return c;
   }

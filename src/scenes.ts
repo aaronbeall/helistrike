@@ -1567,9 +1567,9 @@ export class MissionScene extends Phaser.Scene {
       const along = range(-0.22 * span, 0.78 * span);
       const side = range(-6, 6);
       const frame = (Math.random() * FX_VARIANTS) | 0;
-      const sc = range(0.38, 0.8);
-      const stretch = range(0.75, 1.65) + Math.min(0.5, spd * 0.0018);
-      const thin = range(0.2, 0.38);
+      const sc = range(0.28, 0.58);
+      const stretch = range(1.35, 2.3) + Math.min(0.75, spd * 0.0025);
+      const thin = range(0.12, 0.24);
       this.stampWreck(
         "fx_dirt",
         x + ux * along + px * side,
@@ -3101,7 +3101,7 @@ export class MissionScene extends Phaser.Scene {
         ? Math.min(3.15, 1 + spd * 0.0017)
         : shock
           ? Math.min(2.8, 1 + spd * 0.0022)
-          : 1 + spd * (spark ? 0.011 : streak ? 0.0064 : dart ? 0.0052 : 0.0048);
+          : 1 + spd * (spark ? 0.012 : streak ? 0.0064 : dart ? 0.0052 : 0.0048);
       const thick = shock
         ? s.scale * (1.05 + 0.95 * age)
         : dart
@@ -5128,7 +5128,7 @@ export class MissionScene extends Phaser.Scene {
   fragTrailSize(f: Frag): number {
     const r = f.trailR;
     if (f.trailSoft) return r / 4.8;
-    let size = (r * (f.scale ?? 1)) / (f.linger ? 6 : 6.5);
+    let size = (r * Math.min(f.scale ?? 1, 1)) / (f.linger ? 6 : 6.5);
     // Dish trails keep trailR small for emit rate; lifespan should follow the big sprite.
     if (f.dishFlat || f.flamePts?.length) {
       size = Math.max(size, (this.texSpan(f.key) * (f.scale ?? 1)) / 48);
@@ -6016,6 +6016,8 @@ export class MissionScene extends Phaser.Scene {
     }
     u.vx = vx;
     u.vy = vy;
+    const trackX0 = u.x;
+    const trackY0 = u.y;
     this.stepOnTerrain(u, vx * dt, vy * dt, false);
     this.separateGround(u);
     if (isWater(this.world, u.x, u.y)) {
@@ -6027,20 +6029,22 @@ export class MissionScene extends Phaser.Scene {
     }
     const step = Math.hypot(u.vx, u.vy) * dt;
     if (Math.hypot(u.vx, u.vy) > 6 && !isWater(this.world, u.x, u.y)) {
-      u.track += step;
-      if (u.track > d.trackGap) {
-        u.track -= d.trackGap;
+      const printGap = d.trackGap * 0.8;
+      const first = printGap - u.track;
+      for (let dist = first; dist <= step; dist += printGap) {
+        const t = step > 0 ? Phaser.Math.Clamp(dist / step, 0, 1) : 1;
         const key = `track_${d.track}`;
         const back = specOf(u.kind).radius * 0.72;
         this.stampWreck(
           this.textures.exists(key) ? key : "track",
-          u.x - Math.cos(u.angle) * back,
-          u.y - Math.sin(u.angle) * back,
+          Phaser.Math.Linear(trackX0, u.x, t) - Math.cos(u.angle) * back,
+          Phaser.Math.Linear(trackY0, u.y, t) - Math.sin(u.angle) * back,
           u.angle + Math.PI / 2,
-          d.trackScale * 1.25,
+          d.trackScale * 0.85,
           0.7
         );
       }
+      u.track = (u.track + step) % printGap;
     }
   }
 
