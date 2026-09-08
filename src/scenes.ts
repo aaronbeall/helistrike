@@ -1903,9 +1903,8 @@ export class MissionScene extends Phaser.Scene {
     const img = this.textures.exists(tex)
       ? (this.textures.get(tex).getSourceImage() as { width: number; height: number })
       : { width: 52, height: 52 };
-    const zs = zScale(host.z, host.y);
-    const mx = (mount.x - pivot.x) * img.width * zs;
-    const my = (mount.y - pivot.y) * img.height * zs;
+    const mx = (mount.x - pivot.x) * img.width;
+    const my = (mount.y - pivot.y) * img.height;
     return {
       x: host.x + mx * Math.cos(rot) - my * Math.sin(rot),
       y: host.y + mx * Math.sin(rot) + my * Math.cos(rot),
@@ -2367,12 +2366,11 @@ export class MissionScene extends Phaser.Scene {
     const h = this.heli;
     const craft = h.spec;
     const pivot = craftOrigin(craft);
-    const zs = zScale(h.z, h.y);
     const img = this.textures.exists(craft.body)
       ? (this.textures.get(craft.body).getSourceImage() as { width: number; height: number })
       : { width: 120, height: 120 };
-    const dw = img.width * zs;
-    const dh = img.height * zs;
+    const dw = img.width;
+    const dh = img.height;
     const hullRot = h.angle + craft.rotOff;
     const mx = (mount.x - pivot.x) * dw;
     const my = (mount.y - pivot.y) * dh;
@@ -4833,7 +4831,7 @@ export class MissionScene extends Phaser.Scene {
     const src = this.textures.exists(host.key)
       ? (this.textures.get(host.key).getSourceImage() as { width: number; height: number })
       : { width: 64, height: 64 };
-    const sc = (host.scale ?? 1) * zScale(host.z || 0, host.y);
+    const sc = host.scale ?? 1;
     const dw = src.width * sc;
     const dh = src.height * sc;
     const mx = (mount.x - pivot.x) * dw;
@@ -6234,12 +6232,11 @@ export class MissionScene extends Phaser.Scene {
             const mount = mounts[side]!;
             const pivot = spritePivot(textureOf(u.kind));
             const hullRot = u.angle + sp.rotOff;
-            const zs = zScale(u.z, u.y);
             const hullImg = this.textures.exists(textureOf(u.kind))
               ? (this.textures.get(textureOf(u.kind)).getSourceImage() as { width: number; height: number })
               : { width: 64, height: 64 };
-            const dw = hullImg.width * zs;
-            const dh = hullImg.height * zs;
+            const dw = hullImg.width;
+            const dh = hullImg.height;
             const mx = (mount.x - pivot.x) * dw;
             const my = (mount.y - pivot.y) * dh;
             const px = u.x + mx * Math.cos(hullRot) - my * Math.sin(hullRot);
@@ -6476,7 +6473,6 @@ export class MissionScene extends Phaser.Scene {
     const guns = gunsOf(u);
     const wpn = guns[gunI]?.weapon ?? sp.weapon;
     const gun = guns[gunI];
-    const zs = zScale(u.z, u.y);
     const hullRot = this.troopDrawAng(u) + sp.rotOff;
     const hullPivot = spritePivot(textureOf(u.kind));
     const hullImg = this.textures.get(resolveSkin(this.textures, textureOf(u.kind), u.camo)).getSourceImage() as {
@@ -6492,8 +6488,8 @@ export class MissionScene extends Phaser.Scene {
       y: number,
       rot: number
     ) => {
-      const lx = (uv.x - origin.x) * tw * zs;
-      const ly = (uv.y - origin.y) * th * zs;
+      const lx = (uv.x - origin.x) * tw;
+      const ly = (uv.y - origin.y) * th;
       return { x: x + lx * Math.cos(rot) - ly * Math.sin(rot), y: y + lx * Math.sin(rot) + ly * Math.cos(rot) };
     };
     if (!gun || !wpn) {
@@ -6508,8 +6504,8 @@ export class MissionScene extends Phaser.Scene {
     }
     const origin = lookupSpriteOrigin(gun.tex) ?? gun.origin;
     const mount = gun.mount;
-    const dw = hullImg.width * zs;
-    const dh = hullImg.height * zs;
+    const dw = hullImg.width;
+    const dh = hullImg.height;
     const mx = (mount.x - hullPivot.x) * dw;
     const my = (mount.y - hullPivot.y) * dh;
     const hx = u.x + mx * Math.cos(hullRot) - my * Math.sin(hullRot);
