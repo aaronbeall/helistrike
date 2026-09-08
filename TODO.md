@@ -99,6 +99,7 @@
 * [ ] Tail rotor (with tilt)
 * [ ] Pseudo 3d tilt graphic
 * [ ] Clouds
+* [ ] Roadkill organic units with rotors
 
 ## Fix
 

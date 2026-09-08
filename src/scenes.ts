@@ -108,6 +108,7 @@ const PERF_LABELS = [
   "outside/vsync",
 ] as const;
 const PERF_WINDOW = 300;
+const BLAST_RING_FRAMES = 12;
 
 const DEBUG_MENU_ITEMS = [
   { section: "GAMEPLAY" },
@@ -746,6 +747,7 @@ export class MissionScene extends Phaser.Scene {
     this.biomeTiles = extractBiomeTiles(this.textures);
     this.input.mouse?.disableContextMenu();
     ensureImpactGlow(this.textures);
+    ensureBlastRingGradient(this.textures);
     this.input.setDefaultCursor("none");
     this.canFire = !this.input.activePointer.isDown;
     this.input.on("pointerup", () => {
@@ -3702,7 +3704,9 @@ export class MissionScene extends Phaser.Scene {
     waveMul = 1,
     size01 = Phaser.Math.Clamp(blast / 140, 0.18, 1),
     /** Extra eject power from unit/shot influence (1 = baseline). */
-    power = 1
+    power = 1,
+    /** World-space target radius; zero means this blast has no destruction ring. */
+    targetRadius = 0
   ): void {
     const at = worldToScreen(x, y, z);
     const blastX = at.x;
@@ -3750,19 +3754,33 @@ export class MissionScene extends Phaser.Scene {
       180
     );
     this.spawnBlastTrails(x, y, z, dx, dy, dz, soft, size01, p);
-    const wave = (soft ? 0.45 : 1) * waveMul;
-    const ring = this.add.circle(blastX, blastY, 6, 0xff9a40, 0.85)
-      .setScale(blastScale)
-      .setDepth(worldDepth(z, 2, y))
-      .setBlendMode(Phaser.BlendModes.ADD);
-    this.tweens.add({
-      targets: ring,
-      scale: Math.max(2, (blast * wave) / 6),
-      alpha: 0,
-      duration: waveMul > 1 ? 140 : 100,
-      ease: "Expo.Out",
-      onComplete: () => ring.destroy(),
-    });
+    if (targetRadius > 0) {
+      const textureRadius = 64;
+      const startRadius = targetRadius * blastScale;
+      const endRadius = targetRadius * 3 * blastScale;
+      const ring = this.add.image(blastX, blastY, "blast_ring_soft_v2", 0)
+        .setTint(0xff7a18)
+        .setScale(startRadius / textureRadius)
+        .setAlpha(1)
+        .setDepth(worldDepth(z, ZOff.fire + 2, y))
+        .setBlendMode(Phaser.BlendModes.ADD);
+      const ringLife = { t: 0 };
+      this.tweens.add({
+        targets: ringLife,
+        t: 1,
+        duration: 240,
+        ease: "Linear",
+        onUpdate: () => {
+          const t = ringLife.t;
+          const radius = Phaser.Math.Linear(startRadius, endRadius, Phaser.Math.Easing.Expo.Out(t));
+          ring
+            .setScale(radius / textureRadius)
+            .setAlpha(1 - t)
+            .setFrame(Math.min(BLAST_RING_FRAMES - 1, Math.floor(t * BLAST_RING_FRAMES)));
+        },
+        onComplete: () => ring.destroy(),
+      });
+    }
   }
 
   /** Mech death FX bias: shot vel × (killDmg/maxHp) boost + unit velocity. */
@@ -3910,6 +3928,11 @@ export class MissionScene extends Phaser.Scene {
     }
     const sp = specOf(u.kind);
     const building = !!sp.building;
+    const mech =
+      building ||
+      isGroundVehicle(u.kind) ||
+      !!sp.water ||
+      !!sp.aerial;
     const boom = Phaser.Math.Clamp((radius(u.kind) - 6) / 86, 0.16, 1);
     if (!quiet) {
       const hz = u.z + heightOf(u.kind) * 0.5;
@@ -3936,7 +3959,8 @@ export class MissionScene extends Phaser.Scene {
           false,
           building ? 2.25 : 1,
           boom,
-          burst.power
+          burst.power,
+          mech ? radius(u.kind) : 0
         );
       }
       if (building) this.emitDustShock(u.x, u.y, 1);
@@ -3946,11 +3970,6 @@ export class MissionScene extends Phaser.Scene {
       this.shake = Math.min(10, this.shake + 3);
       // Buildings/vehicles: weak splash at ~3× body radius (FX blast can be larger).
       if (!skipSplash && !sp.organic) {
-        const mech =
-          building ||
-          isGroundVehicle(u.kind) ||
-          !!sp.water ||
-          !!sp.aerial;
         if (mech) {
           const splashR = radius(u.kind) * 3;
           const deathDmg = u.max * (building ? 0.05 : 0.1);
@@ -9260,6 +9279,38 @@ function steerDir(
   if (dot < -0.999) w = norm3(-c.y, c.x, 0);
   const t = maxAng / Math.max(ang, 1e-5);
   return norm3(c.x + (w.x - c.x) * t, c.y + (w.y - c.y) * t, c.z + (w.z - c.z) * t);
+}
+
+function ensureBlastRingGradient(textures: Phaser.Textures.TextureManager): void {
+  if (textures.exists("blast_ring_soft_v2")) return;
+  const size = 128;
+  const canvas = document.createElement("canvas");
+  canvas.width = size * BLAST_RING_FRAMES;
+  canvas.height = size;
+  const g = canvas.getContext("2d")!;
+  for (let frame = 0; frame < BLAST_RING_FRAMES; frame++) {
+    const t = frame / (BLAST_RING_FRAMES - 1);
+    const hole = 0.08 + 0.54 * Math.pow(t, 2.2);
+    const remaining = 1 - hole;
+    const innerSoft = hole + remaining * 0.14;
+    const peak = hole + remaining * 0.34;
+    const outerSoft = hole + remaining * 0.72;
+    const cx = frame * size + size / 2;
+    const gradient = g.createRadialGradient(cx, size / 2, 0, cx, size / 2, size / 2);
+    gradient.addColorStop(0, "rgba(255,255,255,0)");
+    gradient.addColorStop(hole, "rgba(255,255,255,0)");
+    gradient.addColorStop(innerSoft, "rgba(255,255,255,0.72)");
+    gradient.addColorStop(peak, "rgba(255,255,255,0.95)");
+    gradient.addColorStop(outerSoft, "rgba(255,255,255,0.38)");
+    gradient.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = gradient;
+    g.fillRect(frame * size, 0, size, size);
+  }
+  textures.addSpriteSheet("blast_ring_soft_v2", canvas as unknown as HTMLImageElement, {
+    frameWidth: size,
+    frameHeight: size,
+    endFrame: BLAST_RING_FRAMES - 1,
+  });
 }
 
 function ensureImpactGlow(textures: Phaser.Textures.TextureManager): void {
