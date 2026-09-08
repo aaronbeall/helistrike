@@ -2352,7 +2352,9 @@ export class MissionScene extends Phaser.Scene {
 
   gunTip(): { x: number; y: number } {
     const d = this.gun.displayHeight * this.gun.originY * 0.92;
-    const a = this.heli.gunAngle;
+    // The gun texture points along local -Y, so its rendered barrel heading is
+    // one quarter-turn behind the projected sprite rotation.
+    const a = this.gun.rotation - Math.PI / 2;
     const sx = this.gun.x + Math.cos(a) * d;
     const sy = this.gun.y + Math.sin(a) * d;
     // Gun sprite sits in projected space; return world XY for ballistics / aim.
@@ -2446,7 +2448,13 @@ export class MissionScene extends Phaser.Scene {
       });
       this.tracer.setDepth(worldDepth(z0, ZOff.muzzle, tip.y));
       this.tracer.emitParticleAt(tipScreenX, tipScreenY, 5);
-      this.showMuzzle(tipScreenX, tipScreenY, ang, 0.78 * tipScale, 0.1);
+      this.showMuzzle(
+        tipScreenX,
+        tipScreenY,
+        projectHeading(ang, tip.x, tip.y, h.z),
+        0.78 * tipScale,
+        0.1
+      );
       const craft = h.spec;
       const side = this.shellEjectSide({
         muzzleUv: lookupSpriteMuzzles(craft.gun)[0],
@@ -2575,12 +2583,12 @@ export class MissionScene extends Phaser.Scene {
       tight: 0.84,
     });
     const at = worldToScreen(x, y, z);
-    this.showMuzzle(at.x, at.y, ang, 0.62 * at.scale, 0.12);
+    this.showMuzzle(at.x, at.y, projectHeading(ang, x, y, z), 0.62 * at.scale, 0.12);
   }
 
-  showMuzzle(x: number, y: number, ang: number, scale: number, life: number): void {
+  showMuzzle(x: number, y: number, drawAng: number, scale: number, life: number): void {
     const sc = scale * range(0.9, 1.12);
-    const rot = ang + range(-0.1, 0.1);
+    const rot = drawAng + range(-0.1, 0.1);
     this.muzzle
       .setVisible(true)
       .setFrame((Math.random() * FX_VARIANTS) | 0)
@@ -2793,8 +2801,12 @@ export class MissionScene extends Phaser.Scene {
     const dh = img.height * sc * zs * across;
     const lx = (uvx - SHOT_ORIGIN.x) * dw;
     const ly = (uvy - SHOT_ORIGIN.y) * dh;
-    const ca = Math.cos(s.angle);
-    const sa = Math.sin(s.angle);
+    const drawRot = Math.atan2(
+      screenVelY(s.vy, s.vz, z, y),
+      screenVelX(s.vx, s.vy, s.vz, x, y, z)
+    );
+    const ca = Math.cos(drawRot);
+    const sa = Math.sin(drawRot);
     return {
       x: base.x + lx * ca - ly * sa,
       y: base.y + lx * sa + ly * ca,
