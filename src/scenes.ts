@@ -526,11 +526,11 @@ export class MissionScene extends Phaser.Scene {
   fragSmoke!: Phaser.GameObjects.Particles.ParticleEmitter;
   lingerSmoke!: Phaser.GameObjects.Particles.ParticleEmitter;
   heliDust!: Phaser.GameObjects.Particles.ParticleEmitter;
-  /** Altitude-banded clones: each band keeps fire>smoke without a global restack. */
+  /** Camera-depth-banded clones: each band keeps fire>smoke without a global restack. */
   fxSlots = new Map<Phaser.GameObjects.Particles.ParticleEmitter, Phaser.GameObjects.Particles.ParticleEmitter[]>();
-  /** Altitude bands so concurrent trails don't all share one emitter depth. */
+  /** Painter-depth bands so concurrent trails don't all share one emitter depth. */
   fxSlotN = 8;
-  fxBandH = 28;
+  fxBandH = 48;
   /** Last applied sim timeScale (skip walking ~N emitters when unchanged). */
   lastSimScale = Number.NaN;
   /** Per-frame particle emit budget (reset in update). */
@@ -5195,7 +5195,7 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 
-  /** Clone an emitter across altitude bands so concurrent trails don't thrash one depth. */
+  /** Clone an emitter across painter-depth bands so concurrent trails don't thrash one depth. */
   poolFx(make: () => Phaser.GameObjects.Particles.ParticleEmitter): Phaser.GameObjects.Particles.ParticleEmitter {
     const slots: Phaser.GameObjects.Particles.ParticleEmitter[] = [];
     for (let i = 0; i < this.fxSlotN; i++) {
@@ -5207,14 +5207,25 @@ export class MissionScene extends Phaser.Scene {
     return slots[0]!;
   }
 
-  fxBand(z: number): number {
-    return Phaser.Math.Clamp(Math.floor(z / this.fxBandH), 0, this.fxSlotN - 1);
+  fxBand(z: number, y: number): number {
+    const cameraDepth = worldDepth(z, 0, y) - Layer.WORLD;
+    const center = (this.fxSlotN - 1) * 0.5;
+    return Phaser.Math.Clamp(Math.round(cameraDepth / this.fxBandH + center), 0, this.fxSlotN - 1);
   }
 
-  fxSlot(proto: Phaser.GameObjects.Particles.ParticleEmitter, z: number): Phaser.GameObjects.Particles.ParticleEmitter {
+  fxBandDepth(band: number, off: number): number {
+    const center = (this.fxSlotN - 1) * 0.5;
+    return Layer.WORLD + (band - center) * this.fxBandH + off;
+  }
+
+  fxSlot(
+    proto: Phaser.GameObjects.Particles.ParticleEmitter,
+    z: number,
+    y: number
+  ): { emitter: Phaser.GameObjects.Particles.ParticleEmitter; band: number } {
     const slots = this.fxSlots.get(proto);
-    if (!slots) return proto;
-    return slots[this.fxBand(z)]!;
+    const band = this.fxBand(z, y);
+    return { emitter: slots ? slots[band]! : proto, band };
   }
 
   fxAt(
@@ -5223,14 +5234,15 @@ export class MissionScene extends Phaser.Scene {
     proto: Phaser.GameObjects.Particles.ParticleEmitter,
     off: number
   ): Phaser.GameObjects.Particles.ParticleEmitter {
-    const em = this.fxSlot(proto, z);
-    const d = worldDepth(z, off, y);
+    const slot = this.fxSlot(proto, z, y);
+    const em = slot.emitter;
+    const d = this.fxBandDepth(slot.band, off);
     if (em.depth !== d) em.setDepth(d);
     return em;
   }
 
   /**
-   * Pick the altitude-band fire/smoke pair and pin both depths from the same z so this
+   * Pick the camera-depth-band fire/smoke pair and pin both depths to that band so this
    * trail stays projectile → smoke → flame. Other bands can still interleave.
    */
   pairFx(
@@ -5241,12 +5253,14 @@ export class MissionScene extends Phaser.Scene {
     fireOff: number = ZOff.fire,
     smokeOff: number = ZOff.smoke
   ): { fire: Phaser.GameObjects.Particles.ParticleEmitter; smoke: Phaser.GameObjects.Particles.ParticleEmitter } {
-    const fire = this.fxSlot(fireProto, z);
-    const smoke = this.fxSlot(smokeProto, z);
+    const fireSlot = this.fxSlot(fireProto, z, y);
+    const smokeSlot = this.fxSlot(smokeProto, z, y);
+    const fire = fireSlot.emitter;
+    const smoke = smokeSlot.emitter;
     const sOff = Math.min(smokeOff, fireOff - 1.25);
     const fOff = Math.max(fireOff, sOff + 1.25);
-    const sd = worldDepth(z, sOff, y);
-    const fd = worldDepth(z, fOff, y);
+    const sd = this.fxBandDepth(smokeSlot.band, sOff);
+    const fd = this.fxBandDepth(fireSlot.band, fOff);
     if (smoke.depth !== sd) smoke.setDepth(sd);
     if (fire.depth !== fd) fire.setDepth(fd);
     return { fire, smoke };
