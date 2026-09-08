@@ -261,51 +261,97 @@ function sampleBiomeId(world: WorldData, x: number, y: number): number {
   return world.biome[ty * TEX + tx]!;
 }
 
-/**
- * Shared 2.5D perspective camera (mutable for debug tuning).
- *
- * Model: eye at world Z = `cam`, looking down with a small pitch. Depth is
- * `(cam - Z)`; sprite scale is `cam/depth`. Phaser zoom is the inverse so a
- * reference at the focus altitude keeps constant on-screen size.
- *
- * Position uses the same depth for pitch: draw through `worldToScreen`, pick /
- * aim through `screenToWorld*` — never ad-hoc Y offsets at call sites.
- */
+/** Shared chase-camera tuning. The eye follows `Camera25D.focus` at this offset. */
 export const CamTune = {
-  /** Eye height above world Z = 0 (also the Z where scale would diverge). */
-  cam: 480,
-  /** Phaser zoom when focus altitude is Z = 0. */
+  /** Vertical eye distance above the focus. */
+  cam: 900,
+  /** Final Phaser framing zoom. Perspective itself lives in `worldToScreen`. */
   zoom0: 1.45,
-  /** Pitch: world-Y screen shift per world-Z, × perspective scale. */
+  /** Eye setback along +Y per unit of vertical eye distance. */
   pitch: 0.05,
 };
 /** Near-plane clamp so scale/zoom stay finite as Z → cam. */
-export const Z_SCALE_NEAR = 96;
+export const Z_SCALE_NEAR = 160;
 /** Height-map value at or below this becomes groundZ 0. */
 export const GROUND_H_ZERO = 0.16;
 /** World Z per unit of height-map above GROUND_H_ZERO. Peak ≈ (0.94 - GROUND_H_ZERO) * this. */
 export const GROUND_Z_SCALE = 258;
 
 export type ScreenPos = { x: number; y: number; scale: number };
+export type Camera25DPose = {
+  focusX: number;
+  focusY: number;
+  focusZ: number;
+  eyeY: number;
+  eyeZ: number;
+  forwardY: number;
+  forwardZ: number;
+  downY: number;
+  downZ: number;
+  focal: number;
+};
 
-/** Perspective depth from the eye to absolute Z. */
-export function camDepth(z: number): number {
-  return Math.max(Z_SCALE_NEAR, CamTune.cam - z);
+/**
+ * Mutable once-per-frame camera pose. Projection helpers read this object so
+ * hot draw paths need no camera allocation or argument plumbing.
+ */
+export const Camera25D: Camera25DPose = {
+  focusX: 0,
+  focusY: 0,
+  focusZ: 0,
+  eyeY: 0,
+  eyeZ: CamTune.cam,
+  forwardY: 0,
+  forwardZ: -1,
+  downY: 1,
+  downZ: 0,
+  focal: CamTune.cam,
+};
+
+/** Move the virtual eye with its focus, keeping focus scale exactly 1. */
+export function setCamera25DFocus(x: number, y: number, z: number): void {
+  const setback = CamTune.cam * CamTune.pitch;
+  const invLen = 1 / Math.hypot(CamTune.cam, setback);
+  Camera25D.focusX = x;
+  Camera25D.focusY = y;
+  Camera25D.focusZ = z;
+  Camera25D.eyeY = y + setback;
+  Camera25D.eyeZ = z + CamTune.cam;
+  Camera25D.forwardY = -setback * invLen;
+  Camera25D.forwardZ = -CamTune.cam * invLen;
+  Camera25D.downY = CamTune.cam * invLen;
+  Camera25D.downZ = -setback * invLen;
+  Camera25D.focal = 1 / invLen;
 }
 
-/** Sprite scale at absolute Z (1 at Z = 0). */
-export function zScale(z: number): number {
-  return CamTune.cam / camDepth(z);
+/** Perspective depth from the eye. X does not affect depth for this camera. */
+export function camDepth(z: number, y = Camera25D.focusY): number {
+  const ry = y - Camera25D.eyeY;
+  const rz = z - Camera25D.eyeZ;
+  return Math.max(Z_SCALE_NEAR, ry * Camera25D.forwardY + rz * Camera25D.forwardZ);
 }
 
-/** Pitch term: how far absolute Z shifts screen Y (north = smaller Y). */
+/** Camera-relative sprite scale. At the chase focus this is exactly 1. */
+export function zScale(z: number, y = Camera25D.focusY): number {
+  return Camera25D.focal / camDepth(z, y);
+}
+
+/** Compatibility helper: projected lift at the camera's focus Y. */
 export function pitchLift(z: number): number {
-  return z * CamTune.pitch * zScale(z);
+  return Camera25D.focusY - projectY(Camera25D.focusY, z);
 }
 
 /** Zero-alloc projected screen Y (`worldToScreen(…).y`). Prefer this in hot loops. */
 export function projectY(y: number, z: number): number {
-  return y - pitchLift(z);
+  const ry = y - Camera25D.eyeY;
+  const rz = z - Camera25D.eyeZ;
+  const down = ry * Camera25D.downY + rz * Camera25D.downZ;
+  return Camera25D.focusY + down * (Camera25D.focal / camDepth(z, y));
+}
+
+/** Zero-alloc projected screen X (`worldToScreen(…).x`). */
+export function projectX(x: number, y: number, z: number): number {
+  return Camera25D.focusX + (x - Camera25D.focusX) * (Camera25D.focal / camDepth(z, y));
 }
 
 /**
@@ -316,9 +362,11 @@ export function projectY(y: number, z: number): number {
 const _scr: ScreenPos = { x: 0, y: 0, scale: 1 };
 
 export function worldToScreen(x: number, y: number, z: number, out: ScreenPos = _scr): ScreenPos {
-  const scale = zScale(z);
-  out.x = x;
-  out.y = y - z * CamTune.pitch * scale;
+  const scale = zScale(z, y);
+  const ry = y - Camera25D.eyeY;
+  const rz = z - Camera25D.eyeZ;
+  out.x = Camera25D.focusX + (x - Camera25D.focusX) * scale;
+  out.y = Camera25D.focusY + (ry * Camera25D.downY + rz * Camera25D.downZ) * scale;
   out.scale = scale;
   return out;
 }
@@ -332,8 +380,14 @@ export function screenToWorldAtZ(
   z: number,
   out: { x: number; y: number; z: number } = _unproj
 ): { x: number; y: number; z: number } {
-  out.x = sx;
-  out.y = sy + pitchLift(z);
+  const dx = (sx - Camera25D.focusX) / Camera25D.focal;
+  const dy = (sy - Camera25D.focusY) / Camera25D.focal;
+  const rayX = dx;
+  const rayY = Camera25D.forwardY + dy * Camera25D.downY;
+  const rayZ = Camera25D.forwardZ + dy * Camera25D.downZ;
+  const t = (z - Camera25D.eyeZ) / rayZ;
+  out.x = Camera25D.focusX + rayX * t;
+  out.y = Camera25D.eyeY + rayY * t;
   out.z = z;
   return out;
 }
@@ -350,41 +404,92 @@ export function screenToWorldOnGround(
   sy: number,
   out: { x: number; y: number; z: number } = _ground
 ): { x: number; y: number; z: number } {
-  let y = sy;
-  // Two passes is enough for the soft height field; was 4 (extra ground samples).
-  y = sy + pitchLift(groundZ(world, sx, y));
-  y = sy + pitchLift(groundZ(world, sx, y));
-  out.x = sx;
-  out.y = y;
-  out.z = groundZ(world, sx, y);
+  const dx = (sx - Camera25D.focusX) / Camera25D.focal;
+  const dy = (sy - Camera25D.focusY) / Camera25D.focal;
+  const rayX = dx;
+  const rayY = Camera25D.forwardY + dy * Camera25D.downY;
+  const rayZ = Camera25D.forwardZ + dy * Camera25D.downZ;
+  let lo = 0;
+  let hi = Math.max(0, -Camera25D.eyeZ / Math.min(-1e-6, rayZ));
+  // The eye starts above the surface and the ray's Z=0 point is at or below it.
+  // Bisection finds the first terrain crossing without oscillating on steep relief.
+  for (let i = 0; i < 14; i++) {
+    const t = (lo + hi) * 0.5;
+    const x = Camera25D.focusX + rayX * t;
+    const y = Camera25D.eyeY + rayY * t;
+    const z = Camera25D.eyeZ + rayZ * t;
+    if (z > groundZ(world, x, y)) lo = t;
+    else hi = t;
+  }
+  const t = (lo + hi) * 0.5;
+  out.x = Camera25D.focusX + rayX * t;
+  out.y = Camera25D.eyeY + rayY * t;
+  out.z = Camera25D.eyeZ + rayZ * t;
   return out;
 }
 
-/**
- * Screen-space velocity Y at altitude `z` (derivative of `projectY`).
- * `d(pitchLift)/dz = pitch * zScale²`.
- */
-export function screenVelY(vy: number, vz: number, z: number): number {
-  const s = zScale(z);
-  return vy - CamTune.pitch * s * s * vz;
+/** Screen-space velocity Y: analytic derivative of the chase projection. */
+export function screenVelY(vy: number, vz: number, z: number, y = Camera25D.focusY): number {
+  const ry = y - Camera25D.eyeY;
+  const rz = z - Camera25D.eyeZ;
+  const depth = camDepth(z, y);
+  const down = ry * Camera25D.downY + rz * Camera25D.downZ;
+  const dDepth = vy * Camera25D.forwardY + vz * Camera25D.forwardZ;
+  const dDown = vy * Camera25D.downY + vz * Camera25D.downZ;
+  return Camera25D.focal * (dDown * depth - down * dDepth) / (depth * depth);
 }
 
-/** @deprecated Prefer `screenVelY` in hot paths; this allocates. */
+/** Projected X velocity at a complete world position. */
+export function screenVelX(
+  vx: number,
+  vy: number,
+  vz: number,
+  x: number,
+  y: number,
+  z: number
+): number {
+  const depth = camDepth(z, y);
+  const dDepth = vy * Camera25D.forwardY + vz * Camera25D.forwardZ;
+  return Camera25D.focal *
+    (vx * depth - (x - Camera25D.focusX) * dDepth) /
+    (depth * depth);
+}
+
+/** Project a world-XY heading into the camera plane at a point. */
+export function projectHeading(
+  angle: number,
+  x: number,
+  y: number,
+  z: number
+): number {
+  const vx = Math.cos(angle);
+  const vy = Math.sin(angle);
+  return Math.atan2(
+    screenVelY(vy, 0, z, y),
+    screenVelX(vx, vy, 0, x, y, z)
+  );
+}
+
+/** Projected velocity. Pass the source position for perspective-correct X/Y. */
 export function screenVel(
   vx: number,
   vy: number,
   vz: number,
-  z: number
+  z: number,
+  x = Camera25D.focusX,
+  y = Camera25D.focusY
 ): { x: number; y: number } {
-  return { x: vx, y: screenVelY(vy, vz, z) };
+  return {
+    x: screenVelX(vx, vy, vz, x, y, z),
+    y: screenVelY(vy, vz, z, y),
+  };
 }
 
 /**
- * Phaser zoom for a camera focused at absolute Z.
- * Equals `zoom0 / zScale(z)` so zoom×scale stays constant for that focus.
+ * Final framing zoom. Chase-camera perspective already keeps focus scale stable.
  */
-export function camZoomAt(z: number): number {
-  return CamTune.zoom0 * (camDepth(z) / CamTune.cam);
+export function camZoomAt(_z: number): number {
+  return CamTune.zoom0;
 }
 
 export function groundZ(world: WorldData, x: number, y: number): number {
@@ -399,6 +504,42 @@ export function waterSurfaceZ(): number {
 
 export function castZ(world: WorldData, x: number, y: number, z: number): number {
   return Math.max(0, z - groundZ(world, x, y));
+}
+
+export type ShadowHit = { x: number; y: number; z: number; cast: number };
+const _shadowHit: ShadowHit = { x: 0, y: 0, z: 0, cast: 0 };
+
+/**
+ * Intersect a directional sun ray with the heightfield. The light direction is
+ * expressed in world units, so camera pitch/zoom never leak into shadow offset.
+ */
+export function castShadowToGround(
+  world: WorldData,
+  x: number,
+  y: number,
+  z: number,
+  out: ShadowHit = _shadowHit
+): ShadowHit {
+  const lightX = 0.24;
+  const lightY = 0.58;
+  let lo = 0;
+  let hi = Math.max(0, z);
+  for (let i = 0; i < 10; i++) {
+    const cast = (lo + hi) * 0.5;
+    const rx = x + lightX * cast;
+    const ry = y + lightY * cast;
+    const rz = z - cast;
+    if (rz > groundZ(world, rx, ry)) lo = cast;
+    else hi = cast;
+  }
+  const cast = (lo + hi) * 0.5;
+  const rx = x + lightX * cast;
+  const ry = y + lightY * cast;
+  out.x = rx;
+  out.y = ry;
+  out.z = z - cast;
+  out.cast = cast;
+  return out;
 }
 
 export function groundSlope(world: WorldData, x: number, y: number): { dx: number; dy: number } {

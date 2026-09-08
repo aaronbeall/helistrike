@@ -926,7 +926,11 @@ function putFxSheet(
     g.drawImage(c, i * size + (size - c.width) / 2, (size - c.height) / 2);
   });
   if (textures.exists(destKey)) textures.remove(destKey);
-  textures.addSpriteSheet(destKey, sheet, { frameWidth: size, frameHeight: size, endFrame: n - 1 });
+  textures.addSpriteSheet(destKey, sheet as unknown as HTMLImageElement, {
+    frameWidth: size,
+    frameHeight: size,
+    endFrame: n - 1,
+  });
 }
 
 function fxKnockBlack(src: HTMLCanvasElement): HTMLCanvasElement {
