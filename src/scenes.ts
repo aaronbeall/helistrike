@@ -8548,6 +8548,9 @@ export class MissionScene extends Phaser.Scene {
     const focusX = this.heli.x + this.lookCamX;
     const focusY = this.heli.y + this.lookCamY;
     setCamera25DFocus(focusX, focusY, this.heli.z);
+    // Camera-space coordinates from getWorldPoint are stale after recentering,
+    // even within the same game-loop frame.
+    this.ptrFrame = -1;
     this.ptrWorldReady = false;
     if (this.mapBlend < 0.001) this.cameras.main.centerOn(focusX, focusY);
   }
