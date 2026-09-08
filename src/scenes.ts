@@ -1988,20 +1988,74 @@ export class MissionScene extends Phaser.Scene {
     z: number,
     tex: string,
     rot: number,
-    scale = 1
+    scale = 1,
+    raycastInterval = 1,
+    cacheOwner?: object
   ): void {
-    const hit = castShadowToGround(this.world, x, y, z);
-    const cast = hit.cast;
-    const at = worldToScreen(hit.x, hit.y, hit.z);
+    type CachedShadow = {
+      x: number;
+      y: number;
+      z: number;
+      cast: number;
+      sourceX: number;
+      sourceY: number;
+      sourceZ: number;
+      frame: number;
+      owner?: object;
+    };
+    const frame = this.game.loop.frame;
+    let hit = sh.getData("shadowHit") as CachedShadow | undefined;
+    const movedFar =
+      !hit ||
+      hit.owner !== cacheOwner ||
+      Math.abs(x - hit.sourceX) > 48 ||
+      Math.abs(y - hit.sourceY) > 48 ||
+      Math.abs(z - hit.sourceZ) > 24;
+    if (movedFar || raycastInterval <= 1 || frame - hit!.frame >= raycastInterval) {
+      const fresh = castShadowToGround(this.world, x, y, z);
+      hit ??= {
+        x: 0,
+        y: 0,
+        z: 0,
+        cast: 0,
+        sourceX: 0,
+        sourceY: 0,
+        sourceZ: 0,
+        frame: -1,
+      };
+      hit.x = fresh.x;
+      hit.y = fresh.y;
+      hit.z = fresh.z;
+      hit.cast = fresh.cast;
+      hit.sourceX = x;
+      hit.sourceY = y;
+      hit.sourceZ = z;
+      hit.frame = frame;
+      hit.owner = cacheOwner;
+      sh.setData("shadowHit", hit);
+    }
+    const resolved = hit!;
+    const cast = resolved.cast;
+    const at = worldToScreen(resolved.x, resolved.y, resolved.z);
     const want = shadowKey(tex, cast);
     const sk = this.textures.exists(want) ? want : "shadow";
     if (sh.texture.key !== sk) sh.setTexture(sk);
     sh.setPosition(at.x, at.y)
-      .setRotation(projectHeading(rot, hit.x, hit.y, hit.z))
+      .setRotation(projectHeading(rot, resolved.x, resolved.y, resolved.z))
       .setAlpha(shadowAlpha(cast))
       .setScale(scale * at.scale);
-    const depth = worldDepth(hit.z, -12, hit.y);
+    const depth = worldDepth(resolved.z, -12, resolved.y);
     if (sh.depth !== depth) sh.setDepth(depth);
+  }
+
+  projectedInView(x: number, y: number, pad: number): boolean {
+    const view = this.cameras.main.worldView;
+    return (
+      x >= view.x - pad &&
+      x <= view.right + pad &&
+      y >= view.y - pad &&
+      y <= view.bottom + pad
+    );
   }
 
   syncHeliGfx(dt = 1 / 60): void {
@@ -6378,6 +6432,7 @@ export class MissionScene extends Phaser.Scene {
       const scr = worldToScreen(u.x, u.y, u.z);
       const scrX = scr.x;
       const scrY = scr.y;
+      if (!this.projectedInView(scrX, scrY, 220)) continue;
       const drawRot = projectHeading(rot, u.x, u.y, u.z);
       const zs = scr.scale;
       const pivot = spritePivot(textureOf(u.kind));
@@ -6386,7 +6441,17 @@ export class MissionScene extends Phaser.Scene {
       const zBias = u.pinId != null ? ZOff.posted : 0;
       const bodyDepth = worldDepth(u.z, ZOff.body + zBias, u.y);
       sh.setVisible(true).setOrigin(ox, oy);
-      this.applyCastShadow(sh, u.x, u.y, u.z, tex, rot, sp.aerial ? 1 : 0.92);
+      this.applyCastShadow(
+        sh,
+        u.x,
+        u.y,
+        u.z,
+        tex,
+        rot,
+        sp.aerial ? 1 : 0.92,
+        sp.aerial ? 2 : sp.building ? 8 : 1,
+        u
+      );
       im.setVisible(true);
       if (im.texture.key !== tex) im.setTexture(tex);
       im.setOrigin(ox, oy)
@@ -6592,15 +6657,16 @@ export class MissionScene extends Phaser.Scene {
       if (!cameraPointVisible(s.z, s.y)) return;
       const key = shotLookOf(s);
       const rot = s.angle;
+      const at = worldToScreen(s.x, s.y, s.z);
+      const drawX = at.x;
+      const drawY = at.y;
+      if (!this.projectedInView(drawX, drawY, 120)) return;
       const drawRot = Math.atan2(
         screenVelY(s.vy, s.vz, s.z, s.y),
         screenVelX(s.vx, s.vy, s.vz, s.x, s.y, s.z)
       );
       const ox = SHOT_ORIGIN.x;
       const sc = s.scale ?? 1;
-      const at = worldToScreen(s.x, s.y, s.z);
-      const drawX = at.x;
-      const drawY = at.y;
       const zs = at.scale;
       // Foreshorten along the barrel when climbing/diving (non-zero vz).
       const horiz = Math.hypot(s.vx, s.vy);
@@ -6645,6 +6711,7 @@ export class MissionScene extends Phaser.Scene {
       const at = worldToScreen(f.x, f.y, z);
       const drawX = at.x;
       const drawY = at.y;
+      if (!this.projectedInView(drawX, drawY, 180)) continue;
       const { x: ox, y: oy } = spritePivot(f.key);
       const sc = (f.scale ?? 1) * at.scale;
       let sx = sc;
@@ -6697,7 +6764,7 @@ export class MissionScene extends Phaser.Scene {
           .setAlpha(1);
         if (canShadow) {
           sh.setVisible(true).setOrigin(ox, oy);
-          this.applyCastShadow(sh, f.x, f.y, z, f.key, travel, f.scale ?? 1);
+          this.applyCastShadow(sh, f.x, f.y, z, f.key, travel, f.scale ?? 1, 2, f);
           sh.setScale(sh.scaleX * along, sh.scaleY * across);
           if (cast < 1) sh.setAlpha(0.22);
         }
@@ -6730,7 +6797,7 @@ export class MissionScene extends Phaser.Scene {
           .setAlpha(1);
         if (canShadow) {
           sh.setVisible(true).setOrigin(ox, oy);
-          this.applyCastShadow(sh, f.x, f.y, z, f.key, skew, f.scale ?? 1);
+          this.applyCastShadow(sh, f.x, f.y, z, f.key, skew, f.scale ?? 1, 2, f);
           sh.setScale(sh.scaleX * along, sh.scaleY * across);
           if (cast < 1) sh.setAlpha(0.22);
         }
@@ -6739,7 +6806,7 @@ export class MissionScene extends Phaser.Scene {
       this.unwrapTilt(im);
       if (canShadow) {
         sh.setVisible(true).setOrigin(ox, oy);
-        this.applyCastShadow(sh, f.x, f.y, z, f.key, f.angle, f.scale ?? 1);
+        this.applyCastShadow(sh, f.x, f.y, z, f.key, f.angle, f.scale ?? 1, 2, f);
         if (f.dishFlat) sh.setScale(sh.scaleX * 1.04, sh.scaleY * 0.52);
         if (f.rotorSkew) sh.setScale(sh.scaleX * 1.08, sh.scaleY * 0.78);
         if (cast < 1) sh.setAlpha(0.22);
