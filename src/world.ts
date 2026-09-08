@@ -326,11 +326,21 @@ export function setCamera25DFocus(x: number, y: number, z: number): void {
   Camera25D.focal = 1 / invLen;
 }
 
-/** Perspective depth from the eye. X does not affect depth for this camera. */
-export function camDepth(z: number, y = Camera25D.focusY): number {
+/** Unclamped perspective depth from the eye. X does not affect depth. */
+export function rawCamDepth(z: number, y = Camera25D.focusY): number {
   const ry = y - Camera25D.eyeY;
   const rz = z - Camera25D.eyeZ;
-  return Math.max(Z_SCALE_NEAR, ry * Camera25D.forwardY + rz * Camera25D.forwardZ);
+  return ry * Camera25D.forwardY + rz * Camera25D.forwardZ;
+}
+
+/** Perspective depth clamped only for finite projection math. */
+export function camDepth(z: number, y = Camera25D.focusY): number {
+  return Math.max(Z_SCALE_NEAR, rawCamDepth(z, y));
+}
+
+/** Points at or behind the near plane are not valid render/target candidates. */
+export function cameraPointVisible(z: number, y = Camera25D.focusY): boolean {
+  return rawCamDepth(z, y) > Z_SCALE_NEAR;
 }
 
 /** Camera-relative sprite scale. At the chase focus this is exactly 1. */

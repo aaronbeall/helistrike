@@ -51,6 +51,7 @@ import {
   groundZ,
   worldToScreen,
   setCamera25DFocus,
+  cameraPointVisible,
   screenToWorldAtZ,
   screenToWorldOnGround,
   screenVelX,
@@ -3019,6 +3020,7 @@ export class MissionScene extends Phaser.Scene {
     const kids = this.sparkG.getChildren() as Phaser.GameObjects.Image[];
     for (const k of kids) k.setVisible(false);
     this.sparks.forEach((s, i) => {
+      if (!cameraPointVisible(s.z, s.y)) return;
       const im = kids[i]!;
       const fade = Phaser.Math.Clamp(s.life / s.max, 0, 1);
       const age = 1 - fade;
@@ -3392,6 +3394,7 @@ export class MissionScene extends Phaser.Scene {
     const x = x0 + (s.x - x0) * t;
     const y = y0 + (s.y - y0) * t;
     const z = z0 + (s.z - z0) * t;
+    if (!cameraPointVisible(z, y)) return;
     const tail = this.shotUvScreenPos(s, SHOT_TAIL.x, SHOT_TAIL.y, x, y, z);
     const tx = tail.x;
     const ty = tail.y;
@@ -5070,6 +5073,7 @@ export class MissionScene extends Phaser.Scene {
 
   emitFragTrail(f: Frag, dim: number): void {
     if (dim <= 0.02 || this.fxEmitBudget >= this.fxEmitCap) return;
+    if (!cameraPointVisible(f.z, f.y)) return;
     const fragScale = worldToScreen(f.x, f.y, f.z).scale;
     // Trails sit under the debris sprite (body ≈ 0); keep fire above smoke within the pair.
     const trailFire = -0.35;
@@ -6336,6 +6340,7 @@ export class MissionScene extends Phaser.Scene {
     for (const u of this.units) {
       if (u.dead) continue;
       const i = slot++;
+      if (!cameraPointVisible(u.z, u.y)) continue;
       const sp = specOf(u.kind);
       const guns = gunsOf(u);
       const sh = kids[i * SLOTS]!;
@@ -6558,6 +6563,7 @@ export class MissionScene extends Phaser.Scene {
     this.shots.forEach((s, i) => {
       const sh = kids[i * 2]!;
       const im = kids[i * 2 + 1]!;
+      if (!cameraPointVisible(s.z, s.y)) return;
       const key = shotLookOf(s);
       const rot = s.angle;
       const drawRot = Math.atan2(
@@ -6608,6 +6614,7 @@ export class MissionScene extends Phaser.Scene {
       const i = vi++;
       const sh = kids[i * 2]!;
       const im = kids[i * 2 + 1]!;
+      if (!cameraPointVisible(f.z || 0, f.y)) continue;
       const z = f.z || 0;
       const at = worldToScreen(f.x, f.y, z);
       const drawX = at.x;
@@ -7020,6 +7027,7 @@ export class MissionScene extends Phaser.Scene {
     for (const u of this.units) {
       if (u.dead) continue;
       if (castZ(this.world, u.x, u.y, u.z) < 16 && !isAerial(u.kind)) continue;
+      if (!cameraPointVisible(u.z, u.y)) continue;
       const at = worldToScreen(u.x, u.y, u.z);
       const d = Math.hypot(at.x - pt.x, at.y - pt.y);
       if (d < bd) {
@@ -7038,6 +7046,7 @@ export class MissionScene extends Phaser.Scene {
     const hit = { x: 0, y: 0, z: 0 };
     for (const u of this.units) {
       if (u.dead) continue;
+      if (!cameraPointVisible(u.z, u.y)) continue;
       const at = worldToScreen(u.x, u.y, u.z);
       screenToWorldAtZ(pt.x, pt.y, u.z, hit);
       const fp = footprintOf(u, 12 / Math.max(at.scale, 0.01));
@@ -8872,6 +8881,7 @@ export class MissionScene extends Phaser.Scene {
     g.setDepth(Layer.FIELD);
     for (const u of this.units) {
       if (u.dead || u.health >= u.max - 0.5) continue;
+      if (!cameraPointVisible(u.z, u.y)) continue;
       const at = worldToScreen(u.x, u.y, u.z);
       const zs = at.scale;
       const w = (isOrganic(u.kind) ? 16 : 32) * zs;
@@ -9030,6 +9040,7 @@ export class MissionScene extends Phaser.Scene {
     const pad = 120;
     for (const u of this.units) {
       if (u.dead || isOrganic(u.kind)) continue;
+      if (!cameraPointVisible(u.z, u.y)) continue;
       const ratio = u.health / Math.max(u.max, 1);
       const want = ratio < 0.25 ? 3 : ratio < 0.45 ? 2 : ratio < 0.75 ? 1 : 0;
       if (!u.dmgSites) u.dmgSites = [];
