@@ -3817,7 +3817,7 @@ export class MissionScene extends Phaser.Scene {
       const startRadius = targetRadius * blastScale;
       const endRadius = targetRadius * 4 * blastScale;
       const ring = this.add.image(blastX, blastY, "blast_ring_soft_v4", 0)
-        .setTint(0xff7a18)
+        .setTint(0xffffff)
         .setScale(startRadius / textureRadius)
         .setAlpha(1)
         .setDepth(worldDepth(z, ZOff.fire + 2, y))
@@ -3826,7 +3826,7 @@ export class MissionScene extends Phaser.Scene {
       this.tweens.add({
         targets: ringLife,
         t: 1,
-        duration: 320,
+        duration: 220,
         ease: "Linear",
         onUpdate: () => {
           const t = ringLife.t;
