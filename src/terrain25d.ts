@@ -95,7 +95,13 @@ void main(void) {
   float sx = uCamera0.x * px + uCamera0.z * py + uCamera0.w;
   float sy = uCamera0.y * px + uCamera1.x * py + uCamera1.y;
   float z01 = clamp((depth - uFocalNear.y) / max(1.0, uCamera1.z - uFocalNear.y), 0.0, 1.0);
-  gl_Position = vec4(sx * 2.0 / uViewport.x - 1.0, 1.0 - sy * 2.0 / uViewport.y, z01 * 2.0 - 1.0, 1.0);
+  float clipW = mix(1.0, depth / uFocalNear.x, uProjectionBlend);
+  gl_Position = vec4(
+    (sx * 2.0 / uViewport.x - 1.0) * clipW,
+    (1.0 - sy * 2.0 / uViewport.y) * clipW,
+    (z01 * 2.0 - 1.0) * clipW,
+    clipW
+  );
   vUV = aUV;
 }
 `;

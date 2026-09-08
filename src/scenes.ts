@@ -1794,6 +1794,9 @@ export class MissionScene extends Phaser.Scene {
 
     if (this.editOpen) this.handleReliefEdit(wallDt);
     this.drawDebugAi();
+    // Apply suppression after draw/debug updates so nothing can re-enable
+    // itself over the theater map later in this frame.
+    this.setTheaterWorldHidden(this.mapBlend > 0.5);
 
     const mapOn = this.mapBlend > 0.12;
     this.syncHudParallax(wallDt);
@@ -2025,11 +2028,12 @@ export class MissionScene extends Phaser.Scene {
     const sy = 1 - Math.abs(h.pitch) * 0.14;
     this.body.setScale(sx * zs, sy * zs);
     this.rotor.setOrigin(0.5, 0.5);
+    const tiltRot = projectHeading(h.angle, h.x, h.y, h.z);
     const rOffF = h.pitch * 16 * zs;
     const rOffS = h.roll * 14 * zs;
     this.rotor.setPosition(
-      this.body.x + Math.cos(bodyRot) * rOffF - Math.sin(bodyRot) * rOffS,
-      this.body.y + Math.sin(bodyRot) * rOffF + Math.cos(bodyRot) * rOffS
+      this.body.x + Math.cos(tiltRot) * rOffF - Math.sin(tiltRot) * rOffS,
+      this.body.y + Math.sin(tiltRot) * rOffF + Math.cos(tiltRot) * rOffS
     );
     const mount = spriteUvPos(this.body, craftGunMount(craft).x, craftGunMount(craft).y);
     this.gun.setPosition(mount.x, mount.y);
@@ -2056,8 +2060,8 @@ export class MissionScene extends Phaser.Scene {
       this.rotor.setAlpha(1);
     }
     this.gun.setScale(zs);
-    applyEdgeLight(this.body, h.angle + craft.rotOff);
-    applyEdgeLight(this.gun, h.gunAngle + Math.PI / 2);
+    applyEdgeLight(this.body, bodyRot);
+    applyEdgeLight(this.gun, this.gun.rotation);
     clearEdgeLight(this.rotor);
     this.body.setDepth(worldDepth(h.z, ZOff.body, h.y));
     this.rotor.setDepth(worldDepth(h.z, ZOff.rotor, h.y));
@@ -3757,8 +3761,8 @@ export class MissionScene extends Phaser.Scene {
     if (targetRadius > 0) {
       const textureRadius = 64;
       const startRadius = targetRadius * blastScale;
-      const endRadius = targetRadius * 3 * blastScale;
-      const ring = this.add.image(blastX, blastY, "blast_ring_soft_v2", 0)
+      const endRadius = targetRadius * 4 * blastScale;
+      const ring = this.add.image(blastX, blastY, "blast_ring_soft_v4", 0)
         .setTint(0xff7a18)
         .setScale(startRadius / textureRadius)
         .setAlpha(1)
@@ -3768,11 +3772,14 @@ export class MissionScene extends Phaser.Scene {
       this.tweens.add({
         targets: ringLife,
         t: 1,
-        duration: 240,
+        duration: 320,
         ease: "Linear",
         onUpdate: () => {
           const t = ringLife.t;
-          const radius = Phaser.Math.Linear(startRadius, endRadius, Phaser.Math.Easing.Expo.Out(t));
+          const expand = t >= 1
+            ? 1
+            : (1 - Math.pow(2, -14 * t)) / (1 - Math.pow(2, -14));
+          const radius = Phaser.Math.Linear(startRadius, endRadius, expand);
           ring
             .setScale(radius / textureRadius)
             .setAlpha(1 - t)
@@ -7578,7 +7585,7 @@ export class MissionScene extends Phaser.Scene {
 
   drawDebugAi(): void {
     this.aiGfx.clear();
-    if (!this.debugAi) {
+    if (!this.debugAi || this.mapWorldHidden) {
       for (const t of this.aiLabels) t.setVisible(false);
       return;
     }
@@ -8677,7 +8684,6 @@ export class MissionScene extends Phaser.Scene {
 
     const ease = Phaser.Math.Easing.Sine.InOut(this.mapBlend);
     this.terrain25d?.setProjectionBlend(1 - ease);
-    this.setTheaterWorldHidden(this.mapBlend > 0.08);
     const cam = this.cameras.main;
     const k = 1 - Math.exp(-5.2 * dt);
     this.camZoom = Phaser.Math.Linear(this.camZoom, this.playZoom(), k);
@@ -9282,7 +9288,7 @@ function steerDir(
 }
 
 function ensureBlastRingGradient(textures: Phaser.Textures.TextureManager): void {
-  if (textures.exists("blast_ring_soft_v2")) return;
+  if (textures.exists("blast_ring_soft_v4")) return;
   const size = 128;
   const canvas = document.createElement("canvas");
   canvas.width = size * BLAST_RING_FRAMES;
@@ -9290,7 +9296,8 @@ function ensureBlastRingGradient(textures: Phaser.Textures.TextureManager): void
   const g = canvas.getContext("2d")!;
   for (let frame = 0; frame < BLAST_RING_FRAMES; frame++) {
     const t = frame / (BLAST_RING_FRAMES - 1);
-    const hole = 0.08 + 0.54 * Math.pow(t, 2.2);
+    const holeEase = 1 - Math.pow(1 - t, 3.5);
+    const hole = 0.08 + 0.54 * holeEase;
     const remaining = 1 - hole;
     const innerSoft = hole + remaining * 0.14;
     const peak = hole + remaining * 0.34;
@@ -9306,7 +9313,7 @@ function ensureBlastRingGradient(textures: Phaser.Textures.TextureManager): void
     g.fillStyle = gradient;
     g.fillRect(frame * size, 0, size, size);
   }
-  textures.addSpriteSheet("blast_ring_soft_v2", canvas as unknown as HTMLImageElement, {
+  textures.addSpriteSheet("blast_ring_soft_v4", canvas as unknown as HTMLImageElement, {
     frameWidth: size,
     frameHeight: size,
     endFrame: BLAST_RING_FRAMES - 1,
