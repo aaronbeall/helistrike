@@ -3816,10 +3816,10 @@ export class MissionScene extends Phaser.Scene {
       const textureRadius = 64;
       const startRadius = targetRadius * blastScale;
       const endRadius = targetRadius * 4 * blastScale;
-      const ring = this.add.image(blastX, blastY, "blast_ring_soft_v4", 0)
+      const ring = this.add.image(blastX, blastY, "blast_ring_soft_v9", 0)
         .setTint(0xffffff)
         .setScale(startRadius / textureRadius)
-        .setAlpha(1)
+        .setAlpha(0.4)
         .setDepth(worldDepth(z, ZOff.fire + 2, y))
         .setBlendMode(Phaser.BlendModes.ADD);
       const ringLife = { t: 0 };
@@ -3836,7 +3836,7 @@ export class MissionScene extends Phaser.Scene {
           const radius = Phaser.Math.Linear(startRadius, endRadius, expand);
           ring
             .setScale(radius / textureRadius)
-            .setAlpha(1 - t)
+            .setAlpha(0.4 * (1 - t * t))
             .setFrame(Math.min(BLAST_RING_FRAMES - 1, Math.floor(t * BLAST_RING_FRAMES)));
         },
         onComplete: () => ring.destroy(),
@@ -6728,7 +6728,7 @@ export class MissionScene extends Phaser.Scene {
       const canShadow =
         !f.pinHost && !f.boatSink && !f.shellEject && this.textures.exists(shadowKey(f.key, cast));
       const depth = f.settled
-        ? Layer.HULK
+        ? Layer.WRECK
         : f.shellEject
           ? worldDepth(z, f.shellUnder ? ZOff.shot - 0.4 : ZOff.turret + 0.85, f.y)
           : worldDepth(z, ZOff.body + (f.pinHost ? 0.55 : 0.35), f.y);
@@ -9355,7 +9355,7 @@ function steerDir(
 }
 
 function ensureBlastRingGradient(textures: Phaser.Textures.TextureManager): void {
-  if (textures.exists("blast_ring_soft_v4")) return;
+  if (textures.exists("blast_ring_soft_v9")) return;
   const size = 128;
   const canvas = document.createElement("canvas");
   canvas.width = size * BLAST_RING_FRAMES;
@@ -9373,14 +9373,48 @@ function ensureBlastRingGradient(textures: Phaser.Textures.TextureManager): void
     const gradient = g.createRadialGradient(cx, size / 2, 0, cx, size / 2, size / 2);
     gradient.addColorStop(0, "rgba(255,255,255,0)");
     gradient.addColorStop(hole, "rgba(255,255,255,0)");
-    gradient.addColorStop(innerSoft, "rgba(255,255,255,0.72)");
-    gradient.addColorStop(peak, "rgba(255,255,255,0.95)");
-    gradient.addColorStop(outerSoft, "rgba(255,255,255,0.38)");
+    gradient.addColorStop(innerSoft, "rgba(160,215,255,0.54)");
+    gradient.addColorStop(peak, "rgba(255,255,255,1)");
+    gradient.addColorStop(outerSoft, "rgba(255,190,120,0.27)");
     gradient.addColorStop(1, "rgba(255,255,255,0)");
     g.fillStyle = gradient;
     g.fillRect(frame * size, 0, size, size);
+    const pixels = g.getImageData(frame * size, 0, size, size);
+    const source = new Uint8ClampedArray(pixels.data);
+    const center = size / 2;
+    for (let py = 0; py < size; py++) {
+      for (let px = 0; px < size; px++) {
+        const dx = px - center;
+        const dy = py - center;
+        const angle = Math.atan2(dy, dx);
+        const radius = Math.hypot(dx, dy);
+        const waves =
+          Math.sin(angle * 3 + 0.4) * 0.55 +
+          Math.sin(angle * 7 - 1.1) * 0.3 +
+          Math.sin(angle * 13 + 2.2) * 0.15;
+        const warpedRadius = radius - waves * (0.5 + 5 * t * t);
+        const sampleX = Math.round(center + Math.cos(angle) * warpedRadius);
+        const sampleY = Math.round(center + Math.sin(angle) * warpedRadius);
+        const dst = (py * size + px) * 4;
+        if (sampleX < 0 || sampleX >= size || sampleY < 0 || sampleY >= size) {
+          pixels.data[dst + 3] = 0;
+          continue;
+        }
+        const src = (sampleY * size + sampleX) * 4;
+        pixels.data[dst] = source[src]!;
+        pixels.data[dst + 1] = source[src + 1]!;
+        pixels.data[dst + 2] = source[src + 2]!;
+        const rays =
+          Math.sin(angle * 17 + 0.8) * 0.5 +
+          Math.sin(angle * 31 - 1.7) * 0.3 +
+          Math.sin(angle * 53 + 2.4) * 0.2;
+        const rayStrength = 0.22 + 0.28 * t * t;
+        pixels.data[dst + 3] = Math.min(255, source[src + 3]! * (0.78 + rays * rayStrength));
+      }
+    }
+    g.putImageData(pixels, frame * size, 0);
   }
-  textures.addSpriteSheet("blast_ring_soft_v4", canvas as unknown as HTMLImageElement, {
+  textures.addSpriteSheet("blast_ring_soft_v9", canvas as unknown as HTMLImageElement, {
     frameWidth: size,
     frameHeight: size,
     endFrame: BLAST_RING_FRAMES - 1,
