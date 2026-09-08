@@ -272,6 +272,8 @@ export const CamTune = {
 };
 /** Near-plane clamp so scale/zoom stay finite as Z → cam. */
 export const Z_SCALE_NEAR = 160;
+/** Maximum coarse ray-march spacing, roughly half a rendered terrain cell. */
+const TERRAIN_RAY_STEP = 12;
 /** Height-map value at or below this becomes groundZ 0. */
 export const GROUND_H_ZERO = 0.16;
 /** World Z per unit of height-map above GROUND_H_ZERO. Peak ≈ (0.94 - GROUND_H_ZERO) * this. */
@@ -409,11 +411,25 @@ export function screenToWorldOnGround(
   const rayX = dx;
   const rayY = Camera25D.forwardY + dy * Camera25D.downY;
   const rayZ = Camera25D.forwardZ + dy * Camera25D.downZ;
+  const rayEnd = Math.max(0, -Camera25D.eyeZ / Math.min(-1e-6, rayZ));
+  const horizontalLength = Math.hypot(rayX, rayY) * rayEnd;
+  const marchSteps = Math.max(8, Math.min(128, Math.ceil(horizontalLength / TERRAIN_RAY_STEP)));
   let lo = 0;
-  let hi = Math.max(0, -Camera25D.eyeZ / Math.min(-1e-6, rayZ));
-  // The eye starts above the surface and the ray's Z=0 point is at or below it.
-  // Bisection finds the first terrain crossing without oscillating on steep relief.
-  for (let i = 0; i < 14; i++) {
+  let hi = rayEnd;
+  // Bracket the nearest crossing first: relief can put several terrain
+  // intersections along one ray, which whole-ray bisection cannot distinguish.
+  for (let i = 1; i <= marchSteps; i++) {
+    const t = rayEnd * (i / marchSteps);
+    const x = Camera25D.focusX + rayX * t;
+    const y = Camera25D.eyeY + rayY * t;
+    const z = Camera25D.eyeZ + rayZ * t;
+    if (z <= groundZ(world, x, y)) {
+      lo = rayEnd * ((i - 1) / marchSteps);
+      hi = t;
+      break;
+    }
+  }
+  for (let i = 0; i < 10; i++) {
     const t = (lo + hi) * 0.5;
     const x = Camera25D.focusX + rayX * t;
     const y = Camera25D.eyeY + rayY * t;
@@ -522,9 +538,31 @@ export function castShadowToGround(
 ): ShadowHit {
   const lightX = 0.24;
   const lightY = 0.58;
+  const sourceGround = groundZ(world, x, y);
+  if (z <= sourceGround + 0.25) {
+    out.x = x;
+    out.y = y;
+    out.z = sourceGround;
+    out.cast = 0;
+    return out;
+  }
+  const rayEnd = Math.max(0, z);
+  const horizontalLength = Math.hypot(lightX, lightY) * rayEnd;
+  const marchSteps = Math.max(4, Math.min(96, Math.ceil(horizontalLength / TERRAIN_RAY_STEP)));
   let lo = 0;
-  let hi = Math.max(0, z);
-  for (let i = 0; i < 10; i++) {
+  let hi = rayEnd;
+  for (let i = 1; i <= marchSteps; i++) {
+    const cast = rayEnd * (i / marchSteps);
+    const rx = x + lightX * cast;
+    const ry = y + lightY * cast;
+    const rz = z - cast;
+    if (rz <= groundZ(world, rx, ry)) {
+      lo = rayEnd * ((i - 1) / marchSteps);
+      hi = cast;
+      break;
+    }
+  }
+  for (let i = 0; i < 8; i++) {
     const cast = (lo + hi) * 0.5;
     const rx = x + lightX * cast;
     const ry = y + lightY * cast;
