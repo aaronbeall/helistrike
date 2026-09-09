@@ -186,33 +186,33 @@ export const FX_BLAST_CELLS = 4;
 
 export function preloadArt(scene: Phaser.Scene): void {
   scene.load.image("menu_splash", "menu-splash.png");
-  scene.load.image("src_enemy", SRC.enemy);
-  scene.load.image("src_enemy_heli_hulk", "sprites/units/heli-enemy-hulk.png");
-  scene.load.image("src_tank_parts", SRC.tankParts);
-  scene.load.image("src_bunker", SRC.bunker);
-  scene.load.image("src_bunker_hulk", SRC.bunkerHulk);
+  scene.load.image("src_enemy_heli", SRC.enemyHeli);
+  scene.load.image("src_enemy_heli_hulk", SRC.enemyHeliHulk);
+  scene.load.image("src_enemy_tank_parts", SRC.enemyTankParts);
+  scene.load.image("src_enemy_tank_wreck_parts", SRC.enemyTankWreck);
+  scene.load.image("src_enemy_rotors", SRC.enemyRotors);
+  scene.load.image("src_enemy_rotors_hulk", SRC.enemyRotorsHulk);
+  scene.load.image("src_enemy_vehicles", SRC.enemyVehicles);
+  scene.load.image("src_enemy_vehicles_hulk", SRC.enemyVehiclesHulk);
+  scene.load.image("src_enemy_troops", SRC.enemyTroops);
+  scene.load.image("src_enemy_troops_hulk", SRC.enemyTroopsHulk);
+  scene.load.image("src_enemy_air_ship", SRC.enemyAirShip);
+  scene.load.image("src_enemy_air_ship_hulk", SRC.enemyAirShipHulk);
+  scene.load.image("src_enemy_moto_mg", SRC.enemyMotoMg);
+  scene.load.image("src_enemy_moto_mg_hulk", SRC.enemyMotoMgHulk);
+  scene.load.image("src_building_bunker", SRC.buildingBunker);
+  scene.load.image("src_building_bunker_hulk", SRC.buildingBunkerHulk);
+  scene.load.image("src_building_structures", SRC.buildingStructures);
+  scene.load.image("src_building_structures_hulk", SRC.buildingStructuresHulk);
+  scene.load.image("src_building_tower_guns", SRC.buildingTowerGuns);
+  scene.load.image("src_building_tower_guns_hulk", SRC.buildingTowerGunsHulk);
+  scene.load.image("src_building_radar_dish", SRC.buildingRadarDish);
+  scene.load.image("src_building_radar_dish_hulk", SRC.buildingRadarDishHulk);
   scene.load.image("src_debris_mech", SRC.debrisMech);
   scene.load.image("src_debris_struct", SRC.debrisStruct);
   scene.load.image("src_debris_organic", SRC.debrisOrganic);
   scene.load.image("src_debris_wheels", SRC.debrisWheels);
-  scene.load.image("src_tank_wreck", SRC.tankWreck);
   scene.load.image("src_blasts", SRC.blasts);
-  scene.load.image("src_rotors", SRC.rotors);
-  scene.load.image("src_vehicles", SRC.vehicles);
-  scene.load.image("src_troops", SRC.troops);
-  scene.load.image("src_buildings", SRC.buildings);
-  scene.load.image("src_air_ship", SRC.airShip);
-  scene.load.image("src_vehicles_hulk", SRC.vehiclesHulk);
-  scene.load.image("src_buildings_hulk", SRC.buildingsHulk);
-  scene.load.image("src_air_ship_hulk", SRC.airShipHulk);
-  scene.load.image("src_troops_hulk", SRC.troopsHulk);
-  scene.load.image("src_tower_guns", SRC.towerGuns);
-  scene.load.image("src_tower_guns_hulk", SRC.towerGunsHulk);
-  scene.load.image("src_rotors_hulk", SRC.rotorsHulk);
-  scene.load.image("src_moto_mg", SRC.motoMg);
-  scene.load.image("src_moto_mg_hulk", SRC.motoMgHulk);
-  scene.load.image("src_radar_dish", SRC.radarDish);
-  scene.load.image("src_radar_dish_hulk", SRC.radarDishHulk);
   for (const art of UNIT_PART_ART) {
     scene.load.image(`src_${art.key}`, `sprites/units/${art.key}.png`);
   }
@@ -540,7 +540,7 @@ export function spriteUvPos(
 }
 
 export function prepareArt(textures: Phaser.Textures.TextureManager): void {
-  const enemy = fit(keyImage(src(textures, "src_enemy"), "magenta"), 104);
+  const enemy = fit(keyImage(src(textures, "src_enemy_heli"), "magenta"), 104);
   put(textures, "enemy_heli", enemy);
   if (textures.exists("src_enemy_heli_hulk")) {
     const enemyHulkSrc = keyImage(src(textures, "src_enemy_heli_hulk"), "magenta");
@@ -556,7 +556,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     hc.getContext("2d")!.drawImage(enemy, 0, 0);
     put(textures, "enemy_heli_hulk", darkenWreck(hc));
   }
-  const rotors = splitRotorSheet(keyPixels(src(textures, "src_rotors"), "magenta"));
+  const rotors = splitRotorSheet(keyPixels(src(textures, "src_enemy_rotors"), "magenta"));
   // Hub-centered square (axis at canvas middle) — required for spin-blur registration.
   // Sheet cell 0 unused (Apache rotor is CRAFT_ART); cell 1 = enemy heli.
   const enemyRotor = fit(squareCenter(rotors[1]!), 108);
@@ -583,19 +583,19 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     }
   }
 
-  const parts = sliceGrid(keyImage(src(textures, "src_tank_parts"), "magenta"), 2, 1);
+  const parts = sliceGrid(keyImage(src(textures, "src_enemy_tank_parts"), "magenta"), 2, 1);
   const hull = fit(parts[0]!, 72);
   const turret = fit(parts[1]!, 56);
   put(textures, "enemy_tank", hull);
   put(textures, "enemy_tank_gun", turret);
   setSpriteOrigin("enemy_tank_gun", cupolaOrigin(turret));
-  const wreck = sliceGrid(keyImage(src(textures, "src_tank_wreck"), "magenta"), 2, 1);
+  const wreck = sliceGrid(keyImage(src(textures, "src_enemy_tank_wreck_parts"), "magenta"), 2, 1);
   put(textures, "enemy_tank_hulk", darkenWreck(fit(wreck[0]!, 70)));
   const hulkTurret = darkenWreck(fit(wreck[1]!, 56));
   put(textures, "enemy_tank_gun_hulk", hulkTurret);
   setSpriteOrigin("enemy_tank_gun_hulk", cupolaOrigin(hulkTurret));
 
-  put(textures, "building_bunker", fit(keyImage(src(textures, "src_bunker"), "magenta"), 128));
+  put(textures, "building_bunker", fit(keyImage(src(textures, "src_building_bunker"), "magenta"), 128));
 
   for (const art of UNIT_PART_ART) {
     const srcKey = `src_${art.key}`;
@@ -603,8 +603,8 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     const img = fit(keyImage(src(textures, srcKey), "magenta"), art.size);
     put(textures, art.key, art.hulk ? darkenWreck(img) : img);
   }
-  if (textures.exists("src_radar_dish")) {
-    put(textures, "building_radar_disk", fit(clipRadarDish(keyPixels(src(textures, "src_radar_dish"), "magenta")), 160));
+  if (textures.exists("src_building_radar_dish")) {
+    put(textures, "building_radar_disk", fit(clipRadarDish(keyPixels(src(textures, "src_building_radar_dish"), "magenta")), 160));
   }
   putGrid(textures, "src_vehicles", 3, 2, [
     ["enemy_pickup", 58],
@@ -650,8 +650,8 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   ] as const) {
     grayShiftTexture(textures, key);
   }
-  if (textures.exists("src_radar_dish_hulk")) {
-    put(textures, "building_radar_disk_hulk", darkenWreck(fit(clipRadarDish(keyPixels(src(textures, "src_radar_dish_hulk"), "magenta")), 150)));
+  if (textures.exists("src_building_radar_dish_hulk")) {
+    put(textures, "building_radar_disk_hulk", darkenWreck(fit(clipRadarDish(keyPixels(src(textures, "src_building_radar_dish_hulk"), "magenta")), 150)));
   }
   putHulkGrid(textures, "src_vehicles_hulk", 3, 2, [
     ["enemy_pickup_hulk", 58],
