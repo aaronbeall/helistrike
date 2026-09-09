@@ -13,16 +13,26 @@ import {
   playerLoadout,
   SHOT_ORIGIN,
   SHOT_TAIL,
-  MISSILE_IGNITE,
   HELLFIRE_LOCK_T,
   HELLFIRE_SEEK_DELAY,
+  shotBehaviorOf,
+  legacyShotLook,
+  guidanceUsesLock,
   type Debris,
   type Shot,
+  type ShotState,
+  type SmokeVolume,
   type SimParticle,
   type SimParticleKind,
   type Unit,
   type PlayerWpnSpec,
 } from "./combat";
+import {
+  aimInStationArc,
+  heatCategoryOk,
+  heatSeekScore,
+  smokeBlocksLos,
+} from "./weaponRuntime";
 import { Layer, ZOff, Z_GRAVITY, worldDepth } from "./depth";
 import { range } from "./rng";
 import { CRUISE_AGL, Heli, MAX_AGL } from "./heli";
@@ -36,7 +46,7 @@ import {
   pointInFootprint,
 } from "./footprint";
 import { lookupSpriteMuzzles, lookupSpriteOrigin } from "./spriteOrigin";
-import { allCrafts, craftAgility, craftCameraScale, craftComposite, craftCompositePartScale, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftOf, craftOrigin, craftRotorMounts, craftSecondaryMounts, craftStartingAmmo, rotorDrawSpan, selectCraft, type CraftComposite } from "./craft";
+import { allCrafts, craftAgility, craftCameraScale, craftComposite, craftCompositePartScale, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftOf, craftOrigin, craftPreviewExhaustScale, craftPreviewExhaustTint, craftPreviewFitScale, craftRotorMounts, craftSecondaryMounts, craftStartingAmmo, rotorDrawSpan, selectCraft, type CraftComposite } from "./craft";
 import { allMissions, missionOf, selectMission } from "./mission";
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
 import { configRigsAnyOpen, installConfigRigHotkeys } from "./configRigs";
@@ -230,12 +240,12 @@ const CAMERA_PRESETS = [
   { name: "DRAMATIC", pitch: 0.09, cam: 600, zoom0: 1.45 },
 ] as const;
 
-function shotLookOf(s: Shot): ShotLook {
-  if (s.look) return s.look;
-  if (s.kind === "rocket") return "shot_rocket";
-  if (s.kind === "lock-on-missile") return "shot_hellfire";
-  if (s.kind === "guided-missile") return "shot_tow";
-  return "shot_chain";
+function shotLookOf(s: Shot, textures?: Phaser.Textures.TextureManager): ShotLook {
+  if (s.look) {
+    if (!textures || textures.exists(s.look)) return s.look;
+    return legacyShotLook(s.kind);
+  }
+  return legacyShotLook(s.kind);
 }
 
 /** Soft rim where map-edge steering ramps up. */
@@ -503,13 +513,6 @@ function drawControlLegend(scene: Phaser.Scene, width: number, y: number): void 
   scene.add.container(width / 2, 0, createControlLegend(scene, panelW, y));
 }
 
-function craftPreviewExhaustTint(kind: string): number {
-  if (kind === "prometheus") return 0xc86cff;
-  if (kind === "warthog") return 0xff8a2c;
-  if (kind === "lightning_ii") return 0xbfeaff;
-  return 0x70d8ff;
-}
-
 export class MenuScene extends Phaser.Scene {
   constructor() {
     super("menu");
@@ -579,7 +582,8 @@ export class MenuScene extends Phaser.Scene {
         .setDepth(2)
         .setInteractive({ useHandCursor: true });
       const art = this.add.image(x, 181, craft.body).setDepth(3);
-      const artScale = Math.min(104 / Math.max(1, art.width), 82 / Math.max(1, art.height));
+      // Fit the card box; never upscale past native 1:1 (keeps drones crisp).
+      const artScale = craftPreviewFitScale(art.width, art.height, 104, 82);
       art.setScale(artScale);
       const composite = craftComposite(craft);
       const rotors = composite.rotors.map((part, rotorI) => {
@@ -995,7 +999,7 @@ export class MenuScene extends Phaser.Scene {
         card.art
           .setVisible(selected)
           .setPosition(w / 2, 170)
-          .setScale(card.artScale * 1.05)
+          .setScale(Math.min(1, card.artScale * 1.05))
           .setDepth(8)
           .setAlpha(1);
         card.rotors.forEach((rotor, rotorI) => {
@@ -1011,11 +1015,11 @@ export class MenuScene extends Phaser.Scene {
         card.exhaustGlows.forEach((glow, exhaustI) => {
           const mount = card.exhaustMounts[exhaustI]!;
           const at = spriteUvPos(card.art, mount.x, mount.y);
-          const scale = card.art.scaleX * 0.55;
+          const glowSc = craftPreviewExhaustScale(card.art.scaleX);
           glow
             .setVisible(selected)
             .setPosition(at.x, at.y)
-            .setScale(scale * 0.75, scale)
+            .setScale(glowSc.x, glowSc.y)
             .setDepth(8.5);
         });
         card.label
@@ -1419,6 +1423,8 @@ export class MissionScene extends Phaser.Scene {
   miniMask!: Phaser.GameObjects.Graphics;
   mapGfx!: Phaser.GameObjects.Graphics;
   hudCam!: Phaser.Cameras.Scene2D.Camera;
+  /** World-space field HUD (locks, unit bars) — mirrors main cam, no thermal post-FX. */
+  fieldHudCam!: Phaser.Cameras.Scene2D.Camera;
   hudRoot!: Phaser.GameObjects.Container;
   hudSet = new Set<Phaser.GameObjects.GameObject>();
   hudParS = 1;
@@ -1449,6 +1455,14 @@ export class MissionScene extends Phaser.Scene {
   towLookHold = 0;
   towLookX = 0;
   towLookY = 0;
+  /** Rising-edge pointer tracking for click / release weapon controls. */
+  pointerWasDown = false;
+  /** Latched GPS / designate aim point while holding designate_then_release. */
+  designateLatch: { x: number; y: number } | null = null;
+  /** Per-slot cooldown for automatic stations (independent of selected weapon). */
+  stationFireCd: number[] = [0, 0, 0, 0];
+  /** Persistent LOS-blocking smoke screens. */
+  smokeVolumes: SmokeVolume[] = [];
   playLastFrame = false;
   playScrollX = 0;
   playScrollY = 0;
@@ -3001,6 +3015,7 @@ export class MissionScene extends Phaser.Scene {
         this.syncHeliGfx(dt);
         this.handleFire(dt);
         this.tickPlayerMuzzles(dt);
+        this.updateSmokeVolumes(dt);
         timings[2] = performance.now() - t;
 
         t = performance.now();
@@ -3048,6 +3063,7 @@ export class MissionScene extends Phaser.Scene {
         this.syncHeliGfx(dt);
         this.handleFire(dt);
         this.tickPlayerMuzzles(dt);
+        this.updateSmokeVolumes(dt);
         this.updateUnits(dt);
         this.updateShots(dt);
         if (this.heli.phase === "dead" && !this.playerCrashStarted) this.beginPlayerCrash();
@@ -3933,214 +3949,514 @@ export class MissionScene extends Phaser.Scene {
 
   handleFire(dt: number): void {
     const h = this.heli;
-    if (h.phase !== "flight" || !this.canFire || this.debugOpen || this.editOpen || this.helpOpen || this.exitOpen) return;
-    const spec = this.loadout[h.weapon]!;
-    const wpn = spec.kind;
     const ptr = this.worldPointer();
     const down = this.input.activePointer.isDown;
+    const pressed = down && !this.pointerWasDown;
+    const released = !down && this.pointerWasDown;
 
-    if (wpn === "cannon" && down && h.fireCd <= 0 && this.hasAmmo(h.weapon)) {
-      h.fireCd = spec.fireCd;
-      if (Number.isFinite(this.ammo[h.weapon]!)) this.spendAmmo(h.weapon);
-      const air = this.hoverAerial();
-      const spd = spec.speed;
-      const station = h.spec.stations?.[h.weapon];
-      const fixed = station?.mount === "fixed" || (!station && h.spec.gunMode === "fixed");
-      const muzzleFire = station?.muzzleFire;
-      const authored = fixed ? craftFixedMuzzles(h.spec) : [];
-      const mountedGunI =
-        authored.length === 0 && this.guns.length > 1
-          ? this.playerGunSide++ % this.guns.length
-          : 0;
-      const muzzleUvs =
-        authored.length === 0
-          ? [undefined]
-          : muzzleFire === "simultaneous"
-            ? authored
-            : muzzleFire === "alternate"
-              ? [authored[this.playerGunSide++ % authored.length]]
-              : [authored[0]];
-      const fxInterval = spec.fireCd / Math.max(1, muzzleUvs.length);
-      const shotFxScale = projectileFxScale("player", fxInterval);
-      for (const muzzleUv of muzzleUvs) {
-        const spread = spec.beam ? 0 : (Math.random() - 0.5) * (spec.silent ? 0.025 : 0.08);
-        const ang = (fixed ? h.angle : h.gunAngle) + spread;
-        const tip = muzzleUv ? this.craftBodyMountWorldPos(muzzleUv) : this.gunTip(mountedGunI);
-        const tipScr = worldToScreen(tip.x, tip.y, h.z);
-        const tipScreenX = tipScr.x;
-        const tipScreenY = tipScr.y;
-        const tipScale = tipScr.scale;
-        const z0 = h.z + ZOff.shot;
-        const along = projectAlong(tip.x, tip.y, ang, air ? air.x : ptr.x, air ? air.y : ptr.y);
-        const dist = Math.max(80, along);
-        const t = dist / spd;
-        const tx = tip.x + Math.cos(ang) * dist;
-        const ty = tip.y + Math.sin(ang) * dist;
-        const tz = air ? air.z + heightOf(air.kind) * 0.5 : groundZ(this.world, tx, ty);
-        this.spawnShot({
-          kind: spec.kind,
-          from: "player",
-          x: tip.x,
-          y: tip.y,
-          z: z0,
-          vx: Math.cos(ang) * spd,
-          vy: Math.sin(ang) * spd,
-          vz: (tz - z0) / t,
-          angle: ang,
-          life: t + (air ? 0.55 : spec.life),
-          blast: spec.blast,
-          dmg: spec.dmg,
-          look: spec.look,
-          scale: spec.scale,
-          fxInterval,
-        });
-        if (spec.beam) {
-          const beamEnd = worldToScreen(tx, ty, tz);
-          const beam = this.add.graphics().setDepth(worldDepth(z0, ZOff.muzzle, tip.y));
-          beam.lineStyle(5 * tipScale, 0x55ddff, 0.24).lineBetween(tipScreenX, tipScreenY, beamEnd.x, beamEnd.y);
-          beam.lineStyle(1.5 * tipScale, 0xffffff, 0.95).lineBetween(tipScreenX, tipScreenY, beamEnd.x, beamEnd.y);
-          this.tweens.add({ targets: beam, alpha: 0, duration: 110, onComplete: () => beam.destroy() });
-        } else if (!spec.silent) {
-          this.emitVisualBurst(tip.x, tip.y, h.z, {
-            n: scaledProjectileFxCount(6, shotFxScale),
-            spdMin: 220,
-            spdMax: 520,
-            bx: Math.cos(ang),
-            by: Math.sin(ang),
-            bz: (tz - z0) / Math.max(40, dist),
-            tight: 0.9,
-            scaleMul: 0.3,
-          }, this.muzzleBurst);
-          this.tracer.setDepth(worldDepth(z0, ZOff.muzzle, tip.y));
-          this.emitBudgeted("short", this.tracer, tipScreenX, tipScreenY, scaledProjectileFxCount(5, shotFxScale));
-          this.showMuzzle(
-            tipScreenX,
-            tipScreenY,
-            projectHeading(ang, tip.x, tip.y, h.z),
-            0.78 * tipScale,
-            0.1
-          );
-          const craft = h.spec;
-          const mountedGun = this.guns[mountedGunI] ?? this.gun;
-          const mountedGunUv = craftGunMounts(craft)[mountedGunI] ?? craftGunMount(craft);
-          const side = muzzleUv
-            ? (muzzleUv.x < craftOrigin(craft).x ? -1 : 1)
-            : this.shellEjectSide({
-                muzzleUv: lookupSpriteMuzzles(craft.gun)[0],
-                mountUv: mountedGunUv,
-              });
-          const ejectAt = muzzleUv ? tip : screenToWorldAtZ(mountedGun.x, mountedGun.y, h.z);
-          this.spawnShellEject({
-            x: ejectAt.x,
-            y: ejectAt.y,
-            z: h.z - 12,
-            barrelAng: ang,
-            dmg: spec.dmg,
-            side,
-            aerial: true,
-            fireCd: spec.fireCd,
-          });
-        }
-      }
+    for (let i = 0; i < this.stationFireCd.length; i++) {
+      this.stationFireCd[i] = Math.max(0, (this.stationFireCd[i] ?? 0) - dt);
     }
 
-    if (wpn === "rocket" && down && h.fireCd <= 0 && this.hasAmmo(h.weapon)) {
-      h.fireCd = spec.fireCd;
-      const { x: px, y: py } = this.missilePylon();
-      this.spendAmmo(h.weapon);
-      const air = this.hoverAerial();
-      const along = projectAlong(px, py, h.angle, air ? air.x : ptr.x, air ? air.y : ptr.y);
-      const dist = Math.max(80, along);
-      const t = dist / spec.speed;
-      const tx = px + Math.cos(h.angle) * dist;
-      const ty = py + Math.sin(h.angle) * dist;
-      const tz = air ? air.z + heightOf(air.kind) * 0.5 : groundZ(this.world, tx, ty);
-      this.spawnShot({
-        kind: spec.kind,
-        from: "player",
-        x: px,
-        y: py,
-        z: h.z + ZOff.shot,
-        vx: Math.cos(h.angle) * spec.speed,
-        vy: Math.sin(h.angle) * spec.speed,
-        vz: (tz - h.z) / t,
-        angle: h.angle,
-        life: t + spec.life,
-        blast: spec.blast,
-        dmg: spec.dmg,
-        look: spec.look,
-        scale: spec.scale,
-        fxInterval: spec.fireCd,
-      });
-      this.missileMuzzle(px, py, h.z, h.angle, projectileFxScale("player", spec.fireCd));
+    if (h.phase === "flight" && this.canFire && !this.debugOpen && !this.editOpen && !this.helpOpen && !this.exitOpen) {
+      this.tickAutomaticStations(dt, ptr);
     }
 
     this.tickHellfireLock(dt, ptr);
-    if (wpn === "lock-on-missile") {
-      if (
-        down &&
-        h.fireCd <= 0 &&
-        this.hasAmmo(h.weapon) &&
-        h.hellfireLock
-      ) {
-        h.fireCd = spec.fireCd;
-        const { x: px, y: py, side } = this.missilePylon();
-        this.spendAmmo(h.weapon);
-        const kick = spec.speed;
-        this.spawnShot({
-          kind: spec.kind,
-          from: "player",
-          x: px,
-          y: py,
-          z: h.z + ZOff.shot,
-          vx: h.vx + Math.cos(h.angle) * kick,
-          vy: h.vy + Math.sin(h.angle) * kick,
-          vz: h.vz,
-          angle: h.angle,
-          life: spec.life,
-          targetId: h.hellfireLock.id,
-          blast: spec.blast,
-          dmg: spec.dmg,
-          look: spec.look,
-          scale: spec.scale,
-          fxInterval: spec.fireCd,
-          motor: -MISSILE_IGNITE,
-          yaw: side * (1.05 + Math.random() * 0.45),
-        });
-        this.missileMuzzle(px, py, h.z, h.angle, projectileFxScale("player", spec.fireCd));
+
+    if (h.phase !== "flight" || !this.canFire || this.debugOpen || this.editOpen || this.helpOpen || this.exitOpen) {
+      this.pointerWasDown = down;
+      return;
+    }
+
+    const slot = h.weapon;
+    const spec = this.loadout[slot]!;
+    const station = h.spec.stations?.[slot];
+    if (station?.controller === "automatic" || spec.control.mode === "automatic") {
+      this.pointerWasDown = down;
+      return;
+    }
+
+    // Designate latch: press captures aim, release fires.
+    if (spec.control.mode === "designate_then_release") {
+      if (pressed) this.designateLatch = { x: ptr.x, y: ptr.y };
+      if (down && this.designateLatch) this.designateLatch = { x: ptr.x, y: ptr.y };
+    } else if (pressed) {
+      this.designateLatch = null;
+    }
+
+    // NLOS / Starstreak second-click terminal handoff (before spawn gating).
+    if (spec.control.mode === "first_second_click" && pressed) {
+      const active = this.shots.find(
+        (s) => s.from === "player" && s.wpnId === spec.id && s.st && !s.st.terminal && !s.st.bomblet
+      );
+      if (active?.st && h.hellfireLock) {
+        active.st.terminal = true;
+        active.st.seeking = true;
+        active.targetId = h.hellfireLock.id;
+        this.pointerWasDown = down;
+        return;
       }
     }
 
-    if (wpn === "guided-missile" && down && h.fireCd <= 0 && this.hasAmmo(h.weapon)) {
-      h.fireCd = spec.fireCd;
-      const { x: px, y: py, side } = this.missilePylon();
-      this.spendAmmo(h.weapon);
+    // Specter drone: click while an active drone exists → remote detonate (no new spawn).
+    if (spec.payload.mode === "drone" && pressed) {
+      const drone = this.shots.find((s) => s.from === "player" && s.wpnId === spec.id && s.st?.drone && !s.st.detonate);
+      if (drone?.st) {
+        drone.st.detonate = true;
+        this.pointerWasDown = down;
+        return;
+      }
+    }
+
+    let wantFire = false;
+    if (spec.control.mode === "hold") wantFire = down;
+    else if (spec.control.mode === "click" || spec.control.mode === "first_second_click") wantFire = pressed;
+    else if (spec.control.mode === "lock_then_click") wantFire = (pressed || down) && !!h.hellfireLock;
+    else if (spec.control.mode === "designate_then_release") wantFire = released && !!this.designateLatch;
+
+    if (!wantFire || h.fireCd > 0 || !this.hasAmmo(slot)) {
+      this.pointerWasDown = down;
+      return;
+    }
+
+    const stationOk = station?.mount === "fixed" || (!station && h.spec.gunMode === "fixed");
+    const aimAng = stationOk || station?.mount === "hardpoint" || station?.mount === "bay"
+      ? h.angle
+      : h.gunAngle;
+    if (station?.traverse && !aimInStationArc(aimAng, h.angle, station.traverse)) {
+      this.pointerWasDown = down;
+      return;
+    }
+
+    h.fireCd = spec.fireCd;
+    const salvoN = spec.salvo?.count ?? 1;
+    const spread = spec.salvo?.spread ?? 0;
+    const gx = this.designateLatch?.x;
+    const gy = this.designateLatch?.y;
+    if (spec.control.mode === "designate_then_release") this.designateLatch = null;
+
+    // EMP radial pulse: no projectile.
+    if (spec.launch.mode === "beam" && spec.payload.mode === "emp") {
+      this.spendAmmo(slot);
+      this.applyEmpPulse(h.x, h.y, h.z, spec.payload.radius, spec.payload.duration, spec.dmg);
+      this.pointerWasDown = down;
+      return;
+    }
+
+    for (let i = 0; i < salvoN; i++) {
+      const yawOff = salvoN > 1 ? (i - (salvoN - 1) / 2) * spread : 0;
+      this.firePlayerWeapon(slot, spec, ptr, yawOff, gx, gy);
+    }
+    this.pointerWasDown = down;
+  }
+
+  /** Spawn one player round from the selected (or automatic) loadout slot. */
+  firePlayerWeapon(
+    slot: number,
+    spec: PlayerWpnSpec,
+    ptr: { x: number; y: number },
+    yawOff = 0,
+    gx?: number,
+    gy?: number,
+    autoTarget?: Unit
+  ): void {
+    const h = this.heli;
+    if (!this.hasAmmo(slot)) return;
+    this.spendAmmo(slot);
+    const beh = shotBehaviorOf(spec);
+    const pierce =
+      spec.payload.mode === "kinetic" && spec.payload.penetration != null
+        ? spec.payload.penetration
+        : undefined;
+    const helixPayload = spec.payload.mode === "plasma_helix";
+    const strands = helixPayload ? 2 : 1;
+
+    for (let strand = 0; strand < strands; strand++) {
+      const st: ShotState = {
+        age: 0,
+        launchAngle: h.angle + yawOff,
+        pierce,
+        hitIds: pierce != null ? [] : undefined,
+        gx,
+        gy,
+        drone: spec.payload.mode === "drone" || undefined,
+        helix: helixPayload ? 0 : undefined,
+        helixSide: helixPayload ? (strand === 0 ? 1 : -1) : undefined,
+        helixOff: helixPayload ? 10 : undefined,
+      };
+      if (spec.launch.mode === "muzzle") {
+        this.fireMuzzleShot(slot, spec, beh, st, ptr, yawOff, autoTarget);
+      } else if (spec.launch.mode === "kick_motor") {
+        this.fireKickMotorShot(slot, spec, beh, st, yawOff, autoTarget);
+      } else if (spec.launch.mode === "drop") {
+        this.fireDropShot(slot, spec, beh, st, yawOff);
+      } else if (spec.launch.mode === "beam") {
+        // Tesla / line beams: muzzle projectile with short life + visual.
+        this.fireMuzzleShot(slot, spec, beh, st, ptr, yawOff, autoTarget);
+      }
+    }
+  }
+
+  fireMuzzleShot(
+    slot: number,
+    spec: PlayerWpnSpec,
+    beh: ReturnType<typeof shotBehaviorOf>,
+    st: ShotState,
+    ptr: { x: number; y: number },
+    yawOff: number,
+    autoTarget?: Unit
+  ): void {
+    const h = this.heli;
+    const station = h.spec.stations?.[slot];
+    const fixed = station?.mount === "fixed" || (!station && h.spec.gunMode === "fixed");
+    const rocketPod = spec.kind === "rocket" && spec.guidance.mode === "none";
+    // Hydra pods keep pylon feel; guided muzzle rockets (Refractor) use the gun tip.
+    if (rocketPod) {
+      const { x: px, y: py } = this.missilePylon();
+      const ang = h.angle + yawOff;
+      const air = autoTarget && isAerial(autoTarget.kind) ? autoTarget : this.hoverAerial();
+      const aim = autoTarget ?? air;
+      const along = projectAlong(px, py, ang, aim ? aim.x : ptr.x, aim ? aim.y : ptr.y);
+      const dist = Math.max(80, along);
+      const t = dist / spec.speed;
+      const tx = px + Math.cos(ang) * dist;
+      const ty = py + Math.sin(ang) * dist;
+      const tz = aim && isAerial(aim.kind)
+        ? aim.z + heightOf(aim.kind) * 0.5
+        : groundZ(this.world, tx, ty);
+      const inherit = spec.launch.mode === "muzzle" ? spec.launch.inheritMomentum : 0.35;
       this.spawnShot({
         kind: spec.kind,
         from: "player",
+        id: nextId(),
+        wpnId: spec.id,
+        slot,
+        beh,
+        st: { ...st, launchAngle: ang },
         x: px,
         y: py,
         z: h.z + ZOff.shot,
-        vx: h.vx + Math.cos(h.angle) * spec.speed,
-        vy: h.vy + Math.sin(h.angle) * spec.speed,
-        vz: h.vz,
-        angle: h.angle,
-        life: spec.life,
-        blast: spec.blast,
-        dmg: spec.dmg,
+        vx: h.vx * inherit + Math.cos(ang) * spec.speed,
+        vy: h.vy * inherit + Math.sin(ang) * spec.speed,
+        vz: (tz - h.z) / t,
+        angle: ang,
+        life: t + spec.life,
+        blast: beh.blast,
+        dmg: beh.dmg,
         look: spec.look,
         scale: spec.scale,
         fxInterval: spec.fireCd,
-        guided: true,
-        motor: -(MISSILE_IGNITE + 0.06),
-        cruise: 300,
-        yaw: side * (0.42 + Math.random() * 0.22),
-        wireSide: side,
-        wire: spec.warpTimeScale ? undefined : [],
-        warpTimeScale: spec.warpTimeScale,
+        guided: spec.guidance.mode === "pointer" || undefined,
+        warpTimeScale: spec.warpTimeScale ?? (spec.payload.mode === "warp" ? spec.payload.timeScale : undefined),
       });
-      this.missileMuzzle(px, py, h.z, h.angle, projectileFxScale("player", spec.fireCd));
+      this.missileMuzzle(px, py, h.z, ang, projectileFxScale("player", spec.fireCd));
+      return;
     }
+
+    const muzzleFire = station?.muzzleFire;
+    const authored = fixed ? craftFixedMuzzles(h.spec) : [];
+    const mountedGunI =
+      authored.length === 0 && this.guns.length > 1
+        ? this.playerGunSide++ % this.guns.length
+        : 0;
+    const muzzleUvs =
+      authored.length === 0
+        ? [undefined]
+        : muzzleFire === "simultaneous"
+          ? authored
+          : muzzleFire === "alternate"
+            ? [authored[this.playerGunSide++ % authored.length]]
+            : [authored[0]];
+    const fxInterval = spec.fireCd / Math.max(1, muzzleUvs.length);
+    const shotFxScale = projectileFxScale("player", fxInterval);
+    const spd = spec.speed;
+    const inherit = spec.launch.mode === "muzzle" || spec.launch.mode === "beam" ? (spec.launch.mode === "muzzle" ? spec.launch.inheritMomentum : 0.2) : 0.35;
+    for (const muzzleUv of muzzleUvs) {
+      const spread = spec.beam ? 0 : (Math.random() - 0.5) * (spec.silent ? 0.025 : 0.08);
+      const ang = (fixed ? h.angle : h.gunAngle) + spread + yawOff + ((st.helixSide ?? 0) * 0.012);
+      const tip = muzzleUv ? this.craftBodyMountWorldPos(muzzleUv) : this.gunTip(mountedGunI);
+      const tipScr = worldToScreen(tip.x, tip.y, h.z);
+      const tipScreenX = tipScr.x;
+      const tipScreenY = tipScr.y;
+      const tipScale = tipScr.scale;
+      const z0 = h.z + ZOff.shot;
+      const air = autoTarget && isAerial(autoTarget.kind) ? autoTarget : this.hoverAerial();
+      const aim = autoTarget ?? air;
+      const along = projectAlong(tip.x, tip.y, ang, aim ? aim.x : ptr.x, aim ? aim.y : ptr.y);
+      const dist = Math.max(80, along);
+      const t = dist / spd;
+      const tx = tip.x + Math.cos(ang) * dist;
+      const ty = tip.y + Math.sin(ang) * dist;
+      const tz = aim && isAerial(aim.kind)
+        ? aim.z + heightOf(aim.kind) * 0.5
+        : groundZ(this.world, tx, ty);
+      const beamRange = spec.launch.mode === "beam" ? spec.launch.range : undefined;
+      const life = beamRange != null
+        ? beamRange / spd
+        : t + (air ? 0.55 : spec.life);
+      this.spawnShot({
+        kind: spec.kind,
+        from: "player",
+        id: nextId(),
+        wpnId: spec.id,
+        slot,
+        beh,
+        st: {
+          ...st,
+          launchAngle: ang,
+        },
+        x: tip.x,
+        y: tip.y,
+        z: z0,
+        vx: h.vx * inherit + Math.cos(ang) * spd,
+        vy: h.vy * inherit + Math.sin(ang) * spd,
+        vz: (tz - z0) / t,
+        angle: ang,
+        life,
+        blast: beh.blast,
+        dmg: beh.dmg,
+        look: spec.look,
+        scale: spec.scale,
+        fxInterval,
+        guided: spec.guidance.mode === "pointer" || undefined,
+        tint: spec.payload.mode === "plasma_helix" ? 0x66eeff : undefined,
+        warpTimeScale: spec.warpTimeScale ?? (spec.payload.mode === "warp" ? spec.payload.timeScale : undefined),
+      });
+      if (spec.beam || spec.payload.mode === "beam") {
+        const beamEnd = worldToScreen(tx, ty, tz);
+        const beam = this.add.graphics().setDepth(worldDepth(z0, ZOff.muzzle, tip.y));
+        beam.lineStyle(5 * tipScale, 0x55ddff, 0.24).lineBetween(tipScreenX, tipScreenY, beamEnd.x, beamEnd.y);
+        beam.lineStyle(1.5 * tipScale, 0xffffff, 0.95).lineBetween(tipScreenX, tipScreenY, beamEnd.x, beamEnd.y);
+        this.tweens.add({ targets: beam, alpha: 0, duration: 110, onComplete: () => beam.destroy() });
+      } else if (!spec.silent) {
+        this.emitVisualBurst(tip.x, tip.y, h.z, {
+          n: scaledProjectileFxCount(6, shotFxScale),
+          spdMin: 220,
+          spdMax: 520,
+          bx: Math.cos(ang),
+          by: Math.sin(ang),
+          bz: (tz - z0) / Math.max(40, dist),
+          tight: 0.9,
+          scaleMul: 0.3,
+        }, this.muzzleBurst);
+        this.tracer.setDepth(worldDepth(z0, ZOff.muzzle, tip.y));
+        this.emitBudgeted("short", this.tracer, tipScreenX, tipScreenY, scaledProjectileFxCount(5, shotFxScale));
+        this.showMuzzle(
+          tipScreenX,
+          tipScreenY,
+          projectHeading(ang, tip.x, tip.y, h.z),
+          0.78 * tipScale,
+          0.1
+        );
+        const craft = h.spec;
+        const mountedGun = this.guns[mountedGunI] ?? this.gun;
+        const mountedGunUv = craftGunMounts(craft)[mountedGunI] ?? craftGunMount(craft);
+        const side = muzzleUv
+          ? (muzzleUv.x < craftOrigin(craft).x ? -1 : 1)
+          : this.shellEjectSide({
+              muzzleUv: lookupSpriteMuzzles(craft.gun)[0],
+              mountUv: mountedGunUv,
+            });
+        const ejectAt = muzzleUv ? tip : screenToWorldAtZ(mountedGun.x, mountedGun.y, h.z);
+        this.spawnShellEject({
+          x: ejectAt.x,
+          y: ejectAt.y,
+          z: h.z - 12,
+          barrelAng: ang,
+          dmg: spec.dmg,
+          side,
+          aerial: true,
+          fireCd: spec.fireCd,
+        });
+      }
+    }
+  }
+
+  fireKickMotorShot(
+    slot: number,
+    spec: PlayerWpnSpec,
+    beh: ReturnType<typeof shotBehaviorOf>,
+    st: ShotState,
+    yawOff: number,
+    autoTarget?: Unit
+  ): void {
+    const h = this.heli;
+    const launch = spec.launch;
+    if (launch.mode !== "kick_motor") return;
+    const { x: px, y: py, side } = this.missilePylon();
+    const ang = h.angle + yawOff;
+    const kick = launch.kickSpeed;
+    const inherit = launch.inheritMomentum;
+    const g = spec.guidance;
+    const continuousPointer = g.mode === "pointer";
+    const wantsWire = continuousPointer && !("wire" in g && g.wire === false);
+    const lockId =
+      autoTarget?.id ??
+      (g.mode === "laser" || g.mode === "heat" || g.mode === "command_nlos"
+        ? h.hellfireLock?.id
+        : undefined);
+    const loft = spec.steering?.loft;
+    this.spawnShot({
+      kind: spec.kind,
+      from: "player",
+      id: nextId(),
+      wpnId: spec.id,
+      slot,
+      beh,
+      st: { ...st, launchAngle: ang },
+      x: px,
+      y: py,
+      z: h.z + ZOff.shot,
+      vx: h.vx * inherit + Math.cos(ang) * kick,
+      vy: h.vy * inherit + Math.sin(ang) * kick,
+      vz: h.vz,
+      angle: ang,
+      life: spec.life,
+      targetId: lockId,
+      blast: beh.blast,
+      dmg: beh.dmg,
+      look: spec.look,
+      scale: spec.scale,
+      fxInterval: spec.fireCd,
+      guided: continuousPointer || (g.mode === "command_nlos" && !st.terminal) || undefined,
+      motor: -launch.igniteDelay,
+      cruise: spec.speed,
+      loft,
+      yaw: side * (g.mode === "laser" || g.mode === "heat"
+        ? 1.05 + Math.random() * 0.45
+        : 0.42 + Math.random() * 0.22),
+      wireSide: side,
+      wire: wantsWire ? [] : undefined,
+      warpTimeScale: spec.warpTimeScale ?? (spec.payload.mode === "warp" ? spec.payload.timeScale : undefined),
+    });
+    this.missileMuzzle(px, py, h.z, ang, projectileFxScale("player", spec.fireCd));
+  }
+
+  fireDropShot(
+    slot: number,
+    spec: PlayerWpnSpec,
+    beh: ReturnType<typeof shotBehaviorOf>,
+    st: ShotState,
+    yawOff: number
+  ): void {
+    const h = this.heli;
+    const launch = spec.launch;
+    if (launch.mode !== "drop") return;
+    const ang = h.angle + yawOff;
+    const inherit = launch.inheritMomentum;
+    const release = launch.releaseSpeed ?? 0;
+    this.spawnShot({
+      kind: spec.kind,
+      from: "player",
+      id: nextId(),
+      wpnId: spec.id,
+      slot,
+      beh,
+      st: { ...st, launchAngle: ang, gx: st.gx, gy: st.gy },
+      x: h.x,
+      y: h.y,
+      z: h.z + ZOff.shot,
+      vx: h.vx * inherit + Math.cos(ang) * release,
+      vy: h.vy * inherit + Math.sin(ang) * release,
+      vz: h.vz - 40,
+      angle: ang,
+      life: spec.life,
+      blast: beh.blast,
+      dmg: beh.dmg,
+      look: spec.look,
+      scale: spec.scale,
+      fxInterval: spec.fireCd,
+      warpTimeScale: spec.warpTimeScale ?? (spec.payload.mode === "warp" ? spec.payload.timeScale : undefined),
+    });
+  }
+
+  applyEmpPulse(x: number, y: number, z: number, radius: number, duration: number, dmg: number): void {
+    for (const u of this.units) {
+      if (u.dead) continue;
+      if (Math.hypot(u.x - x, u.y - y) > radius) continue;
+      u.empT = Math.max(u.empT ?? 0, duration);
+      this.hurt(u, dmg * 0.35, true);
+    }
+    const at = worldToScreen(x, y, z);
+    this.spawnImpactFlash(at.x, at.y, z, 0x88ccff, radius * 0.55 * at.scale, 0.7, 220);
+    this.shake = Math.min(8, this.shake + 2.2);
+  }
+
+  updateSmokeVolumes(dt: number): void {
+    let w = 0;
+    const vols = this.smokeVolumes;
+    for (let i = 0; i < vols.length; i++) {
+      const s = vols[i]!;
+      s.t -= dt;
+      if (s.t <= 0) continue;
+      s.puff += dt;
+      while (s.puff >= 0.18) {
+        s.puff -= 0.18;
+        if (!cameraPointVisible(s.z, s.y)) continue;
+        const at = worldToScreen(
+          s.x + range(-s.radius * 0.35, s.radius * 0.35),
+          s.y + range(-s.radius * 0.35, s.radius * 0.35),
+          s.z + range(4, 28)
+        );
+        this.lingerSmoke.setDepth(worldDepth(s.z, ZOff.smoke, s.y));
+        this.emitBudgeted("smoke", this.lingerSmoke, at.x, at.y, 1);
+      }
+      vols[w++] = s;
+    }
+    vols.length = w;
+  }
+
+  tickAutomaticStations(_dt: number, ptr: { x: number; y: number }): void {
+    const h = this.heli;
+    const stations = h.spec.stations;
+    if (!stations) return;
+    for (let slot = 0; slot < this.loadout.length; slot++) {
+      const station = stations[slot];
+      const spec = this.loadout[slot]!;
+      if (!station || station.controller !== "automatic") continue;
+      if ((this.stationFireCd[slot] ?? 0) > 0 || !this.hasAmmo(slot)) continue;
+      const acquire =
+        spec.guidance.mode === "auto" ? spec.guidance.acquireRadius : 340;
+      const tgt = this.nearestUnitInFrontArc(h.x, h.y, h.angle, acquire, station.traverse);
+      if (!tgt) continue;
+      if (station.traverse) {
+        const aim = Math.atan2(tgt.y - h.y, tgt.x - h.x);
+        if (!aimInStationArc(aim, h.angle, station.traverse)) continue;
+      }
+      this.stationFireCd[slot] = spec.fireCd;
+      const salvoN = spec.salvo?.count ?? 1;
+      const spread = spec.salvo?.spread ?? 0;
+      for (let i = 0; i < salvoN; i++) {
+        const yawOff = salvoN > 1 ? (i - (salvoN - 1) / 2) * spread : 0;
+        this.firePlayerWeapon(slot, spec, ptr, yawOff, undefined, undefined, tgt);
+      }
+    }
+  }
+
+  nearestUnitInFrontArc(
+    x: number,
+    y: number,
+    heading: number,
+    maxR: number,
+    traverse?: { center: number; arc: number; side?: "left" | "right" | "both" }
+  ): Unit | undefined {
+    let best: Unit | undefined;
+    let bd = maxR;
+    for (const u of this.units) {
+      if (u.dead) continue;
+      const d = Math.hypot(u.x - x, u.y - y);
+      if (d > bd || d < 40) continue;
+      const aim = Math.atan2(u.y - y, u.x - x);
+      if (traverse) {
+        if (!aimInStationArc(aim, heading, traverse)) continue;
+      } else if (Math.abs(Phaser.Math.Angle.Wrap(aim - heading)) > Math.PI * 0.55) {
+        continue;
+      }
+      bd = d;
+      best = u;
+    }
+    return best;
   }
 
   missileMuzzle(x: number, y: number, z: number, ang: number, fxScale = 1): void {
@@ -4338,7 +4654,7 @@ export class MissionScene extends Phaser.Scene {
   }
 
   spawnShot(s: Shot): void {
-    const look = shotLookOf(s);
+    const look = shotLookOf(s, this.textures);
     const nudge = this.shotTipNudge(look, s.angle, s.x, s.y, s.z, s.scale ?? 1);
     s.x += nudge.x;
     s.y += nudge.y;
@@ -4391,7 +4707,7 @@ export class MissionScene extends Phaser.Scene {
     y = s.y,
     z = s.z
   ): { x: number; y: number } {
-    const look = shotLookOf(s);
+    const look = shotLookOf(s, this.textures);
     const img = this.textures.exists(look)
       ? (this.textures.get(look).getSourceImage() as { width: number; height: number })
       : { width: 48, height: 10 };
@@ -4728,10 +5044,15 @@ export class MissionScene extends Phaser.Scene {
 
   updateShots(dt: number): void {
     const ptr = this.worldPointer();
+    const seekMul = craftOf().enemySeekerMul ?? 1;
     let w = 0;
     const shots = this.shots;
     for (let si = 0; si < shots.length; si++) {
       const s = shots[si]!;
+      const beh = s.from === "player" ? s.beh : undefined;
+      const st = s.from === "player" ? s.st : undefined;
+      if (st) st.age = (st.age ?? 0) + dt;
+
       if (s.motor != null) {
         const was = s.motor;
         s.motor += dt;
@@ -4740,98 +5061,116 @@ export class MissionScene extends Phaser.Scene {
       const lit = s.motor == null || s.motor >= 0;
       const lofting = lit && (s.loft ?? 0) > 0;
       if (lofting) s.loft = (s.loft ?? 0) - dt;
-      const hellfireHome = lit && s.kind === "lock-on-missile" && s.targetId != null;
-      const stingerHome = lit && s.homePlayer && s.kind === "lock-on-missile";
-      if (hellfireHome) {
-        const cur = Math.hypot(s.vx, s.vy, s.vz);
-        const burn = s.motor ?? 0;
-        const accel = 520 + Phaser.Math.Clamp(burn, 0, 1.4) * 260;
-        const spd = cur + accel * dt;
-        const seeking = (s.loft ?? 0) <= 0;
-        if (seeking) {
-          const u = s.targetId != null ? this.unitById(s.targetId) : undefined;
-          const tx = u ? u.x : s.x + s.vx;
-          const ty = u ? u.y : s.y + s.vy;
-          const tz = u ? u.z + heightOf(u.kind) * 0.5 : groundZ(this.world, s.x, s.y);
+
+      // --- Spec-driven player guidance / motor ---
+      if (beh && st) {
+        this.updatePlayerShotFlight(s, beh, st, dt, ptr);
+      } else {
+        // --- Legacy enemy (and any untagged) flight ---
+        const hellfireHome = lit && s.kind === "lock-on-missile" && s.targetId != null;
+        const stingerHome = lit && s.homePlayer && s.kind === "lock-on-missile";
+        if (hellfireHome) {
+          const cur = Math.hypot(s.vx, s.vy, s.vz);
+          const burn = s.motor ?? 0;
+          const accel = 520 + Phaser.Math.Clamp(burn, 0, 1.4) * 260;
+          const spd = cur + accel * dt;
+          const seeking = (s.loft ?? 0) <= 0;
+          if (seeking) {
+            const u = s.targetId != null ? this.unitById(s.targetId) : undefined;
+            const tx = u ? u.x : s.x + s.vx;
+            const ty = u ? u.y : s.y + s.vy;
+            const tz = u ? u.z + heightOf(u.kind) * 0.5 : groundZ(this.world, s.x, s.y);
+            const home = norm3(tx - s.x, ty - s.y, tz - s.z);
+            const dir0 =
+              cur < 8
+                ? { x: Math.cos(s.angle), y: Math.sin(s.angle), z: 0.55 }
+                : { x: s.vx, y: s.vy, z: s.vz };
+            const d = steerDir(dir0.x, dir0.y, dir0.z, home.x, home.y, home.z, 7.4 * seekMul * dt);
+            s.angle = Math.atan2(d.y, d.x);
+            s.vx = d.x * spd;
+            s.vy = d.y * spd;
+            s.vz = d.z * spd;
+          } else if (cur > 8) {
+            s.vx = (s.vx / cur) * spd;
+            s.vy = (s.vy / cur) * spd;
+            s.vz = (s.vz / cur) * spd;
+          } else {
+            s.vx = Math.cos(s.angle) * spd;
+            s.vy = Math.sin(s.angle) * spd;
+          }
+        }
+        if (stingerHome) {
+          const cur = Math.hypot(s.vx, s.vy, s.vz);
+          const tx = this.heli.x;
+          const ty = this.heli.y;
+          const tz = this.heli.z + this.heli.height * 0.45;
           const home = norm3(tx - s.x, ty - s.y, tz - s.z);
           const dir0 =
             cur < 8
-              ? { x: Math.cos(s.angle), y: Math.sin(s.angle), z: 0.55 }
+              ? { x: Math.cos(s.angle), y: Math.sin(s.angle), z: 0.12 }
               : { x: s.vx, y: s.vy, z: s.vz };
-          const d = steerDir(dir0.x, dir0.y, dir0.z, home.x, home.y, home.z, 7.4 * dt);
+          const age = Math.max(0, s.motor ?? 0);
+          const steerRate = Phaser.Math.Linear(0.78, 0.26, Phaser.Math.Clamp(age / 5.5, 0, 1));
+          const d = steerDir(dir0.x, dir0.y, dir0.z, home.x, home.y, home.z, steerRate * seekMul * dt);
           s.angle = Math.atan2(d.y, d.x);
+          const spd = Math.min(Math.max(cur, 220) + 50 * dt, 380);
           s.vx = d.x * spd;
           s.vy = d.y * spd;
           s.vz = d.z * spd;
-        } else if (cur > 8) {
-          s.vx = (s.vx / cur) * spd;
-          s.vy = (s.vy / cur) * spd;
-          s.vz = (s.vz / cur) * spd;
-        } else {
+        }
+        if (lit && s.guided) {
+          const tgt = this.reticleUnit() ?? this.hoverAerial();
+          const want = Math.atan2(ptr.y - s.y, ptr.x - s.x);
+          const da = Phaser.Math.Angle.Wrap(want - s.angle);
+          s.angle += Phaser.Math.Clamp(da, -2.2 * dt, 2.2 * dt);
+          const dist = Math.hypot(ptr.x - s.x, ptr.y - s.y);
+          const hold = Phaser.Math.Clamp(dist / 360, 0, 1);
+          const gndAim = groundZ(this.world, ptr.x, ptr.y);
+          const tz = tgt
+            ? tgt.z + heightOf(tgt.kind) * 0.3
+            : Phaser.Math.Linear(gndAim, this.heli.z, hold);
+          s.vz = (tz - s.z) * 3.2;
+          s.life = Math.max(s.life, 0.6);
+        }
+        if (s.motor != null && s.motor < 0) {
+          const drag = s.kind === "guided-missile" ? Math.pow(0.12, dt) : Math.pow(0.07, dt);
+          s.vx *= drag;
+          s.vy *= drag;
+          s.vz *= Math.pow(0.22, dt);
+          if (s.yaw) s.angle += s.yaw * dt;
+          const spd = Math.hypot(s.vx, s.vy);
+          if (spd > 6) {
+            s.vx = Math.cos(s.angle) * spd;
+            s.vy = Math.sin(s.angle) * spd;
+          }
+        } else if (hellfireHome || stingerHome) {
+          /* vx/vy/vz already steered in 3D */
+        } else if (s.cruise != null && s.motor != null) {
+          const cur = Math.hypot(s.vx, s.vy);
+          const ramp = Phaser.Math.Clamp(s.motor / 0.16, 0, 1);
+          const k = ramp * ramp * (3 - 2 * ramp);
+          const spd = Phaser.Math.Linear(Math.max(cur, 50), s.cruise, k);
+          s.vx = Math.cos(s.angle) * spd;
+          s.vy = Math.sin(s.angle) * spd;
+        } else if (s.guided) {
+          const spd = 300;
           s.vx = Math.cos(s.angle) * spd;
           s.vy = Math.sin(s.angle) * spd;
         }
       }
-      if (stingerHome) {
-        const cur = Math.hypot(s.vx, s.vy, s.vz);
-        const tx = this.heli.x;
-        const ty = this.heli.y;
-        const tz = this.heli.z + this.heli.height * 0.45;
-        const home = norm3(tx - s.x, ty - s.y, tz - s.z);
-        const dir0 =
-          cur < 8
-            ? { x: Math.cos(s.angle), y: Math.sin(s.angle), z: 0.12 }
-            : { x: s.vx, y: s.vy, z: s.vz };
-        const age = Math.max(0, s.motor ?? 0);
-        const steerRate = Phaser.Math.Linear(0.78, 0.26, Phaser.Math.Clamp(age / 5.5, 0, 1));
-        const d = steerDir(dir0.x, dir0.y, dir0.z, home.x, home.y, home.z, steerRate * dt);
-        s.angle = Math.atan2(d.y, d.x);
-        const spd = Math.min(Math.max(cur, 220) + 50 * dt, 380);
-        s.vx = d.x * spd;
-        s.vy = d.y * spd;
-        s.vz = d.z * spd;
+
+      // Plasma helix visual offset (base position restored after trail/hit tests via cx/cy).
+      let helixDx = 0;
+      let helixDy = 0;
+      if (st?.helixSide != null && st.helixOff) {
+        const freq = 18;
+        const off = Math.sin(st.age * freq) * st.helixOff * st.helixSide;
+        const px = -Math.sin(s.angle);
+        const py = Math.cos(s.angle);
+        helixDx = px * off;
+        helixDy = py * off;
       }
-      if (lit && s.guided) {
-        // Prefer unit under reticle (incl. ground); fall back to nearby aerial pick.
-        const tgt = this.reticleUnit() ?? this.hoverAerial();
-        const want = Math.atan2(ptr.y - s.y, ptr.x - s.x);
-        const da = Phaser.Math.Angle.Wrap(want - s.angle);
-        s.angle += Phaser.Math.Clamp(da, -2.2 * dt, 2.2 * dt);
-        const dist = Math.hypot(ptr.x - s.x, ptr.y - s.y);
-        const hold = Phaser.Math.Clamp(dist / 360, 0, 1);
-        const gndAim = groundZ(this.world, ptr.x, ptr.y);
-        // Aim low on the hull (30% height) so TOWs don't skim over small targets.
-        const tz = tgt
-          ? tgt.z + heightOf(tgt.kind) * 0.3
-          : Phaser.Math.Linear(gndAim, this.heli.z, hold);
-        s.vz = (tz - s.z) * 3.2;
-        s.life = Math.max(s.life, 0.6);
-      }
-      if (s.motor != null && s.motor < 0) {
-        const drag = s.kind === "guided-missile" ? Math.pow(0.12, dt) : Math.pow(0.07, dt);
-        s.vx *= drag;
-        s.vy *= drag;
-        s.vz *= Math.pow(0.22, dt);
-        if (s.yaw) s.angle += s.yaw * dt;
-        const spd = Math.hypot(s.vx, s.vy);
-        if (spd > 6) {
-          s.vx = Math.cos(s.angle) * spd;
-          s.vy = Math.sin(s.angle) * spd;
-        }
-      } else if (hellfireHome || stingerHome) {
-        /* vx/vy/vz already steered in 3D */
-      } else if (s.cruise != null && s.motor != null) {
-        const cur = Math.hypot(s.vx, s.vy);
-        const ramp = Phaser.Math.Clamp(s.motor / 0.16, 0, 1);
-        const k = ramp * ramp * (3 - 2 * ramp);
-        const spd = Phaser.Math.Linear(Math.max(cur, 50), s.cruise, k);
-        s.vx = Math.cos(s.angle) * spd;
-        s.vy = Math.sin(s.angle) * spd;
-      } else if (s.guided) {
-        const spd = 300;
-        s.vx = Math.cos(s.angle) * spd;
-        s.vy = Math.sin(s.angle) * spd;
-      }
+
       const x0 = s.x;
       const y0 = s.y;
       const z0 = s.z;
@@ -4839,7 +5178,6 @@ export class MissionScene extends Phaser.Scene {
       s.x += s.vx * dt;
       s.y += s.vy * dt;
       s.z += s.vz * dt;
-      // Soft absolute ceiling for enemy Hellfires only — player missiles are uncapped.
       if (s.kind === "lock-on-missile" && s.from !== "player") {
         if (s.z > HELLFIRE_Z_MAX) {
           s.z = HELLFIRE_Z_MAX;
@@ -4847,9 +5185,17 @@ export class MissionScene extends Phaser.Scene {
         }
       }
       s.life -= dt;
-      if (s.kind === "guided-missile" && s.from === "player" && !s.warpTimeScale) this.simulateTowWire(s, dt);
-      // Repel Hellfire/TOW off ground during pre-ignition instead of detonating
-      const preIgnite = (s.kind === "lock-on-missile" || s.kind === "guided-missile") && s.from === "player" && s.motor != null && s.motor < 0;
+      if (s.wire) this.simulateTowWire(s, dt);
+
+      const kickPre =
+        beh?.launch.mode === "kick_motor" && s.motor != null && s.motor < 0;
+      const preIgnite =
+        kickPre ||
+        ((s.kind === "lock-on-missile" || s.kind === "guided-missile") &&
+          s.from === "player" &&
+          s.motor != null &&
+          s.motor < 0 &&
+          !beh);
       if (preIgnite) {
         const gRepel = groundZ(this.world, s.x, s.y) + 8;
         if (s.z < gRepel) {
@@ -4857,22 +5203,33 @@ export class MissionScene extends Phaser.Scene {
           if (s.vz < 60) s.vz = 60;
         }
       }
+
+      const dronePersist = !!st?.drone && !st.detonate;
       const g1 = groundZ(this.world, s.x, s.y);
       const a0 = z0 - g0;
       const a1 = s.z - g1;
       let hit = s.from !== "enemy" && s.life <= 0;
+      if (dronePersist && hit) {
+        // Life elapsed → detonate
+        st!.detonate = true;
+      }
       if (preIgnite && a1 > 0) {
         /* skip ground collision during pre-ignition repel */
-      } else if (a0 > 0.05 && a1 <= 0) {
+      } else if (!dronePersist && a0 > 0.05 && a1 <= 0) {
         const u = a0 / (a0 - a1);
         s.x = x0 + (s.x - x0) * u;
         s.y = y0 + (s.y - y0) * u;
         s.z = g0 + (g1 - g0) * u;
         hit = true;
-      } else if (a1 <= 0 && a0 <= 0.05) {
+      } else if (!dronePersist && a1 <= 0 && a0 <= 0.05) {
         s.z = g1;
         hit = true;
+      } else if (dronePersist && a1 < CRUISE_AGL * 0.35) {
+        // Keep drones above ground
+        s.z = g1 + CRUISE_AGL * 0.45;
+        if (s.vz < 0) s.vz *= 0.2;
       }
+
       let victim: Unit | undefined;
       let hitPlayer = false;
       if (
@@ -4889,28 +5246,57 @@ export class MissionScene extends Phaser.Scene {
       if (s.from === "player") {
         for (const u of this.units) {
           if (u.dead) continue;
+          if (st?.hitIds?.includes(u.id)) continue;
           const hr = circumRadiusOf(u.kind) + 8;
-          const dx = s.x - u.x;
-          const dy = s.y - u.y;
+          const dx = s.x + helixDx - u.x;
+          const dy = s.y + helixDy - u.y;
           if (dx * dx + dy * dy > hr * hr) continue;
-          if (!pointInFootprint(s.x, s.y, footprintInto(u, 8, 0))) continue;
+          if (!pointInFootprint(s.x + helixDx, s.y + helixDy, footprintInto(u, 8, 0))) continue;
           const top = u.z + heightOf(u.kind);
           if (s.z > top + 2) continue;
           if (s.z < u.z - 2) continue;
+          // Kinetic pierce: damage and continue.
+          if (st && (st.pierce ?? 0) > 0 && beh?.payload.mode === "kinetic") {
+            st.pierce! -= 1;
+            st.hitIds = st.hitIds ?? [];
+            st.hitIds.push(u.id);
+            this.hurt(u, s.dmg, false);
+            continue;
+          }
           hit = true;
           victim = u;
           break;
         }
       }
+      if (st?.detonate) hit = true;
       if (hit) {
-        if (s.kind === "guided-missile" && s.from === "player") {
+        if ((s.guided || beh?.guidance.mode === "pointer" || beh?.guidance.mode === "command_nlos") && s.from === "player" && s.wire) {
           this.towLookX = s.x;
           this.towLookY = s.y;
           this.towLookHold = 0.9;
         }
+        // Cluster open at impact
+        if (beh?.payload.mode === "cluster" && st && !st.bomblet && !st.opened) {
+          st.opened = true;
+          this.spawnClusterBomblets(s, beh.payload.bomblets, beh.payload.spread);
+        }
+        if (beh?.payload.mode === "smoke") {
+          this.smokeVolumes.push({
+            x: s.x,
+            y: s.y,
+            z: s.z,
+            radius: beh.payload.radius,
+            t: beh.payload.duration,
+            max: beh.payload.duration,
+            puff: 0,
+          });
+        }
+        if (beh?.payload.mode === "emp") {
+          this.applyEmpPulse(s.x, s.y, s.z, beh.payload.radius, beh.payload.duration, s.dmg);
+        }
         this.explode(
-          s.x,
-          s.y,
+          s.x + helixDx,
+          s.y + helixDy,
           s.z,
           s.blast,
           s.dmg,
@@ -4920,12 +5306,22 @@ export class MissionScene extends Phaser.Scene {
           s.vz,
           !!victim || hitPlayer,
           s.kind,
-          projectileFxScale(s.from, s.fxInterval)
+          projectileFxScale(s.from, s.fxInterval),
+          s
         );
         continue;
       }
       if (s.from === "enemy" && this.enemyShotExpired(s)) continue;
-      this.emitShotTrail(s, x0, y0, z0);
+      // Temporarily apply helix for trail emit position
+      if (helixDx || helixDy) {
+        s.x += helixDx;
+        s.y += helixDy;
+        this.emitShotTrail(s, x0 + helixDx, y0 + helixDy, z0);
+        s.x -= helixDx;
+        s.y -= helixDy;
+      } else {
+        this.emitShotTrail(s, x0, y0, z0);
+      }
       shots[w++] = s;
     }
     shots.length = w;
@@ -4938,16 +5334,252 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 
+  /** Spec-driven motor, gravity, and guidance for player shots with `beh`. */
+  updatePlayerShotFlight(
+    s: Shot,
+    beh: NonNullable<Shot["beh"]>,
+    st: ShotState,
+    dt: number,
+    ptr: { x: number; y: number }
+  ): void {
+    const lit = s.motor == null || s.motor >= 0;
+    const g = beh.guidance;
+
+    // Gravity for drops and ballistic artillery shells
+    if (beh.gravity && (beh.launch.mode === "drop" || (beh.launch.mode === "muzzle" && !!beh.gravity))) {
+      s.vz += -beh.gravity.acceleration * dt;
+      if (beh.gravity.terminalVelocity != null && s.vz < -beh.gravity.terminalVelocity) {
+        s.vz = -beh.gravity.terminalVelocity;
+      }
+    }
+
+    // Pre-ignite drag / yaw
+    if (s.motor != null && s.motor < 0) {
+      const drag = Math.pow(g.mode === "pointer" ? 0.12 : 0.07, dt);
+      s.vx *= drag;
+      s.vy *= drag;
+      s.vz *= Math.pow(0.22, dt);
+      if (s.yaw) s.angle += s.yaw * dt;
+      const spd = Math.hypot(s.vx, s.vy);
+      if (spd > 6) {
+        s.vx = Math.cos(s.angle) * spd;
+        s.vy = Math.sin(s.angle) * spd;
+      }
+      return;
+    }
+
+    // Kick motor acceleration toward cruise
+    if (beh.launch.mode === "kick_motor" && lit && s.motor != null) {
+      const launch = beh.launch;
+      const cur = Math.hypot(s.vx, s.vy, s.vz);
+      const burn = s.motor;
+      const accel = launch.acceleration + Phaser.Math.Clamp(burn, 0, launch.burnTime) * 0.35 * launch.acceleration;
+      const spd = Math.min(beh.cruiseSpeed * 1.15, cur + accel * dt);
+      s.cruise = beh.cruiseSpeed;
+      const seeking = (s.loft ?? 0) <= 0;
+
+      if (g.mode === "laser" || g.mode === "heat") {
+        if (seeking && s.targetId != null) {
+          const u = this.unitById(s.targetId);
+          const tx = u ? u.x : s.x + s.vx;
+          const ty = u ? u.y : s.y + s.vy;
+          const tz = u ? u.z + heightOf(u.kind) * 0.5 : groundZ(this.world, s.x, s.y);
+          const home = norm3(tx - s.x, ty - s.y, tz - s.z);
+          const dir0 =
+            cur < 8
+              ? { x: Math.cos(s.angle), y: Math.sin(s.angle), z: 0.55 }
+              : { x: s.vx, y: s.vy, z: s.vz };
+          const turn = (beh.steering?.turnRate ?? 7.4) * dt;
+          const d = steerDir(dir0.x, dir0.y, dir0.z, home.x, home.y, home.z, turn);
+          s.angle = Math.atan2(d.y, d.x);
+          s.vx = d.x * spd;
+          s.vy = d.y * spd;
+          s.vz = d.z * spd;
+        } else if (cur > 8) {
+          s.vx = (s.vx / cur) * spd;
+          s.vy = (s.vy / cur) * spd;
+          s.vz = (s.vz / cur) * spd;
+        } else {
+          s.vx = Math.cos(s.angle) * spd;
+          s.vy = Math.sin(s.angle) * spd;
+        }
+        return;
+      }
+
+      if (g.mode === "command_nlos") {
+        const dir0 =
+          cur < 8
+            ? { x: Math.cos(s.angle), y: Math.sin(s.angle), z: 0.2 }
+            : { x: s.vx, y: s.vy, z: s.vz };
+        if (st.terminal && s.targetId != null) {
+          const u = this.unitById(s.targetId);
+          const tx = u ? u.x : s.x + s.vx;
+          const ty = u ? u.y : s.y + s.vy;
+          const tz = u ? u.z + heightOf(u.kind) * 0.35 : groundZ(this.world, s.x, s.y);
+          const home = norm3(tx - s.x, ty - s.y, tz - s.z);
+          const turn = (beh.steering?.terminalTurnRate ?? beh.steering?.turnRate ?? 8) * dt;
+          const d = steerDir(dir0.x, dir0.y, dir0.z, home.x, home.y, home.z, turn);
+          s.angle = Math.atan2(d.y, d.x);
+          s.vx = d.x * spd;
+          s.vy = d.y * spd;
+          s.vz = d.z * spd;
+        } else {
+          const want = Math.atan2(ptr.y - s.y, ptr.x - s.x);
+          const da = Phaser.Math.Angle.Wrap(want - s.angle);
+          const rate = (beh.steering?.turnRate ?? 3.4) * 0.55;
+          s.angle += Phaser.Math.Clamp(da, -rate * dt, rate * dt);
+          s.vx = Math.cos(s.angle) * spd;
+          s.vy = Math.sin(s.angle) * spd;
+          const gndAim = groundZ(this.world, ptr.x, ptr.y);
+          s.vz = (gndAim + 40 - s.z) * 1.6;
+        }
+        return;
+      }
+
+      if (g.mode === "pointer") {
+        const want = Math.atan2(ptr.y - s.y, ptr.x - s.x);
+        const da = Phaser.Math.Angle.Wrap(want - s.angle);
+        const maxA = g.maxAngle;
+        const rate = g.steerRate;
+        const clampedWant = s.angle + Phaser.Math.Clamp(da, -maxA, maxA);
+        const d2 = Phaser.Math.Angle.Wrap(clampedWant - s.angle);
+        s.angle += Phaser.Math.Clamp(d2, -rate * dt, rate * dt);
+        const tgt = this.reticleUnit() ?? this.hoverAerial();
+        const dist = Math.hypot(ptr.x - s.x, ptr.y - s.y);
+        const hold = Phaser.Math.Clamp(dist / 360, 0, 1);
+        const gndAim = groundZ(this.world, ptr.x, ptr.y);
+        const tz = tgt
+          ? tgt.z + heightOf(tgt.kind) * 0.3
+          : Phaser.Math.Linear(gndAim, this.heli.z, hold);
+        s.vz = (tz - s.z) * 3.2;
+        s.vx = Math.cos(s.angle) * spd;
+        s.vy = Math.sin(s.angle) * spd;
+        s.life = Math.max(s.life, 0.6);
+        return;
+      }
+
+      if (g.mode === "gps" && st.gx != null && st.gy != null) {
+        const want = Math.atan2(st.gy - s.y, st.gx - s.x);
+        const da = Phaser.Math.Angle.Wrap(want - s.angle);
+        const rate = g.steerRate;
+        s.angle += Phaser.Math.Clamp(da, -rate * dt, rate * dt);
+        const horiz = Math.max(spd * 0.35, Math.hypot(s.vx, s.vy));
+        s.vx = Math.cos(s.angle) * horiz;
+        s.vy = Math.sin(s.angle) * horiz;
+        return;
+      }
+
+      if (g.mode === "auto" || st.drone) {
+        if (!s.targetId || (g.mode === "auto" && g.retarget)) {
+          const acq = g.mode === "auto" ? g.acquireRadius : 300;
+          const n = this.nearestUnit(s.x, s.y, acq);
+          if (n) s.targetId = n.id;
+        }
+        const u = s.targetId != null ? this.unitById(s.targetId) : undefined;
+        if (u) {
+          const home = norm3(u.x - s.x, u.y - s.y, u.z + heightOf(u.kind) * 0.4 - s.z);
+          const dir0 = cur < 8 ? { x: Math.cos(s.angle), y: Math.sin(s.angle), z: 0 } : { x: s.vx, y: s.vy, z: s.vz };
+          const turn = (beh.steering?.turnRate ?? 4.8) * dt;
+          const d = steerDir(dir0.x, dir0.y, dir0.z, home.x, home.y, home.z, turn);
+          s.angle = Math.atan2(d.y, d.x);
+          const fly = Math.min(spd, beh.cruiseSpeed);
+          s.vx = d.x * fly;
+          s.vy = d.y * fly;
+          s.vz = d.z * fly;
+          if (Math.hypot(u.x - s.x, u.y - s.y) < circumRadiusOf(u.kind) + 20) st.detonate = true;
+        }
+        if (st.drone) {
+          const wantZ = groundZ(this.world, s.x, s.y) + CRUISE_AGL * 0.55;
+          s.vz += (wantZ - s.z) * 1.8 * dt;
+        }
+        return;
+      }
+
+      s.vx = Math.cos(s.angle) * spd;
+      s.vy = Math.sin(s.angle) * spd;
+      return;
+    }
+
+    // Muzzle rockets with pointer (Refractor)
+    if (g.mode === "pointer" && lit) {
+      const want = Math.atan2(ptr.y - s.y, ptr.x - s.x);
+      const da = Phaser.Math.Angle.Wrap(want - s.angle);
+      const rate = g.steerRate;
+      const maxA = g.maxAngle;
+      s.angle += Phaser.Math.Clamp(Phaser.Math.Clamp(da, -maxA, maxA), -rate * dt, rate * dt);
+      const spd = Math.hypot(s.vx, s.vy) || beh.cruiseSpeed;
+      s.vx = Math.cos(s.angle) * spd;
+      s.vy = Math.sin(s.angle) * spd;
+    }
+
+    // GPS steering while falling
+    if (g.mode === "gps" && st.gx != null && st.gy != null && beh.launch.mode === "drop") {
+      const want = Math.atan2(st.gy - s.y, st.gx - s.x);
+      const da = Phaser.Math.Angle.Wrap(want - s.angle);
+      s.angle += Phaser.Math.Clamp(da, -g.steerRate * dt, g.steerRate * dt);
+      const horiz = Math.hypot(s.vx, s.vy);
+      const spd = Math.max(horiz, 40);
+      s.vx = Math.cos(s.angle) * spd;
+      s.vy = Math.sin(s.angle) * spd;
+    }
+  }
+
+  spawnClusterBomblets(parent: Shot, count: number, spread: number): void {
+    const beh = parent.beh;
+    if (!beh) return;
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2 + Math.random() * 0.4;
+      const r = spread * (0.35 + Math.random() * 0.65);
+      const bx = parent.x + Math.cos(a) * r * 0.15;
+      const by = parent.y + Math.sin(a) * r * 0.15;
+      this.spawnShot({
+        kind: "rocket",
+        from: "player",
+        wpnId: parent.wpnId,
+        slot: parent.slot,
+        beh: {
+          ...beh,
+          payload: { mode: "he" },
+          guidance: { mode: "none" },
+        },
+        st: {
+          age: 0,
+          launchAngle: a,
+          bomblet: true,
+          opened: true,
+        },
+        x: bx,
+        y: by,
+        z: parent.z + 8,
+        vx: Math.cos(a) * (80 + Math.random() * 120),
+        vy: Math.sin(a) * (80 + Math.random() * 120),
+        vz: 40 + Math.random() * 80,
+        angle: a,
+        life: 0.85 + Math.random() * 0.4,
+        blast: parent.blast * 0.28,
+        dmg: parent.dmg * 0.22,
+        look: parent.look,
+        scale: (parent.scale ?? 1) * 0.45,
+        fxInterval: 0.2,
+      });
+    }
+  }
+
   missileIgnite(s: Shot): void {
-    if (s.from === "player" && s.kind === "lock-on-missile") {
+    if (s.from === "player" && (s.kind === "lock-on-missile" || s.beh?.guidance.mode === "laser" || s.beh?.guidance.mode === "heat")) {
       const pitch = 0.92;
       const spd = Math.max(Math.hypot(s.vx, s.vy), 90);
       s.vx = Math.cos(s.angle) * spd * Math.cos(pitch);
       s.vy = Math.sin(s.angle) * spd * Math.cos(pitch);
       s.vz = spd * Math.sin(pitch);
-      s.loft = HELLFIRE_SEEK_DELAY;
+      const seekDelay =
+        s.beh?.guidance.mode === "laser"
+          ? s.beh.guidance.seekDelay
+          : s.beh?.steering?.loft ?? HELLFIRE_SEEK_DELAY;
+      s.loft = seekDelay;
     } else if (s.from === "player") {
       s.vz += 300;
+      if (s.beh?.steering?.loft != null) s.loft = s.beh.steering.loft;
     }
     const sc = shotTrailScale(s);
     const small = troopMissileTrail(s);
@@ -5016,9 +5648,8 @@ export class MissionScene extends Phaser.Scene {
     if (this.heli.phase === "dead") return;
     let wireDepth = worldDepth(this.heli.z, ZOff.shot - 0.8, this.heli.y);
     for (const s of this.shots) {
-      if (s.kind !== "guided-missile" || s.from !== "player") continue;
-      const pts = s.wire ?? [];
-      if (pts.length === 0) continue;
+      if (!s.wire?.length || s.from !== "player") continue;
+      const pts = s.wire;
       wireDepth = Math.min(
         wireDepth,
         worldDepth(s.z, ZOff.shot - 0.8, s.y),
@@ -5096,10 +5727,16 @@ export class MissionScene extends Phaser.Scene {
     dz: number,
     objectHit: boolean,
     kind: ShotKind,
-    impactFxScale: number
+    impactFxScale: number,
+    shot?: Shot
   ): void {
+    const payload = shot?.beh?.payload;
     const water = isWater(this.world, x, y);
-    const he = kind !== "cannon";
+    // Kinetic / beam stay ballistic; everything else uses HE blast treatment.
+    const he =
+      payload != null
+        ? payload.mode !== "kinetic" && payload.mode !== "beam"
+        : kind !== "cannon";
     const fx = hitSimParticleFx(dmg);
     const travel = Math.hypot(dx, dy, dz) || 1;
     const simParticleBx = dx;
@@ -7640,8 +8277,15 @@ export class MissionScene extends Phaser.Scene {
 
   updateUnits(dt: number): void {
     const h = this.heli;
+    const aimMul = craftOf().enemyAimMul ?? 1;
     for (const u of this.units) {
       if (u.dead) continue;
+      if ((u.empT ?? 0) > 0) {
+        u.empT = (u.empT ?? 0) - dt;
+        u.fireCd -= dt;
+        u.muzzleT = Math.max(0, u.muzzleT - dt);
+        continue;
+      }
       u.fireCd -= dt;
       const dx = h.x - u.x;
       const dy = h.y - u.y;
@@ -7704,7 +8348,7 @@ export class MissionScene extends Phaser.Scene {
           const fleeing = !downed && u.aiMood === "flee";
           const kiting = canShoot && !downed && u.aiMood === "kite" && dist < seeR && dist > 36;
           if (downed) {
-            u.turret = Phaser.Math.Angle.RotateTo(u.turret, Math.atan2(dy, dx), 1.8 * dt);
+            u.turret = Phaser.Math.Angle.RotateTo(u.turret, Math.atan2(dy, dx), 1.8 * aimMul * dt);
             u.aiState = (u.burstLeft ?? 0) > 0 ? "BURST" : "DOWN";
             u.aiTx = h.x;
             u.aiTy = h.y;
@@ -7782,7 +8426,7 @@ export class MissionScene extends Phaser.Scene {
           const gp = this.gunMountPos(u, gi);
           const want = Math.atan2(h.y - gp.y, h.x - gp.x);
           const cur = u.turrets[gi] ?? 0;
-          u.turrets[gi] = Phaser.Math.Angle.RotateTo(cur, want, 1.65 * dt);
+          u.turrets[gi] = Phaser.Math.Angle.RotateTo(cur, want, 1.65 * aimMul * dt);
         }
         u.turret = u.turrets[0] ?? u.turret;
       }
@@ -7802,10 +8446,10 @@ export class MissionScene extends Phaser.Scene {
           !hullFlee && (inRange || (u.burstLeft ?? 0) > 0 || (sp.organic && u.health <= 1 && u.health < u.max))
             ? aim
             : u.angle;
-        u.turret = Phaser.Math.Angle.RotateTo(u.turret, aimTo, 2.4 * dt);
+        u.turret = Phaser.Math.Angle.RotateTo(u.turret, aimTo, 2.4 * aimMul * dt);
       } else if (sp.fixedAim && !guns.length && wpn && inRange && !hullFlee && !strafeHeli) {
         const turn = sp.move === "heli" ? 1.7 : 2.2;
-        u.angle = Phaser.Math.Angle.RotateTo(u.angle, aim, turn * dt);
+        u.angle = Phaser.Math.Angle.RotateTo(u.angle, aim, turn * aimMul * dt);
       }
       if (sp.building || sp.move === "static") {
         u.aiState = inRange ? "ENGAGE" : u.aiState ?? "IDLE";
@@ -7824,7 +8468,8 @@ export class MissionScene extends Phaser.Scene {
       const gunAim = Math.atan2(h.y - aimFrom.y, h.x - aimFrom.x);
       const barrelAng = softTurret ? u.turret : !guns.length ? u.angle : (u.turrets[gunI] ?? u.turret);
       const facingOk = Math.abs(Phaser.Math.Angle.Wrap(gunAim - barrelAng)) < 0.16;
-      if (wpn && u.fireCd <= 0 && !soldierFlee && !scoutFlee && facingOk && (inRange || continueBurst)) {
+      const losBlocked = smokeBlocksLos(this.smokeVolumes, u.x, u.y, h.x, h.y);
+      if (wpn && u.fireCd <= 0 && !soldierFlee && !scoutFlee && facingOk && !losBlocked && (inRange || continueBurst)) {
         const burstN = wpn.burst ?? 0;
         const fxInterval = burstN > 0 ? (wpn.burstGap ?? 0.075) : wpn.fireCd;
         if (burstN) {
@@ -8339,9 +8984,17 @@ export class MissionScene extends Phaser.Scene {
       const sh = kids[i * 2]!;
       const im = kids[i * 2 + 1]!;
       if (!cameraPointVisible(s.z, s.y)) return;
-      const key = shotLookOf(s);
+      const key = shotLookOf(s, this.textures);
       const rot = s.angle;
-      const at = worldToScreen(s.x, s.y, s.z);
+      let wx = s.x;
+      let wy = s.y;
+      const st = s.st;
+      if (st?.helixSide != null && st.helixOff) {
+        const off = Math.sin(st.age * 18) * st.helixOff * st.helixSide;
+        wx += -Math.sin(s.angle) * off;
+        wy += Math.cos(s.angle) * off;
+      }
+      const at = worldToScreen(wx, wy, s.z);
       const drawX = at.x;
       const drawY = at.y;
       if (!this.projectedInView(drawX, drawY, 120)) return;
@@ -8358,7 +9011,7 @@ export class MissionScene extends Phaser.Scene {
       const along = 1 - pitchN * 0.52;
       const across = 1 + pitchN * 0.06;
       sh.setVisible(true).setOrigin(ox, 0.5);
-      this.applyCastShadow(sh, s.x, s.y, s.z, key, rot, sc);
+      this.applyCastShadow(sh, wx, wy, s.z, key, rot, sc);
       const shotDepth = worldDepth(s.z, 0, s.y);
       im.setVisible(true);
       if (im.texture.key !== key) im.setTexture(key);
@@ -8541,9 +9194,16 @@ export class MissionScene extends Phaser.Scene {
     if (h.hellfireLock && !this.unitById(h.hellfireLock.id)) h.hellfireLock = null;
     if (h.hellfireSeek && !this.unitById(h.hellfireSeek.id)) h.hellfireSeek = null;
 
-    if (this.loadout[h.weapon]!.kind !== "lock-on-missile") return;
+    const spec = this.loadout[h.weapon]!;
+    const g = spec.guidance;
+    if (!guidanceUsesLock(g)) return;
 
-    const tgt = this.hellfirePickTarget(ptr.x, ptr.y, 160);
+    const lockTime = g.lockTime;
+    const lockRadius = g.lockRadius;
+    const tgt =
+      g.mode === "heat"
+        ? this.heatPickTarget(ptr.x, ptr.y, lockRadius, g)
+        : this.hellfirePickTarget(ptr.x, ptr.y, lockRadius);
     if (!tgt || (h.hellfireLock && tgt.id === h.hellfireLock.id)) {
       h.hellfireSeek = null;
       return;
@@ -8552,11 +9212,36 @@ export class MissionScene extends Phaser.Scene {
       h.hellfireSeek = { id: tgt.id, t: 0 };
     } else {
       h.hellfireSeek.t += dt;
-      if (h.hellfireSeek.t >= HELLFIRE_LOCK_T) {
+      if (h.hellfireSeek.t >= lockTime) {
         h.hellfireLock = { id: h.hellfireSeek.id };
         h.hellfireSeek = null;
       }
     }
+  }
+
+  heatPickTarget(
+    x: number,
+    y: number,
+    max: number,
+    g: Extract<PlayerWpnSpec["guidance"], { mode: "heat" }>
+  ): Unit | undefined {
+    const h = this.heli;
+    let best: Unit | undefined;
+    let bestScore = -Infinity;
+    for (const u of this.units) {
+      if (u.dead || u.health < g.minHealth) continue;
+      if (!heatCategoryOk(u, g.categories)) continue;
+      const d = Math.hypot(u.x - x, u.y - y);
+      if (d > max) continue;
+      const aim = Math.atan2(u.y - h.y, u.x - h.x);
+      if (Math.abs(Phaser.Math.Angle.Wrap(aim - h.angle)) > g.maxOffBoresight) continue;
+      const score = heatSeekScore(u, aim, h.angle) - d * 0.01;
+      if (score > bestScore) {
+        bestScore = score;
+        best = u;
+      }
+    }
+    return best;
   }
 
   lockBoxHalf(u: Unit, scale: number): number {
@@ -8618,7 +9303,13 @@ export class MissionScene extends Phaser.Scene {
     const seen = new Set<number>();
     const out: Unit[] = [];
     for (const s of this.shots) {
-      if (s.kind !== "lock-on-missile" || s.from !== "player" || s.targetId == null) continue;
+      if (s.from !== "player" || s.targetId == null) continue;
+      const guided =
+        s.kind === "lock-on-missile" ||
+        s.beh?.guidance.mode === "laser" ||
+        s.beh?.guidance.mode === "heat" ||
+        s.beh?.guidance.mode === "command_nlos";
+      if (!guided) continue;
       if (seen.has(s.targetId)) continue;
       const u = this.unitById(s.targetId);
       if (!u) continue;
@@ -8639,10 +9330,12 @@ export class MissionScene extends Phaser.Scene {
     this.lockTxt.setVisible(false);
     this.lockInbdTxt.setVisible(false);
 
-    const hellfire = this.loadout[h.weapon]!.kind === "lock-on-missile";
+    const wpnGuidance = this.loadout[h.weapon]!.guidance;
+    const lockGuided = guidanceUsesLock(wpnGuidance);
+    const lockTime = lockGuided ? wpnGuidance.lockTime : HELLFIRE_LOCK_T;
     const inbound = this.inboundHellfireTargets();
-    const locked = hellfire && h.hellfireLock ? this.unitById(h.hellfireLock.id) : undefined;
-    const seeking = hellfire && h.hellfireSeek ? this.unitById(h.hellfireSeek.id) : undefined;
+    const locked = lockGuided && h.hellfireLock ? this.unitById(h.hellfireLock.id) : undefined;
+    const seeking = lockGuided && h.hellfireSeek ? this.unitById(h.hellfireSeek.id) : undefined;
     if (!locked && !seeking && inbound.length === 0) {
       g.setVisible(false);
       return;
@@ -8675,7 +9368,7 @@ export class MissionScene extends Phaser.Scene {
     if (seeking) {
       const vis = this.unitOnHud(seeking);
       if (vis.on) {
-        const t = Math.min(1, h.hellfireSeek!.t / HELLFIRE_LOCK_T);
+        const t = Math.min(1, h.hellfireSeek!.t / lockTime);
         const scale = 2 - t;
         const box = this.drawLockBox(seeking, scale, 1.6, 0.72 + t * 0.22);
         lockDepth = Math.max(lockDepth, box.depth);
@@ -9642,9 +10335,11 @@ export class MissionScene extends Phaser.Scene {
     if (!this.helpBody || !this.helpCounter) return;
     const craft = craftOf();
     if (this.helpCraftBody.texture.key !== craft.body) this.helpCraftBody.setTexture(craft.body);
-    const previewScale = Math.min(
-      170 / Math.max(1, this.helpCraftBody.width),
-      165 / Math.max(1, this.helpCraftBody.height)
+    const previewScale = craftPreviewFitScale(
+      this.helpCraftBody.width,
+      this.helpCraftBody.height,
+      170,
+      165
     );
     this.helpCraftBody.setScale(previewScale);
     this.helpCraftRotors.forEach((rotor, rotorI) => {
@@ -9657,8 +10352,8 @@ export class MissionScene extends Phaser.Scene {
     this.helpCraftExhaustGlows.forEach((glow, exhaustI) => {
       const mount = this.helpCraftExhaustMounts[exhaustI]!;
       const at = spriteUvPos(this.helpCraftBody, mount.x, mount.y);
-      const scale = this.helpCraftBody.scaleX * 0.55;
-      glow.setPosition(at.x, at.y).setScale(scale * 0.75, scale);
+      const glowSc = craftPreviewExhaustScale(this.helpCraftBody.scaleX);
+      glow.setPosition(at.x, at.y).setScale(glowSc.x, glowSc.y);
     });
     this.helpCraftName.setText(craft.fullName.toUpperCase());
     const stats = [
@@ -10593,6 +11288,11 @@ export class MissionScene extends Phaser.Scene {
   setupHudCam(): void {
     const w = this.scale.width;
     const h = this.scale.height;
+    // Field tracking overlays share main's view transform but skip thermal/post-FX.
+    this.fieldHudCam = this.cameras.add(0, 0, w, h);
+    this.fieldHudCam.setName("fieldHud");
+    this.fieldHudCam.transparent = true;
+    this.syncFieldHudCam();
     this.hudCam = this.cameras.add(0, 0, w, h);
     this.hudCam.setName("hud");
     this.hudCam.transparent = true;
@@ -10632,6 +11332,10 @@ export class MissionScene extends Phaser.Scene {
     this.bindHud(this.reticleMark);
     this.bindHud(this.sight);
     this.bindHud(this.mapLabel);
+    // World-anchored tracking HUD: lock boxes, unit HP — not thermalized.
+    for (const go of [this.lockSpr, this.lockGfx, this.lockTxt, this.lockInbdTxt, this.hpGfx]) {
+      this.bindFieldHud(go);
+    }
     const markHudTree = (obj: Phaser.GameObjects.GameObject) => {
       this.bindHud(obj);
       const list = (obj as Phaser.GameObjects.Container).list;
@@ -10655,6 +11359,17 @@ export class MissionScene extends Phaser.Scene {
         (obj as Phaser.GameObjects.GameObject & { setVisible(value: boolean): unknown }).setVisible(false);
       }
     });
+  }
+
+  /** Keep field HUD camera aligned with the thermalized main view. */
+  syncFieldHudCam(): void {
+    if (!this.fieldHudCam) return;
+    const main = this.cameras.main;
+    this.fieldHudCam.setScroll(main.scrollX, main.scrollY);
+    this.fieldHudCam.setZoom(main.zoom);
+    if (this.fieldHudCam.width !== main.width || this.fieldHudCam.height !== main.height) {
+      this.fieldHudCam.setSize(main.width, main.height);
+    }
   }
 
   theaterWorldKeep(obj: Phaser.GameObjects.GameObject): boolean {
@@ -10689,11 +11404,21 @@ export class MissionScene extends Phaser.Scene {
     this.mapWorldVisibility.clear();
   }
 
+  /** Screen-fixed chrome HUD (minimap, bars, reticle) — hudCam only. */
   bindHud(go: Phaser.GameObjects.GameObject): void {
     this.hudSet.add(go);
     (go as Phaser.GameObjects.GameObject & { setScrollFactor(x: number, y?: number): unknown })
       .setScrollFactor(0);
-    go.cameraFilter = this.cameras.main.id;
+    go.cameraFilter = this.cameras.main.id | this.fieldHudCam.id;
+  }
+
+  /**
+   * World-projected field tracking HUD (locks, HP bars).
+   * Drawn by fieldHudCam (same scroll/zoom as main, no thermal pipeline).
+   */
+  bindFieldHud(go: Phaser.GameObjects.GameObject): void {
+    this.hudSet.add(go);
+    go.cameraFilter = this.cameras.main.id | this.hudCam.id;
   }
 
   adoptHud(go: Phaser.GameObjects.GameObject & { x: number; y: number }): void {
@@ -10705,7 +11430,7 @@ export class MissionScene extends Phaser.Scene {
 
   bindWorld(go: Phaser.GameObjects.GameObject): void {
     if (this.hudSet.has(go)) return;
-    go.cameraFilter |= this.hudCam.id;
+    go.cameraFilter |= this.hudCam.id | this.fieldHudCam.id;
   }
 
   hudLocal(x: number, y: number): { x: number; y: number } {
@@ -10772,6 +11497,7 @@ export class MissionScene extends Phaser.Scene {
     this.ptrFrame = -1;
     this.ptrWorldReady = false;
     if (this.mapBlend < 0.001) this.cameras.main.centerOn(focusX, focusY);
+    this.syncFieldHudCam();
   }
 
   theaterZoom(): number {
@@ -10871,6 +11597,7 @@ export class MissionScene extends Phaser.Scene {
       cam.setBounds(0, 0, WORLD, WORLD);
       cam.useBounds = true;
     }
+    this.syncFieldHudCam();
   }
 
   syncLookCam(dt: number): void {

@@ -344,7 +344,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 475, strafeThrust: 310, maxSpeed: 305, minSpeed: 0, yawRate: 2.45, yawAccel: 10.5, drag: 1.65,
     verticalThrust: 340, cruiseThrust: 36, cruiseAgl: 46, maxAgl: 118,
     gunMode: "turret",
-    loadout: ["concealed_cannon", "smoke_bomb", "stinger_missile", "tv_missile"],
+    loadout: ["concealed_cannon", "hellfire_missile", "smoke_bomb", "stinger_missile"],
     enemyAimMul: 0.55,
     enemySeekerMul: 0.42,
   },
@@ -612,6 +612,34 @@ export function craftCompositePartScale(
   return part.drawSpan == null
     ? bodyScale
     : (part.drawSpan / Math.max(1, textureWidth)) * bodyScale;
+}
+
+/**
+ * Fit a craft body texture into a UI box without upscaling past native pixels.
+ * Shared by selection / help / other UI previews — not the roster zoom path.
+ */
+export function craftPreviewFitScale(
+  bodyW: number,
+  bodyH: number,
+  boxW: number,
+  boxH: number,
+  maxScale = 1
+): number {
+  return Math.min(maxScale, boxW / Math.max(1, bodyW), boxH / Math.max(1, bodyH));
+}
+
+/** Exhaust glow display scale paired with a preview body scale. */
+export function craftPreviewExhaustScale(bodyScale: number): { x: number; y: number } {
+  const s = bodyScale * 0.55;
+  return { x: s * 0.75, y: s };
+}
+
+/** Per-craft exhaust glow tint for UI previews. */
+export function craftPreviewExhaustTint(kind: CraftKind | string): number {
+  if (kind === "prometheus") return 0xc86cff;
+  if (kind === "warthog") return 0xff8a2c;
+  if (kind === "lightning_ii") return 0xbfeaff;
+  return 0x70d8ff;
 }
 
 /** Craft whose body/gun/hulk/rotor texture matches `key` (bare, no camo suffix). */

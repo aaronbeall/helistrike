@@ -263,9 +263,10 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   swarm_missile: {
     id: "swarm_missile", name: "STARSTREAK", fullName: "STARSTREAK MICRO-MISSILE SWARM", ammo: 18, fireCd: 0.48, speed: 720,
     dmg: 118, blast: 76, life: 4.5, kind: "lock-on-missile", look: stagedLook("swarm_missile"), scale: 0.58,
-    guidance: laser(0.3, 220), launch: motor(135, 880, 1.4), payload: { mode: "kinetic", penetration: 0.9 },
-    control: { mode: "lock_then_click" }, steering: { turnRate: 11.2, maxG: 25 },
-    salvo: { count: 3, interval: 0.065, spread: 0.06 }, notes: ["three-dart laser-guided salvo"],
+    guidance: { mode: "command_nlos", lockTime: 0.3, lockRadius: 220, wire: false, terminalOnSecondClick: true },
+    launch: motor(135, 880, 1.4), payload: { mode: "kinetic", penetration: 0.9 },
+    control: { mode: "first_second_click" }, steering: { turnRate: 11.2, terminalTurnRate: 14, maxG: 25 },
+    salvo: { count: 3, interval: 0.065, spread: 0.06 }, notes: ["three-dart NLOS command salvo; second click terminals"],
   },
   attack_drone: {
     id: "attack_drone", name: "SPECTER", fullName: "SPECTER REMOTE ATTACK DRONE", ammo: 3, fireCd: 3, speed: 260,
@@ -549,6 +550,21 @@ export function shotBehaviorOf(spec: PlayerWpnSpec): ShotBehavior {
     dmg: spec.dmg,
     blast: spec.blast,
   };
+}
+
+/** Legacy projectile texture when staged `shot_wpn_*` art is missing. */
+export function legacyShotLook(kind: ShotKind): ShotLook {
+  if (kind === "rocket") return "shot_rocket";
+  if (kind === "lock-on-missile") return "shot_hellfire";
+  if (kind === "guided-missile") return "shot_tow";
+  return "shot_chain";
+}
+
+/** True when guidance mode drives the lock HUD / seeker. */
+export function guidanceUsesLock(
+  g: WeaponGuidance
+): g is Extract<WeaponGuidance, { mode: "laser" | "heat" | "command_nlos" }> {
+  return g.mode === "laser" || g.mode === "heat" || g.mode === "command_nlos";
 }
 
 export interface Shot {
