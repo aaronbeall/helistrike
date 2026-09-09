@@ -71,8 +71,6 @@ export interface CraftSpec {
   /** Body texture key. */
   body: string;
   hulk: string;
-  /** @deprecated Prefer PlayerWpnSpec.mount via sockets; kept only as rare fallback. */
-  gun?: string;
   /** False for craft whose weapons are baked into the body and use authored muzzles. */
   gunVisible?: boolean;
   /**
@@ -565,17 +563,12 @@ export function rotorDrawSpan(tex: string, partScale = 1): number {
   return 108 * partScale;
 }
 
-/** Authored rotor centers and optional per-mount scales; one center fallback for legacy craft. */
+/** Authored rotor centers and optional per-mount scales; body center if none authored. */
 export function craftRotorMounts(c: CraftSpec = craftOf()): { x: number; y: number; scale?: number }[] {
   const mounts = lookupSpritePoints(c.body)
     .filter((point) => point.role === "rotor")
     .map((point) => ({ x: point.x, y: point.y, ...(point.scale != null ? { scale: point.scale } : {}) }));
   return mounts.length ? mounts : [{ x: 0.5, y: 0.5 }];
-}
-
-/** Texture key for a cannon weapon's turret gun body, or undefined when no mount art. */
-export function gunMountTexture(wpnId: string): string | undefined {
-  return weaponMountTex(wpnId);
 }
 
 /**
@@ -585,9 +578,9 @@ export function gunMountTexture(wpnId: string): string | undefined {
 export function craftGunTexture(c: CraftSpec = craftOf()): string | undefined {
   if (c.gunVisible === false) return undefined;
   const sock = c.sockets.find(
-    (s) => (s.class === "turret" || s.class === "cabin") && !!gunMountTexture(s.weapon)
+    (s) => (s.class === "turret" || s.class === "cabin") && !!weaponMountTex(s.weapon)
   );
-  return sock ? gunMountTexture(sock.weapon) : c.gun;
+  return sock ? weaponMountTex(sock.weapon) : undefined;
 }
 
 /** Authoritative visual parts and mounts for composing a craft in any view. */
@@ -598,7 +591,7 @@ export function craftComposite(c: CraftSpec = craftOf()): CraftComposite {
     c.gunVisible === false
       ? []
       : c.sockets.filter(
-          (s) => (s.class === "turret" || s.class === "cabin") && !!gunMountTexture(s.weapon)
+          (s) => (s.class === "turret" || s.class === "cabin") && !!weaponMountTex(s.weapon)
         );
   return {
     body: { tex: c.body, origin: craftOrigin(c) },
@@ -606,7 +599,7 @@ export function craftComposite(c: CraftSpec = craftOf()): CraftComposite {
       c.gunVisible === false
         ? []
         : gunSockets.map((sock, i) => {
-            const tex = gunMountTexture(sock.weapon)!;
+            const tex = weaponMountTex(sock.weapon)!;
             return {
               kind: "gun" as const,
               tex,
@@ -671,19 +664,6 @@ export function craftPreviewExhaustTint(kind: CraftKind | string): number {
   return 0x70d8ff;
 }
 
-/** Craft whose body/gun/hulk/rotor texture matches `key` (bare, no camo suffix). */
-export function craftByTexture(key: string): CraftSpec | undefined {
-  const k = key.replace(/__(woodland|desert|urban|snow|digital)$/, "");
-  return allCrafts().find(
-    (c) =>
-      c.body === k ||
-      c.hulk === k ||
-      c.gun === k ||
-      c.rotor === k ||
-      c.rotorHulk === k
-  );
-}
-
 /** Body origin from SPRITE_SPECS. */
 export function craftOrigin(c: CraftSpec = craftOf()): { x: number; y: number } {
   return lookupSpriteOrigin(c.body) ?? DEFAULT_ORIGIN;
@@ -718,7 +698,7 @@ export function socketPointRole(socket: CraftSocket): SocketPointRole {
   return "hardpoint";
 }
 
-/** Emit / attach UVs for a socket (with sensible fallbacks). */
+/** Emit / attach UVs for a socket (role primary, then related hull roles). */
 export function craftSocketPoints(
   c: CraftSpec,
   socket: CraftSocket
@@ -742,11 +722,6 @@ export function craftHardpointMounts(c: CraftSpec = craftOf()): { x: number; y: 
   return mountsOf(c.body, "hardpoint");
 }
 
-/** @deprecated Use craftHardpointMounts. */
-export function craftSecondaryMounts(c: CraftSpec = craftOf()): { x: number; y: number }[] {
-  return craftHardpointMounts(c);
-}
-
 /** True when the craft aims a chin/cabin gun independently of the hull. */
 export function craftAimsWithTurret(c: CraftSpec = craftOf()): boolean {
   return c.sockets.some((s) => s.class === "turret" || s.class === "cabin");
@@ -767,7 +742,6 @@ export function craftPivot(key: string): { x: number; y: number } | undefined {
   const k = key.replace(/__(woodland|desert|urban|snow|digital)$/, "");
   for (const c of allCrafts()) {
     if (c.body === k || c.hulk === k) return craftOrigin(c);
-    if (c.gun === k) return craftGunOrigin(c);
   }
   return undefined;
 }

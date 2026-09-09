@@ -13,10 +13,6 @@ export const SHOT_TAIL = { x: 0.06, y: 0.5 } as const;
 /** Player loadout identity (slot / catalog key). */
 export type WpnId = string;
 
-/** Closed legacy look type; staged keys cross one typed boundary until roster art lands. */
-export type PlayerShotLook = ShotLook;
-
-/** Shared ordnance projectile keys under public/sprites/shots/. */
 /** Shared ordnance projectile keys under public/sprites/shots/. */
 const ORD = {
   rocket: "shot_rocket",
@@ -106,7 +102,7 @@ export interface WeaponSensorView {
   palette: "white_hot" | "black_hot" | "full_spectrum";
 }
 
-/** Player loadout — shared by fire logic and the combat config browser. */
+/** Player loadout — shared by fire logic and the combat rig. */
 export interface PlayerWpnSpec {
   /** Loadout identity (slot / catalog). May diverge from `kind` (e.g. upgraded cannon). */
   id: WpnId;
@@ -124,7 +120,7 @@ export interface PlayerWpnSpec {
   /** Flight / seek behavior (`ShotKind`). */
   kind: ShotKind;
   /** Projectile texture key. */
-  look: PlayerShotLook;
+  look: ShotLook;
   /**
    * Visible turret/cabin gun-body texture (barrel-up overlay under the craft).
    * Omit for ordnance / weapons with no mount graphic.
@@ -152,7 +148,7 @@ export interface PlayerWpnSpec {
   notes: string[];
 }
 
-/** Shared missile timing retained for the phase-1 legacy runtime. */
+/** Shared soft-launch motor ignite delay (kick_motor weapons). */
 export const MISSILE_IGNITE = 0.525;
 export const HELLFIRE_LOCK_T = 0.5;
 export const HELLFIRE_SEEK_DELAY = 0.42;
@@ -271,12 +267,12 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   },
   heavy_bomb: {
     id: "heavy_bomb", name: "MOAB", fullName: "GBU-43/B MASSIVE ORDNANCE AIR BLAST", ammo: 2, fireCd: 2.4, speed: 165,
-    dmg: 520, blast: 410, life: 7.5, kind: "guided-missile", look: ordLook("bomb"), scale: 1.75,
+    dmg: 520, blast: 410, life: 7.5, kind: "guided-missile", look: ordLook("bomb"), scale: 1.75, trailScale: 0.52,
     guidance: NONE, launch: DROP, payload: HE, control: CLICK, gravity: GRAVITY, fits: FIT_BAY, notes: ["gravity bomb inherits aircraft momentum"],
   },
   cluster_bomb: {
     id: "cluster_bomb", name: "ROCKEYE", fullName: "CBU-100 ROCKEYE II CLUSTER BOMB", ammo: 5, fireCd: 1.35, speed: 185,
-    dmg: 225, blast: 255, life: 6.8, kind: "guided-missile", look: ordLook("bomb"), scale: 1.2,
+    dmg: 225, blast: 255, life: 6.8, kind: "guided-missile", look: ordLook("bomb"), scale: 1.2, trailScale: 0.52,
     guidance: NONE, launch: DROP, payload: { mode: "cluster", bomblets: 18, spread: 145 }, control: CLICK,
     gravity: GRAVITY, fits: FIT_BAY, notes: ["momentum-inheriting cluster gravity bomb"],
   },
@@ -338,7 +334,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   },
   emp: {
     id: "emp", name: "EMP", fullName: "TACTICAL EMP PULSE EMITTER", ammo: 6, fireCd: 1.8, speed: 1,
-    dmg: 18, blast: 230, life: 0.2, kind: "rocket", look: ordLook("rocket"), scale: 1.4,
+    dmg: 18, blast: 230, life: 0.2, kind: "rocket", look: ordLook("rocket"), scale: 1.4, trailScale: 0.32,
     guidance: NONE, launch: { mode: "beam", range: 235, duration: 0.25 },
     payload: { mode: "emp", duration: 8, radius: 230, disables: true }, control: CLICK,
     fits: FIT_GUN, notes: ["radial pulse disables affected systems"],
@@ -363,7 +359,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   },
   warp_bomb: {
     id: "warp_bomb", name: "WARP BOMB", fullName: "WB-1 GUIDED WARP BOMB", ammo: 4, fireCd: 1.4, speed: 330,
-    dmg: 340, blast: 290, life: 6.2, kind: "guided-missile", look: ordLook("bomb"), scale: 1.3,
+    dmg: 340, blast: 290, life: 6.2, kind: "guided-missile", look: ordLook("bomb"), scale: 1.3, trailScale: 0.52,
     guidance: { mode: "gps", steerRate: 2.6, pointOnClick: true }, launch: DROP, payload: { mode: "warp", timeScale: 0.12 },
     control: { mode: "designate_then_release" }, steering: { turnRate: 2.6 }, gravity: GRAVITY,
     sensorView: { mode: "thermal", source: "remote", palette: "full_spectrum" },
@@ -383,7 +379,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   },
   gps_bomb: {
     id: "gps_bomb", name: "JDAM", fullName: "GBU-31 JDAM", ammo: 8, fireCd: 0.95, speed: 205,
-    dmg: 245, blast: 215, life: 7, kind: "guided-missile", look: ordLook("bomb"), scale: 1.1,
+    dmg: 245, blast: 215, life: 7, kind: "guided-missile", look: ordLook("bomb"), scale: 1.1, trailScale: 0.52,
     guidance: { mode: "gps", steerRate: 1.85, pointOnClick: true }, launch: DROP, payload: HE,
     control: { mode: "designate_then_release" }, steering: { turnRate: 1.85 }, gravity: GRAVITY,
     fits: FIT_BAY, notes: ["clicked GPS point; steers while falling"],
@@ -427,7 +423,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   },
   bomb: {
     id: "bomb", name: "IRON BOMB", fullName: "MARK 82 GENERAL-PURPOSE BOMB", ammo: 10, fireCd: 0.72, speed: 220,
-    dmg: 210, blast: 195, life: 6.5, kind: "guided-missile", look: ordLook("bomb"), scale: 1,
+    dmg: 210, blast: 195, life: 6.5, kind: "guided-missile", look: ordLook("bomb"), scale: 1, trailScale: 0.52,
     guidance: NONE, launch: DROP, payload: HE, control: CLICK, gravity: GRAVITY,
     fits: FIT_BAY, notes: ["unguided gravity bomb inherits momentum"],
   },
@@ -450,14 +446,18 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   },
   mini_bomb: {
     id: "mini_bomb", name: "KINETIC SLUGS", fullName: "KINETIC DROP SLUGS", ammo: 24, fireCd: 0.5, speed: 180,
-    dmg: 95, blast: 42, life: 5.5, kind: "guided-missile", look: ordLook("miniRocket"), scale: 0.58,
+    dmg: 95, blast: 42, life: 5.5, kind: "guided-missile", look: ordLook("miniRocket"), scale: 0.58, trailScale: 0.52,
     guidance: NONE, launch: DROP, payload: { mode: "kinetic", penetration: 1.2 }, control: CLICK,
     gravity: GRAVITY, salvo: { count: 2, interval: 0.035, spread: 0.08 }, fits: FIT_BAY, notes: ["paired momentum-inheriting kinetic drop slugs"],
   },
 };
 
 export function playerLoadout(ids: readonly WpnId[]): PlayerWpnSpec[] {
-  return ids.map((id) => PLAYER_WPNS[id] ?? PLAYER_WPNS.chain_gun!);
+  return ids.map((id) => {
+    const w = PLAYER_WPNS[id];
+    if (!w) throw new Error(`unknown weapon id: ${id}`);
+    return w;
+  });
 }
 
 /** Resolve craft sockets into an ordered weapon loadout. */
@@ -664,7 +664,7 @@ export interface Shot {
   cruise?: number;
   loft?: number;
   yaw?: number;
-  look?: PlayerShotLook;
+  look?: ShotLook;
   /** Draw scale from weapon preset (× secondary mul when applicable). */
   scale?: number;
   /** Effective seconds per projectile, used only to scale muzzle and impact-spark density. */
