@@ -8,7 +8,6 @@ const SRC = {
   tankParts: "sprites/units/tank-parts.png",
   bunker: "sprites/units/bunker.png",
   bunkerHulk: "sprites/units/bunker-hulk.png",
-  rock: "sprites/units/rock.png",
   debrisMech: "sprites/debris/mech.png",
   debrisStruct: "sprites/debris/struct.png",
   debrisOrganic: "sprites/debris/organic.png",
@@ -159,6 +158,7 @@ export const DOODAD_ART: { key: string; size: number }[] = [
   { key: "bush", size: 30 },
   { key: "shrub", size: 28 },
   { key: "boulder", size: 40 },
+  { key: "rock", size: 36 },
   { key: "reed", size: 30 },
   { key: "dead", size: 38 },
   { key: "snowrock", size: 34 },
@@ -189,7 +189,6 @@ export function preloadArt(scene: Phaser.Scene): void {
   scene.load.image("src_tank_parts", SRC.tankParts);
   scene.load.image("src_bunker", SRC.bunker);
   scene.load.image("src_bunker_hulk", SRC.bunkerHulk);
-  scene.load.image("src_rock", SRC.rock);
   scene.load.image("src_debris_mech", SRC.debrisMech);
   scene.load.image("src_debris_struct", SRC.debrisStruct);
   scene.load.image("src_debris_organic", SRC.debrisOrganic);
@@ -598,8 +597,6 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
       put(textures, art.key, fit(keyed, art.fit));
     }
   }
-
-  put(textures, "doodad_rock", fit(keyImage(src(textures, "src_rock"), "magenta"), 36));
 
   const parts = sliceGrid(keyImage(src(textures, "src_tank_parts"), "magenta"), 2, 1);
   const hull = fit(parts[0]!, 72);
