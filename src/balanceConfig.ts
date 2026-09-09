@@ -357,7 +357,7 @@ export class BalanceConfigTool {
     const slice = items.slice(winStart, winStart + size);
     this.listTxt.setText(
       [
-        `— ${this.cat.toUpperCase()}  ${this.idx + 1}/${items.length} —`,
+        `— ${this.cat.toUpperCase()} · ${this.filterLabel()}  ${this.idx + 1}/${items.length} —`,
         ...slice.map((p, i) => {
           const mark = winStart + i === this.idx ? "▸" : " ";
           return `${mark} ${p.label.padEnd(20)} ${p.group}`;
@@ -418,15 +418,13 @@ export class BalanceConfigTool {
     const xMax = Math.max(...xs);
     const yMin = Math.min(...ys);
     const yMax = Math.max(...ys);
-    const xPad = (xMax - xMin) * 0.08 || Math.max(1, Math.abs(xMax) * 0.1) || 1;
-    const yPad = (yMax - yMin) * 0.08 || Math.max(1, Math.abs(yMax) * 0.1) || 1;
-    const x0 = xMin - xPad;
-    const x1 = xMax + xPad;
-    const y0 = yMin - yPad;
-    const y1 = yMax + yPad;
+    const xDomain = axisDomain(xMin, xMax, this.logScale);
+    const yDomain = axisDomain(yMin, yMax, this.logScale);
 
-    const toX = (v: number) => plotL + CHART_PAD + ((v - x0) / (x1 - x0)) * (plotW - CHART_PAD * 2);
-    const toY = (v: number) => plotB - CHART_PAD - ((v - y0) / (y1 - y0)) * (plotH - CHART_PAD * 2);
+    const toX = (v: number) =>
+      plotL + CHART_PAD + axisNorm(v, xDomain, this.logScale) * (plotW - CHART_PAD * 2);
+    const toY = (v: number) =>
+      plotB - CHART_PAD - axisNorm(v, yDomain, this.logScale) * (plotH - CHART_PAD * 2);
 
     this.chart.clear();
     // Grid
@@ -440,7 +438,6 @@ export class BalanceConfigTool {
     this.chart.lineStyle(1.5, 0x5a5040, 1);
     this.chart.strokeRect(plotL + CHART_PAD, plotT + CHART_PAD, plotW - CHART_PAD * 2, plotH - CHART_PAD * 2);
 
-    // Axis titles via hint-adjacent board text in stats; draw ticks as dots.
     for (const p of items) {
       const xv = p.values[xDef.id] ?? 0;
       const yv = p.values[yDef.id] ?? 0;
@@ -467,12 +464,14 @@ export class BalanceConfigTool {
         .setVisible(true)
         .setOrigin(0, 0);
     };
-    place(`${xDef.label} →`, plotL + CHART_PAD, plotB - 18, GOLD);
-    place(`↑ ${yDef.label}`, plotL + 4, plotT + CHART_PAD, GOLD);
-    place(fmtNum(x0), plotL + CHART_PAD, plotB - CHART_PAD + 4);
-    place(fmtNum(x1), plotR - CHART_PAD - 40, plotB - CHART_PAD + 4);
-    place(fmtNum(y0), plotL + 2, plotB - CHART_PAD - 12);
-    place(fmtNum(y1), plotL + 2, plotT + CHART_PAD);
+    const xTitle = this.logScale ? `log ${xDef.label} →` : `${xDef.label} →`;
+    const yTitle = this.logScale ? `↑ log ${yDef.label}` : `↑ ${yDef.label}`;
+    place(xTitle, plotL + CHART_PAD, plotB - 18, GOLD);
+    place(yTitle, plotL + 4, plotT + CHART_PAD, GOLD);
+    place(fmtNum(xDomain.lo), plotL + CHART_PAD, plotB - CHART_PAD + 4);
+    place(fmtNum(xDomain.hi), plotR - CHART_PAD - 40, plotB - CHART_PAD + 4);
+    place(fmtNum(yDomain.lo), plotL + 2, plotB - CHART_PAD - 12);
+    place(fmtNum(yDomain.hi), plotL + 2, plotT + CHART_PAD);
 
     if (this.showLabels) {
       for (const p of items) {
@@ -524,6 +523,43 @@ function colorOf(group: string): number {
   return GROUP_COLORS[group] ?? GROUP_COLORS.other!;
 }
 
+/** Burst/salvo-aware sustained DPS matching enemy fire cadence. */
+function sustainedDps(
+  dmg: number,
+  fireCd: number,
+  count = 1,
+  gap = 0
+): number {
+  const n = Math.max(1, count);
+  const cycle = fireCd + (n - 1) * Math.max(0, gap);
+  return cycle > 0 ? (dmg * n) / cycle : 0;
+}
+
+type AxisDomain = { lo: number; hi: number };
+
+function axisDomain(min: number, max: number, log: boolean): AxisDomain {
+  if (!log) {
+    const pad = (max - min) * 0.08 || Math.max(1, Math.abs(max) * 0.1) || 1;
+    return { lo: min - pad, hi: max + pad };
+  }
+  const lo = Math.max(min, 1e-6);
+  const hi = Math.max(max, lo * 1.01);
+  const llo = Math.log10(lo);
+  const lhi = Math.log10(hi);
+  const pad = (lhi - llo) * 0.08 || 0.1;
+  return { lo: 10 ** (llo - pad), hi: 10 ** (lhi + pad) };
+}
+
+function axisNorm(v: number, domain: AxisDomain, log: boolean): number {
+  if (!log) {
+    return Phaser.Math.Clamp((v - domain.lo) / (domain.hi - domain.lo), 0, 1);
+  }
+  const lv = Math.log10(Math.max(v, 1e-9));
+  const llo = Math.log10(domain.lo);
+  const lhi = Math.log10(domain.hi);
+  return Phaser.Math.Clamp((lv - llo) / Math.max(1e-9, lhi - llo), 0, 1);
+}
+
 function buildBalanceCatalog(): BalancePoint[] {
   const out: BalancePoint[] = [];
 
@@ -551,6 +587,8 @@ function buildBalanceCatalog(): BalancePoint[] {
   for (const w of Object.values(PLAYER_WPNS)) {
     const kindGroup =
       w.kind === "cannon" ? "cannon" : w.kind === "rocket" ? "rocket" : "missile";
+    const salvoN = w.salvo?.count ?? 1;
+    const salvoGap = w.salvo?.interval ?? 0;
     out.push({
       id: `weapons:player:${w.id}`,
       label: w.name,
@@ -558,8 +596,7 @@ function buildBalanceCatalog(): BalancePoint[] {
       group: `player/${kindGroup}`,
       color: colorOf("player"),
       values: {
-        // Rate-normalized damage (dmg / fireCd).
-        dps: w.fireCd > 0 ? w.dmg / w.fireCd : 0,
+        dps: sustainedDps(w.dmg, w.fireCd, salvoN, salvoGap),
         blast: w.blast,
         fireCd: w.fireCd,
         speed: w.speed,
@@ -581,7 +618,7 @@ function buildBalanceCatalog(): BalancePoint[] {
       group: `enemy/${kindGroup}`,
       color: colorOf("enemy"),
       values: {
-        dps: w.fireCd > 0 ? w.dmg / w.fireCd : 0,
+        dps: sustainedDps(w.dmg, w.fireCd, w.burst ?? 1, w.burstGap ?? 0),
         blast: w.blast,
         fireCd: w.fireCd,
         speed: w.speed,
@@ -610,7 +647,7 @@ function buildBalanceCatalog(): BalancePoint[] {
         health: sp.health,
         radius: sp.radius,
         driveSpd: sp.drive?.maxSpd ?? 0,
-        wpnDps: w && w.fireCd > 0 ? w.dmg / w.fireCd : 0,
+        wpnDps: w ? sustainedDps(w.dmg, w.fireCd, w.burst ?? 1, w.burstGap ?? 0) : 0,
         wpnBlast: w?.blast ?? 0,
         wpnFireCd: w?.fireCd ?? 0,
         wpnRange: w?.range ?? 0,
