@@ -6425,7 +6425,8 @@ export class MissionScene extends Phaser.Scene {
             const flamePts = this.sampleSolidLocalPoints(
               rk,
               radius(u.kind) / Math.max(scale, 0.01),
-              2 + ((Math.random() * 3) | 0)
+              2 + ((Math.random() * 3) | 0),
+              0.7
             );
             const heliRotor = r.tex.includes("rotor") && r.tex !== "enemy_drone_rotor";
             if (heliRotor) {
@@ -6625,23 +6626,39 @@ export class MissionScene extends Phaser.Scene {
     return tex.alpha[y * tex.width + x]! >= 48;
   }
 
-  /** Bounded random solid-pixel pick, with an object-radius fallback around the pivot. */
-  sampleSolidUv(key: string, fallbackRadius: number, attempts = 24): { u: number; v: number } {
+  /**
+   * Bounded random solid-pixel pick, with an object-radius fallback around the pivot.
+   * `maxCenterFrac` (e.g. 0.7 for rotors) limits picks to that fraction of half the
+   * texture span from the sprite pivot — still requires a solid pixel.
+   */
+  sampleSolidUv(
+    key: string,
+    fallbackRadius: number,
+    attempts = 24,
+    maxCenterFrac?: number
+  ): { u: number; v: number } {
     const tex = this.textureAlphaBounds(key);
+    const pivot = spritePivot(key);
+    const width = tex?.width ?? Math.max(1, this.texSpan(key));
+    const height = tex?.height ?? Math.max(1, this.texSpan(key));
+    const cx = pivot.x * width;
+    const cy = pivot.y * height;
+    const rotorR = Math.max(width, height) * 0.5;
+    const maxDist = maxCenterFrac != null ? rotorR * maxCenterFrac : null;
     if (tex) {
-      for (let i = 0; i < attempts; i++) {
+      const tries = maxDist != null ? Math.max(attempts, 64) : attempts;
+      for (let i = 0; i < tries; i++) {
         const x = tex.minX + ((Math.random() * (tex.maxX - tex.minX + 1)) | 0);
         const y = tex.minY + ((Math.random() * (tex.maxY - tex.minY + 1)) | 0);
+        if (maxDist != null && Math.hypot(x + 0.5 - cx, y + 0.5 - cy) > maxDist) continue;
         if (tex.alpha[y * tex.width + x]! >= 48) {
           return { u: (x + 0.5) / tex.width, v: (y + 0.5) / tex.height };
         }
       }
     }
-    const width = tex?.width ?? Math.max(1, this.texSpan(key));
-    const height = tex?.height ?? Math.max(1, this.texSpan(key));
-    const pivot = spritePivot(key);
     const ang = Math.random() * Math.PI * 2;
-    const dist = Math.sqrt(Math.random()) * Math.max(1, fallbackRadius);
+    const cap = maxDist ?? Math.max(1, fallbackRadius);
+    const dist = Math.sqrt(Math.random()) * cap;
     return {
       u: Phaser.Math.Clamp(pivot.x + (Math.cos(ang) * dist) / width, 0, 1),
       v: Phaser.Math.Clamp(pivot.y + (Math.sin(ang) * dist) / height, 0, 1),
@@ -6651,14 +6668,15 @@ export class MissionScene extends Phaser.Scene {
   sampleSolidLocalPoints(
     key: string,
     fallbackRadius: number,
-    count: number
+    count: number,
+    maxCenterFrac?: number
   ): { lx: number; ly: number; sc: number }[] {
     const tex = this.textureAlphaBounds(key);
     const width = tex?.width ?? Math.max(1, this.texSpan(key));
     const height = tex?.height ?? Math.max(1, this.texSpan(key));
     const pivot = spritePivot(key);
     return Array.from({ length: count }, (_, i) => {
-      const uv = this.sampleSolidUv(key, fallbackRadius);
+      const uv = this.sampleSolidUv(key, fallbackRadius, 24, maxCenterFrac);
       return {
         lx: (uv.u - pivot.x) * width,
         ly: (uv.v - pivot.y) * height,
@@ -6861,7 +6879,8 @@ export class MissionScene extends Phaser.Scene {
       const flamePts = this.sampleSolidLocalPoints(
         rk,
         opts.radius / Math.max(scale, 0.01),
-        2 + ((Math.random() * 3) | 0)
+        2 + ((Math.random() * 3) | 0),
+        0.7
       );
       const rotorAng = ri % 2 ? -opts.rotor : opts.rotor;
       // Drones: all rotors always fly off — never pin to the falling hull.
@@ -9050,7 +9069,7 @@ export class MissionScene extends Phaser.Scene {
   syncShotSprites(): void {
     while (this.shotG.getLength() < this.shots.length * 2) {
       this.shotG.add(this.add.image(0, 0, "shadow"));
-      this.shotG.add(this.add.image(0, 0, "shot_chain"));
+      this.shotG.add(this.add.image(0, 0, "shot_rocket"));
     }
     const kids = this.shotG.getChildren() as Phaser.GameObjects.Image[];
     for (const k of kids) k.setVisible(false);

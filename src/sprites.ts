@@ -14,33 +14,58 @@ const SRC = {
   debrisOrganic: "sprites/debris/organic.png",
   debrisWheels: "sprites/debris/wheels.png",
   tankWreck: "sprites/units/tank-wreck-parts.png",
-  weapons: "sprites/units/weapons.png",
   blasts: "sprites/fx/blasts.png",
   rotors: "sprites/units/rotors.png",
-  split: "sprites/units/split-parts.png",
   vehicles: "sprites/units/vehicles.png",
-  guns: "sprites/units/guns.png",
   troops: "sprites/units/troops.png",
   buildings: "sprites/units/buildings.png",
   airShip: "sprites/units/air-ship.png",
-  splitHulk: "sprites/units/split-parts-hulk.png",
   vehiclesHulk: "sprites/units/vehicles-hulk.png",
   buildingsHulk: "sprites/units/buildings-hulk.png",
   airShipHulk: "sprites/units/air-ship-hulk.png",
   troopsHulk: "sprites/units/troops-hulk.png",
-  gunsHulk: "sprites/units/guns-hulk.png",
-  gunsExtra: "sprites/units/guns-extra.png",
   towerGuns: "sprites/units/tower-guns.png",
-  gunsExtraHulk: "sprites/units/guns-extra-hulk.png",
   towerGunsHulk: "sprites/units/tower-guns-hulk.png",
   rotorsHulk: "sprites/units/rotors-hulk.png",
   motoMg: "sprites/units/moto-mg.png",
   motoMgHulk: "sprites/units/moto-mg-hulk.png",
-  radar: "sprites/units/radar.png",
   radarDish: "sprites/units/radar-dish.png",
   radarDishHulk: "sprites/units/radar-dish-hulk.png",
-  radarHulk: "sprites/units/radar-hulk.png",
 } as const;
+
+/**
+ * Unit / building / gun parts that used to live in sparse sheets — one PNG per key.
+ */
+const UNIT_PART_ART: readonly { key: string; size: number; hulk?: boolean }[] = [
+  { key: "enemy_boat", size: 92 },
+  { key: "building_tower", size: 78 },
+  { key: "enemy_boat_gun", size: 36 },
+  { key: "building_tower_gun", size: 52 },
+  { key: "building_radar", size: 220 },
+  { key: "enemy_lav_gun", size: 40 },
+  { key: "enemy_sam_gun", size: 48 },
+  { key: "enemy_ptboat_gun", size: 32 },
+  { key: "enemy_battleship_gun", size: 52 },
+  { key: "enemy_battleship_gun_aa", size: 44 },
+  { key: "enemy_battleship_gun_sam", size: 48 },
+  { key: "enemy_heli_gun", size: 36 },
+  { key: "enemy_heli_heavy_gun", size: 48 },
+  { key: "enemy_drone_rotor", size: 14 },
+  { key: "enemy_boat_hulk", size: 88, hulk: true },
+  { key: "building_tower_hulk", size: 78, hulk: true },
+  { key: "enemy_boat_gun_hulk", size: 36, hulk: true },
+  { key: "building_tower_gun_hulk", size: 52, hulk: true },
+  { key: "building_radar_hulk", size: 210, hulk: true },
+  { key: "enemy_lav_gun_hulk", size: 40, hulk: true },
+  { key: "enemy_sam_gun_hulk", size: 48, hulk: true },
+  { key: "enemy_ptboat_gun_hulk", size: 32, hulk: true },
+  { key: "enemy_battleship_gun_hulk", size: 52, hulk: true },
+  { key: "enemy_battleship_gun_aa_hulk", size: 44, hulk: true },
+  { key: "enemy_battleship_gun_sam_hulk", size: 48, hulk: true },
+  { key: "enemy_heli_gun_hulk", size: 36, hulk: true },
+  { key: "enemy_heli_heavy_gun_hulk", size: 48, hulk: true },
+];
+
 
 /**
  * Shared ordnance projectile PNGs (nose-up, magenta key) under `public/sprites/shots/`.
@@ -170,32 +195,26 @@ export function preloadArt(scene: Phaser.Scene): void {
   scene.load.image("src_debris_organic", SRC.debrisOrganic);
   scene.load.image("src_debris_wheels", SRC.debrisWheels);
   scene.load.image("src_tank_wreck", SRC.tankWreck);
-  scene.load.image("src_weapons", SRC.weapons);
   scene.load.image("src_blasts", SRC.blasts);
   scene.load.image("src_rotors", SRC.rotors);
-  scene.load.image("src_split", SRC.split);
   scene.load.image("src_vehicles", SRC.vehicles);
-  scene.load.image("src_guns", SRC.guns);
   scene.load.image("src_troops", SRC.troops);
   scene.load.image("src_buildings", SRC.buildings);
   scene.load.image("src_air_ship", SRC.airShip);
-  scene.load.image("src_split_hulk", SRC.splitHulk);
   scene.load.image("src_vehicles_hulk", SRC.vehiclesHulk);
   scene.load.image("src_buildings_hulk", SRC.buildingsHulk);
   scene.load.image("src_air_ship_hulk", SRC.airShipHulk);
   scene.load.image("src_troops_hulk", SRC.troopsHulk);
-  scene.load.image("src_guns_hulk", SRC.gunsHulk);
-  scene.load.image("src_guns_extra", SRC.gunsExtra);
   scene.load.image("src_tower_guns", SRC.towerGuns);
-  scene.load.image("src_guns_extra_hulk", SRC.gunsExtraHulk);
   scene.load.image("src_tower_guns_hulk", SRC.towerGunsHulk);
   scene.load.image("src_rotors_hulk", SRC.rotorsHulk);
   scene.load.image("src_moto_mg", SRC.motoMg);
   scene.load.image("src_moto_mg_hulk", SRC.motoMgHulk);
-  scene.load.image("src_radar", SRC.radar);
   scene.load.image("src_radar_dish", SRC.radarDish);
   scene.load.image("src_radar_dish_hulk", SRC.radarDishHulk);
-  scene.load.image("src_radar_hulk", SRC.radarHulk);
+  for (const art of UNIT_PART_ART) {
+    scene.load.image(`src_${art.key}`, `sprites/units/${art.key}.png`);
+  }
   for (const art of CRAFT_ART) {
     scene.load.image(`src_${art.key}`, art.file);
   }
@@ -552,7 +571,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     put(textures, "enemy_heli_hulk", darkenWreck(hc));
   }
   const rotors = splitRotorSheet(keyPixels(src(textures, "src_rotors"), "magenta"));
-  // Bake near in-game draw size (player ~134, enemy 108) — not full 1024-sheet res.
+  // Hub-centered square (axis at canvas middle) — required for spin-blur registration.
   const playerRotor = fit(squareCenter(rotors[0]!), 134);
   const enemyRotor = fit(squareCenter(rotors[1]!), 108);
   put(textures, "heli_rotor", playerRotor);
@@ -596,18 +615,12 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
 
   put(textures, "building_bunker", fit(keyImage(src(textures, "src_bunker"), "magenta"), 128));
 
-  putGrid(textures, "src_split", 3, 2, [
-    ["enemy_boat", 92],
-    ["building_tower", 78],
-    ["_", 88],
-    ["enemy_boat_gun", 36],
-    ["building_tower_gun", 52],
-    ["_", 64],
-  ]);
-  putGrid(textures, "src_radar", 2, 1, [
-    ["building_radar", 220],
-    ["_", 72],
-  ]);
+  for (const art of UNIT_PART_ART) {
+    const srcKey = `src_${art.key}`;
+    if (!textures.exists(srcKey)) continue;
+    const img = fit(keyImage(src(textures, srcKey), "magenta"), art.size);
+    put(textures, art.key, art.hulk ? darkenWreck(img) : img);
+  }
   if (textures.exists("src_radar_dish")) {
     put(textures, "building_radar_disk", fit(clipRadarDish(keyPixels(src(textures, "src_radar_dish"), "magenta")), 160));
   }
@@ -622,22 +635,6 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   putGrid(textures, "src_moto_mg", 2, 1, [
     ["enemy_motorcycle", 46],
     ["enemy_troop_mounted_mg", 36],
-  ]);
-  putGrid(textures, "src_guns", 3, 2, [
-    ["enemy_lav_gun", 40],
-    ["enemy_sam_gun", 48],
-    ["enemy_ptboat_gun", 32],
-  ]);
-  putGrid(textures, "src_guns_extra", 3, 3, [
-    ["enemy_battleship_gun", 52],
-    ["enemy_battleship_gun_aa", 44],
-    ["enemy_battleship_gun_sam", 48],
-    ["_", 52],
-    ["_", 52],
-    ["enemy_heli_gun", 36],
-    ["enemy_heli_heavy_gun", 48],
-    ["enemy_drone_rotor", 14],
-    ["_", 8],
   ]);
   putGrid(textures, "src_tower_guns", 2, 1, [
     ["building_tower_aa", 48],
@@ -664,18 +661,13 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     ["enemy_battleship", 280],
   ]);
   grayShiftTexture(textures, "enemy_battleship");
-  putHulkGrid(textures, "src_split_hulk", 3, 2, [
-    ["enemy_boat_hulk", 88],
-    ["building_tower_hulk", 78],
-    ["_", 84],
-    ["enemy_boat_gun_hulk", 36],
-    ["building_tower_gun_hulk", 52],
-    ["_", 64],
-  ]);
-  putHulkGrid(textures, "src_radar_hulk", 2, 1, [
-    ["building_radar_hulk", 210],
-    ["_", 64],
-  ]);
+  for (const key of [
+    "enemy_battleship_gun",
+    "enemy_battleship_gun_aa",
+    "enemy_battleship_gun_sam",
+  ] as const) {
+    grayShiftTexture(textures, key);
+  }
   if (textures.exists("src_radar_dish_hulk")) {
     put(textures, "building_radar_disk_hulk", darkenWreck(fit(clipRadarDish(keyPixels(src(textures, "src_radar_dish_hulk"), "magenta")), 150)));
   }
@@ -709,6 +701,13 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     ["enemy_battleship_hulk", 280],
   ]);
   grayShiftTexture(textures, "enemy_battleship_hulk");
+  for (const key of [
+    "enemy_battleship_gun_hulk",
+    "enemy_battleship_gun_aa_hulk",
+    "enemy_battleship_gun_sam_hulk",
+  ] as const) {
+    grayShiftTexture(textures, key);
+  }
   putHulkGrid(textures, "src_troops_hulk", 3, 2, [
     ["enemy_troop_rpg_hulk", 28],
     ["enemy_troop_gunner_hulk", 28],
@@ -716,22 +715,6 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     ["enemy_troop_mechanic_hulk", 28],
     ["enemy_troop_officer_hulk", 28],
     ["enemy_troop_soldier_hulk", 28],
-  ]);
-  putHulkGrid(textures, "src_guns_hulk", 3, 2, [
-    ["enemy_lav_gun_hulk", 40],
-    ["enemy_sam_gun_hulk", 48],
-    ["enemy_ptboat_gun_hulk", 32],
-  ]);
-  putHulkGrid(textures, "src_guns_extra_hulk", 3, 3, [
-    ["enemy_battleship_gun_hulk", 52],
-    ["enemy_battleship_gun_aa_hulk", 44],
-    ["enemy_battleship_gun_sam_hulk", 48],
-    ["_", 52],
-    ["_", 52],
-    ["enemy_heli_gun_hulk", 36],
-    ["enemy_heli_heavy_gun_hulk", 48],
-    ["_", 14],
-    ["_", 8],
   ]);
   putHulkGrid(textures, "src_tower_guns_hulk", 2, 1, [
     ["building_tower_aa_hulk", 48],
@@ -768,12 +751,6 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   putDebrisSheet(textures, "src_debris_organic", "organic");
   putWheelDebrisSheet(textures);
 
-  const wpn = sliceGrid(keyImage(src(textures, "src_weapons"), "magenta"), 2, 2);
-  // Weapons sheet is nose-up; rotate to nose-along-+X like tracer shots.
-  put(textures, "shot_rocket", fit(rotateCw90(wpn[1]!), 28));
-  put(textures, "shot_hellfire", fit(rotateCw90(wpn[2]!), 36));
-  put(textures, "shot_tow", fit(rotateCw90(wpn[3]!), 34));
-
   for (const art of PLAYER_ORDNANCE_SHOT_ART) {
     const srcKey = `src_${art.look}`;
     if (!textures.exists(srcKey)) continue;
@@ -809,12 +786,6 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     "enemy_heli",
     "enemy_heli_hulk",
     ...CRAFT_ART.map((a) => a.key),
-    "shot_chain",
-    "shot_shell",
-    "shot_small",
-    "shot_rocket",
-    "shot_hellfire",
-    "shot_tow",
     ...PLAYER_ORDNANCE_SHOT_ART.map((a) => a.look),
     ...PLAYER_GUN_MOUNT_ART.map((a) => a.key),
     "enemy_tank",
@@ -861,7 +832,6 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     "building_tower_aa",
     "building_tower_sam",
     "enemy_drone_rotor",
-    "shot_aa",
     "fx_debris_metal",
     ...["mech", "struct", "organic"].flatMap((cat) =>
       Array.from({ length: 12 }, (_, i) => `fx_debris_${cat}_${i}`)
@@ -1476,7 +1446,7 @@ function grayShiftTexture(textures: Phaser.Textures.TextureManager, key: string)
   put(textures, key, toNavalGray(copyToCanvas(img, img.width, img.height)));
 }
 
-/** Shift warm desert tan toward the cool gunmetal of the naval gun sprites. */
+/** Shift warm desert tan toward cool naval gunmetal (battleship hull + mounts). */
 function toNavalGray(src: HTMLCanvasElement): HTMLCanvasElement {
   const g = src.getContext("2d")!;
   const pix = g.getImageData(0, 0, src.width, src.height);
@@ -1750,6 +1720,10 @@ function insetHub(src: HTMLCanvasElement): { x: number; y: number } {
   return { x: bx, y: by };
 }
 
+/**
+ * Hub-centered square: mast at canvas middle, side = 2×max blade reach.
+ * Spin blur and Phaser origin (0.5, 0.5) both assume this layout.
+ */
 function squareCenter(src: HTMLCanvasElement): HTMLCanvasElement {
   const hub = insetHub(src);
   const g = src.getContext("2d")!;

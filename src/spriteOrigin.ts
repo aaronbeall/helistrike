@@ -50,8 +50,9 @@ function pts(role: SpritePointRole, list: Uv[], idPrefix?: string): SpritePoint[
 }
 
 /**
- * Authoritative per-texture layout. Camo suffixes are stripped on lookup;
- * `_hulk` inherits live key unless listed separately.
+ * Authored per-texture layout. Camo suffixes are stripped on lookup.
+ * `_hulk` with no own entry inherits **origin only** from the live key — never
+ * points (muzzles / mounts). List a hulk key explicitly to author its own.
  */
 export const SPRITE_SPECS: Record<string, SpriteSpec> = {
   // —— Player craft ——
@@ -191,9 +192,14 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     ],
   },
 
-  craft_cyberhawk_rotor: { origin: uv(0.497, 0.461) },
-  craft_stealthhawk_rotor: { origin: uv(0.491, 0.481) },
+  craft_cyberhawk_rotor: { origin: uv(0.5, 0.5) },
+  craft_stealthhawk_rotor: { origin: uv(0.5, 0.5) },
+  craft_chinook_rotor: { origin: uv(0.5, 0.5) },
+  craft_osprey_rotor: { origin: uv(0.5, 0.5) },
+  craft_littlebird_rotor: { origin: uv(0.5, 0.5) },
   craft_viper_rotor: { origin: uv(0.5, 0.5) },
+  craft_blackhawk_rotor: { origin: uv(0.5, 0.5) },
+  craft_cobra_rotor: { origin: uv(0.5, 0.5) },
 
   // —— Enemy / building hulls ——
   enemy_heli: {
@@ -364,9 +370,13 @@ export function bareSpriteKey(key: string): string {
 
 function resolveSpec(key: string): SpriteSpec | undefined {
   const k = bareSpriteKey(key);
-  if (SPRITE_SPECS[k]) return SPRITE_SPECS[k];
-  if (k.endsWith("_hulk")) return SPRITE_SPECS[k.slice(0, -5)];
-  return undefined;
+  const own = SPRITE_SPECS[k];
+  if (own) return own;
+  if (!k.endsWith("_hulk")) return undefined;
+  const live = SPRITE_SPECS[k.slice(0, -5)];
+  if (!live?.origin) return undefined;
+  // Origin-only inherit — wrecks must not pick up live muzzles / hull mounts.
+  return { origin: live.origin, ...(live.originMode ? { originMode: live.originMode } : {}) };
 }
 
 /** Ensure a mutable spec entry exists (e.g. cupola bake writes origin). */
@@ -388,7 +398,7 @@ export function allSpriteSpecs(): { key: string; spec: SpriteSpec }[] {
   return Object.entries(SPRITE_SPECS).map(([key, spec]) => ({ key, spec }));
 }
 
-/** Live-sprite origin; `_hulk` inherits live counterpart unless listed alone. */
+/** Pivot UV; `_hulk` falls back to live origin when not authored. */
 export function lookupSpriteOrigin(key: string): Uv | undefined {
   // Return shared refs — do not clone (hot path: spritePivot every unit/debris/frame).
   return resolveSpec(key)?.origin;

@@ -349,16 +349,6 @@ function drawTracerShape(opts: {
   return c;
 }
 
-function drawTracer(style: "chain" | "shell" | "small" | "aa"): HTMLCanvasElement {
-  const cfg = {
-    chain: { w: 64, h: 10, core: [255, 250, 220] as TracerRgb, mid: [255, 210, 80] as TracerRgb, rim: [255, 140, 32] as TracerRgb, glow: 0.55 },
-    shell: { w: 72, h: 13, core: [255, 252, 236] as TracerRgb, mid: [255, 188, 64] as TracerRgb, rim: [255, 110, 24] as TracerRgb, glow: 0.55 },
-    small: { w: 36, h: 7, core: [255, 236, 180] as TracerRgb, mid: [220, 160, 56] as TracerRgb, rim: [168, 96, 28] as TracerRgb, glow: 0.35 },
-    aa: { w: 110, h: 6, core: [255, 250, 210] as TracerRgb, mid: [255, 170, 48] as TracerRgb, rim: [255, 90, 20] as TracerRgb, glow: 0.55 },
-  }[style];
-  return drawTracerShape(cfg);
-}
-
 /** Stable hue/shape seed from weapon id (unique cannon looks without authored PNGs). */
 function hashHue(id: string): number {
   let h = 2166136261;
@@ -424,17 +414,6 @@ function drawRocket(): HTMLCanvasElement {
   g.lineTo(14, 7);
   g.closePath();
   g.fill();
-  return c;
-}
-
-function drawMissile(color: string): HTMLCanvasElement {
-  const c = canvas(24, 10);
-  const g = ctxOf(c);
-  g.fillStyle = color;
-  roundRect(g, 2, 2, 16, 6, 2);
-  g.fill();
-  g.fillStyle = "#e8e0d0";
-  g.fillRect(4, 3, 6, 4);
   return c;
 }
 
@@ -568,17 +547,12 @@ function drawLock(): HTMLCanvasElement {
  */
 export function bakeAll(textures: Phaser.Textures.TextureManager): void {
   add(textures, "shadow", drawShadow());
-  add(textures, "shot_chain", drawTracer("chain"));
-  add(textures, "shot_shell", drawTracer("shell"));
-  add(textures, "shot_small", drawTracer("small"));
-  add(textures, "shot_aa", drawTracer("aa"));
   for (let i = 0; i < 5; i++) {
     const key = i === 0 ? "fx_shell" : `fx_shell_${i}`;
     add(textures, key, drawShellCasing(i));
   }
+  // Fallback if shots/ PNG fails to load — prepareArt overwrites from library.
   add(textures, "shot_rocket", drawRocket());
-  add(textures, "shot_hellfire", drawMissile("#c45c1a"));
-  add(textures, "shot_tow", drawMissile("#c8b45a"));
   add(textures, "fx_debris_metal", drawDebris("#6a7064"));
   add(textures, "fx_spark", drawSpark());
   add(textures, "fx_smoke", drawSmoke());
@@ -637,8 +611,6 @@ function collectArtKeys(): string[] {
     "enemy_heli_rotor_spin",
     "enemy_drone_rotor",
     "shot_rocket",
-    "shot_hellfire",
-    "shot_tow",
     "fx_muzzle",
     "fx_spark",
     "fx_smoke",
