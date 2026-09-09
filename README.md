@@ -9,10 +9,10 @@ A top-down helicopter combat game, with copious amounts of destruction, retro ar
 Arcade 2.5D and lots of sprites:
 
 * The sim lives in world X/Y plus altitude Z.
-* A chase camera sits above and slightly behind the bird and projects sprites with height, scale, and ground shadows.
-* Painted units sit on a height-mapped landscape (water, river, sand, grass, forest, rock, peak).
+* A chase camera sits above and trails behind the bird, projects sprites with height, scale, and ground shadows.
+* In-game objects (units, buildings, effects) sit on a height-mapped landscape (water, river, sand, grass, forest, rock, peak).
 * Destruction is permanently painted on the field: explosion scars, bullet holes, crashed hulks, ejected casings, and debris after coming to rest.
-* Lots and lots of particles: fire, smoke, sparks, trails, lighting, splashes, etc.
+* Lots and lots of particles: fire, smoke, sparks, trails, dirt, blood, lighting, splashes, etc.
 * Bevel lighting effect on live objects (player, enemy units that move)
 * Mesh projection on terrain for a psuedo 3d effect.
 * Post-processing effects, like bloom and thermal vision.
