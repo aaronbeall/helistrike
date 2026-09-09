@@ -16,6 +16,7 @@
   * [ ] Gunship (high flying aircraft)
   * [ ] Chinnook (can pick things up and drop them, including friendly units)
   * [ ] (Secret) Prometheus (alien, cloaking)
+  * [ ] Steamship (steampunk airship)
 * [ ] Single player progress, mission/vehicle unlocks, weapon/upgrade purchases
 * [ ] Additional weapon options (current: chain gun, rockets, hellfires, TOWs), loadout options specific to heli type
   * [ ] Miniguns
@@ -41,6 +42,12 @@
   * [ ] (Alien) Refractor cannon (like rocket pod, but energy weapon)
   * [ ] (Alien) Warp bomb (like TOW but also slows time to a crawl while moving)
 * [ ] Counter-measures
+  * [ ] Flares (default)
+  * [ ] Smokescreen (stealth)
+  * [ ] Timewarp (cyber)
+  * [ ] Phase cloak (promotheus)
+  * [ ] Reactive Armor
+  * [ ] Turtle (drone)
 * [ ] Last stand / base defense game mode
 * [ ] Enemy line-of-sight behavior (hide behind terrain, etc)
   * [ ] TOWs and Hellfire collide on launch making fire behind cover ineffective
@@ -103,6 +110,9 @@
 * [ ] Tail rotor (with tilt)
 * [ ] Pseudo 3d tilt graphic
 * [ ] Clouds
+* [ ] Drive ground vehicles
+* [ ] Eject, infiltrate, hijack
+* [ ] Hulk break-apart effect (dynamic splitting of hulk graphics into individual parts)
 
 ## Fix
 

@@ -28,6 +28,25 @@ export type CraftKind =
   | "gunship"
   | "warthog";
 
+export interface CraftStationSpec {
+  /** Installation policy; the weapon identity remains in the parallel loadout slot. */
+  mount?: "fixed" | "turret" | "cabin" | "hardpoint" | "bay";
+  controller?: "pilot" | "gunner" | "automatic";
+  /** Traverse is measured in degrees around craft-forward; cabin guns use a 180° side arc. */
+  traverse?: { center: number; arc: number; side?: "left" | "right" | "both" };
+  /** Installation label when it differs from the shared weapon identity. */
+  displayName?: string;
+  /** Authored multi-muzzle policy belongs to this installation, not the weapon identity. */
+  muzzleFire?: "single" | "alternate" | "simultaneous";
+}
+
+export type CraftStations = [
+  CraftStationSpec | null,
+  CraftStationSpec | null,
+  CraftStationSpec | null,
+  CraftStationSpec | null,
+];
+
 export interface CraftSpec {
   kind: CraftKind;
   name: string;
@@ -79,6 +98,12 @@ export interface CraftSpec {
   liftClass?: "medium" | "heavy";
   gunMode: "turret" | "fixed";
   loadout: [string, string, string, string];
+  /** Optional installation metadata parallel to the four legacy string loadout slots. */
+  stations?: CraftStations;
+  /** Enemy gun-laying accuracy multiplier; lower is harder to hit. */
+  enemyAimMul?: number;
+  /** Enemy seeker acquisition/tracking multiplier; lower is harder to lock. */
+  enemySeekerMul?: number;
 }
 
 /** Catalog of player-selectable craft. */
@@ -102,7 +127,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 520, strafeThrust: 340, maxSpeed: 340, minSpeed: 0, yawRate: 2.55, yawAccel: 11, drag: 1.65,
     verticalThrust: 340, cruiseThrust: 36, cruiseAgl: 46, maxAgl: 118,
     gunMode: "turret",
-    loadout: ["cannon", "rocket", "hellfire", "tow"],
+    loadout: ["chain_gun", "rocket", "hellfire_missile", "tv_missile"],
   },
   little_bird: {
     kind: "little_bird",
@@ -125,7 +150,13 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 660, strafeThrust: 560, maxSpeed: 390, minSpeed: 0, yawRate: 4.1, yawAccel: 22, drag: 1.25,
     verticalThrust: 520, cruiseThrust: 52, cruiseAgl: 46, maxAgl: 118,
     gunMode: "fixed",
-    loadout: ["minigun", "rocket", "hellfire", "tow"],
+    loadout: ["minigun", "rocket", "hellfire_missile", "heavy_machine_gun"],
+    stations: [
+      { mount: "fixed", controller: "pilot", traverse: { center: 0, arc: 12 }, displayName: "DUAL M134", muzzleFire: "simultaneous" },
+      { mount: "hardpoint", controller: "pilot" },
+      { mount: "hardpoint", controller: "pilot" },
+      { mount: "fixed", controller: "pilot", traverse: { center: 0, arc: 12 } },
+    ],
   },
   quad_drone: {
     kind: "quad_drone",
@@ -148,7 +179,13 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 760, strafeThrust: 700, maxSpeed: 440, minSpeed: 0, yawRate: 4.35, yawAccel: 23.5, drag: 1.05,
     verticalThrust: 650, cruiseThrust: 60, cruiseAgl: 38, maxAgl: 105,
     gunMode: "fixed",
-    loadout: ["quad_dual_gun", "quad_micro_rocket", "quad_micro_missile", "quad_guided_charge"],
+    loadout: ["light_machine_gun", "tesla_beam", "mini_hellfire_missile", "mini_bomb"],
+    stations: [
+      { mount: "turret", controller: "pilot" },
+      { mount: "turret", controller: "pilot" },
+      { mount: "hardpoint", controller: "pilot" },
+      { mount: "bay", controller: "pilot" },
+    ],
   },
   cobra: {
     kind: "cobra",
@@ -170,7 +207,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 600, strafeThrust: 410, maxSpeed: 375, minSpeed: 0, yawRate: 3.25, yawAccel: 16.5, drag: 1.45,
     verticalThrust: 410, cruiseThrust: 42, cruiseAgl: 46, maxAgl: 118,
     gunMode: "turret",
-    loadout: ["m197", "rocket", "hellfire", "tow"],
+    loadout: ["light_gatling_cannon", "rocket", "tow_missile", "sidewinder_missile"],
   },
   viper: {
     kind: "viper",
@@ -192,7 +229,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 610, strafeThrust: 430, maxSpeed: 390, minSpeed: 0, yawRate: 3.3, yawAccel: 17, drag: 1.4,
     verticalThrust: 420, cruiseThrust: 43, cruiseAgl: 48, maxAgl: 122,
     gunMode: "turret",
-    loadout: ["m197", "rocket", "hellfire", "tow"],
+    loadout: ["light_gatling_cannon", "rocket", "tow_missile", "sidewinder_missile"],
   },
   blackhawk: {
     kind: "blackhawk",
@@ -215,7 +252,13 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     verticalThrust: 300, cruiseThrust: 32, cruiseAgl: 46, maxAgl: 118,
     liftClass: "medium",
     gunMode: "turret",
-    loadout: ["blackhawk_minigun", "rocket", "hellfire", "cannon"],
+    loadout: ["minigun", "rocket", "hellfire_missile", "tow_missile"],
+    stations: [
+      { mount: "cabin", controller: "gunner", traverse: { center: 90, arc: 180, side: "both" }, displayName: "DUAL M134" },
+      { mount: "hardpoint", controller: "pilot" },
+      { mount: "hardpoint", controller: "pilot" },
+      { mount: "hardpoint", controller: "pilot" },
+    ],
   },
   chinook: {
     kind: "chinook",
@@ -238,7 +281,13 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     verticalThrust: 240, cruiseThrust: 24, cruiseAgl: 46, maxAgl: 118,
     liftClass: "heavy",
     gunMode: "turret",
-    loadout: ["chinook_minigun", "chinook_50cal", "chinook_m240", "chinook_ramp_gun"],
+    loadout: ["machine_gun", "heavy_bomb", "cluster_bomb", "minigun"],
+    stations: [
+      { mount: "cabin", controller: "gunner", traverse: { center: 90, arc: 180, side: "both" }, displayName: "DUAL M240D" },
+      { mount: "bay", controller: "pilot" },
+      { mount: "bay", controller: "pilot" },
+      { mount: "cabin", controller: "automatic", traverse: { center: 180, arc: 180, side: "both" }, displayName: "AUTO M134" },
+    ],
   },
   osprey: {
     kind: "osprey",
@@ -261,7 +310,13 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     verticalThrust: 380, cruiseThrust: 40, cruiseAgl: 70, maxAgl: 170,
     liftClass: "heavy",
     gunMode: "turret",
-    loadout: ["door_gun", "rocket", "hellfire", "tow"],
+    loadout: ["minigun", "guided_rockets", "hellfire_missile", "auto_machine_gun"],
+    stations: [
+      { mount: "cabin", controller: "gunner", traverse: { center: 180, arc: 180, side: "both" }, displayName: "GAU-17/A" },
+      { mount: "hardpoint", controller: "pilot" },
+      { mount: "hardpoint", controller: "pilot" },
+      { mount: "turret", controller: "automatic", displayName: "AUTO M2" },
+    ],
   },
   stealthhawk: {
     kind: "stealthhawk",
@@ -283,7 +338,9 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 475, strafeThrust: 310, maxSpeed: 305, minSpeed: 0, yawRate: 2.45, yawAccel: 10.5, drag: 1.65,
     verticalThrust: 340, cruiseThrust: 36, cruiseAgl: 46, maxAgl: 118,
     gunMode: "turret",
-    loadout: ["silenced_autocannon", "rocket", "hellfire", "tow"],
+    loadout: ["concealed_cannon", "hellfire_missile", "smoke_bomb", "stinger_missile"],
+    enemyAimMul: 0.55,
+    enemySeekerMul: 0.42,
   },
   cyberhawk: {
     kind: "cyberhawk",
@@ -305,7 +362,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 740, strafeThrust: 500, maxSpeed: 500, minSpeed: 0, yawRate: 3.35, yawAccel: 16, drag: 1.2,
     verticalThrust: 480, cruiseThrust: 48, cruiseAgl: 46, maxAgl: 118,
     gunMode: "turret",
-    loadout: ["laser", "rocket", "hellfire", "tow"],
+    loadout: ["railgun", "swarm_missile", "attack_drone", "emp"],
   },
   prometheus: {
     kind: "prometheus",
@@ -326,7 +383,13 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     verticalThrust: 700, cruiseThrust: 65, cruiseAgl: 90, maxAgl: 240,
     liftClass: "heavy",
     gunMode: "fixed",
-    loadout: ["plasma_helix", "refractor", "photon", "warp_bomb"],
+    loadout: ["plasma_cannon", "laser_rocket", "photon_missile", "warp_bomb"],
+    stations: [
+      { mount: "turret", controller: "pilot" },
+      { mount: "fixed", controller: "pilot", traverse: { center: 0, arc: 12 } },
+      { mount: "fixed", controller: "pilot", traverse: { center: 0, arc: 12 } },
+      { mount: "bay", controller: "pilot" },
+    ],
   },
   lightning_ii: {
     kind: "lightning_ii",
@@ -346,7 +409,13 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 1050, reverseThrust: 130, strafeThrust: 260, maxSpeed: 680, maxReverseSpeed: 65, minSpeed: 0, yawRate: 2.35, yawAccel: 10, drag: 1.15,
     verticalThrust: 430, cruiseThrust: 45, cruiseAgl: 120, maxAgl: 300,
     gunMode: "fixed",
-    loadout: ["f35_gau22", "f35_aim9x", "f35_aim120", "f35_jassm"],
+    loadout: ["medium_gatling_cannon", "long_range_missile", "sidewinder_missile", "gps_bomb"],
+    stations: [
+      { mount: "fixed", controller: "pilot", traverse: { center: 0, arc: 12 } },
+      { mount: "bay", controller: "pilot" },
+      { mount: "hardpoint", controller: "pilot" },
+      { mount: "bay", controller: "pilot" },
+    ],
   },
   gunship: {
     kind: "gunship",
@@ -368,7 +437,13 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 500, strafeThrust: 0, maxSpeed: 300, minSpeed: 190, yawRate: 0.7, yawAccel: 2, drag: 1.5,
     verticalThrust: 180, cruiseThrust: 22, cruiseAgl: 120, maxAgl: 300,
     gunMode: "turret",
-    loadout: ["gunship_minigun", "gunship_40mm", "gunship_105mm", "gunship_missile"],
+    loadout: ["heavy_artillery", "medium_cannon", "light_cannon", "gps_missile"],
+    stations: [
+      { mount: "cabin", controller: "gunner", traverse: { center: -90, arc: 180, side: "left" } },
+      { mount: "cabin", controller: "gunner", traverse: { center: -90, arc: 180, side: "left" } },
+      { mount: "cabin", controller: "gunner", traverse: { center: -90, arc: 180, side: "left" } },
+      { mount: "hardpoint", controller: "pilot" },
+    ],
   },
   warthog: {
     kind: "warthog",
@@ -387,7 +462,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 1200, strafeThrust: 0, maxSpeed: 760, minSpeed: 300, yawRate: 1.25, yawAccel: 5.5, drag: 0.75,
     verticalThrust: 260, cruiseThrust: 32, cruiseAgl: 150, maxAgl: 360,
     gunMode: "fixed",
-    loadout: ["gau8", "rocket", "hellfire", "tow"],
+    loadout: ["heavy_cannon", "heavy_guided_missile", "bomb", "gps_bomb"],
   },
 };
 

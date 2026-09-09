@@ -44,7 +44,7 @@ export type ShotLook =
   | "shot_tow";
 
 /** Projectile flight behavior (independent of art `look`). */
-export type ShotKind = "cannon" | "rocket" | "hellfire" | "tow";
+export type ShotKind = "cannon" | "rocket" | "lock-on-missile" | "guided-missile";
 
 export type MoveKind =
   | "static"
@@ -354,7 +354,7 @@ export const ENEMY_WPNS: { id: EnemyWpnId; label: string; w: WeaponSpec }[] = [
     id: "seeker",
     label: "SEEKER",
     w: {
-      kind: "hellfire",
+      kind: "lock-on-missile",
       fireCd: 2.8,
       range: 820,
       speed: 300,

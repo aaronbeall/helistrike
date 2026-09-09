@@ -154,7 +154,6 @@ const DEBUG_MENU_ITEMS = [
   { section: "RENDERING" },
   { action: "terrainMesh", label: "Terrain mesh" },
   { action: "fx", label: "Post FX", shortcut: "F" },
-  { action: "thermal", label: "Thermal vision", shortcut: "T" },
   { section: "TOOLS" },
   { action: "relief", label: "Terrain editor", shortcut: "E" },
   { action: "camera", label: "Camera…" },
@@ -170,8 +169,8 @@ const CAMERA_PRESETS = [
 function shotLookOf(s: Shot): ShotLook {
   if (s.look) return s.look;
   if (s.kind === "rocket") return "shot_rocket";
-  if (s.kind === "hellfire") return "shot_hellfire";
-  if (s.kind === "tow") return "shot_tow";
+  if (s.kind === "lock-on-missile") return "shot_hellfire";
+  if (s.kind === "guided-missile") return "shot_tow";
   return "shot_chain";
 }
 
@@ -369,7 +368,7 @@ function createControlLegend(
   y: number
 ): Phaser.GameObjects.GameObject[] {
   const objects: Phaser.GameObjects.GameObject[] = [];
-  const controlW = panelW / 6;
+  const controlW = panelW / 7;
   const x0 = -panelW / 2;
   const controlX = (i: number) => x0 + i * controlW + controlW / 2;
   objects.push(
@@ -423,13 +422,15 @@ function createControlLegend(
   keycap(controlX(2) + 31, iconY, "SHIFT", 50, 22);
   label(2, "POP-UP / NAP-OF-EARTH");
   const weaponX = controlX(3);
-  for (let i = 0; i < 4; i++) keycap(weaponX - 33 + i * 22, iconY, String(i + 1), 18, 19);
-  mouse(weaponX + 50, iconY, false, true);
+  for (let i = 0; i < 4; i++) keycap(weaponX - 42 + i * 20, iconY, String(i + 1), 16, 19);
+  mouse(weaponX + 46, iconY, false, true);
   label(3, "SELECT WEAPON");
   keycap(controlX(4), iconY, "M", 30, 26);
-  label(4, "TACTICAL MAP");
-  keycap(controlX(5), iconY, "H", 30, 26);
-  label(5, "HELP / TIPS");
+  label(4, "MAP");
+  keycap(controlX(5), iconY, "T", 30, 26);
+  label(5, "THERMAL VISION");
+  keycap(controlX(6), iconY, "H", 30, 26);
+  label(6, "HELP / TIPS");
   return objects;
 }
 
@@ -3532,7 +3533,7 @@ export class MissionScene extends Phaser.Scene {
     const missile = wpn !== "cannon";
     this.reticle.setTexture(missile && this.textures.exists("reticle_sq") ? "reticle_sq" : "reticle");
     this.drawReticleTally(p.x, p.y, missile ? (this.ammo[h.weapon] ?? 0) : 0, this.loadout[h.weapon]!.ammo);
-    if (wpn === "hellfire") {
+    if (wpn === "lock-on-missile") {
       this.sight.clear();
       this.sight.setVisible(false);
       return;
@@ -3749,7 +3750,10 @@ export class MissionScene extends Phaser.Scene {
       if (Number.isFinite(this.ammo[h.weapon]!)) this.spendAmmo(h.weapon);
       const air = this.hoverAerial();
       const spd = spec.speed;
-      const authored = spec.fixed ? craftFixedMuzzles(h.spec) : [];
+      const station = h.spec.stations?.[h.weapon];
+      const fixed = station?.mount === "fixed" || (!station && h.spec.gunMode === "fixed");
+      const muzzleFire = station?.muzzleFire;
+      const authored = fixed ? craftFixedMuzzles(h.spec) : [];
       const mountedGunI =
         authored.length === 0 && this.guns.length > 1
           ? this.playerGunSide++ % this.guns.length
@@ -3757,16 +3761,16 @@ export class MissionScene extends Phaser.Scene {
       const muzzleUvs =
         authored.length === 0
           ? [undefined]
-          : spec.muzzleFire === "simultaneous"
+          : muzzleFire === "simultaneous"
             ? authored
-            : spec.muzzleFire === "alternate"
+            : muzzleFire === "alternate"
               ? [authored[this.playerGunSide++ % authored.length]]
               : [authored[0]];
       const fxInterval = spec.fireCd / Math.max(1, muzzleUvs.length);
       const shotFxScale = projectileFxScale("player", fxInterval);
       for (const muzzleUv of muzzleUvs) {
         const spread = spec.beam ? 0 : (Math.random() - 0.5) * (spec.silent ? 0.025 : 0.08);
-        const ang = (spec.fixed ? h.angle : h.gunAngle) + spread;
+        const ang = (fixed ? h.angle : h.gunAngle) + spread;
         const tip = muzzleUv ? this.craftBodyMountWorldPos(muzzleUv) : this.gunTip(mountedGunI);
         const tipScr = worldToScreen(tip.x, tip.y, h.z);
         const tipScreenX = tipScr.x;
@@ -3878,7 +3882,7 @@ export class MissionScene extends Phaser.Scene {
     }
 
     this.tickHellfireLock(dt, ptr);
-    if (wpn === "hellfire") {
+    if (wpn === "lock-on-missile") {
       if (
         down &&
         h.fireCd <= 0 &&
@@ -3913,7 +3917,7 @@ export class MissionScene extends Phaser.Scene {
       }
     }
 
-    if (wpn === "tow" && down && h.fireCd <= 0 && this.hasAmmo(h.weapon)) {
+    if (wpn === "guided-missile" && down && h.fireCd <= 0 && this.hasAmmo(h.weapon)) {
       h.fireCd = spec.fireCd;
       const { x: px, y: py, side } = this.missilePylon();
       this.spendAmmo(h.weapon);
@@ -4520,7 +4524,7 @@ export class MissionScene extends Phaser.Scene {
       return true;
     }
     // Hellfires use a soft clamp instead of a hard height cull.
-    if (s.kind === "hellfire") return false;
+    if (s.kind === "lock-on-missile") return false;
     return s.z > SHOT_Z_MAX;
   }
 
@@ -4538,8 +4542,8 @@ export class MissionScene extends Phaser.Scene {
       const lit = s.motor == null || s.motor >= 0;
       const lofting = lit && (s.loft ?? 0) > 0;
       if (lofting) s.loft = (s.loft ?? 0) - dt;
-      const hellfireHome = lit && s.kind === "hellfire" && s.targetId != null;
-      const stingerHome = lit && s.homePlayer && s.kind === "hellfire";
+      const hellfireHome = lit && s.kind === "lock-on-missile" && s.targetId != null;
+      const stingerHome = lit && s.homePlayer && s.kind === "lock-on-missile";
       if (hellfireHome) {
         const cur = Math.hypot(s.vx, s.vy, s.vz);
         const burn = s.motor ?? 0;
@@ -4606,7 +4610,7 @@ export class MissionScene extends Phaser.Scene {
         s.life = Math.max(s.life, 0.6);
       }
       if (s.motor != null && s.motor < 0) {
-        const drag = s.kind === "tow" ? Math.pow(0.12, dt) : Math.pow(0.07, dt);
+        const drag = s.kind === "guided-missile" ? Math.pow(0.12, dt) : Math.pow(0.07, dt);
         s.vx *= drag;
         s.vy *= drag;
         s.vz *= Math.pow(0.22, dt);
@@ -4638,16 +4642,16 @@ export class MissionScene extends Phaser.Scene {
       s.y += s.vy * dt;
       s.z += s.vz * dt;
       // Soft absolute ceiling for enemy Hellfires only — player missiles are uncapped.
-      if (s.kind === "hellfire" && s.from !== "player") {
+      if (s.kind === "lock-on-missile" && s.from !== "player") {
         if (s.z > HELLFIRE_Z_MAX) {
           s.z = HELLFIRE_Z_MAX;
           if (s.vz > 0) s.vz = 0;
         }
       }
       s.life -= dt;
-      if (s.kind === "tow" && s.from === "player" && !s.warpTimeScale) this.simulateTowWire(s, dt);
+      if (s.kind === "guided-missile" && s.from === "player" && !s.warpTimeScale) this.simulateTowWire(s, dt);
       // Repel Hellfire/TOW off ground during pre-ignition instead of detonating
-      const preIgnite = (s.kind === "hellfire" || s.kind === "tow") && s.from === "player" && s.motor != null && s.motor < 0;
+      const preIgnite = (s.kind === "lock-on-missile" || s.kind === "guided-missile") && s.from === "player" && s.motor != null && s.motor < 0;
       if (preIgnite) {
         const gRepel = groundZ(this.world, s.x, s.y) + 8;
         if (s.z < gRepel) {
@@ -4701,7 +4705,7 @@ export class MissionScene extends Phaser.Scene {
         }
       }
       if (hit) {
-        if (s.kind === "tow" && s.from === "player") {
+        if (s.kind === "guided-missile" && s.from === "player") {
           this.towLookX = s.x;
           this.towLookY = s.y;
           this.towLookHold = 0.9;
@@ -4737,7 +4741,7 @@ export class MissionScene extends Phaser.Scene {
   }
 
   missileIgnite(s: Shot): void {
-    if (s.from === "player" && s.kind === "hellfire") {
+    if (s.from === "player" && s.kind === "lock-on-missile") {
       const pitch = 0.92;
       const spd = Math.max(Math.hypot(s.vx, s.vy), 90);
       s.vx = Math.cos(s.angle) * spd * Math.cos(pitch);
@@ -4774,7 +4778,7 @@ export class MissionScene extends Phaser.Scene {
 
   emitShotTrail(s: Shot, x0: number, y0: number, z0: number): void {
     if (s.kind === "cannon") return;
-    if ((s.kind === "hellfire" || s.kind === "tow") && (s.motor == null || s.motor < 0) && !s.homePlayer) return;
+    if ((s.kind === "lock-on-missile" || s.kind === "guided-missile") && (s.motor == null || s.motor < 0) && !s.homePlayer) return;
     if (s.homePlayer && s.motor != null && s.motor < 0) return;
     const isRocket = s.kind === "rocket";
     const small = troopMissileTrail(s);
@@ -4814,7 +4818,7 @@ export class MissionScene extends Phaser.Scene {
     if (this.heli.phase === "dead") return;
     let wireDepth = worldDepth(this.heli.z, ZOff.shot - 0.8, this.heli.y);
     for (const s of this.shots) {
-      if (s.kind !== "tow" || s.from !== "player") continue;
+      if (s.kind !== "guided-missile" || s.from !== "player") continue;
       const pts = s.wire ?? [];
       if (pts.length === 0) continue;
       wireDepth = Math.min(
@@ -7683,7 +7687,7 @@ export class MissionScene extends Phaser.Scene {
             }
           }
         }
-        const home = wpn.kind === "hellfire";
+        const home = wpn.kind === "lock-on-missile";
         this.spawnShot({
           kind: wpn.kind,
           from: "enemy",
@@ -8247,7 +8251,7 @@ export class MissionScene extends Phaser.Scene {
     if (h.hellfireLock && !this.unitById(h.hellfireLock.id)) h.hellfireLock = null;
     if (h.hellfireSeek && !this.unitById(h.hellfireSeek.id)) h.hellfireSeek = null;
 
-    if (this.loadout[h.weapon]!.kind !== "hellfire") return;
+    if (this.loadout[h.weapon]!.kind !== "lock-on-missile") return;
 
     const tgt = this.hellfirePickTarget(ptr.x, ptr.y, 160);
     if (!tgt || (h.hellfireLock && tgt.id === h.hellfireLock.id)) {
@@ -8324,7 +8328,7 @@ export class MissionScene extends Phaser.Scene {
     const seen = new Set<number>();
     const out: Unit[] = [];
     for (const s of this.shots) {
-      if (s.kind !== "hellfire" || s.from !== "player" || s.targetId == null) continue;
+      if (s.kind !== "lock-on-missile" || s.from !== "player" || s.targetId == null) continue;
       if (seen.has(s.targetId)) continue;
       const u = this.unitById(s.targetId);
       if (!u) continue;
@@ -8345,7 +8349,7 @@ export class MissionScene extends Phaser.Scene {
     this.lockTxt.setVisible(false);
     this.lockInbdTxt.setVisible(false);
 
-    const hellfire = this.loadout[h.weapon]!.kind === "hellfire";
+    const hellfire = this.loadout[h.weapon]!.kind === "lock-on-missile";
     const inbound = this.inboundHellfireTargets();
     const locked = hellfire && h.hellfireLock ? this.unitById(h.hellfireLock.id) : undefined;
     const seeking = hellfire && h.hellfireSeek ? this.unitById(h.hellfireSeek.id) : undefined;
@@ -9745,11 +9749,9 @@ export class MissionScene extends Phaser.Scene {
                       ? this.terrainMesh
                       : item.action === "fx"
                         ? this.fxOn
-                        : item.action === "thermal"
-                          ? this.thermalOn
-                          : item.action === "relief"
-                            ? this.editOpen
-                            : undefined;
+                        : item.action === "relief"
+                          ? this.editOpen
+                          : undefined;
       const label = `${item.label}${shortcut ? `  ${shortcut}` : ""}`;
       if (on != null) {
         row.setText(`${mark}  ${label.padEnd(25)} ${on ? "ON" : "OFF"}`);
@@ -9782,7 +9784,6 @@ export class MissionScene extends Phaser.Scene {
     else if (item.action === "blast") this.setDebugBlast(!this.debugBlast);
     else if (item.action === "terrainMesh") this.toggleTerrainMesh();
     else if (item.action === "fx") this.toggleTestFx();
-    else if (item.action === "thermal") this.toggleThermal();
     else if (item.action === "relief") this.toggleReliefEditor();
     else if (item.action === "camera") this.openDebugCam();
     else if (item.action === "spawn") this.openDebugSpawn();
@@ -10530,11 +10531,11 @@ export class MissionScene extends Phaser.Scene {
     const pointerAtFocus = screenToWorldAtZ(p.x, p.y, this.heli.z);
     const wpn = this.loadout[this.heli.weapon]!.kind;
     const look =
-      wpn === "hellfire"
+      wpn === "lock-on-missile"
         ? { pull: 0.86, max: 360, rate: 5.2 }
         : wpn === "rocket"
           ? { pull: 0.42, max: 160, rate: 7.4 }
-          : wpn === "tow"
+          : wpn === "guided-missile"
             ? { pull: 0.55, max: 210, rate: 6.5 }
             : { pull: 0.2, max: 88, rate: 10 };
     const pull = look.pull;
@@ -10550,7 +10551,7 @@ export class MissionScene extends Phaser.Scene {
     let tow: Shot | undefined;
     for (let i = this.shots.length - 1; i >= 0; i--) {
       const s = this.shots[i]!;
-      if (s.kind === "tow" && s.from === "player") {
+      if (s.kind === "guided-missile" && s.from === "player") {
         tow = s;
         break;
       }
@@ -11012,8 +11013,8 @@ function shotTrailScale(s: Shot): number {
   const vis = s.scale ?? 1;
   const small = troopMissileTrail(s);
   if (s.kind === "rocket") return small ? vis * 0.34 : vis * 0.32;
-  if (s.kind === "tow") return vis * 0.52;
-  if (s.kind === "hellfire") return small ? vis * 0.4 : vis * 0.55;
+  if (s.kind === "guided-missile") return vis * 0.52;
+  if (s.kind === "lock-on-missile") return small ? vis * 0.4 : vis * 0.55;
   return vis;
 }
 

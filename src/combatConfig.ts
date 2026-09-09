@@ -438,7 +438,7 @@ function playerEntries(): CombatEntry[] {
 
 function formatPlayer(w: PlayerWpnSpec): { stats: string[]; info: string[] } {
   const info = [...w.notes.map((n) => `· ${n}`), "source: combat.ts PLAYER_WPNS / SHOT_ORIGIN / SHOT_TAIL"];
-  if (w.kind === "hellfire" || w.kind === "tow") {
+  if (w.kind === "lock-on-missile" || w.kind === "guided-missile") {
     info.push(
       `MISSILE_IGNITE ${MISSILE_IGNITE}`,
       `HELLFIRE_LOCK_T ${HELLFIRE_LOCK_T}`,
