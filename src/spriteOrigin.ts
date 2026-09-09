@@ -11,7 +11,7 @@ export type SpritePointRole =
   | "rotor"
   | "dish"
   | "troop"
-  | "secondary"
+  | "hardpoint"
   | "exhaust"
   | "muzzle";
 
@@ -61,7 +61,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
       { role: "rotor", x: 0.498, y: 0.453 },
       { role: "gun", x: 0.497, y: 0.174 },
       // Wing hardpoints (left → right).
-      ...pts("secondary", [uv(0.112, 0.448), uv(0.859, 0.445)]),
+      ...pts("hardpoint", [uv(0.112, 0.448), uv(0.859, 0.445)]),
     ],
   },
   heli_gun: {
@@ -74,7 +74,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     points: [
       { role: "rotor", x: 0.5, y: 0.42 },
       ...pts("muzzle", [uv(0.24, 0.38), uv(0.76, 0.38)], "wing"),
-      ...pts("secondary", [uv(0.043, 0.386), uv(0.949, 0.384)]),
+      ...pts("hardpoint", [uv(0.043, 0.386), uv(0.949, 0.384)]),
     ],
   },
   craft_quad_drone: {
@@ -87,7 +87,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
         uv(0.925, 0.923),
       ], "quad"),
       ...pts("muzzle", [uv(0.31, 0.42), uv(0.69, 0.42)], "coil"),
-      ...pts("secondary", [uv(0.24, 0.49), uv(0.76, 0.49)]),
+      ...pts("hardpoint", [uv(0.24, 0.49), uv(0.76, 0.49)]),
     ],
   },
   craft_blackhawk: {
@@ -95,7 +95,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     points: [
       { role: "rotor", x: 0.486, y: 0.395 },
       { role: "gun", x: 0.503, y: 0.142 },
-      ...pts("secondary", [uv(0.16, 0.52), uv(0.84, 0.52)]),
+      ...pts("hardpoint", [uv(0.16, 0.52), uv(0.84, 0.52)]),
     ],
   },
   craft_chinook: {
@@ -103,7 +103,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     points: [
       ...pts("rotor", [uv(0.5, 0.144), uv(0.481, 0.815)], "tandem"),
       { role: "gun", x: 0.5, y: 0.14 },
-      ...pts("secondary", [uv(0.24, 0.46), uv(0.76, 0.46), uv(0.5, 0.84)]),
+      ...pts("hardpoint", [uv(0.24, 0.46), uv(0.76, 0.46), uv(0.5, 0.84)]),
     ],
   },
   craft_cobra: {
@@ -111,7 +111,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     points: [
       { role: "rotor", x: 0.5, y: 0.4 },
       { role: "gun", x: 0.494, y: 0.112 },
-      ...pts("secondary", [uv(0.227, 0.427), uv(0.772, 0.428)]),
+      ...pts("hardpoint", [uv(0.227, 0.427), uv(0.772, 0.428)]),
     ],
   },
   craft_viper: {
@@ -119,7 +119,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     points: [
       { role: "rotor", x: 0.5, y: 0.49 },
       { role: "gun", x: 0.494, y: 0.107 },
-      ...pts("secondary", [uv(0.169, 0.451), uv(0.815, 0.451)]),
+      ...pts("hardpoint", [uv(0.169, 0.451), uv(0.815, 0.451)]),
     ],
   },
   craft_osprey: {
@@ -127,7 +127,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     points: [
       ...pts("rotor", [uv(0.06, 0.345), uv(0.937, 0.339)]),
       ...pts("gun", [uv(0.499, 0.41), uv(0.498, 0.938)], "gun"),
-      ...pts("secondary", [uv(0.337, 0.48), uv(0.637, 0.48)]),
+      ...pts("hardpoint", [uv(0.337, 0.48), uv(0.637, 0.48)]),
     ],
   },
   craft_stealthhawk: {
@@ -135,7 +135,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     points: [
       { role: "rotor", x: 0.5, y: 0.4 },
       { role: "gun", x: 0.5, y: 0.16 },
-      ...pts("secondary", [uv(0.22, 0.48), uv(0.78, 0.48)]),
+      ...pts("hardpoint", [uv(0.22, 0.48), uv(0.78, 0.48)]),
     ],
   },
   craft_cyberhawk: {
@@ -144,7 +144,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
       { role: "rotor", x: 0.5, y: 0.4 },
       { role: "rotor", x: 0.497, y: 0.9, scale: 0.34, id: "tail" },
       { role: "gun", x: 0.5, y: 0.17 },
-      ...pts("secondary", [uv(0.18, 0.48), uv(0.82, 0.48)]),
+      ...pts("hardpoint", [uv(0.18, 0.48), uv(0.82, 0.48)]),
       ...pts("exhaust", [uv(0.372, 0.646), uv(0.63, 0.647)]),
     ],
   },
@@ -152,7 +152,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     origin: uv(0.5, 0.5),
     points: [
       { role: "gun", x: 0.5, y: 0.28 },
-      ...pts("secondary", [uv(0.153, 0.357), uv(0.836, 0.53)]),
+      ...pts("hardpoint", [uv(0.153, 0.357), uv(0.836, 0.53)]),
       ...pts("exhaust", [uv(0.241, 0.777), uv(0.378, 0.863), uv(0.623, 0.866), uv(0.758, 0.781)]),
     ],
   },
@@ -161,14 +161,14 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     points: [
       { role: "gun", x: 0.28, y: 0.45 },
       ...pts("rotor", [uv(0.185, 0.284), uv(0.322, 0.284), uv(0.671, 0.286), uv(0.811, 0.286)], "prop"),
-      ...pts("secondary", [uv(0.418, 0.219), uv(0.415, 0.312), uv(0.417, 0.564)]),
+      ...pts("hardpoint", [uv(0.418, 0.219), uv(0.415, 0.312), uv(0.417, 0.564)]),
     ],
   },
   craft_warthog: {
     origin: uv(0.5, 0.48),
     points: [
       { role: "gun", x: 0.5, y: 0.12 },
-      ...pts("secondary", [uv(0.22, 0.5), uv(0.78, 0.5)]),
+      ...pts("hardpoint", [uv(0.22, 0.5), uv(0.78, 0.5)]),
       ...pts("exhaust", [uv(0.408, 0.813), uv(0.585, 0.81)]),
     ],
   },
@@ -176,7 +176,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     origin: uv(0.5, 0.56),
     points: [
       { role: "muzzle", x: 0.5, y: 0.045 },
-      ...pts("secondary", [
+      ...pts("hardpoint", [
         uv(0.22, 0.52),
         uv(0.37, 0.58),
         uv(0.63, 0.58),
@@ -196,7 +196,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     points: [
       { role: "rotor", x: 0.497, y: 0.411 },
       { role: "gun", x: 0.503, y: 0.142 },
-      ...pts("secondary", [uv(0.16, 0.52), uv(0.84, 0.52)]),
+      ...pts("hardpoint", [uv(0.16, 0.52), uv(0.84, 0.52)]),
     ],
   },
   enemy_heli_small: {
@@ -212,7 +212,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     points: [
       ...pts("rotor", [uv(0.5, 0.252), uv(0.5, 0.768)]),
       ...pts("gun", [uv(0.318, 0.345), uv(0.696, 0.346)]),
-      ...pts("secondary", [uv(0.129, 0.578), uv(0.883, 0.574)]),
+      ...pts("hardpoint", [uv(0.129, 0.578), uv(0.883, 0.574)]),
     ],
   },
   enemy_drone: {

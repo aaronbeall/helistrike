@@ -10,7 +10,7 @@ import {
   stats,
   textureOf,
   wheelDebrisKeys,
-  playerLoadout,
+  playerLoadoutFromSockets,
   SHOT_ORIGIN,
   SHOT_TAIL,
   HELLFIRE_LOCK_T,
@@ -47,7 +47,7 @@ import {
   pointInFootprint,
 } from "./footprint";
 import { lookupSpriteMuzzles, lookupSpriteOrigin } from "./spriteOrigin";
-import { allCrafts, craftAgility, craftCameraScale, craftComposite, craftCompositePartScale, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftOf, craftOrigin, craftPreviewExhaustScale, craftPreviewExhaustTint, craftPreviewFitScale, craftRotorMounts, craftSecondaryMounts, craftStartingAmmo, rotorDrawSpan, selectCraft, type CraftComposite } from "./craft";
+import { allCrafts, craftAgility, craftAimsWithTurret, craftCameraScale, craftComposite, craftCompositePartScale, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftHardpointMounts, craftOf, craftOrigin, craftPreviewExhaustScale, craftPreviewExhaustTint, craftPreviewFitScale, craftRotorMounts, craftSocketPoints, craftStartingAmmo, rotorDrawSpan, selectCraft, type CraftComposite } from "./craft";
 import { allMissions, missionOf, selectMission } from "./mission";
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
 import { configRigsAnyOpen, installConfigRigHotkeys } from "./configRigs";
@@ -1068,7 +1068,7 @@ export class MenuScene extends Phaser.Scene {
           .setFillStyle(i === missionIndex ? 0xe8b84a : 0x5d5544, i === missionIndex ? 1 : 0.9)
           .setScale(i === missionIndex ? 1.45 : 1)
       );
-      const weapons = playerLoadout(craft.loadout);
+      const weapons = playerLoadoutFromSockets(craft.sockets);
       drawStatBars(craft);
       weaponRows.forEach((row, i) => {
         const weapon = weapons[i];
@@ -1272,7 +1272,7 @@ export class MissionScene extends Phaser.Scene {
   shots: Shot[] = [];
   debris: Debris[] = [];
   simParticles: SimParticle[] = [];
-  loadout: PlayerWpnSpec[] = playerLoadout(craftOf().loadout);
+  loadout: PlayerWpnSpec[] = playerLoadoutFromSockets(craftOf().sockets);
   ammo = this.loadout.map((w) => w.ammo);
   keyW!: Phaser.Input.Keyboard.Key;
   keyA!: Phaser.Input.Keyboard.Key;
@@ -1631,7 +1631,7 @@ export class MissionScene extends Phaser.Scene {
     this.playerCrashSimmerT = 0;
     this.playerGunSide = 0;
     const selectedCraft = craftOf();
-    this.loadout = playerLoadout(selectedCraft.loadout);
+    this.loadout = playerLoadoutFromSockets(selectedCraft.sockets);
     this.ammo = this.loadout.map((weapon) => craftStartingAmmo(weapon.ammo, selectedCraft));
     if (!data.world) {
       this.world = worldFromGen(
@@ -3422,7 +3422,7 @@ export class MissionScene extends Phaser.Scene {
     const aimMountUv = gunParts[0]?.mount ?? craftOrigin(craft);
     const aimMount = spriteUvPos(this.body, aimMountUv.x, aimMountUv.y);
     // Aim in world XY (mount unprojected; pointer is ground-unprojected).
-    if (craft.gunMode === "fixed") {
+    if (!craftAimsWithTurret(craft)) {
       h.gunAngle = h.angle;
     } else if (h.phase === "flight" || h.phase === "ready" || h.phase === "spool") {
       const aim = this.worldPointer();
@@ -3947,21 +3947,26 @@ export class MissionScene extends Phaser.Scene {
     };
   }
 
-  /** World position of a craft secondary hardpoint UV. */
-  secondaryWorldPos(mount: { x: number; y: number }): { x: number; y: number } {
+  /** World position of a craft hardpoint UV. */
+  hardpointWorldPos(mount: { x: number; y: number }): { x: number; y: number } {
     return this.craftBodyMountWorldPos(mount);
   }
 
   /** World position of the next missile hardpoint (alternates left/right by ammo). */
-  missilePylon(): { x: number; y: number; side: number } {
-    const mounts = craftSecondaryMounts(this.heli.spec);
-    const ammo = this.ammo[this.heli.weapon] ?? 0;
+  missilePylon(slot = this.heli.weapon): { x: number; y: number; side: number } {
+    const h = this.heli;
+    const socket = h.spec.sockets[slot];
+    const mounts =
+      socket && (socket.class === "hardpoint" || socket.class === "bay")
+        ? craftSocketPoints(h.spec, socket)
+        : craftHardpointMounts(h.spec);
+    const ammo = this.ammo[slot] ?? 0;
     // Remaining-ammo phase cycles every authored hardpoint; for two mounts this
     // preserves the original right/left alternation.
     const index = mounts.length > 1 ? ((ammo - 1) % mounts.length + mounts.length) % mounts.length : 0;
     const mount = mounts[index] ?? mounts[0]!;
-    const side = mount.x < craftOrigin(this.heli.spec).x ? -1 : 1;
-    return { ...this.secondaryWorldPos(mount), side };
+    const side = mount.x < craftOrigin(h.spec).x ? -1 : 1;
+    return { ...this.hardpointWorldPos(mount), side };
   }
 
   handleFire(dt: number): void {
@@ -3990,8 +3995,8 @@ export class MissionScene extends Phaser.Scene {
 
     const slot = h.weapon;
     const spec = this.loadout[slot]!;
-    const station = h.spec.stations?.[slot];
-    if (station?.controller === "automatic" || spec.control.mode === "automatic") {
+    const socket = h.spec.sockets[slot]!;
+    if (socket.controller === "automatic" || spec.control.mode === "automatic") {
       this.pointerWasDown = down;
       return;
     }
@@ -4039,11 +4044,10 @@ export class MissionScene extends Phaser.Scene {
       return;
     }
 
-    const stationOk = station?.mount === "fixed" || (!station && h.spec.gunMode === "fixed");
-    const aimAng = stationOk || station?.mount === "hardpoint" || station?.mount === "bay"
-      ? h.angle
-      : h.gunAngle;
-    if (station?.traverse && !aimInStationArc(aimAng, h.angle, station.traverse)) {
+    const hullAim =
+      socket.class === "fixed" || socket.class === "hardpoint" || socket.class === "bay";
+    const aimAng = hullAim ? h.angle : h.gunAngle;
+    if (socket.traverse && !aimInStationArc(aimAng, h.angle, socket.traverse)) {
       this.pointerWasDown = down;
       return;
     }
@@ -4155,12 +4159,12 @@ export class MissionScene extends Phaser.Scene {
     autoTarget?: Unit
   ): void {
     const h = this.heli;
-    const station = h.spec.stations?.[slot];
-    const fixed = station?.mount === "fixed" || (!station && h.spec.gunMode === "fixed");
+    const socket = h.spec.sockets[slot]!;
+    const fixed = socket.class === "fixed";
     const rocketPod = spec.kind === "rocket" && spec.guidance.mode === "none";
     // Hydra pods keep pylon feel; guided muzzle rockets (Refractor) use the gun tip.
     if (rocketPod) {
-      const { x: px, y: py } = this.missilePylon();
+      const { x: px, y: py } = this.missilePylon(slot);
       const ang = h.angle + yawOff;
       const air = autoTarget && isAerial(autoTarget.kind) ? autoTarget : this.hoverAerial();
       const aim = autoTarget ?? air;
@@ -4201,8 +4205,8 @@ export class MissionScene extends Phaser.Scene {
       return;
     }
 
-    const muzzleFire = station?.muzzleFire;
-    const authored = fixed ? craftFixedMuzzles(h.spec) : [];
+    const muzzleFire = socket.muzzleFire;
+    const authored = fixed ? craftSocketPoints(h.spec, socket) : [];
     const mountedGunI =
       authored.length === 0 && this.guns.length > 1
         ? this.playerGunSide++ % this.guns.length
@@ -4331,7 +4335,7 @@ export class MissionScene extends Phaser.Scene {
     const h = this.heli;
     const launch = spec.launch;
     if (launch.mode !== "kick_motor") return;
-    const { x: px, y: py, side } = this.missilePylon();
+    const { x: px, y: py, side } = this.missilePylon(slot);
     const ang = h.angle + yawOff;
     const kick = launch.kickSpeed;
     const inherit = launch.inheritMomentum;
@@ -4456,20 +4460,18 @@ export class MissionScene extends Phaser.Scene {
 
   tickAutomaticStations(_dt: number, ptr: { x: number; y: number }): void {
     const h = this.heli;
-    const stations = h.spec.stations;
-    if (!stations) return;
     for (let slot = 0; slot < this.loadout.length; slot++) {
-      const station = stations[slot];
+      const socket = h.spec.sockets[slot];
       const spec = this.loadout[slot]!;
-      if (!station || station.controller !== "automatic") continue;
+      if (!socket || socket.controller !== "automatic") continue;
       if ((this.stationFireCd[slot] ?? 0) > 0 || !this.hasAmmo(slot)) continue;
       const acquire =
         spec.guidance.mode === "auto" ? spec.guidance.acquireRadius : 340;
-      const tgt = this.nearestUnitInFrontArc(h.x, h.y, h.angle, acquire, station.traverse);
+      const tgt = this.nearestUnitInFrontArc(h.x, h.y, h.angle, acquire, socket.traverse);
       if (!tgt) continue;
-      if (station.traverse) {
+      if (socket.traverse) {
         const aim = Math.atan2(tgt.y - h.y, tgt.x - h.x);
-        if (!aimInStationArc(aim, h.angle, station.traverse)) continue;
+        if (!aimInStationArc(aim, h.angle, socket.traverse)) continue;
       }
       this.stationFireCd[slot] = spec.fireCd;
       const salvoN = spec.salvo?.count ?? 1;
@@ -5764,10 +5766,10 @@ export class MissionScene extends Phaser.Scene {
   }
 
   towWing(side: number): { x: number; y: number; z: number } {
-    const mounts = craftSecondaryMounts(this.heli.spec);
+    const mounts = craftHardpointMounts(this.heli.spec);
     const index = mounts.length > 1 ? (side < 0 ? 0 : 1) : 0;
     const mount = mounts[index] ?? mounts[0]!;
-    return { ...this.secondaryWorldPos(mount), z: this.heli.z + ZOff.shot };
+    return { ...this.hardpointWorldPos(mount), z: this.heli.z + ZOff.shot };
   }
 
   explode(

@@ -20,7 +20,7 @@ export function heatCategoryOk(
 }
 
 /**
- * Aim angle within station traverse arc (relative to craft heading).
+ * Aim angle within socket traverse arc (relative to craft heading).
  * Cabin side left/right further restricts to that hemisphere.
  */
 export function aimInStationArc(

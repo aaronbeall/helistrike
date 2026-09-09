@@ -9,7 +9,7 @@ import {
   craftKind,
   craftOf,
   craftOrigin,
-  craftSecondaryMounts,
+  craftHardpointMounts,
   selectCraft,
   type CraftKind,
   type CraftSpec,
@@ -1234,7 +1234,7 @@ function formatCraft(craft: CraftSpec): { stats: string[]; info: string[] } {
       ...(gunMounts.length ? { gunMounts } : {}),
       gunOrigin: craftGunOrigin(craft),
       exhaustMounts: craftExhaustMounts(craft),
-      secondaryMounts: craftSecondaryMounts(craft),
+      hardpointMounts: craftHardpointMounts(craft),
     }),
   ];
   return {
@@ -1247,7 +1247,7 @@ function formatCraft(craft: CraftSpec): { stats: string[]; info: string[] } {
 }
 
 function formatSpec(kind: UnitKind, sp: UnitSpec): { stats: string[]; info: string[] } {
-  const info = ["source: roster.ts SPECS + craft.ts CRAFTS (partsRoll / crew / drive / secondary)"];
+  const info = ["source: roster.ts SPECS + craft.ts CRAFTS (partsRoll / crew / drive / hardpoint)"];
   if (sp.crew?.mounts.length) {
     const total = TROOP_WEIGHTS.reduce((s, [, w]) => s + w, 0);
     info.push(`pickTroop n=${TROOP_WEIGHTS.length}`);

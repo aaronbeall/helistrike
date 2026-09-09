@@ -814,7 +814,7 @@ function buildBalanceCatalog(): BalancePoint[] {
   for (const c of allCrafts()) {
     const loadoutVals: Record<string, number> = {};
     let firepower = 0;
-    for (const id of c.loadout) {
+    for (const id of c.sockets.map((s) => s.weapon)) {
       const w = PLAYER_WPNS[id];
       if (!w) continue;
       const dps = playerWeaponDps(w);

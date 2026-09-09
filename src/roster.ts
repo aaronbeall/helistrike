@@ -101,8 +101,9 @@ export interface WeaponSpec {
 }
 
 /**
- * Hull hardpoint secondary (e.g. seeker missiles). Separate from body `weapon` / `guns`.
+ * Hull hardpoint ordnance (e.g. seeker missiles). Separate from body `weapon` / `guns`.
  * Cadence rolls between fireCdMin/Max; mount firing behavior is explicit.
+ * Geometry uses SPRITE_SPECS `hardpoint` points.
  */
 export interface SecondaryWpnSpec {
   wpn: WeaponSpec;
@@ -126,7 +127,7 @@ export interface SecondaryWpnSpec {
  * Tagged hull UV roles (SPRITE_SPECS point roles minus muzzle).
  * Shared by craft mounts and rig overlays.
  */
-export type HullMountRole = "gun" | "rotor" | "dish" | "troop" | "secondary" | "exhaust";
+export type HullMountRole = "gun" | "rotor" | "dish" | "troop" | "hardpoint" | "exhaust";
 
 export interface HullMount {
   x: number;
@@ -141,7 +142,7 @@ export const HULL_MOUNT_COLOR: Record<HullMountRole, number> = {
   rotor: 0x5ec8ff,
   dish: 0xe8b84a,
   troop: 0xd878ff,
-  secondary: 0xff8c42,
+  hardpoint: 0xff8c42,
   exhaust: 0xb04aff
 };
 
@@ -180,8 +181,8 @@ export interface UnitSpec {
   drive?: DriveSpec;
   weapon?: WeaponSpec;
   /**
-   * Optional hull hardpoint secondary (seeker missiles, etc.).
-   * Fired by scenes from `mounts` — not via SPECS.guns.
+   * Optional hull hardpoint ordnance (seeker missiles, etc.).
+   * Fired by scenes from `mounts` (SPRITE `hardpoint` UVs) — not via SPECS.guns.
    */
   secondary?: SecondaryWpnSpec;
   guns: PartMount[];
@@ -584,7 +585,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     weapon: wpn("he", { fireCd: 1.4, range: 640, speed: 520, dmg: 3, blast: 8, burst: 3, burstGap: 0.13 }),
     secondary: {
       wpn: WPN.seeker,
-      mounts: mountsOf("enemy_heli", "secondary"),
+      mounts: mountsOf("enemy_heli", "hardpoint"),
       mountFire: "alternate",
       fireCdMin: 5.5,
       fireCdMax: 9.5,
@@ -1158,7 +1159,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     }),
     secondary: {
       wpn: WPN.seeker,
-      mounts: mountsOf("enemy_heli_heavy", "secondary"),
+      mounts: mountsOf("enemy_heli_heavy", "hardpoint"),
       mountFire: "alternate",
       fireCdMin: 5.5,
       fireCdMax: 9.5,

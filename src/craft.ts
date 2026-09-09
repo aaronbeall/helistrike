@@ -28,24 +28,30 @@ export type CraftKind =
   | "gunship"
   | "warthog";
 
-export interface CraftStationSpec {
-  /** Installation policy; the weapon identity remains in the parallel loadout slot. */
-  mount?: "fixed" | "turret" | "cabin" | "hardpoint" | "bay";
-  controller?: "pilot" | "gunner" | "automatic";
+/** Physical install class — also the weapon compatibility key (`fits`). */
+export type SocketClass = "fixed" | "turret" | "cabin" | "hardpoint" | "bay";
+
+/** Body UV role used to emit / attach from this socket. */
+export type SocketPointRole = "gun" | "muzzle" | "hardpoint";
+
+export interface CraftSocket {
+  /** Stable physical install id (hangar / save) — location, not weapon. */
+  id: string;
+  /** Mount class — drives aim policy and weapon fit. */
+  class: SocketClass;
+  controller: "pilot" | "gunner" | "automatic";
+  /** Default installed weapon; hangar may reassign any catalog weapon in `fits`. */
+  weapon: string;
+  /**
+   * Body point role for emit/attach. Defaults from `class`:
+   * turret/cabin→gun, fixed→muzzle, hardpoint/bay→hardpoint.
+   */
+  points?: SocketPointRole;
   /** Traverse is measured in degrees around craft-forward; cabin guns use a 180° side arc. */
   traverse?: { center: number; arc: number; side?: "left" | "right" | "both" };
-  /** Installation label when it differs from the shared weapon identity. */
-  displayName?: string;
   /** Authored multi-muzzle policy belongs to this installation, not the weapon identity. */
   muzzleFire?: "single" | "alternate" | "simultaneous";
 }
-
-export type CraftStations = [
-  CraftStationSpec | null,
-  CraftStationSpec | null,
-  CraftStationSpec | null,
-  CraftStationSpec | null,
-];
 
 export interface CraftSpec {
   kind: CraftKind;
@@ -100,10 +106,11 @@ export interface CraftSpec {
   maxAgl: number;
   /** Future pickup/place capability; no cargo gameplay exists yet. */
   liftClass?: "medium" | "heavy";
-  gunMode: "turret" | "fixed";
-  loadout: [string, string, string, string];
-  /** Optional installation metadata parallel to the four legacy string loadout slots. */
-  stations?: CraftStations;
+  /**
+   * Weapon installs: geometry + policy + default weapon.
+   * Hangar loadouts assign any catalog weapon whose `fits` includes `socket.class`.
+   */
+  sockets: CraftSocket[];
   /** Enemy gun-laying accuracy multiplier; lower is harder to hit. */
   enemyAimMul?: number;
   /** Enemy seeker acquisition/tracking multiplier; lower is harder to lock. */
@@ -130,13 +137,11 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     rotOff: Math.PI / 2,
     forwardThrust: 520, strafeThrust: 340, maxSpeed: 340, minSpeed: 0, yawRate: 2.55, yawAccel: 11, drag: 1.65,
     verticalThrust: 340, cruiseThrust: 36, cruiseAgl: 46, maxAgl: 118,
-    gunMode: "turret",
-    loadout: ["chain_gun", "rocket", "hellfire_missile", "tv_missile"],
-    stations: [
-      { mount: "turret", controller: "pilot", displayName: "M230" },
-      { mount: "hardpoint", controller: "pilot", displayName: "HYDRA 70" },
-      { mount: "hardpoint", controller: "pilot", displayName: "HELLFIRE" },
-      { mount: "hardpoint", controller: "pilot", displayName: "SPIKE NLOS" },
+    sockets: [
+      { id: "chin_turret", class: "turret", controller: "pilot", weapon: "chain_gun", points: "gun" },
+      { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket", points: "hardpoint" },
+      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "hellfire_missile", points: "hardpoint" },
+      { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "tv_missile", points: "hardpoint" },
     ],
   },
   little_bird: {
@@ -159,13 +164,11 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     rotOff: Math.PI / 2,
     forwardThrust: 660, strafeThrust: 560, maxSpeed: 390, minSpeed: 0, yawRate: 4.1, yawAccel: 22, drag: 1.25,
     verticalThrust: 520, cruiseThrust: 52, cruiseAgl: 46, maxAgl: 118,
-    gunMode: "fixed",
-    loadout: ["minigun", "rocket", "hellfire_missile", "heavy_machine_gun"],
-    stations: [
-      { mount: "fixed", controller: "pilot", traverse: { center: 0, arc: 12 }, displayName: "DUAL M134", muzzleFire: "simultaneous" },
-      { mount: "hardpoint", controller: "pilot" },
-      { mount: "hardpoint", controller: "pilot" },
-      { mount: "fixed", controller: "pilot", traverse: { center: 0, arc: 12 } },
+    sockets: [
+      { id: "wing_gun_l", class: "fixed", controller: "pilot", weapon: "minigun", points: "muzzle", traverse: { center: 0, arc: 12 }, muzzleFire: "simultaneous" },
+      { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket", points: "hardpoint" },
+      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "hellfire_missile", points: "hardpoint" },
+      { id: "wing_gun_r", class: "fixed", controller: "pilot", weapon: "heavy_machine_gun", points: "muzzle", traverse: { center: 0, arc: 12 } },
     ],
   },
   quad_drone: {
@@ -190,13 +193,11 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     rotOff: Math.PI / 2,
     forwardThrust: 760, strafeThrust: 700, maxSpeed: 440, minSpeed: 0, yawRate: 4.35, yawAccel: 23.5, drag: 1.05,
     verticalThrust: 650, cruiseThrust: 60, cruiseAgl: 38, maxAgl: 105,
-    gunMode: "fixed",
-    loadout: ["light_machine_gun", "tesla_beam", "mini_hellfire_missile", "mini_bomb"],
-    stations: [
-      { mount: "turret", controller: "pilot" },
-      { mount: "turret", controller: "pilot" },
-      { mount: "hardpoint", controller: "pilot" },
-      { mount: "bay", controller: "pilot" },
+    sockets: [
+      { id: "nose_gun", class: "fixed", controller: "pilot", weapon: "light_machine_gun", points: "muzzle" },
+      { id: "nose_coil", class: "fixed", controller: "pilot", weapon: "tesla_beam", points: "muzzle" },
+      { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "mini_hellfire_missile", points: "hardpoint" },
+      { id: "bomb_bay", class: "bay", controller: "pilot", weapon: "mini_bomb", points: "hardpoint" },
     ],
   },
   cobra: {
@@ -218,13 +219,11 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     rotOff: Math.PI / 2,
     forwardThrust: 600, strafeThrust: 410, maxSpeed: 375, minSpeed: 0, yawRate: 3.25, yawAccel: 16.5, drag: 1.45,
     verticalThrust: 410, cruiseThrust: 42, cruiseAgl: 46, maxAgl: 118,
-    gunMode: "turret",
-    loadout: ["light_gatling_cannon", "rocket", "tow_missile", "sidewinder_missile"],
-    stations: [
-      { mount: "turret", controller: "pilot", displayName: "M197" },
-      { mount: "hardpoint", controller: "pilot", displayName: "HYDRA 70" },
-      { mount: "hardpoint", controller: "pilot", displayName: "TOW" },
-      { mount: "hardpoint", controller: "pilot", displayName: "SIDEWINDER" },
+    sockets: [
+      { id: "chin_turret", class: "turret", controller: "pilot", weapon: "light_gatling_cannon", points: "gun" },
+      { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket", points: "hardpoint" },
+      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "tow_missile", points: "hardpoint" },
+      { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "sidewinder_missile", points: "hardpoint" },
     ],
   },
   viper: {
@@ -246,13 +245,11 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     rotOff: Math.PI / 2,
     forwardThrust: 610, strafeThrust: 430, maxSpeed: 390, minSpeed: 0, yawRate: 3.3, yawAccel: 17, drag: 1.4,
     verticalThrust: 420, cruiseThrust: 43, cruiseAgl: 48, maxAgl: 122,
-    gunMode: "turret",
-    loadout: ["light_gatling_cannon", "rocket", "tow_missile", "sidewinder_missile"],
-    stations: [
-      { mount: "turret", controller: "pilot", displayName: "M197" },
-      { mount: "hardpoint", controller: "pilot", displayName: "HYDRA 70" },
-      { mount: "hardpoint", controller: "pilot", displayName: "TOW" },
-      { mount: "hardpoint", controller: "pilot", displayName: "SIDEWINDER" },
+    sockets: [
+      { id: "chin_turret", class: "turret", controller: "pilot", weapon: "light_gatling_cannon", points: "gun" },
+      { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket", points: "hardpoint" },
+      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "tow_missile", points: "hardpoint" },
+      { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "sidewinder_missile", points: "hardpoint" },
     ],
   },
   blackhawk: {
@@ -275,13 +272,11 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 450, strafeThrust: 260, maxSpeed: 280, minSpeed: 0, yawRate: 1.95, yawAccel: 8, drag: 1.85,
     verticalThrust: 300, cruiseThrust: 32, cruiseAgl: 46, maxAgl: 118,
     liftClass: "medium",
-    gunMode: "turret",
-    loadout: ["minigun", "rocket", "hellfire_missile", "tow_missile"],
-    stations: [
-      { mount: "cabin", controller: "gunner", traverse: { center: 90, arc: 180, side: "both" }, displayName: "DUAL M134" },
-      { mount: "hardpoint", controller: "pilot" },
-      { mount: "hardpoint", controller: "pilot" },
-      { mount: "hardpoint", controller: "pilot" },
+    sockets: [
+      { id: "cabin_door", class: "cabin", controller: "gunner", weapon: "minigun", points: "gun", traverse: { center: 90, arc: 180, side: "both" } },
+      { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket", points: "hardpoint" },
+      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "hellfire_missile", points: "hardpoint" },
+      { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "tow_missile", points: "hardpoint" },
     ],
   },
   chinook: {
@@ -304,13 +299,11 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 360, strafeThrust: 170, maxSpeed: 220, minSpeed: 0, yawRate: 1.05, yawAccel: 4, drag: 2.2,
     verticalThrust: 240, cruiseThrust: 24, cruiseAgl: 46, maxAgl: 118,
     liftClass: "heavy",
-    gunMode: "turret",
-    loadout: ["machine_gun", "heavy_bomb", "cluster_bomb", "minigun"],
-    stations: [
-      { mount: "cabin", controller: "gunner", traverse: { center: 90, arc: 180, side: "both" }, displayName: "DUAL M240D" },
-      { mount: "bay", controller: "pilot" },
-      { mount: "bay", controller: "pilot" },
-      { mount: "cabin", controller: "automatic", traverse: { center: 180, arc: 180, side: "both" }, displayName: "AUTO M134" },
+    sockets: [
+      { id: "cabin_forward", class: "cabin", controller: "gunner", weapon: "machine_gun", points: "gun", traverse: { center: 90, arc: 180, side: "both" } },
+      { id: "bomb_bay_1", class: "bay", controller: "pilot", weapon: "heavy_bomb", points: "hardpoint" },
+      { id: "bomb_bay_2", class: "bay", controller: "pilot", weapon: "cluster_bomb", points: "hardpoint" },
+      { id: "cabin_ramp_auto", class: "cabin", controller: "automatic", weapon: "minigun", points: "gun", traverse: { center: 180, arc: 180, side: "both" } },
     ],
   },
   osprey: {
@@ -333,13 +326,11 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 700, strafeThrust: 230, maxSpeed: 430, minSpeed: 0, yawRate: 1.7, yawAccel: 7, drag: 1.4,
     verticalThrust: 380, cruiseThrust: 40, cruiseAgl: 70, maxAgl: 170,
     liftClass: "heavy",
-    gunMode: "turret",
-    loadout: ["minigun", "guided_rockets", "hellfire_missile", "auto_machine_gun"],
-    stations: [
-      { mount: "cabin", controller: "gunner", traverse: { center: 180, arc: 180, side: "both" }, displayName: "GAU-17/A" },
-      { mount: "hardpoint", controller: "pilot" },
-      { mount: "hardpoint", controller: "pilot" },
-      { mount: "turret", controller: "automatic", displayName: "AUTO M2" },
+    sockets: [
+      { id: "cabin_ramp", class: "cabin", controller: "gunner", weapon: "minigun", points: "gun", traverse: { center: 180, arc: 180, side: "both" } },
+      { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "guided_rockets", points: "hardpoint" },
+      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "hellfire_missile", points: "hardpoint" },
+      { id: "belly_turret_auto", class: "turret", controller: "automatic", weapon: "auto_machine_gun", points: "gun" },
     ],
   },
   stealthhawk: {
@@ -361,16 +352,14 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     rotOff: Math.PI / 2,
     forwardThrust: 475, strafeThrust: 310, maxSpeed: 305, minSpeed: 0, yawRate: 2.45, yawAccel: 10.5, drag: 1.65,
     verticalThrust: 340, cruiseThrust: 36, cruiseAgl: 46, maxAgl: 118,
-    gunMode: "turret",
-    loadout: ["concealed_cannon", "hellfire_missile", "smoke_bomb", "stinger_missile"],
+    sockets: [
+      { id: "chin_turret", class: "turret", controller: "pilot", weapon: "concealed_cannon", points: "gun" },
+      { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "hellfire_missile", points: "hardpoint" },
+      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "smoke_bomb", points: "hardpoint" },
+      { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "stinger_missile", points: "hardpoint" },
+    ],
     enemyAimMul: 0.55,
     enemySeekerMul: 0.42,
-    stations: [
-      { mount: "turret", controller: "pilot", displayName: "LOW-RCS CANNON" },
-      { mount: "hardpoint", controller: "pilot", displayName: "HELLFIRE" },
-      { mount: "hardpoint", controller: "pilot", displayName: "SMOKE NLOS" },
-      { mount: "hardpoint", controller: "pilot", displayName: "STINGER" },
-    ],
   },
   cyberhawk: {
     kind: "cyberhawk",
@@ -391,13 +380,11 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     rotOff: Math.PI / 2,
     forwardThrust: 740, strafeThrust: 500, maxSpeed: 500, minSpeed: 0, yawRate: 3.35, yawAccel: 16, drag: 1.2,
     verticalThrust: 480, cruiseThrust: 48, cruiseAgl: 46, maxAgl: 118,
-    gunMode: "turret",
-    loadout: ["railgun", "swarm_missile", "attack_drone", "emp"],
-    stations: [
-      { mount: "turret", controller: "pilot", displayName: "RAILGUN" },
-      { mount: "hardpoint", controller: "pilot", displayName: "STARSTREAK" },
-      { mount: "bay", controller: "pilot", displayName: "SPECTER" },
-      { mount: "turret", controller: "pilot", displayName: "EMP" },
+    sockets: [
+      { id: "chin_turret", class: "turret", controller: "pilot", weapon: "railgun", points: "gun" },
+      { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "swarm_missile", points: "hardpoint" },
+      { id: "bomb_bay", class: "bay", controller: "pilot", weapon: "attack_drone", points: "hardpoint" },
+      { id: "chin_aux", class: "turret", controller: "pilot", weapon: "emp", points: "gun" },
     ],
   },
   prometheus: {
@@ -418,13 +405,11 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 900, strafeThrust: 760, maxSpeed: 600, minSpeed: 0, yawRate: 4.5, yawAccel: 25, drag: 0.95,
     verticalThrust: 700, cruiseThrust: 65, cruiseAgl: 90, maxAgl: 240,
     liftClass: "heavy",
-    gunMode: "fixed",
-    loadout: ["plasma_cannon", "laser_rocket", "photon_missile", "warp_bomb"],
-    stations: [
-      { mount: "turret", controller: "pilot" },
-      { mount: "fixed", controller: "pilot", traverse: { center: 0, arc: 12 } },
-      { mount: "fixed", controller: "pilot", traverse: { center: 0, arc: 12 } },
-      { mount: "bay", controller: "pilot" },
+    sockets: [
+      { id: "nose_turret", class: "turret", controller: "pilot", weapon: "plasma_cannon", points: "gun" },
+      { id: "nose_rail_1", class: "fixed", controller: "pilot", weapon: "laser_rocket", points: "muzzle", traverse: { center: 0, arc: 12 } },
+      { id: "nose_rail_2", class: "fixed", controller: "pilot", weapon: "photon_missile", points: "muzzle", traverse: { center: 0, arc: 12 } },
+      { id: "bomb_bay", class: "bay", controller: "pilot", weapon: "warp_bomb", points: "hardpoint" },
     ],
   },
   lightning_ii: {
@@ -444,13 +429,11 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     rotOff: Math.PI / 2,
     forwardThrust: 1050, reverseThrust: 130, strafeThrust: 260, maxSpeed: 680, maxReverseSpeed: 65, minSpeed: 0, yawRate: 2.35, yawAccel: 10, drag: 1.15,
     verticalThrust: 430, cruiseThrust: 45, cruiseAgl: 120, maxAgl: 300,
-    gunMode: "fixed",
-    loadout: ["medium_gatling_cannon", "long_range_missile", "sidewinder_missile", "gps_bomb"],
-    stations: [
-      { mount: "fixed", controller: "pilot", traverse: { center: 0, arc: 12 } },
-      { mount: "bay", controller: "pilot" },
-      { mount: "hardpoint", controller: "pilot" },
-      { mount: "bay", controller: "pilot" },
+    sockets: [
+      { id: "nose_gun", class: "fixed", controller: "pilot", weapon: "medium_gatling_cannon", points: "muzzle", traverse: { center: 0, arc: 12 } },
+      { id: "internal_bay_1", class: "bay", controller: "pilot", weapon: "long_range_missile", points: "hardpoint" },
+      { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "sidewinder_missile", points: "hardpoint" },
+      { id: "internal_bay_2", class: "bay", controller: "pilot", weapon: "gps_bomb", points: "hardpoint" },
     ],
   },
   gunship: {
@@ -472,13 +455,11 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     rotOff: Math.PI / 2,
     forwardThrust: 500, strafeThrust: 0, maxSpeed: 300, minSpeed: 190, yawRate: 0.7, yawAccel: 2, drag: 1.5,
     verticalThrust: 180, cruiseThrust: 22, cruiseAgl: 120, maxAgl: 300,
-    gunMode: "turret",
-    loadout: ["heavy_artillery", "medium_cannon", "light_cannon", "gps_missile"],
-    stations: [
-      { mount: "cabin", controller: "gunner", traverse: { center: -90, arc: 180, side: "left" } },
-      { mount: "cabin", controller: "gunner", traverse: { center: -90, arc: 180, side: "left" } },
-      { mount: "cabin", controller: "gunner", traverse: { center: -90, arc: 180, side: "left" } },
-      { mount: "hardpoint", controller: "pilot" },
+    sockets: [
+      { id: "cabin_gun_1", class: "cabin", controller: "gunner", weapon: "heavy_artillery", points: "gun", traverse: { center: -90, arc: 180, side: "left" } },
+      { id: "cabin_gun_2", class: "cabin", controller: "gunner", weapon: "medium_cannon", points: "gun", traverse: { center: -90, arc: 180, side: "left" } },
+      { id: "cabin_gun_3", class: "cabin", controller: "gunner", weapon: "light_cannon", points: "gun", traverse: { center: -90, arc: 180, side: "left" } },
+      { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "gps_missile", points: "hardpoint" },
     ],
   },
   warthog: {
@@ -497,13 +478,11 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     rotOff: Math.PI / 2,
     forwardThrust: 1200, strafeThrust: 0, maxSpeed: 760, minSpeed: 300, yawRate: 1.25, yawAccel: 5.5, drag: 0.75,
     verticalThrust: 260, cruiseThrust: 32, cruiseAgl: 150, maxAgl: 360,
-    gunMode: "fixed",
-    loadout: ["heavy_cannon", "heavy_guided_missile", "bomb", "gps_bomb"],
-    stations: [
-      { mount: "fixed", controller: "pilot", traverse: { center: 0, arc: 10 }, displayName: "GAU-8" },
-      { mount: "hardpoint", controller: "pilot", displayName: "MAVERICK" },
-      { mount: "bay", controller: "pilot", displayName: "MK82" },
-      { mount: "bay", controller: "pilot", displayName: "JDAM" },
+    sockets: [
+      { id: "nose_gun", class: "fixed", controller: "pilot", weapon: "heavy_cannon", points: "muzzle", traverse: { center: 0, arc: 10 } },
+      { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "heavy_guided_missile", points: "hardpoint" },
+      { id: "bomb_bay_1", class: "bay", controller: "pilot", weapon: "bomb", points: "hardpoint" },
+      { id: "bomb_bay_2", class: "bay", controller: "pilot", weapon: "gps_bomb", points: "hardpoint" },
     ],
   },
 };
@@ -716,9 +695,51 @@ export function craftGunOrigin(c: CraftSpec = craftOf()): { x: number; y: number
   return lookupSpriteOrigin(c.gun) ?? DEFAULT_ORIGIN;
 }
 
-/** Wing hardpoint UVs (missile / rocket / TOW) — left → right. */
+/** Default body UV role for a socket class. */
+export function socketPointRole(socket: CraftSocket): SocketPointRole {
+  if (socket.points) return socket.points;
+  if (socket.class === "turret" || socket.class === "cabin") return "gun";
+  if (socket.class === "fixed") return "muzzle";
+  return "hardpoint";
+}
+
+/** Emit / attach UVs for a socket (with sensible fallbacks). */
+export function craftSocketPoints(
+  c: CraftSpec,
+  socket: CraftSocket
+): { x: number; y: number }[] {
+  const role = socketPointRole(socket);
+  const primary = mountsOf(c.body, role);
+  if (primary.length) return primary;
+  if (role === "muzzle") {
+    const gun = mountsOf(c.body, "gun");
+    if (gun.length) return gun;
+  }
+  if (role === "gun") {
+    const muzzle = mountsOf(c.body, "muzzle");
+    if (muzzle.length) return muzzle;
+  }
+  return mountsOf(c.body, "hardpoint");
+}
+
+/** Wing / store hardpoint UVs — left → right. */
+export function craftHardpointMounts(c: CraftSpec = craftOf()): { x: number; y: number }[] {
+  return mountsOf(c.body, "hardpoint");
+}
+
+/** @deprecated Use craftHardpointMounts. */
 export function craftSecondaryMounts(c: CraftSpec = craftOf()): { x: number; y: number }[] {
-  return mountsOf(c.body, "secondary");
+  return craftHardpointMounts(c);
+}
+
+/** True when the craft aims a chin/cabin gun independently of the hull. */
+export function craftAimsWithTurret(c: CraftSpec = craftOf()): boolean {
+  return c.sockets.some((s) => s.class === "turret" || s.class === "cabin");
+}
+
+/** Default weapon ids in HUD / fire order. */
+export function craftSocketWeapons(c: CraftSpec = craftOf()): string[] {
+  return c.sockets.map((s) => s.weapon);
 }
 
 /** Authored visual exhaust emit points on the craft body. */
@@ -738,7 +759,7 @@ export function craftPivot(key: string): { x: number; y: number } | undefined {
 
 /** Tagged hull mounts for a craft — from SPRITE_SPECS body points. */
 export function craftMountsOf(sp: CraftSpec): HullMount[] {
-  const roles: HullMountRole[] = ["gun", "rotor", "secondary", "exhaust"];
+  const roles: HullMountRole[] = ["gun", "rotor", "hardpoint", "exhaust"];
   const tagged: HullMount[] = [];
   for (const role of roles) {
     for (const p of mountsOf(sp.body, role)) {
