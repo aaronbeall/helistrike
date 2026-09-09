@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { PLAYER_WPNS } from "./combat";
-import { CFG_INFO, CFG_VALUE, makeConfigText, row } from "./configUi";
+import { CFG_INFO, CFG_VALUE, makeConfigText, row, setStackedTexts } from "./configUi";
 import { allCrafts } from "./craft";
 import { ENEMY_WPNS, allKinds, specOf } from "./roster";
 import { nameGameTexture } from "./sprites";
@@ -13,7 +13,11 @@ const LIST_X = 16;
 const LIST_Y = 40;
 const LIST_W = 280;
 const LINE_H = 15;
-const CHART_PAD = 28;
+/** Inner plot padding from the chart board edges (room for ticks + titles). */
+const PAD_L = 54;
+const PAD_R = 18;
+const PAD_T = 18;
+const PAD_B = 44;
 
 type BalanceCat = "craft" | "weapons" | "enemies";
 const CATS: BalanceCat[] = ["craft", "weapons", "enemies"];
@@ -27,7 +31,12 @@ const ENEMY_FILTERS: EnemyFilter[] = ["all", "troop", "vehicle", "aerial", "buil
 type CraftFilter = "all" | "heli" | "vtol" | "plane";
 const CRAFT_FILTERS: CraftFilter[] = ["all", "heli", "vtol", "plane"];
 
-type AxisDef = { id: string; label: string };
+/** Chartable metric. `id` is the values key / axis title (real field path when possible). */
+type AxisDef = {
+  id: string;
+  /** Extra detail keys to highlight when this axis is mapped (composites). */
+  highlight?: string[];
+};
 
 type BalancePoint = {
   id: string;
@@ -39,40 +48,89 @@ type BalancePoint = {
 };
 
 const CRAFT_AXES: AxisDef[] = [
-  { id: "health", label: "health" },
-  { id: "maxSpeed", label: "maxSpeed" },
-  { id: "forwardThrust", label: "forwardThrust" },
-  { id: "strafeThrust", label: "strafeThrust" },
-  { id: "verticalThrust", label: "verticalThrust" },
-  { id: "yawRate", label: "yawRate" },
-  { id: "radius", label: "radius" },
-  { id: "maxAgl", label: "maxAgl" },
-  { id: "ammoScale", label: "ammoScale" },
+  { id: "health" },
+  { id: "maxSpeed" },
+  {
+    id: "thrust",
+    highlight: ["forwardThrust", "strafeThrust", "verticalThrust"],
+  },
+  { id: "yawRate" },
+  { id: "radius" },
+  { id: "maxAgl" },
+  { id: "ammoScale" },
 ];
 
 const WEAPON_AXES: AxisDef[] = [
-  { id: "dps", label: "dps" },
-  { id: "blast", label: "blast" },
-  { id: "fireCd", label: "fireCd" },
-  { id: "speed", label: "speed" },
-  { id: "range", label: "range" },
-  { id: "ammo", label: "ammo" },
+  {
+    id: "dps",
+    highlight: ["dmg", "fireCd", "salvo.count", "salvo.interval", "burst", "burstGap"],
+  },
+  { id: "blast" },
+  { id: "fireCd" },
+  { id: "speed" },
+  { id: "range", highlight: ["life"] },
+  { id: "ammo" },
 ];
 
 const ENEMY_AXES: AxisDef[] = [
-  { id: "health", label: "health" },
-  { id: "radius", label: "radius" },
-  { id: "driveSpd", label: "driveSpd" },
-  { id: "wpnDps", label: "wpnDps" },
-  { id: "wpnBlast", label: "wpnBlast" },
-  { id: "wpnFireCd", label: "wpnFireCd" },
-  { id: "wpnRange", label: "wpnRange" },
+  { id: "health" },
+  { id: "radius" },
+  { id: "drive.maxSpd" },
+  {
+    id: "dps",
+    highlight: ["weapon.dmg", "weapon.fireCd", "weapon.burst", "weapon.burstGap"],
+  },
+  { id: "weapon.blast" },
+  { id: "weapon.fireCd" },
+  { id: "weapon.range" },
 ];
 
 const CAT_AXES: Record<BalanceCat, AxisDef[]> = {
   craft: CRAFT_AXES,
   weapons: WEAPON_AXES,
   enemies: ENEMY_AXES,
+};
+
+/** Preferred detail-panel order (mapped keys float to the top regardless). */
+const CAT_DETAIL_ORDER: Record<BalanceCat, string[]> = {
+  craft: [
+    "health",
+    "maxSpeed",
+    "thrust",
+    "forwardThrust",
+    "strafeThrust",
+    "verticalThrust",
+    "yawRate",
+    "radius",
+    "maxAgl",
+    "ammoScale",
+  ],
+  weapons: [
+    "dps",
+    "dmg",
+    "blast",
+    "fireCd",
+    "speed",
+    "life",
+    "range",
+    "ammo",
+    "salvo.count",
+    "salvo.interval",
+    "burst",
+    "burstGap",
+  ],
+  enemies: [
+    "health",
+    "radius",
+    "drive.maxSpd",
+    "dps",
+    "weapon.dmg",
+    "weapon.blast",
+    "weapon.fireCd",
+    "weapon.range",
+    "weapon.burst",
+    "weapon.burstGap",
+  ],
 };
 
 const DEFAULT_AXES: Record<BalanceCat, { x: string; y: string }> = {
@@ -120,6 +178,8 @@ export class BalanceConfigTool {
   private board!: Phaser.GameObjects.Graphics;
   private chart!: Phaser.GameObjects.Graphics;
   private listTxt!: Phaser.GameObjects.Text;
+  private statsHeadTxt!: Phaser.GameObjects.Text;
+  private statsHotTxt!: Phaser.GameObjects.Text;
   private statsTxt!: Phaser.GameObjects.Text;
   private hintTxt!: Phaser.GameObjects.Text;
   private labelPool: Phaser.GameObjects.Text[] = [];
@@ -150,21 +210,30 @@ export class BalanceConfigTool {
     this.chart = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH + 2).setVisible(false);
     this.listTxt = makeConfigText(scene, DEPTH + 4, { fontSize: "12px", lineSpacing: 2, color: PAPER });
     this.listTxt.setPosition(LIST_X, LIST_Y);
-    this.statsTxt = makeConfigText(scene, DEPTH + 4, {
-      fontSize: "12px",
-      lineSpacing: 3,
-      color: PAPER,
-      wrapW: 360,
-    });
+    const statsStyle = { fontSize: "12px", lineSpacing: 3, wrapW: 360 } as const;
+    this.statsHeadTxt = makeConfigText(scene, DEPTH + 4, { ...statsStyle, color: PAPER });
+    this.statsHotTxt = makeConfigText(scene, DEPTH + 4, { ...statsStyle, color: GOLD });
+    this.statsTxt = makeConfigText(scene, DEPTH + 4, { ...statsStyle, color: PAPER });
     this.hintTxt = scene.add
       .text(18, 14, "", { fontFamily: MONO, fontSize: "12px", color: GOLD })
       .setScrollFactor(0)
       .setDepth(DEPTH + 4)
       .setVisible(false);
     nameGameTexture(scene, this.listTxt, "ui_balance_list");
+    nameGameTexture(scene, this.statsHeadTxt, "ui_balance_stats_head");
+    nameGameTexture(scene, this.statsHotTxt, "ui_balance_stats_hot");
     nameGameTexture(scene, this.statsTxt, "ui_balance_stats");
     nameGameTexture(scene, this.hintTxt, "ui_balance_hint");
-    this.root.add([this.dim, this.board, this.chart, this.listTxt, this.statsTxt, this.hintTxt]);
+    this.root.add([
+      this.dim,
+      this.board,
+      this.chart,
+      this.listTxt,
+      this.statsHeadTxt,
+      this.statsHotTxt,
+      this.statsTxt,
+      this.hintTxt,
+    ]);
 
     this.uiCam = scene.cameras.add(0, 0, w, h, false, "balanceRig");
     this.uiCam.setScroll(0, 0);
@@ -232,6 +301,8 @@ export class BalanceConfigTool {
     this.board.setVisible(this.open);
     this.chart.setVisible(this.open);
     this.listTxt.setVisible(this.open);
+    this.statsHeadTxt.setVisible(this.open);
+    this.statsHotTxt.setVisible(this.open);
     this.statsTxt.setVisible(this.open);
     this.hintTxt.setVisible(this.open);
     this.scene.input.setDefaultCursor(this.open ? "default" : "none");
@@ -341,6 +412,8 @@ export class BalanceConfigTool {
     const items = this.filtered();
     if (!items.length) {
       this.listTxt.setText(`— ${this.cat.toUpperCase()} (empty) —`);
+      this.statsHeadTxt.setText("");
+      this.statsHotTxt.setText("");
       this.statsTxt.setText("");
       this.chart.clear();
       this.board.clear();
@@ -368,27 +441,29 @@ export class BalanceConfigTool {
     const axes = CAT_AXES[this.cat];
     const xDef = axes.find((a) => a.id === this.xAxis) ?? axes[0]!;
     const yDef = axes.find((a) => a.id === this.yAxis) ?? axes[1] ?? axes[0]!;
-    const valueLines = axes.map((a) => row(a.label, fmtNum(selected.values[a.id] ?? 0)));
-    this.statsTxt.setText(
-      [
-        selected.label,
-        `${selected.group} · ${selected.id}`,
-        "",
-        `X  ${xDef.label}`,
-        `Y  ${yDef.label}`,
-        "",
-        ...valueLines,
-      ].join("\n")
+    const detailOrder = CAT_DETAIL_ORDER[this.cat];
+    const ordered = orderedValueKeys(detailOrder, selected.values);
+    const hotKeys = hotKeysXThenY(axes, this.xAxis, this.yAxis, detailOrder, selected.values);
+    const hotSet = new Set(hotKeys);
+    const hotLines = hotKeys.map((k) =>
+      row(axisStatLabel(k, this.xAxis, this.yAxis), fmtNum(selected.values[k] ?? 0))
     );
-
-    this.drawChart(items, selected, xDef, yDef);
+    const restLines = ordered
+      .filter((k) => !hotSet.has(k))
+      .map((k) => row(k, fmtNum(selected.values[k] ?? 0)));
+    this.drawChart(items, selected, xDef, yDef, {
+      head: [selected.label, `${selected.group} · ${selected.id}`, ""],
+      hot: hotLines,
+      rest: restLines,
+    });
   }
 
   private drawChart(
     items: BalancePoint[],
     selected: BalancePoint,
     xDef: AxisDef,
-    yDef: AxisDef
+    yDef: AxisDef,
+    stats: { head: string[]; hot: string[]; rest: string[] }
   ): void {
     const w = this.scene.scale.width;
     const h = this.scene.scale.height;
@@ -397,7 +472,16 @@ export class BalanceConfigTool {
     const top = 56;
     const bottom = h - 36;
     const statsX = right - 360;
-    this.statsTxt.setPosition(statsX, top);
+    setStackedTexts(
+      [
+        { txt: this.statsHeadTxt, lines: stats.head },
+        { txt: this.statsHotTxt, lines: stats.hot },
+        { txt: this.statsTxt, lines: stats.rest },
+      ],
+      statsX,
+      top,
+      6
+    );
 
     const plotL = left;
     const plotR = Math.min(statsX - 24, right - 20);
@@ -405,6 +489,12 @@ export class BalanceConfigTool {
     const plotB = bottom - 8;
     const plotW = Math.max(120, plotR - plotL);
     const plotH = Math.max(120, plotB - plotT);
+    const ix0 = plotL + PAD_L;
+    const iy0 = plotT + PAD_T;
+    const ix1 = plotR - PAD_R;
+    const iy1 = plotB - PAD_B;
+    const innerW = Math.max(40, ix1 - ix0);
+    const innerH = Math.max(40, iy1 - iy0);
 
     this.board.clear();
     this.board.fillStyle(0x14110e, 0.92);
@@ -421,22 +511,19 @@ export class BalanceConfigTool {
     const xDomain = axisDomain(xMin, xMax, this.logScale);
     const yDomain = axisDomain(yMin, yMax, this.logScale);
 
-    const toX = (v: number) =>
-      plotL + CHART_PAD + axisNorm(v, xDomain, this.logScale) * (plotW - CHART_PAD * 2);
-    const toY = (v: number) =>
-      plotB - CHART_PAD - axisNorm(v, yDomain, this.logScale) * (plotH - CHART_PAD * 2);
+    const toX = (v: number) => ix0 + axisNorm(v, xDomain, this.logScale) * innerW;
+    const toY = (v: number) => iy1 - axisNorm(v, yDomain, this.logScale) * innerH;
 
     this.chart.clear();
-    // Grid
     this.chart.lineStyle(1, 0x2a261c, 0.85);
     for (let i = 0; i <= 4; i++) {
-      const gx = plotL + CHART_PAD + ((plotW - CHART_PAD * 2) * i) / 4;
-      const gy = plotT + CHART_PAD + ((plotH - CHART_PAD * 2) * i) / 4;
-      this.chart.lineBetween(gx, plotT + CHART_PAD, gx, plotB - CHART_PAD);
-      this.chart.lineBetween(plotL + CHART_PAD, gy, plotR - CHART_PAD, gy);
+      const gx = ix0 + (innerW * i) / 4;
+      const gy = iy0 + (innerH * i) / 4;
+      this.chart.lineBetween(gx, iy0, gx, iy1);
+      this.chart.lineBetween(ix0, gy, ix1, gy);
     }
     this.chart.lineStyle(1.5, 0x5a5040, 1);
-    this.chart.strokeRect(plotL + CHART_PAD, plotT + CHART_PAD, plotW - CHART_PAD * 2, plotH - CHART_PAD * 2);
+    this.chart.strokeRect(ix0, iy0, innerW, innerH);
 
     for (const p of items) {
       const xv = p.values[xDef.id] ?? 0;
@@ -453,25 +540,37 @@ export class BalanceConfigTool {
       }
     }
 
-    // Axis end labels (always on) + optional point names.
     this.ensureLabels(items.length + 6);
     let li = 0;
-    const place = (text: string, x: number, y: number, color = CFG_INFO) => {
+    const place = (
+      text: string,
+      x: number,
+      y: number,
+      color = CFG_INFO,
+      originX = 0,
+      originY = 0,
+      rotation = 0
+    ) => {
       const t = this.labelPool[li++]!;
       t.setText(text)
         .setPosition(x, y)
         .setColor(color)
         .setVisible(true)
-        .setOrigin(0, 0);
+        .setOrigin(originX, originY)
+        .setRotation(rotation);
     };
-    const xTitle = this.logScale ? `log ${xDef.label} →` : `${xDef.label} →`;
-    const yTitle = this.logScale ? `↑ log ${yDef.label}` : `↑ ${yDef.label}`;
-    place(xTitle, plotL + CHART_PAD, plotB - 18, GOLD);
-    place(yTitle, plotL + 4, plotT + CHART_PAD, GOLD);
-    place(fmtNum(xDomain.lo), plotL + CHART_PAD, plotB - CHART_PAD + 4);
-    place(fmtNum(xDomain.hi), plotR - CHART_PAD - 40, plotB - CHART_PAD + 4);
-    place(fmtNum(yDomain.lo), plotL + 2, plotB - CHART_PAD - 12);
-    place(fmtNum(yDomain.hi), plotL + 2, plotT + CHART_PAD);
+    const xTitle = this.logScale ? `log ${xDef.id} (X)` : `${xDef.id} (X)`;
+    const yTitle = this.logScale ? `log ${yDef.id} (Y)` : `${yDef.id} (Y)`;
+    // Y title vertical, left of tick numbers.
+    place(yTitle, plotL + 12, (iy0 + iy1) * 0.5, GOLD, 0.5, 0.5, -Math.PI / 2);
+    // Y ticks against the plot's left edge.
+    place(fmtNum(yDomain.hi), ix0 - 6, iy0, CFG_INFO, 1, 0.5);
+    place(fmtNum(yDomain.lo), ix0 - 6, iy1, CFG_INFO, 1, 0.5);
+    // X ticks under the frame.
+    place(fmtNum(xDomain.lo), ix0, iy1 + 6, CFG_INFO, 0, 0);
+    place(fmtNum(xDomain.hi), ix1, iy1 + 6, CFG_INFO, 1, 0);
+    // X title centered below ticks.
+    place(xTitle, (ix0 + ix1) * 0.5, iy1 + 24, GOLD, 0.5, 0);
 
     if (this.showLabels) {
       for (const p of items) {
@@ -483,11 +582,12 @@ export class BalanceConfigTool {
           .setPosition(toX(xv) + 8, toY(yv) - 8)
           .setColor(p === selected ? PAPER : CFG_INFO)
           .setVisible(true)
-          .setOrigin(0, 0.5);
+          .setOrigin(0, 0.5)
+          .setRotation(0);
       }
     }
     while (li < this.labelPool.length) {
-      this.labelPool[li++]!.setVisible(false);
+      this.labelPool[li++]!.setVisible(false).setRotation(0);
     }
   }
 
@@ -537,6 +637,61 @@ function sustainedDps(
 
 type AxisDomain = { lo: number; hi: number };
 
+function axisKeys(def: AxisDef | undefined, values: Record<string, number>, preferred: string[]): string[] {
+  if (!def) return [];
+  const keys = [def.id, ...(def.highlight ?? [])];
+  const present = keys.filter((k) => k in values);
+  const rank = new Map(preferred.map((k, i) => [k, i]));
+  present.sort((a, b) => {
+    if (a === def.id) return -1;
+    if (b === def.id) return 1;
+    return (rank.get(a) ?? 999) - (rank.get(b) ?? 999);
+  });
+  return present;
+}
+
+/** Mapped stats for the panel: X axis (+components), then Y axis (+components). */
+function hotKeysXThenY(
+  axes: AxisDef[],
+  xAxis: string,
+  yAxis: string,
+  preferred: string[],
+  values: Record<string, number>
+): string[] {
+  const xDef = axes.find((a) => a.id === xAxis);
+  const yDef = axes.find((a) => a.id === yAxis);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const k of [...axisKeys(xDef, values, preferred), ...axisKeys(yDef, values, preferred)]) {
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(k);
+  }
+  return out;
+}
+
+function axisStatLabel(key: string, xAxis: string, yAxis: string): string {
+  const tags: string[] = [];
+  if (key === xAxis) tags.push("X");
+  if (key === yAxis) tags.push("Y");
+  return tags.length ? `${key} (${tags.join("/")})` : key;
+}
+
+function orderedValueKeys(preferred: string[], values: Record<string, number>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const k of preferred) {
+    if (k in values && !seen.has(k)) {
+      out.push(k);
+      seen.add(k);
+    }
+  }
+  for (const k of Object.keys(values)) {
+    if (!seen.has(k)) out.push(k);
+  }
+  return out;
+}
+
 function axisDomain(min: number, max: number, log: boolean): AxisDomain {
   if (!log) {
     const pad = (max - min) * 0.08 || Math.max(1, Math.abs(max) * 0.1) || 1;
@@ -573,6 +728,7 @@ function buildBalanceCatalog(): BalancePoint[] {
       values: {
         health: c.health,
         maxSpeed: c.maxSpeed,
+        thrust: (c.forwardThrust + c.strafeThrust + c.verticalThrust) / 3,
         forwardThrust: c.forwardThrust,
         strafeThrust: c.strafeThrust,
         verticalThrust: c.verticalThrust,
@@ -597,12 +753,16 @@ function buildBalanceCatalog(): BalancePoint[] {
       color: colorOf("player"),
       values: {
         dps: sustainedDps(w.dmg, w.fireCd, salvoN, salvoGap),
+        dmg: w.dmg,
         blast: w.blast,
         fireCd: w.fireCd,
         speed: w.speed,
-        // Approx engagement reach so player + enemy can share a range axis.
+        life: w.life,
         range: w.speed * w.life,
         ammo: w.ammo,
+        ...(w.salvo
+          ? { "salvo.count": w.salvo.count, "salvo.interval": w.salvo.interval }
+          : {}),
       },
     });
   }
@@ -619,11 +779,14 @@ function buildBalanceCatalog(): BalancePoint[] {
       color: colorOf("enemy"),
       values: {
         dps: sustainedDps(w.dmg, w.fireCd, w.burst ?? 1, w.burstGap ?? 0),
+        dmg: w.dmg,
         blast: w.blast,
         fireCd: w.fireCd,
         speed: w.speed,
         range: w.range,
         ammo: 0,
+        ...(w.burst != null ? { burst: w.burst } : {}),
+        ...(w.burstGap != null ? { burstGap: w.burstGap } : {}),
       },
     });
   }
@@ -646,11 +809,14 @@ function buildBalanceCatalog(): BalancePoint[] {
       values: {
         health: sp.health,
         radius: sp.radius,
-        driveSpd: sp.drive?.maxSpd ?? 0,
-        wpnDps: w ? sustainedDps(w.dmg, w.fireCd, w.burst ?? 1, w.burstGap ?? 0) : 0,
-        wpnBlast: w?.blast ?? 0,
-        wpnFireCd: w?.fireCd ?? 0,
-        wpnRange: w?.range ?? 0,
+        "drive.maxSpd": sp.drive?.maxSpd ?? 0,
+        dps: w ? sustainedDps(w.dmg, w.fireCd, w.burst ?? 1, w.burstGap ?? 0) : 0,
+        "weapon.dmg": w?.dmg ?? 0,
+        "weapon.blast": w?.blast ?? 0,
+        "weapon.fireCd": w?.fireCd ?? 0,
+        "weapon.range": w?.range ?? 0,
+        ...(w?.burst != null ? { "weapon.burst": w.burst } : {}),
+        ...(w?.burstGap != null ? { "weapon.burstGap": w.burstGap } : {}),
       },
     });
   }
