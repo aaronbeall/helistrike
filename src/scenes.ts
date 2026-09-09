@@ -1708,7 +1708,7 @@ export class MissionScene extends Phaser.Scene {
     this.shadow = this.add.image(0, 0, "shadow").setDepth(Layer.SHADOW);
     this.guns = this.craftParts.guns.map((part) =>
       this.add
-        .image(0, 0, part.tex)
+        .image(0, 0, this.textures.exists(part.tex) ? part.tex : craft.gun)
         .setDepth(Layer.WORLD)
         .setOrigin(part.origin.x, part.origin.y)
     );

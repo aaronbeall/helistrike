@@ -4,6 +4,7 @@ import {
   type HullMount,
   type HullMountRole,
 } from "./roster";
+import { weaponMountTex } from "./combat";
 
 const DEFAULT_ORIGIN = { x: 0.5, y: 0.5 };
 
@@ -586,21 +587,68 @@ export function craftRotorMounts(c: CraftSpec = craftOf()): { x: number; y: numb
   return mounts.length ? mounts : [{ x: 0.5, y: 0.5 }];
 }
 
+/** Texture key for a cannon weapon's turret gun body, or undefined when no mount art. */
+export function gunMountTexture(wpnId: string): string | undefined {
+  return weaponMountTex(wpnId);
+}
+
+/** Texture key for a cannon weapon's turret gun body (no swivel track). */
+export function gunMountKey(wpnId: string): string {
+  return gunMountTexture(wpnId) ?? `gun_${wpnId}`;
+}
+
+/**
+ * Visible gun overlay texture for a craft.
+ * Prefers the authored mount body for the first turret/cabin/(visible) fixed gun socket.
+ */
+export function craftGunTexture(c: CraftSpec = craftOf()): string {
+  if (c.gunVisible === false) return c.gun;
+  const sock =
+    c.sockets.find(
+      (s) =>
+        (s.class === "turret" || s.class === "cabin") && !!gunMountTexture(s.weapon)
+    ) ??
+    c.sockets.find((s) => s.class === "turret" || s.class === "cabin") ??
+    c.sockets.find((s) => s.class === "fixed");
+  return sock ? gunMountKey(sock.weapon) : c.gun;
+}
+
 /** Authoritative visual parts and mounts for composing a craft in any view. */
 export function craftComposite(c: CraftSpec = craftOf()): CraftComposite {
   const rotorTex = craftRotorTex(c);
+  const gunMounts = craftGunMounts(c);
+  const gunSockets =
+    c.gunVisible === false
+      ? []
+      : c.sockets.filter(
+          (s) => (s.class === "turret" || s.class === "cabin") && !!gunMountTexture(s.weapon)
+        );
   return {
     body: { tex: c.body, origin: craftOrigin(c) },
     guns:
       c.gunVisible === false
         ? []
-        : craftGunMounts(c).map((mount) => ({
-            kind: "gun",
-            tex: c.gun,
-            origin: craftGunOrigin(c),
-            mount,
-            layer: "below",
-          })),
+        : gunSockets.length
+          ? gunSockets.map((sock, i) => {
+              const tex = gunMountTexture(sock.weapon)!;
+              return {
+                kind: "gun" as const,
+                tex,
+                origin: lookupSpriteOrigin(tex) ?? craftGunOrigin(c),
+                mount: gunMounts[i] ?? gunMounts[0] ?? craftOrigin(c),
+                layer: "below" as const,
+              };
+            })
+          : gunMounts.map((mount) => {
+              const tex = craftGunTexture(c);
+              return {
+                kind: "gun" as const,
+                tex,
+                origin: lookupSpriteOrigin(tex) ?? craftGunOrigin(c),
+                mount,
+                layer: "below" as const,
+              };
+            }),
     rotors: rotorTex
       ? craftRotorMounts(c).map((mount) => ({
           kind: "rotor",

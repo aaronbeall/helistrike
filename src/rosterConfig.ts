@@ -419,7 +419,7 @@ export class RosterConfigTool {
           if (e.cat === "craft") {
             const c = craftOf(e.kind);
             const active = e.kind === craftKind() ? " ★" : "";
-            return `${mark} ${c.fullName.padEnd(22)} PLY${active}`;
+            return `${mark} ${c.name.padEnd(16)} PLY${active}`;
           }
           return `${mark} ${labelOf(e.kind).padEnd(16)} ${categoryTag(e.kind)}`;
         }),

@@ -43,11 +43,33 @@ const SRC = {
 } as const;
 
 /**
- * Authored rocket/missile/bomb projectile PNGs (nose-up, magenta key) under
- * `public/sprites/shots/`. Filled as image-gen assets land; cannons use bake.
+ * Shared ordnance projectile PNGs (nose-up, magenta key) under `public/sprites/shots/`.
+ * Multiple weapons map onto these looks. Cannon tracers are baked at runtime.
  */
 export const PLAYER_ORDNANCE_SHOT_ART: readonly { look: string; size: number }[] = [
-  // e.g. { look: "shot_wpn_rocket", size: 28 },
+  { look: "shot_rocket", size: 28 },
+  { look: "shot_laser_guided", size: 36 },
+  { look: "shot_guided", size: 34 },
+  { look: "shot_missile", size: 26 },
+  { look: "shot_aam", size: 30 },
+  { look: "shot_mini_rocket", size: 22 },
+  { look: "shot_long", size: 34 },
+  { look: "shot_bomb", size: 44 },
+  { look: "shot_canister", size: 32 },
+];
+
+/**
+ * Shared player turret gun bodies (barrel-up, magenta key) under `public/sprites/guns/`.
+ * Weapons map onto these via `PlayerWpnSpec.mount` in combat.ts — no swivel track art.
+ */
+export const PLAYER_GUN_MOUNT_ART: readonly { key: string; size: number }[] = [
+  { key: "gun_gatling", size: 52 },
+  { key: "gun_minigun", size: 40 },
+  { key: "gun_machine", size: 38 },
+  { key: "gun_artillery", size: 56 },
+  { key: "gun_railgun", size: 52 },
+  { key: "gun_plasma", size: 50 },
+  { key: "gun_tesla", size: 48 },
 ];
 
 /**
@@ -191,6 +213,9 @@ export function preloadArt(scene: Phaser.Scene): void {
   }
   for (const art of PLAYER_ORDNANCE_SHOT_ART) {
     scene.load.image(`src_${art.look}`, `sprites/shots/${art.look}.png`);
+  }
+  for (const art of PLAYER_GUN_MOUNT_ART) {
+    scene.load.image(`src_${art.key}`, `sprites/guns/${art.key}.png`);
   }
 }
 
@@ -756,6 +781,13 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     put(textures, art.look, fit(rotateCw90(keyImage(src(textures, srcKey), "magenta")), art.size));
   }
 
+  for (const art of PLAYER_GUN_MOUNT_ART) {
+    const srcKey = `src_${art.key}`;
+    if (!textures.exists(srcKey)) continue;
+    // Gun mounts are authored barrel-up (same as heli_gun) — no rotate.
+    put(textures, art.key, fit(keyImage(src(textures, srcKey), "magenta"), art.size));
+  }
+
   const blastSrc = src(textures, "src_blasts");
   const blasts = sliceGrid(matteMagenta(copyToCanvas(blastSrc, blastSrc.width, blastSrc.height)), 2, 2);
   blasts.forEach((c, i) => {
@@ -785,6 +817,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     "shot_hellfire",
     "shot_tow",
     ...PLAYER_ORDNANCE_SHOT_ART.map((a) => a.look),
+    ...PLAYER_GUN_MOUNT_ART.map((a) => a.key),
     "enemy_tank",
     "enemy_tank_gun",
     "enemy_tank_gun_hulk",

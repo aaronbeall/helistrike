@@ -8,8 +8,10 @@ import {
   SHOT_TAIL,
   type PlayerWpnSpec,
 } from "./combat";
+import { allCrafts } from "./craft";
 import { ENEMY_WPNS, usesOfWeapon } from "./roster";
 import { CFG_INFO, CFG_VALUE, dumpConfig, makeConfigText, setStatsAndInfo } from "./configUi";
+import { lookupSpriteOrigin } from "./spriteOrigin";
 import {
   TOON_BLAST_FRAMES,
   TOON_BLAST_KEY,
@@ -51,6 +53,8 @@ export interface CombatEntry {
   tag: string;
   /** Preview texture key (sheet or still). */
   tex: string;
+  /** Optional gun-mount body texture (player cannons). */
+  mountTex?: string;
   /** Sheet frame count when >1 (fx_* sheets). */
   frames?: number;
   /** Nose-up rotation for projectile previews. */
@@ -78,6 +82,7 @@ export class CombatConfigTool {
   private dim!: Phaser.GameObjects.Rectangle;
   private board!: Phaser.GameObjects.Graphics;
   private preview!: Phaser.GameObjects.Image;
+  private mountPreview!: Phaser.GameObjects.Image;
   private overlay!: Phaser.GameObjects.Graphics;
   private listTxt!: Phaser.GameObjects.Text;
   private statsTxt!: Phaser.GameObjects.Text;
@@ -113,6 +118,12 @@ export class CombatConfigTool {
       .setScrollFactor(0)
       .setDepth(DEPTH + 2)
       .setVisible(false);
+    this.mountPreview = scene.add
+      .image(0, 0, "__DEFAULT")
+      .setName("ui_combat_mount")
+      .setScrollFactor(0)
+      .setDepth(DEPTH + 2)
+      .setVisible(false);
     this.overlay = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH + 3).setVisible(false);
     this.listTxt = makeConfigText(scene, DEPTH + 4, { fontSize: "13px", lineSpacing: 3, color: PAPER });
     this.listTxt.setPosition(LIST_X, LIST_Y);
@@ -130,6 +141,7 @@ export class CombatConfigTool {
     this.root.add([
       this.dim,
       this.board,
+      this.mountPreview,
       this.preview,
       this.overlay,
       this.listTxt,
@@ -193,6 +205,7 @@ export class CombatConfigTool {
     this.dim.setVisible(this.open);
     this.board.setVisible(this.open);
     this.preview.setVisible(this.open);
+    this.mountPreview.setVisible(this.open);
     this.overlay.setVisible(this.open);
     this.listTxt.setVisible(this.open);
     this.statsTxt.setVisible(this.open);
@@ -302,56 +315,117 @@ export class CombatConfigTool {
     const h = this.scene.scale.height;
     const listRight = LIST_X + LIST_W + 20;
     const gap = 28;
-    const tex = e.tex;
-    const frames = e.frames ?? 1;
+    const panelGap = 16;
+    const pad = 10;
+    const s = this.zoom;
+    const hasShot = this.scene.textures.exists(e.tex);
+    const hasMount = !!(e.mountTex && this.scene.textures.exists(e.mountTex));
 
-    if (!this.scene.textures.exists(tex)) {
+    this.board.clear();
+    this.overlay.clear();
+
+    if (!hasShot && !hasMount) {
       this.preview.setVisible(false);
-      this.board.clear();
-      this.overlay.clear();
+      this.mountPreview.setVisible(false);
       setStatsAndInfo(this.statsTxt, this.infoTxt, e.stats, e.info, listRight, LIST_Y);
       return;
     }
 
-    this.preview.setVisible(true).setTexture(tex);
-    if (frames > 1) {
-      this.frameT += dt;
-      const fi = Math.floor(this.frameT * 8) % frames;
-      if (Number(this.preview.frame.name) !== fi) this.preview.setFrame(fi);
+    type Panel = { spr: Phaser.GameObjects.Image; boxW: number; boxH: number; rot: number };
+    const panels: Panel[] = [];
+
+    if (hasMount) {
+      const mountOrigin = lookupSpriteOrigin(e.mountTex!) ?? { x: 0.5, y: 0.7 };
+      this.mountPreview.setVisible(true).setTexture(e.mountTex!);
+      this.mountPreview.setOrigin(mountOrigin.x, mountOrigin.y);
+      this.mountPreview.setScale(s).setRotation(0);
+      panels.push({
+        spr: this.mountPreview,
+        boxW: this.mountPreview.displayWidth,
+        boxH: this.mountPreview.displayHeight,
+        rot: 0,
+      });
     } else {
-      this.preview.setFrame(0);
+      this.mountPreview.setVisible(false);
     }
 
-    const pivot = { x: 0.5, y: 0.5 };
-    this.preview.setOrigin(pivot.x, pivot.y);
-    const s = this.zoom;
-    this.preview.setScale(s);
-    const rot = e.rotOff ?? (e.cat === "fx" ? 0 : Math.PI / 2);
-    this.preview.setRotation(rot);
+    if (hasShot) {
+      const frames = e.frames ?? 1;
+      this.preview.setVisible(true).setTexture(e.tex);
+      if (frames > 1) {
+        this.frameT += dt;
+        const fi = Math.floor(this.frameT * 8) % frames;
+        if (Number(this.preview.frame.name) !== fi) this.preview.setFrame(fi);
+      } else {
+        this.preview.setFrame(0);
+      }
+      this.preview.setOrigin(0.5, 0.5);
+      this.preview.setScale(s);
+      const rot = e.rotOff ?? (e.cat === "fx" ? 0 : Math.PI / 2);
+      this.preview.setRotation(rot);
+      const bw = this.preview.displayWidth;
+      const bh = this.preview.displayHeight;
+      const cos = Math.abs(Math.cos(rot));
+      const sin = Math.abs(Math.sin(rot));
+      panels.push({
+        spr: this.preview,
+        boxW: bw * cos + bh * sin,
+        boxH: bw * sin + bh * cos,
+        rot,
+      });
+    } else {
+      this.preview.setVisible(false);
+    }
 
-    const bw = this.preview.displayWidth;
-    const bh = this.preview.displayHeight;
-    const cos = Math.abs(Math.cos(rot));
-    const sin = Math.abs(Math.sin(rot));
-    const boxW = bw * cos + bh * sin;
-    const boxH = bw * sin + bh * cos;
-    const pad = 10;
-    const cx = listRight + pad + boxW * 0.5;
-    const cy = Math.min(LIST_Y + pad + boxH * 0.5, h - pad - boxH * 0.5);
-    this.preview.setPosition(cx, cy);
+    const totalW = panels.reduce((sum, p) => sum + p.boxW, 0) + panelGap * (panels.length - 1);
+    const maxH = Math.max(...panels.map((p) => p.boxH));
+    let x = listRight + pad;
+    const cy = Math.min(LIST_Y + pad + maxH * 0.5, h - pad - maxH * 0.5);
+    const unionLeft = x;
+    const unionTop = cy - maxH * 0.5;
 
-    const bx = cx - boxW * 0.5;
-    const by = cy - boxH * 0.5;
+    for (const panel of panels) {
+      const cx = x + panel.boxW * 0.5;
+      panel.spr.setPosition(cx, cy);
+      this.drawCheckerPanel(cx - panel.boxW * 0.5, cy - panel.boxH * 0.5, panel.boxW, panel.boxH, pad);
+      x += panel.boxW + panelGap;
+    }
+
     setStatsAndInfo(
       this.statsTxt,
       this.infoTxt,
       e.stats,
       e.info,
-      Math.min(bx + boxW + gap, w - STATS_W - 16),
-      Math.max(LIST_Y, by)
+      Math.min(unionLeft + totalW + pad + gap, w - STATS_W - 16),
+      Math.max(LIST_Y, unionTop)
     );
 
-    this.board.clear();
+    if (e.cat !== "fx" && this.showMarks) {
+      if (hasShot) {
+        const shot = panels[panels.length - 1]!;
+        const bx = shot.spr.x - shot.boxW * 0.5;
+        const by = shot.spr.y - shot.boxH * 0.5;
+        this.drawShotMarks(shot.rot, bx, by, shot.boxW, shot.boxH);
+        const blast = parseBlast(e);
+        if (blast > 0) {
+          this.overlay.lineStyle(1.2, 0xff6a22, 0.65);
+          this.overlay.strokeCircle(shot.spr.x, shot.spr.y, blast * s * 0.35);
+        }
+      }
+      if (hasMount) {
+        const mount = panels[0]!;
+        const origin = lookupSpriteOrigin(e.mountTex!) ?? { x: 0.5, y: 0.7 };
+        const mx = mount.spr.x + (origin.x - mount.spr.originX) * mount.spr.displayWidth;
+        const my = mount.spr.y + (origin.y - mount.spr.originY) * mount.spr.displayHeight;
+        this.overlay.lineStyle(1.5, ORIGIN_COLOR, 0.95);
+        this.overlay.strokeCircle(mx, my, 4);
+        this.overlay.lineBetween(mx - 7, my, mx + 7, my);
+        this.overlay.lineBetween(mx, my - 7, mx, my + 7);
+      }
+    }
+  }
+
+  private drawCheckerPanel(bx: number, by: number, boxW: number, boxH: number, pad: number): void {
     const cell = 8;
     this.board.fillStyle(0x2a2418, 1);
     this.board.fillRect(bx - pad, by - pad, boxW + pad * 2, boxH + pad * 2);
@@ -364,17 +438,6 @@ export class CombatConfigTool {
     }
     this.board.lineStyle(1, 0xe8b84a, 0.55);
     this.board.strokeRect(bx - pad, by - pad, boxW + pad * 2, boxH + pad * 2);
-
-    this.overlay.clear();
-    if (e.cat !== "fx" && this.showMarks) {
-      this.drawShotMarks(rot, bx, by, boxW, boxH);
-      // Rough blast ring at preview zoom (blast is world units).
-      const blast = parseBlast(e);
-      if (blast > 0) {
-        this.overlay.lineStyle(1.2, 0xff6a22, 0.65);
-        this.overlay.strokeCircle(cx, cy, blast * s * 0.35);
-      }
-    }
   }
 
   /** Edge ticks for tip origin / trail tail — no marks over the art. */
@@ -429,6 +492,7 @@ function playerEntries(): CombatEntry[] {
       label: w.name,
       tag: "PLY",
       tex: w.look,
+      ...(w.mount ? { mountTex: w.mount } : {}),
       rotOff: 0,
       stats: block.stats,
       info: block.info,
@@ -436,8 +500,19 @@ function playerEntries(): CombatEntry[] {
   });
 }
 
+function craftsUsingWeapon(wpnId: string): string[] {
+  return allCrafts()
+    .filter((c) => c.sockets.some((s) => s.weapon === wpnId))
+    .map((c) => c.name);
+}
+
 function formatPlayer(w: PlayerWpnSpec): { stats: string[]; info: string[] } {
-  const info = [...w.notes.map((n) => `· ${n}`), "source: combat.ts PLAYER_WPNS / SHOT_ORIGIN / SHOT_TAIL"];
+  const crafts = craftsUsingWeapon(w.id);
+  const info = [
+    ...w.notes.map((n) => `· ${n}`),
+    crafts.length ? `used by: ${crafts.join(" · ")}` : "used by: —",
+    "source: combat.ts PLAYER_WPNS / SHOT_ORIGIN / SHOT_TAIL",
+  ];
   if (w.kind === "lock-on-missile" || w.kind === "guided-missile") {
     info.push(
       `MISSILE_IGNITE ${MISSILE_IGNITE}`,
