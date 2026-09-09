@@ -18,13 +18,8 @@ const DIGITAL = {
   colors: ["#3a4638", "#2a322c", "#52604a", "#1c241e", "#6a7860", "#485248"],
 };
 
-/** Bases that only get digital (LAV-AA) skins, not biome camo. */
-const DIGITAL_CAMO_BASES = [
-  "enemy_lav",
-  "enemy_lav_hulk",
-  "building_tower_aa",
-  "building_tower_aa_hulk",
-] as const;
+/** Bases that only get digital (LAV-AA) skins, not biome camo. Live only — no hulks. */
+const DIGITAL_CAMO_BASES = ["enemy_lav", "building_tower_aa"] as const;
 
 export function camoPatternKey(kind: CamoKind): string {
   return `camo_${kind}`;
@@ -45,12 +40,18 @@ export function camoForBiome(biome: Biome): CamoKind {
   return "desert";
 }
 
+/**
+ * Resolve a skinned live texture. Hulks are never camo-suffixed — callers that
+ * pass a hulk base always get the plain hulk (e.g. building_tower_aa_hulk, not
+ * building_tower_aa_hulk__digital).
+ */
 export function resolveSkin(
   textures: Phaser.Textures.TextureManager,
   base: string,
   camo?: CamoKind
 ): string {
   if (!camo) return base;
+  if (stripCamoSuffix(base).endsWith("_hulk")) return stripCamoSuffix(base);
   const key = skinnedKey(base, camo);
   return textures.exists(key) ? key : base;
 }
@@ -225,6 +226,7 @@ function bakeBaseKinds(
   kinds: readonly CamoKind[]
 ): void {
   for (const base of bases) {
+    if (base.endsWith("_hulk")) continue; // never bake camo hulks
     const src = srcCanvas(textures, base);
     if (!src) continue;
     const h = hash(base);

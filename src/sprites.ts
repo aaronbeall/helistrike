@@ -576,8 +576,8 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   const enemyRotor = fit(squareCenter(rotors[1]!), 108);
   put(textures, "heli_rotor", playerRotor);
   put(textures, "enemy_heli_rotor", enemyRotor);
-  put(textures, "heli_rotor_spin", radialStampBlur(playerRotor));
-  put(textures, "enemy_heli_rotor_spin", radialStampBlur(enemyRotor));
+  put(textures, "heli_rotor_spin", radialStampBlur(playerRotor, spritePivot("heli_rotor")));
+  put(textures, "enemy_heli_rotor_spin", radialStampBlur(enemyRotor, spritePivot("enemy_heli_rotor")));
 
   // Selectable craft bodies / custom rotors.
   for (const art of CRAFT_ART) {
@@ -590,7 +590,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
       } else {
         const rotor = fit(squareCenter(keyed), art.fit);
         put(textures, art.key, rotor);
-        put(textures, `${art.key}_spin`, radialStampBlur(rotor));
+        put(textures, `${art.key}_spin`, radialStampBlur(rotor, spritePivot(art.key)));
       }
     } else if (art.key.endsWith("_hulk")) {
       put(textures, art.key, darkenWreck(fit(keyed, art.fit)));
@@ -1746,7 +1746,7 @@ function squareCenter(src: HTMLCanvasElement): HTMLCanvasElement {
   return c;
 }
 
-/** Tunable spin-disc bake: faint rotated stamps around the hub (canvas center). */
+/** Tunable spin-disc bake: faint stamps both ways around the hub (`<-----|----->`). */
 const ROTOR_SPIN_STAMPS = 20;
 const ROTOR_SPIN_ARC_DEG = 30;
 
@@ -1760,11 +1760,12 @@ function copyCanvas(src: HTMLCanvasElement): HTMLCanvasElement {
 
 /**
  * Radial smear for fast-spin rotors.
- * 1) Chroma-spill matte on a copy (source stays sharp for hulks / slow spin).
- * 2) Transparent canvas, stamp N times at 1/N alpha, each rotated about center.
+ * Sharp original stays at angle 0 (hub orientation); stamps fan equally ±arc/2
+ * around the authored rotor center (not assumed image center).
  */
 function radialStampBlur(
   src: HTMLCanvasElement,
+  origin: { x: number; y: number } = { x: 0.5, y: 0.5 },
   stamps = ROTOR_SPIN_STAMPS,
   totalDeg = ROTOR_SPIN_ARC_DEG
 ): HTMLCanvasElement {
@@ -1773,20 +1774,25 @@ function radialStampBlur(
   out.width = src.width;
   out.height = src.height;
   const g = out.getContext("2d")!;
-  const cx = out.width * 0.5;
-  const cy = out.height * 0.5;
-  const totalRad = (totalDeg * Math.PI) / 180;
-  const step = totalRad / Math.max(1, stamps);
-  const alpha = 4.5 / Math.max(1, stamps);
-  for (let i = 0; i < stamps; i++) {
-    // Center the arc on 0 so the disc stays registered with the sharp hub.
-    const ang = (i + 0.5) * step - totalRad * 0.5;
-    g.save();
-    g.globalAlpha = alpha;
-    g.translate(cx, cy);
-    g.rotate(ang);
-    g.drawImage(blade, -cx, -cy);
-    g.restore();
+  const cx = out.width * origin.x;
+  const cy = out.height * origin.y;
+  const halfArc = ((totalDeg * Math.PI) / 180) * 0.5;
+  // Center of smear = original rotor orientation.
+  g.globalAlpha = 1;
+  g.drawImage(blade, 0, 0);
+  const side = Math.max(1, Math.floor(stamps / 2));
+  const alpha = 3.2 / Math.max(1, side);
+  for (let i = 1; i <= side; i++) {
+    const t = i / side;
+    const ang = halfArc * t;
+    for (const sign of [-1, 1] as const) {
+      g.save();
+      g.globalAlpha = alpha * (1 - t * 0.35);
+      g.translate(cx, cy);
+      g.rotate(sign * ang);
+      g.drawImage(blade, -cx, -cy);
+      g.restore();
+    }
   }
   return out;
 }

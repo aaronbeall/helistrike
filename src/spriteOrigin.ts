@@ -68,7 +68,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
   // Shared turret gun bodies (barrel-up); no swivel-track art.
   gun_gatling: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.05 }] },
   gun_minigun: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.05 }] },
-  gun_machine: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.06 }] },
+  gun_machine: { origin: uv(0.425, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.06 }] },
   gun_artillery: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.04 }] },
   gun_railgun: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.04 }] },
   gun_plasma: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.05 }] },
@@ -145,14 +145,17 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     ],
   },
   craft_cyberhawk: {
-    origin: uv(0.5, 0.4),
+    origin: uv(0.502, 0.538),
     points: [
-      { role: "rotor", x: 0.5, y: 0.4 },
+      { role: "rotor", x: 0.502, y: 0.538 },
       { role: "rotor", x: 0.497, y: 0.9, scale: 0.34, id: "tail" },
       { role: "gun", x: 0.5, y: 0.17 },
       ...pts("hardpoint", [uv(0.18, 0.48), uv(0.82, 0.48)]),
       ...pts("exhaust", [uv(0.372, 0.646), uv(0.63, 0.647)]),
     ],
+  },
+  craft_cyberhawk_hulk: {
+    origin: uv(0.492, 0.509),
   },
   craft_prometheus: {
     origin: uv(0.5, 0.5),
@@ -183,17 +186,21 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     points: [
       { role: "muzzle", x: 0.5, y: 0.045 },
       ...pts("hardpoint", [
+        uv(0.06, 0.682),
         uv(0.22, 0.52),
         uv(0.37, 0.58),
         uv(0.63, 0.58),
         uv(0.78, 0.52),
+        uv(0.945, 0.68),
       ]),
-      ...pts("exhaust", [uv(0.472, 0.897), uv(0.527, 0.897)]),
+      ...pts("exhaust", [uv(0.499, 0.913)]),
     ],
   },
 
-  craft_cyberhawk_rotor: { origin: uv(0.5, 0.5) },
-  craft_stealthhawk_rotor: { origin: uv(0.5, 0.5) },
+  craft_cyberhawk_rotor: { origin: uv(0.498, 0.459) },
+  craft_cyberhawk_rotor_hulk: { origin: uv(0.481, 0.501) },
+  craft_stealthhawk_rotor: { origin: uv(0.491, 0.491) },
+  craft_stealthhawk_rotor_hulk: { origin: uv(0.449, 0.511) },
   craft_chinook_rotor: { origin: uv(0.5, 0.5) },
   craft_osprey_rotor: { origin: uv(0.5, 0.5) },
   craft_littlebird_rotor: { origin: uv(0.5, 0.5) },
@@ -222,7 +229,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
   enemy_heli_heavy: {
     points: [
       ...pts("rotor", [uv(0.5, 0.252), uv(0.5, 0.768)]),
-      ...pts("gun", [uv(0.318, 0.345), uv(0.696, 0.346)]),
+      ...pts("gun", [uv(0.271, 0.412), uv(0.732, 0.415)]),
       ...pts("hardpoint", [uv(0.129, 0.578), uv(0.883, 0.574)]),
     ],
   },
@@ -265,14 +272,14 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     ]),
   },
   building_tower: {
-    origin: uv(0.512, 0.482),
-    points: [{ role: "gun", x: 0.512, y: 0.482 }],
+    origin: uv(0.5, 0.5),
+    points: [{ role: "gun", x: 0.499, y: 0.476 }],
   },
   building_bunker: {
     points: pts("troop", [uv(0.38, 0.42), uv(0.62, 0.42), uv(0.5, 0.58)]),
   },
   building_radar: {
-    points: [{ role: "dish", x: 0.511, y: 0.639 }],
+    points: [{ role: "dish", x: 0.608, y: 0.538 }],
   },
   building_lookout: {
     origin: uv(0.501, 0.394),
@@ -309,6 +316,9 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     origin: uv(0.496, 0.722),
     points: [{ role: "muzzle", x: 0.496, y: 0.068 }],
   },
+  enemy_ptboat_gun_hulk: {
+    origin: uv(0.49, 0.573),
+  },
   enemy_sam_gun: {
     origin: uv(0.499, 0.635),
     points: pts("muzzle", [uv(0.281, 0.051), uv(0.705, 0.049)]),
@@ -326,21 +336,27 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
       uv(0.6, 0.27),
     ]),
   },
+  building_tower_aa_hulk: {
+    origin: uv(0.499, 0.575),
+  },
   building_tower_sam: {
     origin: uv(0.5, 0.78),
     points: [{ role: "muzzle", x: 0.5, y: 0.12 }],
   },
+  building_tower_sam_hulk: {
+    origin: uv(0.496, 0.598),
+  },
   enemy_battleship_gun: {
     origin: uv(0.5, 0.68),
-    points: pts("muzzle", [uv(0.32, 0.06), uv(0.68, 0.06)]),
+    points: pts("muzzle", [uv(0.346, 0.008), uv(0.629, 0.005)]),
   },
   enemy_battleship_gun_aa: {
     origin: uv(0.5, 0.72),
     points: [{ role: "muzzle", x: 0.5, y: 0.05 }],
   },
   enemy_battleship_gun_sam: {
-    origin: uv(0.5, 0.7),
-    points: [{ role: "muzzle", x: 0.5, y: 0.12 }],
+    origin: uv(0.499, 0.583),
+    points: pts("muzzle", [uv(0.323, 0.032), uv(0.672, 0.035)]),
   },
   enemy_troop_soldier: {
     origin: uv(0.449, 0.647),
