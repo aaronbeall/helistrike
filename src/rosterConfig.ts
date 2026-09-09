@@ -400,8 +400,9 @@ export class RosterConfigTool {
         : "";
     const craftHint = ent.cat === "craft" ? "   ENTER select craft" : "";
     const compositionLabel = this.composition === "assembled" ? "ASSEMBLED" : "UNASSEMBLED";
+    const zoomShown = ent.cat === "craft" ? Math.min(this.zoom, 1) : this.zoom;
     this.hintTxt.setText(
-      `ROSTER RIG   \` cycle / close   [ ] cycle   , . page   - + zoom ${fmtZoom(this.zoom)}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   C composition ${compositionLabel}${rollHint}${craftHint}`
+      `ROSTER RIG   \` cycle / close   [ ] cycle   , . page   - + zoom ${fmtZoom(zoomShown)}${ent.cat === "craft" ? " (no upscale)" : ""}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   C composition ${compositionLabel}${rollHint}${craftHint}`
     );
 
     const size = this.pageSize();
@@ -478,7 +479,8 @@ export class RosterConfigTool {
 
     const composite = craftComposite(craft);
     const pivot = { ...composite.body.origin };
-    const s = this.zoom;
+    // Native pixels only — upscaling makes small craft (drone, etc.) look soft.
+    const s = Math.min(this.zoom, 1);
     const parts: PreviewPart[] = [...composite.guns, ...composite.rotors].map((part) => ({
       tex: part.tex,
       origin: part.origin,
@@ -515,6 +517,7 @@ export class RosterConfigTool {
         h,
         showShots: false,
         wpns: [],
+        zoom: s,
       });
       return;
     }
@@ -728,8 +731,10 @@ export class RosterConfigTool {
     h: number;
     showShots: boolean;
     wpns: WeaponSpec[];
+    /** Override roster zoom (craft caps at 1× to avoid blurry upscaling). */
+    zoom?: number;
   }): void {
-    const s = this.zoom;
+    const s = opts.zoom ?? this.zoom;
     const pad = 10;
     const partGap = 18;
     const maxX = opts.w - STATS_W - 24;

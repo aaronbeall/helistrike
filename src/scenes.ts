@@ -2938,7 +2938,7 @@ export class MissionScene extends Phaser.Scene {
     return spritePivot(key);
   }
 
-  /** ` cycles closed → sprite → roster → combat → closed — owned by ConfigRigsScene. */
+  /** ` cycles closed → sprite → roster → combat → toon → balance → closed — owned by ConfigRigsScene. */
 
   update(_t: number, dms: number): void {
     const perfOn = this.perfEnabled;

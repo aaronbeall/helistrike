@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { BalanceConfigTool } from "./balanceConfig";
 import { CombatConfigTool } from "./combatConfig";
 import { ToonBlastConfigTool } from "./toonBlastConfig";
 import { RosterConfigTool } from "./rosterConfig";
@@ -6,7 +7,7 @@ import { SpriteConfigTool } from "./spriteConfig";
 import { spritePivot } from "./sprites";
 
 /**
- * Overlay scene for sprite / roster / combat / toon-blast config rigs.
+ * Overlay scene for sprite / roster / combat / toon-blast / balance config rigs.
  * Launched lazily (first ` or installConfigRigHotkeys warm-up).
  */
 export class ConfigRigsScene extends Phaser.Scene {
@@ -14,6 +15,7 @@ export class ConfigRigsScene extends Phaser.Scene {
   rosterCfg!: RosterConfigTool;
   combatCfg!: CombatConfigTool;
   toonBlastCfg!: ToonBlastConfigTool;
+  balanceCfg!: BalanceConfigTool;
   /** True after create() finishes constructing tools. */
   ready = false;
   /** Open sprite rig once create() finishes (first ` raced launch). */
@@ -30,6 +32,7 @@ export class ConfigRigsScene extends Phaser.Scene {
     this.rosterCfg = new RosterConfigTool(this);
     this.combatCfg = new CombatConfigTool(this);
     this.toonBlastCfg = new ToonBlastConfigTool(this);
+    this.balanceCfg = new BalanceConfigTool(this);
     this.ready = true;
 
     const kb = this.input.keyboard;
@@ -93,16 +96,21 @@ export class ConfigRigsScene extends Phaser.Scene {
     if (this.rosterCfg.open) this.rosterCfg.update();
     if (this.combatCfg.open) this.combatCfg.update(dt);
     if (this.toonBlastCfg.open) this.toonBlastCfg.update(dt);
+    if (this.balanceCfg.open) this.balanceCfg.update();
   }
 
   anyOpen(): boolean {
     if (!this.ready) return false;
     return (
-      this.spriteCfg.open || this.rosterCfg.open || this.combatCfg.open || this.toonBlastCfg.open
+      this.spriteCfg.open ||
+      this.rosterCfg.open ||
+      this.combatCfg.open ||
+      this.toonBlastCfg.open ||
+      this.balanceCfg.open
     );
   }
 
-  /** ` cycles closed → sprite → roster → combat → toon blast → closed. */
+  /** ` cycles closed → sprite → roster → combat → toon blast → balance → closed. */
   cycle(): void {
     if (!this.ready) {
       this.pendingOpen = true;
@@ -128,7 +136,12 @@ export class ConfigRigsScene extends Phaser.Scene {
         return;
       }
       if (this.toonBlastCfg.open) {
+        this.balanceCfg.toggle();
         this.toonBlastCfg.toggle();
+        return;
+      }
+      if (this.balanceCfg.open) {
+        this.balanceCfg.toggle();
         return;
       }
       this.spriteCfg.toggle();
@@ -148,12 +161,14 @@ export class ConfigRigsScene extends Phaser.Scene {
     | RosterConfigTool
     | CombatConfigTool
     | ToonBlastConfigTool
+    | BalanceConfigTool
     | undefined {
     if (!this.ready) return undefined;
     if (this.spriteCfg.open) return this.spriteCfg;
     if (this.rosterCfg.open) return this.rosterCfg;
     if (this.combatCfg.open) return this.combatCfg;
     if (this.toonBlastCfg.open) return this.toonBlastCfg;
+    if (this.balanceCfg.open) return this.balanceCfg;
     return undefined;
   }
 }
