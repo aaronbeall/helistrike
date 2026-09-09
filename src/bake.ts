@@ -346,7 +346,7 @@ function drawMissile(color: string): HTMLCanvasElement {
   return c;
 }
 
-function drawFrag(color: string): HTMLCanvasElement {
+function drawDebris(color: string): HTMLCanvasElement {
   const c = canvas(16, 16);
   const g = ctxOf(c);
   g.fillStyle = color;
@@ -488,7 +488,7 @@ export function bakeAll(textures: Phaser.Textures.TextureManager): void {
   add(textures, "shot_rocket", drawRocket());
   add(textures, "shot_hellfire", drawMissile("#c45c1a"));
   add(textures, "shot_tow", drawMissile("#c8b45a"));
-  add(textures, "fx_frag_metal", drawFrag("#6a7064"));
+  add(textures, "fx_debris_metal", drawDebris("#6a7064"));
   add(textures, "fx_spark", drawSpark());
   add(textures, "fx_smoke", drawSmoke());
   add(textures, "fx_muzzle", drawMuzzle());
@@ -552,7 +552,7 @@ function collectArtKeys(): string[] {
     "fx_smoke",
     "fx_flame",
     "fx_blast_0",
-    "fx_frag_metal",
+    "fx_debris_metal",
     "hulk_crater",
   ]) {
     keys.add(k);

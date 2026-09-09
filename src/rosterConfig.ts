@@ -1,14 +1,14 @@
 import Phaser from "phaser";
 import {
   allCraftKinds,
-  craftDmgPois,
-  craftGunMount,
+  craftComposite,
+  craftCompositePartScale,
+  craftExhaustMounts,
+  craftGunMounts,
   craftGunOrigin,
   craftKind,
   craftOf,
   craftOrigin,
-  craftRotorSpinTex,
-  craftRotorTex,
   craftSecondaryMounts,
   selectCraft,
   type CraftKind,
@@ -60,7 +60,7 @@ const LIST_Y = 40;
 const LIST_W = 268;
 const STATS_W = 400;
 const LINE_H = 16;
-const PART_SLOTS = 10;
+const PART_SLOTS = 16;
 const LABEL_SLOTS = 16;
 const SHOT_SLOTS = 4;
 
@@ -77,8 +77,19 @@ type PreviewPart = {
   mount: { x: number; y: number };
   rot: number;
   scale: number;
+  drawSpan?: number;
+  layer: "below" | "above";
   /** Vertical foreshortening (radar dish). */
   squashY?: number;
+};
+
+type SpriteHit = {
+  im: Phaser.GameObjects.Image;
+  tex: string;
+  uvx: number;
+  uvy: number;
+  px: number;
+  py: number;
 };
 
 /** Roster list row — playable craft or enemy unit. */
@@ -101,7 +112,7 @@ export class RosterConfigTool {
   private composition: Composition = "assembled";
   /** Index into `partsRollPickIds` for the current unit (pick-mode only). */
   private rollPickIdx = 0;
-  private pinned: { uvx: number; uvy: number } | null = null;
+  private pinned: SpriteHit | null = null;
   private copied = "";
   private statsXY = { x: 0, y: 0 };
   private pendingStats: string[] = [];
@@ -281,14 +292,7 @@ export class RosterConfigTool {
       const uv = this.uvAt(p);
       if (!uv) return;
       this.pinned = uv;
-      const entries = this.entries();
-      const ent = entries[this.idx];
-      const tex = ent
-        ? ent.cat === "craft"
-          ? craftOf(ent.kind).body
-          : specOf(ent.kind).texture
-        : "";
-      this.copied = `${tex} ${uv.uvx.toFixed(3)} ${uv.uvy.toFixed(3)}  px ${uv.px.toFixed(1)} ${uv.py.toFixed(1)}`;
+      this.copied = `${uv.tex} ${uv.uvx.toFixed(3)} ${uv.uvy.toFixed(3)}  px ${uv.px.toFixed(1)} ${uv.py.toFixed(1)}`;
       copyText(this.copied);
     });
 
@@ -395,8 +399,9 @@ export class RosterConfigTool {
         ? `   V roll ${this.rollPickIdx + 1}/${pickIds.length}`
         : "";
     const craftHint = ent.cat === "craft" ? "   ENTER select craft" : "";
+    const compositionLabel = this.composition === "assembled" ? "ASSEMBLED" : "UNASSEMBLED";
     this.hintTxt.setText(
-      `ROSTER RIG   \` cycle / close   [ ] cycle   , . page   - + zoom ${fmtZoom(this.zoom)}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   C composition ${this.composition.toUpperCase()}${rollHint}${craftHint}`
+      `ROSTER RIG   \` cycle / close   [ ] cycle   , . page   - + zoom ${fmtZoom(this.zoom)}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   C composition ${compositionLabel}${rollHint}${craftHint}`
     );
 
     const size = this.pageSize();
@@ -413,7 +418,7 @@ export class RosterConfigTool {
           if (e.cat === "craft") {
             const c = craftOf(e.kind);
             const active = e.kind === craftKind() ? " ★" : "";
-            return `${mark} ${c.label.padEnd(16)} PLY${active}`;
+            return `${mark} ${c.fullName.padEnd(22)} PLY${active}`;
           }
           return `${mark} ${labelOf(e.kind).padEnd(16)} ${categoryTag(e.kind)}`;
         }),
@@ -471,34 +476,32 @@ export class RosterConfigTool {
       return;
     }
 
-    const pivot = { ...craftOrigin(craft) };
+    const composite = craftComposite(craft);
+    const pivot = { ...composite.body.origin };
     const s = this.zoom;
-    const parts: PreviewPart[] = [
-      {
-        tex: craft.gun,
-        origin: craftGunOrigin(craft),
-        mount: craftGunMount(craft),
-        rot: 0,
-        scale: 1,
-      },
-    ];
-    {
-      const rotorTex = craftRotorTex(craft);
-      if (rotorTex) {
-        const spinKey = craftRotorSpinTex(craft);
-        const rotorKey =
-          spinKey && this.scene.textures.exists(spinKey) ? spinKey : rotorTex;
-        parts.push({
-          tex: rotorKey,
-          origin: { x: 0.5, y: 0.5 },
-          mount: craftOrigin(craft),
-          rot: 0,
-          scale: 1,
-        });
-      }
-    }
+    const parts: PreviewPart[] = [...composite.guns, ...composite.rotors].map((part) => ({
+      tex: part.tex,
+      origin: part.origin,
+      mount: part.mount,
+      rot: 0,
+      scale: 1,
+      ...(part.drawSpan != null ? { drawSpan: part.drawSpan } : {}),
+      layer: part.layer,
+    }));
 
     if (this.composition === "separated") {
+      for (const rotor of composite.rotors) {
+        if (!rotor.spinTex || !this.scene.textures.exists(rotor.spinTex)) continue;
+        parts.push({
+          tex: rotor.spinTex,
+          origin: rotor.origin,
+          mount: rotor.mount,
+          rot: 0,
+          scale: 1,
+          ...(rotor.drawSpan != null ? { drawSpan: rotor.drawSpan } : {}),
+          layer: rotor.layer,
+        });
+      }
       this.layoutSeparated({
         hullTex: tex,
         pivot,
@@ -591,6 +594,7 @@ export class RosterConfigTool {
         mount: g.mount,
         rot: 0,
         scale: g.scale ?? 1,
+        layer: sp.move === "heli" ? "below" : "above",
       });
     }
     for (const r of sp.rotors) {
@@ -603,6 +607,7 @@ export class RosterConfigTool {
         mount: r.mount,
         rot: 0,
         scale: r.scale ?? 1,
+        layer: "above",
       });
     }
     if (sp.dish) {
@@ -613,6 +618,7 @@ export class RosterConfigTool {
         mount: d.mount,
         rot: 0,
         scale: (d.scale ?? 1) * 1.04,
+        layer: "above",
         squashY: 0.52,
       });
     }
@@ -769,7 +775,16 @@ export class RosterConfigTool {
         part.setVisible(false);
         continue;
       }
-      part.setVisible(true).setTexture(p.tex).setOrigin(p.origin.x, p.origin.y).setScale(s * p.scale).setRotation(p.rot);
+      part
+        .setVisible(true)
+        .setTexture(p.tex)
+        .setOrigin(p.origin.x, p.origin.y)
+        .setScale(
+          p.drawSpan == null
+            ? s * p.scale
+            : craftCompositePartScale(p, part.width, s)
+        )
+        .setRotation(p.rot);
       if (p.squashY != null) part.setScale(part.scaleX, part.scaleY * p.squashY);
       const { boxW, boxH } = aabbOf(part.displayWidth, part.displayHeight, p.rot);
       cells.push({
@@ -798,6 +813,7 @@ export class RosterConfigTool {
     let hullCx = 0;
     let hullCy = 0;
 
+    this.board.clear();
     for (const cell of cells) {
       if (x + cell.boxW + pad * 2 > maxX && x > opts.listRight) {
         x = opts.listRight;
@@ -807,6 +823,7 @@ export class RosterConfigTool {
       const cx = x + pad + cell.boxW * 0.5;
       const cy = y + pad + cell.boxH * 0.5;
       cell.im.setPosition(cx, cy);
+      this.drawPreviewBoard(x + pad, y + pad, cell.boxW, cell.boxH, pad, false);
       if (cell.isHull) {
         hullCx = cx;
         hullCy = cy;
@@ -818,10 +835,6 @@ export class RosterConfigTool {
       rowH = Math.max(rowH, cell.boxH + pad * 2);
       x += cell.boxW + pad * 2 + partGap;
     }
-
-    const boardW = Math.max(40, maxRight - minX);
-    const boardH = Math.max(40, maxBottom - minY);
-    this.drawPreviewBoard(minX, minY, boardW, boardH, 0);
 
     const statsX = Math.min(maxRight + opts.gap, opts.w - STATS_W - 16);
     this.statsXY = { x: statsX, y: Math.max(LIST_Y, minY) };
@@ -844,8 +857,15 @@ export class RosterConfigTool {
     });
   }
 
-  private drawPreviewBoard(bx: number, by: number, boxW: number, boxH: number, pad: number): void {
-    this.board.clear();
+  private drawPreviewBoard(
+    bx: number,
+    by: number,
+    boxW: number,
+    boxH: number,
+    pad: number,
+    clear = true
+  ): void {
+    if (clear) this.board.clear();
     const cell = 8;
     this.board.fillStyle(0x2a2418, 1);
     this.board.fillRect(bx - pad, by - pad, boxW + pad * 2, boxH + pad * 2);
@@ -883,8 +903,14 @@ export class RosterConfigTool {
         .setOrigin(p.origin.x, p.origin.y)
         .setPosition(cx + mx, cy + my)
         .setRotation(p.rot)
-        .setScale(s * p.scale);
+        .setScale(
+          p.drawSpan == null
+            ? s * p.scale
+            : craftCompositePartScale(p, part.width, s)
+        );
       if (p.squashY != null) part.setScale(part.scaleX, part.scaleY * p.squashY);
+      if (p.layer === "below") this.root.moveBelow(part, this.hull);
+      else this.root.moveAbove(part, this.hull);
     }
     for (; pi < this.parts.length; pi++) this.parts[pi]!.setVisible(false);
   }
@@ -906,21 +932,26 @@ export class RosterConfigTool {
       }
       im.setVisible(true).setTexture(key).setOrigin(0.5, 0.5);
       const sc = Math.min(2.5, (36 * this.zoom) / Math.max(im.width, im.height, 1));
-      im.setScale(sc)
+      im.setScale(sc);
+      const boxW = Math.max(im.displayWidth, 28);
+      const boxH = Math.max(im.displayHeight, 18);
+      im
         .setRotation(0)
-        .setPosition(shotX + Math.max(im.displayWidth, 28) * 0.5, shotY);
-      shotX += Math.max(im.displayWidth, 28) + shotGap;
+        .setPosition(shotX + boxW * 0.5, shotY);
+      this.drawPreviewBoard(shotX, shotY - boxH * 0.5, boxW, boxH, 6, false);
+      shotX += boxW + shotGap + 12;
     }
   }
 
   private applyStatsPanel(tex: string): void {
-    const origin = spritePivot(tex);
-    const tw = this.hull.visible && this.hull.width ? this.hull.width : 1;
-    const th = this.hull.visible && this.hull.height ? this.hull.height : 1;
     const uv = this.uvAt(this.scene.input.activePointer);
+    const origin = uv ? { x: uv.im.originX, y: uv.im.originY } : spritePivot(tex);
+    const tw = uv?.im.width || 1;
+    const th = uv?.im.height || 1;
     const live = dumpConfig({
       cursor: uv
         ? {
+            sprite: uv.tex,
             uv: { x: uv.uvx, y: uv.uvy },
             px: { x: uv.px, y: uv.py },
             fromOrigin: {
@@ -930,8 +961,12 @@ export class RosterConfigTool {
           }
         : "off board",
       pin: this.pinned
-        ? { uv: { x: this.pinned.uvx, y: this.pinned.uvy }, copied: this.copied || "—" }
-        : "click hull to copy name / uv / px",
+        ? {
+            sprite: this.pinned.tex,
+            uv: { x: this.pinned.uvx, y: this.pinned.uvy },
+            copied: this.copied || "—",
+          }
+        : "click a sprite to copy name / uv / px",
     });
     setStackedTexts(
       [
@@ -944,15 +979,32 @@ export class RosterConfigTool {
     );
   }
 
-  private uvAt(p: Phaser.Input.Pointer): { uvx: number; uvy: number; px: number; py: number } | null {
-    if (!this.hull.visible || !this.hull.width || !this.hull.height) return null;
-    const lp = this.hull.getLocalPoint(p.x, p.y, undefined, this.uiCam);
-    if (lp.x < -0.5 || lp.y < -0.5 || lp.x > this.hull.width + 0.5 || lp.y > this.hull.height + 0.5) {
-      return null;
+  private uvAt(p: Phaser.Input.Pointer): SpriteHit | null {
+    const candidates =
+      this.composition === "separated"
+        ? [
+            this.hull,
+            ...this.parts.filter((part) => part.visible),
+            ...this.shots.filter((shot) => shot.visible),
+          ]
+        : [this.hull];
+    for (let i = candidates.length - 1; i >= 0; i--) {
+      const im = candidates[i]!;
+      if (!im.visible || !im.width || !im.height) continue;
+      const lp = im.getLocalPoint(p.x, p.y, undefined, this.uiCam);
+      if (lp.x < -0.5 || lp.y < -0.5 || lp.x > im.width + 0.5 || lp.y > im.height + 0.5) continue;
+      const px = lp.x;
+      const py = lp.y;
+      return {
+        im,
+        tex: markTexKey(im.texture.key),
+        uvx: px / im.width,
+        uvy: py / im.height,
+        px,
+        py,
+      };
     }
-    const px = lp.x;
-    const py = lp.y;
-    return { uvx: px / this.hull.width, uvy: py / this.hull.height, px, py };
+    return null;
   }
 
   private drawHullMarks(opts: {
@@ -973,13 +1025,14 @@ export class RosterConfigTool {
 
     const { cx, cy, s } = opts;
 
-    if (this.pinned) {
-      const hullDw = this.hull.displayWidth;
-      const hullDh = this.hull.displayHeight;
-      const mx = (this.pinned.uvx - opts.pivot.x) * hullDw;
-      const my = (this.pinned.uvy - opts.pivot.y) * hullDh;
-      const px = cx + mx;
-      const py = cy + my;
+    if (this.pinned?.im.visible) {
+      const im = this.pinned.im;
+      const lx = (this.pinned.uvx - im.originX) * im.displayWidth;
+      const ly = (this.pinned.uvy - im.originY) * im.displayHeight;
+      const ca = Math.cos(im.rotation);
+      const sa = Math.sin(im.rotation);
+      const px = im.x + lx * ca - ly * sa;
+      const py = im.y + lx * sa + ly * ca;
       g.fillStyle(0xff3a2a, 1);
       g.fillCircle(px, py, 4);
       g.lineStyle(1, 0xffffff, 0.9);
@@ -1167,21 +1220,15 @@ function categoryTag(kind: UnitKind): string {
 
 function formatCraft(craft: CraftSpec): { stats: string[]; info: string[] } {
   const selected = craft.kind === craftKind();
-  const gunMounts = (() => {
-    try {
-      return craftGunMount(craft);
-    } catch {
-      return undefined;
-    }
-  })();
+  const gunMounts = craftGunMounts(craft);
   const stats = [
     ...dumpConfig(craft, { format: formatRotOff }),
     ...dumpConfig({
       selected: selected ? "yes ★" : "no",
       origin: craftOrigin(craft),
-      ...(gunMounts ? { gunMount: gunMounts } : {}),
+      ...(gunMounts.length ? { gunMounts } : {}),
       gunOrigin: craftGunOrigin(craft),
-      dmgPois: craftDmgPois(craft),
+      exhaustMounts: craftExhaustMounts(craft),
       secondaryMounts: craftSecondaryMounts(craft),
     }),
   ];

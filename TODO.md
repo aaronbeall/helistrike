@@ -14,6 +14,7 @@
   * [ ] Cheyenne II (VTOL)
   * [ ] Warthog (Jet)
   * [ ] Gunship (high flying aircraft)
+  * [ ] Chinnook (can pick things up and drop them, including friendly units)
   * [ ] (Secret) Prometheus (alien, cloaking)
 * [ ] Single player progress, mission/vehicle unlocks, weapon/upgrade purchases
 * [ ] Additional weapon options (current: chain gun, rockets, hellfires, TOWs), loadout options specific to heli type
@@ -62,14 +63,16 @@
   * [ ] Runway/landing pad
   * [ ] Drone swarm truck
   * [ ] Troop truck
-  * [ ] Landed planes
+  * [ ] Landed planes on runways
   * [ ] Ammo depot (with cookoff)
+  * [ ] Explosive tanks
+  * [ ] Explosive trucks
 * More doodads:
   * [ ] destroyed buildings
   * [ ] Pre-baked crashed vehicles
   * [ ] easter egg: waldo, crashed alien spacecraft
-* [ ] Enemy air units
-* [ ] Roads
+* [x] Enemy air units
+* [ ] Roads, bridges, walls/fences
 * [ ] Boss enemies
 * [ ] Starting landing pad/base
   * [ ] Limited repair/rearm 
@@ -84,7 +87,7 @@
 * [ ] Time of day lighting effects
   * [ ] Night rendering (lights)
 * [ ] Steam achievements
-* [ ] Shell ejecta
+* [x] Shell ejecta
 * [ ] Generated art height map
   * [ ] Whole image generation
   * [ ] Asset composition generation
@@ -95,11 +98,11 @@
   * [ ] Hanger -> tanks
   * [ ] Docks -> boats
 * [ ] Rotors push smoke
+* [ ] Roadkill organic units with rotors
 * [ ] Unit speed impact by slope, slope limit
 * [ ] Tail rotor (with tilt)
 * [ ] Pseudo 3d tilt graphic
 * [ ] Clouds
-* [ ] Roadkill organic units with rotors
 
 ## Fix
 

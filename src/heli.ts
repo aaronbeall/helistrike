@@ -63,11 +63,15 @@ export class Heli {
   immune = false;
   hellfireLock: { id: number } | null = null;
   hellfireSeek: { id: number; t: number } | null = null;
-  /** Indices into craftDmgPois(craft). */
-  dmgSites: { poi: number; scale: number }[] = [];
+  /** Persistent solid-pixel damage locations on the craft body. */
+  dmgSites: { u: number; v: number; scale: number }[] = [];
   gndSmooth: number;
   killDx = 0;
   killDy = 0;
+  /** Fixed-wing automatic recovery turn near the theater boundary. */
+  edgeTurn = false;
+  /** Smoothed visual engine output; does not feed back into flight physics. */
+  thrustPower = 0;
 
   constructor(x: number, y: number, world: WorldData, craft: CraftKind = craftOf().kind) {
     this.craft = craft;
@@ -84,6 +88,16 @@ export class Heli {
 
   get height(): number {
     return this.spec.height;
+  }
+
+  startAirborne(angle: number, world: WorldData): void {
+    this.angle = angle;
+    this.phase = "flight";
+    this.gndSmooth = groundZ(world, this.x, this.y);
+    this.z = this.gndSmooth + this.spec.cruiseAgl;
+    this.vx = Math.cos(angle) * this.spec.minSpeed;
+    this.vy = Math.sin(angle) * this.spec.minSpeed;
+    this.vz = 0;
   }
 
   get noseX(): number {
@@ -165,12 +179,35 @@ export class Heli {
       this.rotorSpd = Phaser.Math.Linear(this.rotorSpd, ROTOR_FLIGHT, 1 - Math.pow(0.2, dt));
     }
 
-    const desired = Math.atan2(aimY - this.y, aimX - this.x);
+    let desired = Math.atan2(aimY - this.y, aimX - this.x);
+    if (this.spec.flightModel === "plane") {
+      const turnMargin = Math.max(420, this.spec.minSpeed * 1.2);
+      const nearEdge =
+        this.x < turnMargin ||
+        this.x > WORLD - turnMargin ||
+        this.y < turnMargin ||
+        this.y > WORLD - turnMargin;
+      const toCx = WORLD * 0.5 - this.x;
+      const toCy = WORLD * 0.5 - this.y;
+      const toCenterLen = Math.max(1, Math.hypot(toCx, toCy));
+      const inX = toCx / toCenterLen;
+      const inY = toCy / toCenterLen;
+      const headingIn = Math.cos(this.angle) * inX + Math.sin(this.angle) * inY;
+      const velocityIn = this.vx * inX + this.vy * inY;
+      if (nearEdge && (headingIn < 0.25 || velocityIn < 0)) this.edgeTurn = true;
+      const safelyInland =
+        this.x > turnMargin + 180 &&
+        this.x < WORLD - turnMargin - 180 &&
+        this.y > turnMargin + 180 &&
+        this.y < WORLD - turnMargin - 180;
+      if (this.edgeTurn && safelyInland && headingIn > 0.7) this.edgeTurn = false;
+      if (this.edgeTurn) desired = Math.atan2(toCy, toCx);
+    }
     if (controllable) {
       const err = Phaser.Math.Angle.Wrap(desired - this.angle);
-      const maxRate = 2.55;
+      const maxRate = this.spec.yawRate;
       const targetRate = Phaser.Math.Clamp(err * 5.4, -maxRate, maxRate);
-      const yawAcc = 11;
+      const yawAcc = this.spec.yawAccel;
       if (this.angVel < targetRate) this.angVel = Math.min(targetRate, this.angVel + yawAcc * dt);
       else this.angVel = Math.max(targetRate, this.angVel - yawAcc * dt);
       this.angle += this.angVel * dt;
@@ -185,19 +222,56 @@ export class Heli {
     let ay = 0;
     const fwd = (up ? 1 : 0) + (down ? -1 : 0);
     const str = (right ? 1 : 0) + (left ? -1 : 0);
+    const collective = (spaceDown ? 1 : 0) + (shiftDown ? -1 : 0);
+    const idlePower = this.spec.flightModel === "plane" ? 0.55 : 0.22;
+    const forwardPower = fwd < 0
+      ? Math.abs(fwd) * ((this.spec.reverseThrust ?? this.spec.forwardThrust) / this.spec.forwardThrust)
+      : Math.abs(fwd);
+    const thrustTarget = controllable
+      ? Math.max(idlePower, forwardPower, Math.abs(str), Math.abs(collective))
+      : 0;
+    this.thrustPower = Phaser.Math.Linear(
+      this.thrustPower,
+      thrustTarget,
+      1 - Math.pow(0.08, dt)
+    );
     if (controllable) {
-      ax += ca * fwd * FWD_THRUST;
-      ay += sa * fwd * FWD_THRUST;
-      ax += -sa * str * STRAFE_THRUST;
-      ay += ca * str * STRAFE_THRUST;
+      const longitudinalThrust = fwd < 0
+        ? (this.spec.reverseThrust ?? this.spec.forwardThrust)
+        : this.spec.forwardThrust;
+      ax += ca * fwd * longitudinalThrust;
+      ay += sa * fwd * longitudinalThrust;
+      ax += -sa * str * this.spec.strafeThrust;
+      ay += ca * str * this.spec.strafeThrust;
     }
     this.vx += ax * dt;
     this.vy += ay * dt;
-    const drag = controllable ? 1.65 : 8;
+    const drag = controllable ? this.spec.drag : 8;
     this.vx *= Math.pow(1 / (1 + drag * dt), 1);
     this.vy *= Math.pow(1 / (1 + drag * dt), 1);
+    if (controllable && this.spec.flightModel === "plane") {
+      const headingX = Math.cos(this.angle);
+      const headingY = Math.sin(this.angle);
+      const forwardSpeed = Math.max(
+        this.spec.minSpeed,
+        this.vx * headingX + this.vy * headingY
+      );
+      const lateralSpeed =
+        (-this.vx * headingY + this.vy * headingX) * Math.exp(-2.2 * dt);
+      this.vx = headingX * forwardSpeed - headingY * lateralSpeed;
+      this.vy = headingY * forwardSpeed + headingX * lateralSpeed;
+    }
+    const maxReverse = this.spec.maxReverseSpeed;
+    if (maxReverse != null) {
+      const along = this.vx * ca + this.vy * sa;
+      if (along < -maxReverse) {
+        const lateral = -this.vx * sa + this.vy * ca;
+        this.vx = ca * -maxReverse - sa * lateral;
+        this.vy = sa * -maxReverse + ca * lateral;
+      }
+    }
     const spd = Math.hypot(this.vx, this.vy);
-    const max = 340;
+    const max = this.spec.maxSpeed;
     if (spd > max) {
       this.vx *= max / spd;
       this.vy *= max / spd;
@@ -206,6 +280,12 @@ export class Heli {
     this.y += this.vy * dt;
     this.x = Phaser.Math.Clamp(this.x, 40, WORLD - 40);
     this.y = Phaser.Math.Clamp(this.y, 40, WORLD - 40);
+    if (this.spec.flightModel === "plane") {
+      if (this.x <= 40 && this.vx < 0) this.vx = 0;
+      else if (this.x >= WORLD - 40 && this.vx > 0) this.vx = 0;
+      if (this.y <= 40 && this.vy < 0) this.vy = 0;
+      else if (this.y >= WORLD - 40 && this.vy > 0) this.vy = 0;
+    }
 
     const gnd = groundZ(world, this.x, this.y);
     this.gndSmooth += (gnd - this.gndSmooth) * (1 - Math.exp(-GND_FOLLOW * dt));
@@ -214,12 +294,16 @@ export class Heli {
       this.vz = 0;
     } else if (controllable) {
       const minZ = gnd + LOW_AGL;
-      const maxZ = gnd + MAX_AGL;
-      const restZ = this.gndSmooth + CRUISE_AGL;
+      const maxZ = gnd + this.spec.maxAgl;
+      const restZ = this.gndSmooth + this.spec.cruiseAgl;
       const zIn = (spaceDown ? 1 : 0) + (shiftDown ? -1 : 0);
-      let az = zIn * Z_THRUST;
+      let az = zIn * this.spec.verticalThrust;
       if (zIn === 0) {
-        az += Phaser.Math.Clamp(restZ - this.z, -CRUISE_THRUST, CRUISE_THRUST);
+        az += Phaser.Math.Clamp(
+          restZ - this.z,
+          -this.spec.cruiseThrust,
+          this.spec.cruiseThrust
+        );
         this.vz *= Math.pow(1 / (1 + CRUISE_DAMP * dt), 1);
       }
       const ceilPad = 26;

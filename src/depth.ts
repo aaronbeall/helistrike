@@ -12,10 +12,11 @@ export const Layer = {
 export const ZOff = {
   shot: -1.6,
   gun: -1.1,
+  exhaust: -0.45,
   body: 0,
   smoke: 0.45,
   fire: 1.7,
-  muzzle: 3.4,
+  muzzle: -1,
   dmg: 1.5,
   turret: 1.6,
   rotor: 2.5,

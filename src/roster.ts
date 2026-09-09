@@ -31,7 +31,7 @@ export type UnitKind =
   | "heli_small"
   | "heli_heavy";
 
-export type FragCat = "mech" | "struct" | "organic";
+export type DebrisCat = "mech" | "struct" | "organic";
 
 /** Projectile texture key (= Phaser texture name). */
 export type ShotLook =
@@ -79,6 +79,8 @@ export interface PartMount {
   weapon?: WeaponSpec;
 }
 
+export type MuzzleFireMode = "alternate" | "simultaneous";
+
 export interface WeaponSpec {
   fireCd: number;
   range: number;
@@ -94,15 +96,18 @@ export interface WeaponSpec {
   burst?: number;
   burstGap?: number;
   jitter?: number;
+  /** Explicitly cycle authored muzzle tips; omitted weapons fire from the first tip. */
+  muzzleFire?: "alternate";
 }
 
 /**
  * Hull hardpoint secondary (e.g. seeker missiles). Separate from body `weapon` / `guns`.
- * Cadence rolls between fireCdMin/Max; mounts alternate each shot.
+ * Cadence rolls between fireCdMin/Max; mount firing behavior is explicit.
  */
 export interface SecondaryWpnSpec {
   wpn: WeaponSpec;
   mounts: { x: number; y: number }[];
+  mountFire: MuzzleFireMode;
   fireCdMin: number;
   fireCdMax: number;
   /** Multiplier on `wpn.scale` for this hardpoint. */
@@ -121,7 +126,7 @@ export interface SecondaryWpnSpec {
  * Tagged hull UV roles (SPRITE_SPECS point roles minus muzzle).
  * Shared by craft mounts and rig overlays.
  */
-export type HullMountRole = "gun" | "rotor" | "dish" | "troop" | "secondary" | "dmg";
+export type HullMountRole = "gun" | "rotor" | "dish" | "troop" | "secondary" | "exhaust";
 
 export interface HullMount {
   x: number;
@@ -137,7 +142,7 @@ export const HULL_MOUNT_COLOR: Record<HullMountRole, number> = {
   dish: 0xe8b84a,
   troop: 0xd878ff,
   secondary: 0xff8c42,
-  dmg: 0xff4a4a
+  exhaust: 0xb04aff
 };
 
 /** Suffix labels when a role appears more than once (`gun 1`, `secondary 2`). */
@@ -168,7 +173,7 @@ export interface UnitSpec {
   flyZ?: number;
   texture: string;
   hulk: string;
-  frag: FragCat;
+  debris: DebrisCat;
   rotOff: number;
   move: MoveKind;
   /** Ground locomotion (tank / vehicle). Omitted for non-driving kinds. */
@@ -180,6 +185,8 @@ export interface UnitSpec {
    */
   secondary?: SecondaryWpnSpec;
   guns: PartMount[];
+  /** Explicitly cycle separate gun mounts after each completed burst. */
+  gunFire?: "alternate";
   rotors: PartMount[];
   dish?: PartMount;
   building?: boolean;
@@ -322,6 +329,7 @@ export const ENEMY_WPNS: { id: EnemyWpnId; label: string; w: WeaponSpec }[] = [
       blast: 22,
       look: "shot_shell",
       scale: 0.72,
+      muzzleFire: "alternate",
     },
   },
   {
@@ -339,6 +347,7 @@ export const ENEMY_WPNS: { id: EnemyWpnId; label: string; w: WeaponSpec }[] = [
       burst: 28,
       burstGap: 0.035,
       jitter: 0.04,
+      muzzleFire: "alternate",
     },
   },
   {
@@ -354,6 +363,7 @@ export const ENEMY_WPNS: { id: EnemyWpnId; label: string; w: WeaponSpec }[] = [
       look: "shot_hellfire",
       scale: 1,
       jitter: 0.02,
+      muzzleFire: "alternate",
     },
   },
   {
@@ -533,7 +543,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 20,
     texture: "enemy_tank",
     hulk: "enemy_tank_hulk",
-    frag: "mech",
+    debris: "mech",
     rotOff: Math.PI / 2,
     move: "tank",
     drive: { maxSpd: 32, accel: 16, brake: 22, turn: 0.7, track: "tread", trackGap: 15, trackScale: 1.05 },
@@ -549,7 +559,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 9,
     texture: "enemy_troop_soldier",
     hulk: "enemy_troop_soldier_hulk",
-    frag: "organic",
+    debris: "organic",
     rotOff: Math.PI / 2,
     move: "inf",
     organic: true,
@@ -566,7 +576,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     flyZ: 48,
     texture: "enemy_heli",
     hulk: "enemy_heli_hulk",
-    frag: "mech",
+    debris: "mech",
     rotOff: Math.PI / 2,
     move: "heli",
     aerial: true,
@@ -575,6 +585,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     secondary: {
       wpn: WPN.seeker,
       mounts: mountsOf("enemy_heli", "secondary"),
+      mountFire: "alternate",
       fireCdMin: 5.5,
       fireCdMax: 9.5,
       scale: 0.72,
@@ -599,7 +610,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 16,
     texture: "enemy_boat",
     hulk: "enemy_boat_hulk",
-    frag: "mech",
+    debris: "mech",
     rotOff: Math.PI / 2,
     move: "boat",
     water: true,
@@ -617,7 +628,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 48,
     texture: "building_tower",
     hulk: "building_tower_hulk",
-    frag: "struct",
+    debris: "struct",
     rotOff: Math.PI / 2,
     move: "static",
     building: true,
@@ -649,7 +660,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 32,
     texture: "building_bunker",
     hulk: "building_bunker_hulk",
-    frag: "struct",
+    debris: "struct",
     rotOff: Math.PI / 2,
     move: "static",
     building: true,
@@ -666,7 +677,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 56,
     texture: "building_radar",
     hulk: "building_radar_hulk",
-    frag: "struct",
+    debris: "struct",
     rotOff: Math.PI / 2,
     move: "static",
     building: true,
@@ -689,7 +700,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 14,
     texture: "enemy_pickup",
     hulk: "enemy_pickup_hulk",
-    frag: "mech",
+    debris: "mech",
     rotOff: Math.PI / 2,
     move: "vehicle",
     drive: { maxSpd: 92, accel: 48, brake: 40, turn: 1.55, track: "tire", trackGap: 13, trackScale: 0.78 },
@@ -706,7 +717,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 16,
     texture: "enemy_truck",
     hulk: "enemy_truck_hulk",
-    frag: "mech",
+    debris: "mech",
     rotOff: Math.PI / 2,
     move: "vehicle",
     drive: { maxSpd: 68, accel: 28, brake: 26, turn: 0.85, track: "dual", trackGap: 15, trackScale: 0.95 },
@@ -722,7 +733,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 16,
     texture: "enemy_tanker",
     hulk: "enemy_tanker_hulk",
-    frag: "mech",
+    debris: "mech",
     rotOff: Math.PI / 2,
     move: "vehicle",
     drive: { maxSpd: 52, accel: 18, brake: 22, turn: 0.62, track: "wide", trackGap: 16, trackScale: 1.12 },
@@ -737,7 +748,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 10,
     texture: "enemy_motorcycle",
     hulk: "enemy_motorcycle_hulk",
-    frag: "mech",
+    debris: "mech",
     rotOff: Math.PI / 2,
     move: "vehicle",
     drive: { maxSpd: 138, accel: 72, brake: 48, turn: 2.35, track: "mono", trackGap: 16, trackScale: 0.7 },
@@ -754,7 +765,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 16,
     texture: "enemy_lav",
     hulk: "enemy_lav_hulk",
-    frag: "mech",
+    debris: "mech",
     rotOff: Math.PI / 2,
     move: "tank",
     drive: { maxSpd: 48, accel: 28, brake: 32, turn: 1.15, track: "tire", trackGap: 14, trackScale: 0.82 },
@@ -772,7 +783,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 18,
     texture: "enemy_lav",
     hulk: "enemy_lav_hulk",
-    frag: "mech",
+    debris: "mech",
     rotOff: Math.PI / 2,
     move: "tank",
     drive: { maxSpd: 42, accel: 24, brake: 30, turn: 1.05, track: "tire", trackGap: 14, trackScale: 0.82 },
@@ -795,7 +806,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 20,
     texture: "enemy_sam",
     hulk: "enemy_sam_hulk",
-    frag: "mech",
+    debris: "mech",
     rotOff: Math.PI / 2,
     move: "tank",
     drive: { maxSpd: 24, accel: 12, brake: 18, turn: 0.55, track: "dual", trackGap: 16, trackScale: 1 },
@@ -818,7 +829,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 12,
     texture: "enemy_ptboat",
     hulk: "enemy_ptboat_hulk",
-    frag: "mech",
+    debris: "mech",
     rotOff: Math.PI / 2,
     move: "boat",
     water: true,
@@ -836,13 +847,14 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 40,
     texture: "enemy_battleship",
     hulk: "enemy_battleship_hulk",
-    frag: "mech",
+    debris: "mech",
     rotOff: Math.PI / 2,
     move: "static",
     water: true,
     noCrater: true,
     throwGuns: true,
     weapon: WPN.arty,
+    gunFire: "alternate",
     guns: [],
     rotors: [],
     partsRoll: {
@@ -867,7 +879,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 9,
     texture: "enemy_troop_rpg",
     hulk: "enemy_troop_rpg_hulk",
-    frag: "organic",
+    debris: "organic",
     rotOff: Math.PI / 2,
     move: "inf",
     organic: true,
@@ -893,7 +905,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 9,
     texture: "enemy_troop_gunner",
     hulk: "enemy_troop_gunner_hulk",
-    frag: "organic",
+    debris: "organic",
     rotOff: Math.PI / 2,
     move: "inf",
     organic: true,
@@ -920,7 +932,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 12,
     texture: "enemy_troop_mounted_mg",
     hulk: "enemy_troop_mounted_mg_hulk",
-    frag: "organic",
+    debris: "organic",
     rotOff: Math.PI / 2,
     move: "static",
     organic: true,
@@ -947,7 +959,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 9,
     texture: "enemy_troop_stinger",
     hulk: "enemy_troop_stinger_hulk",
-    frag: "organic",
+    debris: "organic",
     rotOff: Math.PI / 2,
     move: "inf",
     organic: true,
@@ -970,7 +982,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 9,
     texture: "enemy_troop_mechanic",
     hulk: "enemy_troop_mechanic_hulk",
-    frag: "organic",
+    debris: "organic",
     rotOff: Math.PI / 2,
     move: "flee",
     organic: true,
@@ -984,7 +996,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 9,
     texture: "enemy_troop_officer",
     hulk: "enemy_troop_officer_hulk",
-    frag: "organic",
+    debris: "organic",
     rotOff: Math.PI / 2,
     move: "flee",
     organic: true,
@@ -1000,7 +1012,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 28,
     texture: "building_barn",
     hulk: "building_barn_hulk",
-    frag: "struct",
+    debris: "struct",
     rotOff: Math.PI / 2,
     move: "static",
     building: true,
@@ -1015,7 +1027,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 14,
     texture: "building_tent",
     hulk: "building_tent_hulk",
-    frag: "struct",
+    debris: "struct",
     rotOff: Math.PI / 2,
     move: "static",
     building: true,
@@ -1030,7 +1042,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 28,
     texture: "building_fob",
     hulk: "building_fob_hulk",
-    frag: "struct",
+    debris: "struct",
     rotOff: Math.PI / 2,
     move: "static",
     building: true,
@@ -1047,7 +1059,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     height: 56,
     texture: "building_lookout",
     hulk: "building_lookout_hulk",
-    frag: "struct",
+    debris: "struct",
     rotOff: Math.PI / 2,
     move: "static",
     building: true,
@@ -1065,7 +1077,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     flyZ: 36,
     texture: "enemy_drone",
     hulk: "enemy_drone_hulk",
-    frag: "mech",
+    debris: "mech",
     rotOff: Math.PI / 2,
     move: "drone",
     aerial: true,
@@ -1087,7 +1099,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     flyZ: 44,
     texture: "enemy_heli_small",
     hulk: "enemy_heli_small_hulk",
-    frag: "mech",
+    debris: "mech",
     rotOff: Math.PI / 2,
     move: "heli",
     aerial: true,
@@ -1103,7 +1115,8 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
       burstGap: 0.09,
       look: "shot_chain",
       scale: 0.58,
-      jitter: 0.04
+      jitter: 0.04,
+      muzzleFire: "alternate"
     }),
     // Fixed wing guns are baked into the hull; body muzzles alternate L/R.
     guns: [],
@@ -1125,7 +1138,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     flyZ: 52,
     texture: "enemy_heli_heavy",
     hulk: "enemy_heli_heavy_hulk",
-    frag: "mech",
+    debris: "mech",
     rotOff: Math.PI / 2,
     move: "heli",
     aerial: true,
@@ -1143,6 +1156,15 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
       scale: 0.58,
       jitter: 0.04
     }),
+    secondary: {
+      wpn: WPN.seeker,
+      mounts: mountsOf("enemy_heli_heavy", "secondary"),
+      mountFire: "alternate",
+      fireCdMin: 5.5,
+      fireCdMax: 9.5,
+      scale: 0.72,
+      motor: -0.06
+    },
     guns: mountsOf("enemy_heli_heavy", "gun").map((m) => ({
       ...gun("enemy_heli_heavy_gun", 0.78, { ...m }),
       scale: 0.58

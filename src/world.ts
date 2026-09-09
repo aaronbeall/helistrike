@@ -52,8 +52,14 @@ export interface Decor {
   rot: number;
 }
 
+export interface Road {
+  points: { x: number; y: number }[];
+  width: number;
+}
+
 export interface WorldData {
   seed: number;
+  missionId: string;
   height: Float32Array;
   biome: Uint8Array;
   spawnX: number;
@@ -63,11 +69,41 @@ export interface WorldData {
   trees: { x: number; y: number }[];
   rocks: { x: number; y: number }[];
   decor: Decor[];
+  roads: Road[];
   canvas: HTMLCanvasElement;
 }
 
 export type WorldGen = Omit<WorldData, "canvas"> & { terrain: ImageData };
 export type WorldProgress = (t: number, label: string) => void;
+
+export interface WorldGenProfile {
+  id: string;
+  /** Positive values expose more land; negative values produce more open water. */
+  landBias: number;
+  /** Contrast around mid elevation; higher values create sharper relief. */
+  relief: number;
+  /** Strength of the world-edge drop toward water. */
+  edgeFalloff: number;
+  riverTarget: number;
+  objectiveCount: number;
+  garrisonScale: number;
+  patrolCount: number;
+  waterPatrolBias: number;
+  forceMix: "mixed" | "naval" | "heavy";
+}
+
+export const DEFAULT_WORLD_PROFILE: WorldGenProfile = {
+  id: "river_run",
+  landBias: 0,
+  relief: 1,
+  edgeFalloff: 0.18,
+  riverTarget: 50,
+  objectiveCount: 4,
+  garrisonScale: 1,
+  patrolCount: 22,
+  waterPatrolBias: 1,
+  forceMix: "mixed",
+};
 
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
@@ -109,7 +145,8 @@ const HEIGHT_BANDS: { lo: number; hi: number; k: number }[] = [
 export function generateWorld(
   seed: number,
   tiles?: (ImageData | null)[],
-  onProgress?: WorldProgress
+  onProgress?: WorldProgress,
+  profile: WorldGenProfile = DEFAULT_WORLD_PROFILE
 ): WorldGen {
   const rng = new Rng(seed);
   const height = new Float32Array(TEX * TEX);
@@ -128,7 +165,9 @@ export function generateWorld(
       h = h * 0.72 + ridge * 0.28;
       const dx = nx - 0.5;
       const dy = ny - 0.5;
-      h -= Math.pow(Math.hypot(dx, dy) * 1.15, 2) * 0.18;
+      h = 0.5 + (h - 0.5) * profile.relief;
+      h -= Math.pow(Math.hypot(dx, dy) * 1.15, 2) * profile.edgeFalloff;
+      h += profile.landBias;
       height[i] = h;
       moisture[i] = fbm(nx * 5.4 + 40, ny * 5.4, seed + 17, 4);
     }
@@ -136,7 +175,7 @@ export function generateWorld(
 
   onProgress?.(0.32, "river carve");
   const riverRad = new Float32Array(TEX * TEX);
-  carveRivers(height, biome, rng, riverRad);
+  carveRivers(height, biome, rng, riverRad, profile.riverTarget);
   onProgress?.(0.52, "biomes");
 
   for (let i = 0; i < TEX * TEX; i++) {
@@ -178,13 +217,15 @@ export function generateWorld(
   const terrain = paintTerrain(raw, biome, seed, tiles, bankT, onProgress);
   onProgress?.(0.96, "force laydown");
   const { spawnX, spawnY } = findSpawn(height, biome, rng);
-  const { hv, spawns } = placeForces(height, biome, rng, spawnX, spawnY);
+  const { hv, spawns } = placeForces(height, biome, rng, spawnX, spawnY, profile);
+  const roads = makeRoads(spawnX, spawnY, hv, rng);
+  paintRoads(terrain, biome, roads);
   const decor = placeDecor(biome, rng);
   const trees = decor.filter((d) => d.kind === "tree" || d.kind === "pine" || d.kind === "palm").map((d) => ({ x: d.x, y: d.y }));
   const rocks = decor.filter((d) => d.kind === "rock" || d.kind === "boulder" || d.kind === "snowrock").map((d) => ({ x: d.x, y: d.y }));
 
   onProgress?.(1, "ready");
-  return { seed, height, biome, spawnX, spawnY, hv, spawns, trees, rocks, decor, terrain };
+  return { seed, missionId: profile.id, height, biome, spawnX, spawnY, hv, spawns, trees, rocks, decor, roads, terrain };
 }
 
 export function imageDataToCanvas(img: ImageData): HTMLCanvasElement {
@@ -203,7 +244,8 @@ export function worldFromGen(g: WorldGen): WorldData {
 export function generateWorldAsync(
   seed: number,
   tiles: (ImageData | null)[],
-  onProgress?: WorldProgress
+  onProgress?: WorldProgress,
+  profile: WorldGenProfile = DEFAULT_WORLD_PROFILE
 ): Promise<WorldData> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL("./world.worker.ts", import.meta.url), { type: "module" });
@@ -220,7 +262,7 @@ export function generateWorldAsync(
       worker.terminate();
       reject(err);
     };
-    worker.postMessage({ seed, tiles });
+    worker.postMessage({ seed, tiles, profile });
   });
 }
 
@@ -598,12 +640,19 @@ export function groundSlope(world: WorldData, x: number, y: number): { dx: numbe
   };
 }
 
-function carveRivers(height: Float32Array, biome: Uint8Array, rng: Rng, riverRad: Float32Array): void {
+function carveRivers(
+  height: Float32Array,
+  biome: Uint8Array,
+  rng: Rng,
+  riverRad: Float32Array,
+  target: number
+): void {
   const channel = new Int32Array(TEX * TEX);
   const discharge = new Float32Array(TEX * TEX);
   channel.fill(-1);
   let made = 0;
-  for (let attempt = 0; attempt < 160 && made < 50; attempt++) {
+  const attempts = Math.max(80, target * 4);
+  for (let attempt = 0; attempt < attempts && made < target; attempt++) {
     let x = rng.int(40, TEX - 41);
     let y = rng.int(40, TEX - 41);
     let best = -1;
@@ -1500,12 +1549,118 @@ function findSpawn(
   return { spawnX: WORLD * 0.22, spawnY: WORLD * 0.22 };
 }
 
+function makeRoads(
+  spawnX: number,
+  spawnY: number,
+  hv: HvSpec[],
+  rng: Rng
+): Road[] {
+  const roads: Road[] = [];
+  let from = { x: spawnX, y: spawnY };
+  const remaining = hv.slice();
+  while (remaining.length) {
+    let nearest = 0;
+    let nearestD = Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const d = Math.hypot(remaining[i]!.x - from.x, remaining[i]!.y - from.y);
+      if (d < nearestD) {
+        nearestD = d;
+        nearest = i;
+      }
+    }
+    const to = remaining.splice(nearest, 1)[0]!;
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const bend = rng.range(-0.13, 0.13) * len;
+    roads.push({
+      width: rng.range(10, 16),
+      points: [
+        { ...from },
+        {
+          x: (from.x + to.x) * 0.5 - (dy / len) * bend,
+          y: (from.y + to.y) * 0.5 + (dx / len) * bend,
+        },
+        { x: to.x, y: to.y },
+      ],
+    });
+    from = { x: to.x, y: to.y };
+  }
+  return roads;
+}
+
+/** Rasterize roads into terrain color only; biome and height fields remain untouched. */
+function paintRoads(
+  terrain: ImageData,
+  biome: Uint8Array,
+  roads: Road[],
+  originX = 0,
+  originY = 0
+): void {
+  const data = terrain.data;
+  const stamp = (tx: number, ty: number, radius: number) => {
+    const x0 = Math.max(originX, Math.floor(tx - radius));
+    const x1 = Math.min(originX + terrain.width - 1, Math.ceil(tx + radius));
+    const y0 = Math.max(originY, Math.floor(ty - radius));
+    const y1 = Math.min(originY + terrain.height - 1, Math.ceil(ty + radius));
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const d = Math.hypot(x - tx, y - ty) / Math.max(radius, 0.001);
+        if (d > 1) continue;
+        const bi = y * TEX + x;
+        if (biome[bi] === BIOME_ID.water || biome[bi] === BIOME_ID.river) continue;
+        const a = (1 - d * d) * 0.42;
+        const i = ((y - originY) * terrain.width + x - originX) * 4;
+        data[i] = Math.round(lerp(data[i]!, 92, a));
+        data[i + 1] = Math.round(lerp(data[i + 1]!, 72, a));
+        data[i + 2] = Math.round(lerp(data[i + 2]!, 45, a));
+      }
+    }
+  };
+  for (const road of roads) {
+    const radius = (road.width / SCALE) * 0.5;
+    for (let p = 1; p < road.points.length; p++) {
+      const a = road.points[p - 1]!;
+      const b = road.points[p]!;
+      const ax = a.x / SCALE;
+      const ay = a.y / SCALE;
+      const bx = b.x / SCALE;
+      const by = b.y / SCALE;
+      const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay)));
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        stamp(lerp(ax, bx, t), lerp(ay, by, t), radius);
+      }
+    }
+  }
+}
+
+/** Repaint road color after a terrain-editor patch rebuild. */
+export function paintRoadsRect(
+  world: WorldData,
+  g: CanvasRenderingContext2D,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number
+): void {
+  x0 = clamp(Math.floor(x0), 0, TEX - 1);
+  y0 = clamp(Math.floor(y0), 0, TEX - 1);
+  x1 = clamp(Math.ceil(x1), 0, TEX - 1);
+  y1 = clamp(Math.ceil(y1), 0, TEX - 1);
+  if (x1 < x0 || y1 < y0) return;
+  const img = g.getImageData(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
+  paintRoads(img, world.biome, world.roads, x0, y0);
+  g.putImageData(img, x0, y0);
+}
+
 function placeForces(
   height: Float32Array,
   biome: Uint8Array,
   rng: Rng,
   spawnX: number,
-  spawnY: number
+  spawnY: number,
+  profile: WorldGenProfile
 ): { hv: HvSpec[]; spawns: Spawn[] } {
   const hv: HvSpec[] = [];
   const spawns: Spawn[] = [];
@@ -1527,7 +1682,7 @@ function placeForces(
   }
 
   const used: { x: number; y: number }[] = [{ x: spawnX, y: spawnY }];
-  const count = 4;
+  const count = profile.objectiveCount;
   for (let i = 0; i < count; i++) {
     let x = 0,
       y = 0,
@@ -1544,19 +1699,42 @@ function placeForces(
       if (used.some((u) => Math.hypot(u.x - x, u.y - y) < 900)) continue;
       ok = true;
     }
+    if (!ok) {
+      let bestScore = -Infinity;
+      for (let ty = 60; ty < TEX - 60; ty += 18) {
+        for (let tx = 60; tx < TEX - 60; tx += 18) {
+          const b = biome[ty * TEX + tx]!;
+          const h = height[ty * TEX + tx]!;
+          if (b === BIOME_ID.water || b === BIOME_ID.river || b === BIOME_ID.peak || h > 0.78) continue;
+          const wx = (tx + 0.5) * SCALE;
+          const wy = (ty + 0.5) * SCALE;
+          const spawnD = Math.hypot(wx - spawnX, wy - spawnY);
+          if (spawnD < 500) continue;
+          let spacing = spawnD;
+          for (const p of used) spacing = Math.min(spacing, Math.hypot(wx - p.x, wy - p.y));
+          if (spacing > bestScore) {
+            bestScore = spacing;
+            x = wx;
+            y = wy;
+          }
+        }
+      }
+      ok = bestScore > 0;
+    }
+    if (!ok) continue;
     used.push({ x, y });
     const [kind, name] = names[i]!;
     const id = `hv-${i}`;
     hv.push({ id, name, kind, x, y });
     spawns.push({ kind, x, y, hv: id });
-    const garrison = 8 + rng.int(0, 6);
+    const garrison = Math.max(3, Math.round((8 + rng.int(0, 6)) * profile.garrisonScale));
     for (let k = 0; k < garrison; k++) {
       const a = rng.range(0, Math.PI * 2);
       const d = rng.range(60, 280);
       const gx = x + Math.cos(a) * d;
       const gy = y + Math.sin(a) * d;
       if (isWaterAt(biome, gx, gy)) continue;
-      spawns.push({ kind: pickGarrison(rng), x: gx, y: gy });
+      spawns.push({ kind: pickGarrison(rng, profile.forceMix), x: gx, y: gy });
     }
     if (rng.chance(0.55)) {
       spawns.push({
@@ -1574,7 +1752,7 @@ function placeForces(
     }
   }
 
-  for (let i = 0; i < 22; i++) {
+  for (let i = 0; i < profile.patrolCount; i++) {
     const tx = rng.int(60, TEX - 61);
     const ty = rng.int(60, TEX - 61);
     const b = biome[ty * TEX + tx]!;
@@ -1582,16 +1760,35 @@ function placeForces(
     const y = (ty + 0.5) * SCALE;
     if (Math.hypot(x - spawnX, y - spawnY) < 400) continue;
     if (b === BIOME_ID.water || b === BIOME_ID.river) {
-      spawns.push({ kind: pickWater(rng), x, y });
+      if (rng.chance(Math.min(1, profile.waterPatrolBias))) {
+        spawns.push({ kind: pickWater(rng), x, y });
+      }
     } else if (b !== BIOME_ID.peak) {
-      spawns.push({ kind: pickPatrol(rng), x, y });
+      if (rng.chance(Math.min(1, 1 / Math.max(0.1, profile.waterPatrolBias)))) {
+        spawns.push({ kind: pickPatrol(rng, profile.forceMix), x, y });
+      }
     }
   }
   return { hv, spawns };
 }
 
-function pickGarrison(rng: Rng): UnitKind {
+function pickGarrison(rng: Rng, mix: WorldGenProfile["forceMix"] = "mixed"): UnitKind {
   const r = rng.next();
+  if (mix === "heavy") {
+    if (r < 0.3) return "tank";
+    if (r < 0.48) return "lav";
+    if (r < 0.62) return "lav_aa";
+    if (r < 0.74) return "sam";
+    if (r < 0.84) return "tower";
+    return pickTroop(() => rng.next());
+  }
+  if (mix === "naval") {
+    if (r < 0.16) return "lav_aa";
+    if (r < 0.3) return "pickup";
+    if (r < 0.42) return "motorcycle";
+    if (r < 0.52) return "lookout";
+    return pickTroop(() => rng.next());
+  }
   if (r < 0.12) return "tank";
   if (r < 0.17) return "lav";
   if (r < 0.22) return "lav_aa";
@@ -1605,8 +1802,23 @@ function pickGarrison(rng: Rng): UnitKind {
   return pickTroop(() => rng.next());
 }
 
-function pickPatrol(rng: Rng): UnitKind {
+function pickPatrol(rng: Rng, mix: WorldGenProfile["forceMix"] = "mixed"): UnitKind {
   const r = rng.next();
+  if (mix === "heavy") {
+    if (r < 0.34) return "tank";
+    if (r < 0.52) return "lav";
+    if (r < 0.65) return "lav_aa";
+    if (r < 0.75) return "sam";
+    if (r < 0.84) return "truck";
+    return pickTroop(() => rng.next());
+  }
+  if (mix === "naval") {
+    if (r < 0.22) return pickAir(rng);
+    if (r < 0.38) return "pickup";
+    if (r < 0.5) return "motorcycle";
+    if (r < 0.62) return "lav_aa";
+    return pickTroop(() => rng.next());
+  }
   if (r < 0.16) return "tank";
   if (r < 0.21) return "lav";
   if (r < 0.26) return "lav_aa";

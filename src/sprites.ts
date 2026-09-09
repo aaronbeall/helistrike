@@ -44,28 +44,50 @@ const SRC = {
 
 /** Selectable craft body/hulk/rotor source sheets (magenta). */
 const CRAFT_ART: { key: string; file: string; fit: number; rotor?: boolean }[] = [
-  { key: "craft_littlebird", file: "sprites/helistrike-craft-littlebird.png", fit: 90 },
-  { key: "craft_littlebird_hulk", file: "sprites/helistrike-craft-littlebird-hulk.png", fit: 90 },
-  { key: "craft_cobra", file: "sprites/helistrike-craft-cobra.png", fit: 110 },
-  { key: "craft_cobra_hulk", file: "sprites/helistrike-craft-cobra-hulk.png", fit: 110 },
+  { key: "craft_littlebird", file: "sprites/helistrike-craft-littlebird.png", fit: 62 },
+  { key: "craft_littlebird_hulk", file: "sprites/helistrike-craft-littlebird-hulk.png", fit: 62 },
+  { key: "craft_littlebird_rotor", file: "sprites/helistrike-craft-littlebird-rotor.png", fit: 130, rotor: true },
+  { key: "craft_littlebird_rotor_hulk", file: "sprites/helistrike-craft-littlebird-rotor-hulk.png", fit: 80, rotor: true },
+  { key: "craft_quad_drone", file: "sprites/helistrike-craft-quad-drone.png", fit: 48 },
+  { key: "craft_quad_drone_hulk", file: "sprites/helistrike-craft-quad-drone-hulk.png", fit: 48 },
+  { key: "craft_quad_drone_rotor", file: "sprites/helistrike-craft-quad-drone-rotor.png", fit: 48, rotor: true },
+  { key: "craft_quad_drone_rotor_hulk", file: "sprites/helistrike-craft-quad-drone-rotor-hulk.png", fit: 28, rotor: true },
+  { key: "craft_cobra", file: "sprites/helistrike-craft-cobra.png", fit: 112 },
+  { key: "craft_cobra_hulk", file: "sprites/helistrike-craft-cobra-hulk.png", fit: 112 },
   { key: "craft_cobra_rotor", file: "sprites/helistrike-craft-cobra-rotor.png", fit: 120, rotor: true },
   { key: "craft_cobra_rotor_hulk", file: "sprites/helistrike-craft-cobra-rotor-hulk.png", fit: 80, rotor: true },
-  { key: "craft_osprey", file: "sprites/helistrike-craft-osprey.png", fit: 140 },
-  { key: "craft_osprey_hulk", file: "sprites/helistrike-craft-osprey-hulk.png", fit: 140 },
+  { key: "craft_viper", file: "sprites/helistrike-craft-viper.png", fit: 112 },
+  { key: "craft_viper_hulk", file: "sprites/helistrike-craft-viper-hulk.png", fit: 112 },
+  { key: "craft_viper_rotor", file: "sprites/helistrike-craft-viper-rotor.png", fit: 120, rotor: true },
+  { key: "craft_viper_rotor_hulk", file: "sprites/helistrike-craft-viper-rotor-hulk.png", fit: 80, rotor: true },
+  { key: "craft_blackhawk", file: "sprites/helistrike-craft-blackhawk.png", fit: 125 },
+  { key: "craft_blackhawk_hulk", file: "sprites/helistrike-craft-blackhawk-hulk.png", fit: 125 },
+  { key: "craft_blackhawk_rotor", file: "sprites/helistrike-craft-blackhawk-rotor.png", fit: 130, rotor: true },
+  { key: "craft_blackhawk_rotor_hulk", file: "sprites/helistrike-craft-blackhawk-rotor-hulk.png", fit: 80, rotor: true },
+  { key: "craft_chinook", file: "sprites/helistrike-craft-chinook.png", fit: 155 },
+  { key: "craft_chinook_hulk", file: "sprites/helistrike-craft-chinook-hulk.png", fit: 155 },
+  { key: "craft_chinook_rotor", file: "sprites/helistrike-craft-chinook-rotor.png", fit: 130, rotor: true },
+  { key: "craft_chinook_rotor_hulk", file: "sprites/helistrike-craft-chinook-rotor-hulk.png", fit: 80, rotor: true },
+  { key: "craft_osprey", file: "sprites/helistrike-craft-osprey.png", fit: 143 },
+  { key: "craft_osprey_hulk", file: "sprites/helistrike-craft-osprey-hulk.png", fit: 143 },
   { key: "craft_osprey_rotor", file: "sprites/helistrike-craft-osprey-rotor.png", fit: 100, rotor: true },
   { key: "craft_osprey_rotor_hulk", file: "sprites/helistrike-craft-osprey-rotor-hulk.png", fit: 70, rotor: true },
   { key: "craft_stealthhawk", file: "sprites/helistrike-craft-stealthhawk.png", fit: 120 },
   { key: "craft_stealthhawk_hulk", file: "sprites/helistrike-craft-stealthhawk-hulk.png", fit: 120 },
+  { key: "craft_stealthhawk_rotor", file: "sprites/helistrike-craft-stealthhawk-rotor.png", fit: 130, rotor: true },
+  { key: "craft_stealthhawk_rotor_hulk", file: "sprites/helistrike-craft-stealthhawk-rotor-hulk.png", fit: 80, rotor: true },
   { key: "craft_cyberhawk", file: "sprites/helistrike-craft-cyberhawk.png", fit: 120 },
   { key: "craft_cyberhawk_hulk", file: "sprites/helistrike-craft-cyberhawk-hulk.png", fit: 120 },
   { key: "craft_cyberhawk_rotor", file: "sprites/helistrike-craft-cyberhawk-rotor.png", fit: 130, rotor: true },
   { key: "craft_cyberhawk_rotor_hulk", file: "sprites/helistrike-craft-cyberhawk-rotor-hulk.png", fit: 80, rotor: true },
-  { key: "craft_prometheus", file: "sprites/helistrike-craft-prometheus.png", fit: 130 },
-  { key: "craft_prometheus_hulk", file: "sprites/helistrike-craft-prometheus-hulk.png", fit: 130 },
-  { key: "craft_gunship", file: "sprites/helistrike-craft-gunship.png", fit: 200 },
-  { key: "craft_gunship_hulk", file: "sprites/helistrike-craft-gunship-hulk.png", fit: 200 },
-  { key: "craft_warthog", file: "sprites/helistrike-craft-warthog.png", fit: 150 },
-  { key: "craft_warthog_hulk", file: "sprites/helistrike-craft-warthog-hulk.png", fit: 150 },
+  { key: "craft_prometheus", file: "sprites/helistrike-craft-prometheus.png", fit: 120 },
+  { key: "craft_prometheus_hulk", file: "sprites/helistrike-craft-prometheus-hulk.png", fit: 120 },
+  { key: "craft_lightning_ii", file: "sprites/helistrike-craft-lightning-ii.png", fit: 142 },
+  { key: "craft_lightning_ii_hulk", file: "sprites/helistrike-craft-lightning-ii-hulk.png", fit: 142 },
+  { key: "craft_gunship", file: "sprites/helistrike-craft-gunship.png", fit: 324 },
+  { key: "craft_gunship_hulk", file: "sprites/helistrike-craft-gunship-hulk.png", fit: 324 },
+  { key: "craft_warthog", file: "sprites/helistrike-craft-warthog.png", fit: 142 },
+  { key: "craft_warthog_hulk", file: "sprites/helistrike-craft-warthog-hulk.png", fit: 142 },
 ];
 
 export const BIOME_TILE_NAMES = ["water", "sand", "grass", "forest", "rock", "peak"] as const;
@@ -83,7 +105,7 @@ export const DOODAD_ART: { key: string; size: number }[] = [
   { key: "snowrock", size: 34 },
 ];
 
-export const FX_KINDS = ["spark", "flame", "smoke", "muzzle", "dirt", "splash"] as const;
+export const FX_KINDS = ["spark", "flame", "smoke", "muzzle", "exhaust", "dirt", "splash"] as const;
 export type FxKind = (typeof FX_KINDS)[number];
 export const FX_VARIANTS = 4;
 /** Bake cell size per FX sheet (putFxSheet). */
@@ -92,6 +114,7 @@ export const FX_SHEET_SIZE: Record<FxKind, number> = {
   flame: 28,
   smoke: 48,
   muzzle: 34,
+  exhaust: 72,
   dirt: 22,
   splash: 20,
 };
@@ -475,11 +498,18 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   }
   put(textures, "enemy_heli", enemy);
   if (textures.exists("src_enemy_heli_hulk")) {
+    const enemyHulkSrc = keyImage(src(textures, "src_enemy_heli_hulk"), "magenta");
     put(
       textures,
       "enemy_heli_hulk",
-      darkenWreck(fit(keyImage(src(textures, "src_enemy_heli_hulk"), "magenta"), 104))
+      darkenWreck(fit(enemyHulkSrc, 104))
     );
+  } else {
+    const hc = document.createElement("canvas");
+    hc.width = enemy.width;
+    hc.height = enemy.height;
+    hc.getContext("2d")!.drawImage(enemy, 0, 0);
+    put(textures, "enemy_heli_hulk", darkenWreck(hc));
   }
   const rotors = splitRotorSheet(keyPixels(src(textures, "src_rotors"), "magenta"));
   // Bake near in-game draw size (player ~134, enemy 108) — not full 1024-sheet res.
@@ -716,6 +746,10 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   const shadowSrc = [
     "heli_body",
     "heli_body_hulk",
+    "craft_blackhawk",
+    "craft_blackhawk_hulk",
+    "craft_chinook",
+    "craft_chinook_hulk",
     "enemy_heli",
     "enemy_heli_hulk",
     ...CRAFT_ART.map((a) => a.key),
@@ -770,16 +804,16 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     "building_tower_sam",
     "enemy_drone_rotor",
     "shot_aa",
-    "fx_frag_metal",
+    "fx_debris_metal",
     ...["mech", "struct", "organic"].flatMap((cat) =>
-      Array.from({ length: 12 }, (_, i) => `fx_frag_${cat}_${i}`)
+      Array.from({ length: 12 }, (_, i) => `fx_debris_${cat}_${i}`)
     ),
-    ...Array.from({ length: 4 }, (_, i) => `fx_frag_wheel_${i}`),
+    ...Array.from({ length: 4 }, (_, i) => `fx_debris_wheel_${i}`),
   ];
   for (const key of shadowSrc) {
     if (textures.exists(key)) bakeShadows(textures, key);
   }
-  // Wreck / pop-hulk atlases (guns, rotors, hulls) — needed for in-flight frag shadows.
+  // Wreck / pop-hulk atlases (guns, rotors, hulls) — needed for in-flight debris shadows.
   for (const key of textures.getTextureKeys()) {
     if (!key.endsWith("_hulk")) continue;
     if (/__(woodland|desert|urban|snow|digital)$/.test(key)) continue;
@@ -890,7 +924,7 @@ function putDebrisSheet(
   const cells = sliceGrid(keyPixels(src(textures, srcKey), "magenta"), 4, 3);
   cells.forEach((c, i) => {
     if (!c.width || !c.height) return;
-    put(textures, `fx_frag_${cat}_${i}`, darkenWreck(fit(c, cat === "organic" ? 12 : 22), 0.7));
+    put(textures, `fx_debris_${cat}_${i}`, darkenWreck(fit(c, cat === "organic" ? 12 : 22), 0.7));
   });
 }
 
@@ -899,7 +933,7 @@ function putWheelDebrisSheet(textures: Phaser.Textures.TextureManager): void {
   const cells = sliceGrid(keyPixels(src(textures, "src_debris_wheels"), "magenta"), 2, 2);
   cells.forEach((c, i) => {
     if (!c.width || !c.height) return;
-    put(textures, `fx_frag_wheel_${i}`, darkenWreck(fit(c, 15), 0.65));
+    put(textures, `fx_debris_wheel_${i}`, darkenWreck(fit(c, 15), 0.65));
   });
 }
 
@@ -914,7 +948,9 @@ function putFxSheet(
     const srcKey = `src_fx_${kind}_${i}`;
     if (!textures.exists(srcKey)) continue;
     const img = src(textures, srcKey);
-    cells.push(fit(trim(fxKnockBlack(copyToCanvas(img, img.width, img.height)), 2), size));
+    let cell = fxKnockBlack(copyToCanvas(img, img.width, img.height));
+    if (kind === "exhaust") cell = whitenFx(cell);
+    cells.push(fit(trim(cell, 2), size));
   }
   if (!cells.length) return;
   const n = cells.length;
@@ -945,6 +981,21 @@ function fxKnockBlack(src: HTMLCanvasElement): HTMLCanvasElement {
       continue;
     }
     d[i + 3] = Math.min(255, Math.round((lum / 255) * srcA * 1.08));
+  }
+  g.putImageData(pix, 0, 0);
+  return src;
+}
+
+/** Neutralize generated warm flame color so Phaser tint can produce energy exhaust hues. */
+function whitenFx(src: HTMLCanvasElement): HTMLCanvasElement {
+  const g = src.getContext("2d")!;
+  const pix = g.getImageData(0, 0, src.width, src.height);
+  const d = pix.data;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3]! < 2) continue;
+    d[i] = 255;
+    d[i + 1] = 255;
+    d[i + 2] = 255;
   }
   g.putImageData(pix, 0, 0);
   return src;
@@ -1476,7 +1527,17 @@ function insetHub(src: HTMLCanvasElement): { x: number; y: number } {
   const a = src.getContext("2d")!.getImageData(0, 0, w, h).data;
   const dist = new Float64Array(w * h);
   const inf = 1e9;
-  for (let i = 0; i < w * h; i++) dist[i] = a[i * 4 + 3]! >= 12 ? inf : 0;
+  let opaqueX = 0;
+  let opaqueY = 0;
+  let opaqueN = 0;
+  for (let i = 0; i < w * h; i++) {
+    const opaque = a[i * 4 + 3]! >= 12;
+    dist[i] = opaque ? inf : 0;
+    if (!opaque) continue;
+    opaqueX += i % w;
+    opaqueY += (i / w) | 0;
+    opaqueN++;
+  }
   const s2 = Math.SQRT2;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -1502,15 +1563,22 @@ function insetHub(src: HTMLCanvasElement): { x: number; y: number } {
       dist[i] = m;
     }
   }
-  let best = -1;
+  const centroidX = opaqueN ? opaqueX / opaqueN : w / 2;
+  const centroidY = opaqueN ? opaqueY / opaqueN : h / 2;
+  let best = -Infinity;
   let bx = w / 2;
   let by = h / 2;
   for (let i = 0; i < dist.length; i++) {
-    if (dist[i]! > best) {
-      best = dist[i]!;
-      bx = i % w;
-      by = (i / w) | 0;
-    }
+    const x = i % w;
+    const y = (i / w) | 0;
+    // Broad stylized blades can contain a larger inscribed circle than the
+    // hub. Favor thick regions near the rotor's mass center so asymmetric
+    // three-blade art still centers on its actual mechanical hub.
+    const score = dist[i]! - Math.hypot(x - centroidX, y - centroidY) * 0.25;
+    if (score <= best) continue;
+    best = score;
+    bx = x;
+    by = y;
   }
   return { x: bx, y: by };
 }

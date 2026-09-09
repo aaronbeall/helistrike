@@ -63,7 +63,8 @@ export function formatRotOff(key: string, value: unknown): string | number | und
  * Walk a plain config object into rig stat lines (field names as labels).
  * - Object fields → `key      value` rows (root; nests that contain arrays)
  * - Object values → `key: value, …` (nested objects as `( … )`)
- * - Arrays → one `[i] value` line per index (items never expand to field rows)
+ * - `{ x, y, z? }` points → `(x, y, z?)`
+ * - Point arrays → one wrapping line; other object arrays → one `[i] value` line per index
  */
 export function dumpConfig(value: unknown, opts: DumpOpts = {}): string[] {
   const skip = new Set(opts.skip ?? []);
@@ -115,6 +116,11 @@ function dumpValue(
   }
 
   if (isPlainObject(value)) {
+    if (isPoint(value)) {
+      if (key) out.push(emitLine(key, fmtPoint(value), depth));
+      else out.push(fmtPoint(value));
+      return;
+    }
     // Root, or named field whose value contains arrays → field rows.
     // Array items never land here as expanded fields (see dumpArray).
     if (!key || hasArrays(value)) {
@@ -178,6 +184,7 @@ function fmtInline(
     return `[${value.map((item) => fmtInline(item, skip, format, itemNest)).join(", ")}]`;
   }
   if (isPlainObject(value)) {
+    if (isPoint(value)) return fmtPoint(value);
     const body = fmtObjectInline(value, skip, format, nest);
     return nest === 0 ? body : `( ${body} )`;
   }
@@ -231,6 +238,12 @@ function dumpArray(
     else out.push(list);
     return;
   }
+  if (arr.every(isPoint)) {
+    const list = arr.map((point) => fmtPoint(point)).join(", ");
+    if (key) out.push(emitLine(key, list, depth));
+    else out.push(list);
+    return;
+  }
   arr.forEach((item, i) => {
     const body = `[${i}] ${fmtInline(item, skip, format, 0)}`;
     if (i === 0 && key) out.push(emitLine(key, body, depth));
@@ -273,6 +286,22 @@ function isPrimitive(value: unknown): value is string | number | boolean | null 
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+type Point = { x: number; y: number; z?: number };
+
+function isPoint(value: unknown): value is Point {
+  if (!isPlainObject(value) || typeof value.x !== "number" || typeof value.y !== "number") {
+    return false;
+  }
+  if (value.z !== undefined && typeof value.z !== "number") return false;
+  return Object.keys(value).every((key) => key === "x" || key === "y" || key === "z");
+}
+
+function fmtPoint(point: Point): string {
+  const coords = [fmtLeaf(point.x), fmtLeaf(point.y)];
+  if (point.z !== undefined) coords.push(fmtLeaf(point.z));
+  return `(${coords.join(", ")})`;
 }
 
 export function makeConfigText(

@@ -2,26 +2,26 @@ import Phaser from "phaser";
 import { bakeAll, bakeRosterArt } from "./bake";
 import { bakeCamo, camoForBiome, resolveSkin } from "./camo";
 import {
-  fragKeys,
+  debrisKeys,
   heightOf,
   hulkOf,
   nextId,
   radius,
   stats,
   textureOf,
-  wheelFragKeys,
-  WPN_LIST,
-  PLAYER_WPNS,
+  wheelDebrisKeys,
+  playerLoadout,
   SHOT_ORIGIN,
   SHOT_TAIL,
   MISSILE_IGNITE,
   HELLFIRE_LOCK_T,
   HELLFIRE_SEEK_DELAY,
-  type Frag,
+  type Debris,
   type Shot,
-  type Spark,
-  type SparkKind,
+  type SimParticle,
+  type SimParticleKind,
   type Unit,
+  type PlayerWpnSpec,
 } from "./combat";
 import { Layer, ZOff, Z_GRAVITY, worldDepth } from "./depth";
 import { range } from "./rng";
@@ -36,12 +36,14 @@ import {
   pointInFootprint,
 } from "./footprint";
 import { lookupSpriteMuzzles, lookupSpriteOrigin } from "./spriteOrigin";
-import { craftDmgPois, craftGunMount, craftGunOrigin, craftOf, craftOrigin, craftRotorSpinTex, craftRotorTex, craftSecondaryMounts } from "./craft";
+import { allCrafts, craftAgility, craftCameraScale, craftComposite, craftCompositePartScale, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftOf, craftOrigin, craftRotorMounts, craftSecondaryMounts, craftStartingAmmo, rotorDrawSpan, selectCraft, type CraftComposite } from "./craft";
+import { allMissions, missionOf, selectMission } from "./mission";
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
 import { configRigsAnyOpen, installConfigRigHotkeys } from "./configRigs";
 import { applyEdgeLight, clearEdgeLight, ensureEdgeLightPipeline } from "./edgeLight";
 import { createTerrain25D, type Terrain25D } from "./terrain25d";
 import { LOAD_TIPS } from "./tips";
+import { fbm } from "./noise";
 import { preloadArt, prepareArt, extractBiomeTiles, bakeHeliHudWireTexture, bakeHurtVignetteTexture, heliHudWireUv, shadowAlpha, shadowKey, spriteUvPos, FX_VARIANTS, nameGameTexture, nameGeneratedTextures, spritePivot, type HeliHudWireBake } from "./sprites";
 import {
   generateWorld,
@@ -66,6 +68,7 @@ import {
   paintHeightMapRect,
   stampHeightBrush,
   rebuildWorldPatch,
+  paintRoadsRect,
   applyTerrainLight,
   sampleBiome,
   waterSurfaceZ,
@@ -81,6 +84,22 @@ import {
   type Biome,
 } from "./world";
 
+type FxClass = "short" | "fire" | "smoke" | "dust";
+type FxPolicy = {
+  frameCap: number;
+  activeCap: number;
+  emitted: number;
+  emitters: Set<Phaser.GameObjects.Particles.ParticleEmitter>;
+};
+type BurstParticle = Phaser.GameObjects.Particles.Particle & {
+  burstVx?: number;
+  burstVy?: number;
+  burstHeading?: number;
+  launchScale?: number;
+  launchStretch?: number;
+  swirl?: number;
+};
+
 /** Overlay guns are drawn barrel-up (same as hulls). World aim 0 is +X, so +90°. */
 function gunWorldRot(_tex: string, aim: number): number {
   return aim + Math.PI / 2;
@@ -90,6 +109,18 @@ function gunWorldRot(_tex: string, aim: number): number {
 const SHOT_Z_REF = (1 - GROUND_H_ZERO) * GROUND_Z_SCALE + MAX_AGL;
 const SHOT_Z_MAX = SHOT_Z_REF * 1.08;
 const HELLFIRE_Z_MAX = SHOT_Z_REF * 1.21;
+/** Apache M230 cadence is the full-density reference for per-shot muzzle/impact particles. */
+const PROJECTILE_FX_BASE_INTERVAL = 0.07;
+const ENEMY_PROJECTILE_FX_MUL = 0.72;
+
+function projectileFxScale(from: Shot["from"], effectiveInterval = PROJECTILE_FX_BASE_INTERVAL): number {
+  const cadence = Phaser.Math.Clamp(effectiveInterval / PROJECTILE_FX_BASE_INTERVAL, 0.18, 1);
+  return cadence * (from === "enemy" ? ENEMY_PROJECTILE_FX_MUL : 1);
+}
+
+function scaledProjectileFxCount(base: number, scale: number): number {
+  return base <= 0 ? 0 : Math.max(1, Math.round(base * scale));
+}
 
 const PERF_LABELS = [
   "frame",
@@ -99,10 +130,10 @@ const PERF_LABELS = [
   "unit draw",
   "shot sim",
   "shot draw",
-  "frag sim",
-  "frag draw",
-  "spark sim",
-  "spark draw",
+  "debris sim",
+  "debris draw",
+  "sim particle sim",
+  "sim particle draw",
   "target/fx",
   "scene other",
   "outside/vsync",
@@ -123,6 +154,7 @@ const DEBUG_MENU_ITEMS = [
   { section: "RENDERING" },
   { action: "terrainMesh", label: "Terrain mesh" },
   { action: "fx", label: "Post FX", shortcut: "F" },
+  { action: "thermal", label: "Thermal vision", shortcut: "T" },
   { section: "TOOLS" },
   { action: "relief", label: "Terrain editor", shortcut: "E" },
   { action: "camera", label: "Camera…" },
@@ -148,15 +180,15 @@ const MAP_EDGE_MARGIN = 280;
 /** Hard pad units cannot cross. */
 const MAP_EDGE_PAD = 40;
 
-/** Fallback UV jitter pool when a non-player crash has no live damage sites. */
-const CRASH_DMG_UV: { u: number; v: number }[] = [
-  { u: 0.32, v: 0.38 },
-  { u: 0.58, v: 0.42 },
-  { u: 0.45, v: 0.62 },
-  { u: 0.68, v: 0.55 },
-  { u: 0.38, v: 0.72 },
-  { u: 0.52, v: 0.28 },
-];
+type TextureAlphaBounds = {
+  width: number;
+  height: number;
+  alpha: Uint8ClampedArray;
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+};
 
 /** Scratch canvas for tinting blood dirt frames before multiply-stamping terrain. */
 let bloodStampScratch: HTMLCanvasElement | null = null;
@@ -278,65 +310,716 @@ function hideHtmlBoot(): void {
   window.setTimeout(() => splash.remove(), 400);
 }
 
+function ensureMissionPreviews(textures: Phaser.Textures.TextureManager): void {
+  const width = 160;
+  const height = 160;
+  const missions = allMissions();
+  for (let m = 0; m < missions.length; m++) {
+    const mission = missions[m]!;
+    const key = `mission_preview_${mission.kind}`;
+    if (textures.exists(key)) continue;
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const g = canvas.getContext("2d")!;
+    const img = g.createImageData(width, height);
+    const p = mission.profile;
+    const seed = 8101 + m * 977;
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const nx = x / width;
+        const ny = y / height;
+        const ridge = 1 - Math.abs(fbm(nx * 3.1 + 20, ny * 3.1, seed + 9, 3) * 2 - 1);
+        let h = fbm(nx * 6.2, ny * 6.2, seed, 4, 2.05, 0.52) * 0.72 + ridge * 0.28;
+        const radial = Math.pow(Math.hypot(nx - 0.5, ny - 0.5) * 1.15, 2);
+        h = 0.5 + (h - 0.5) * p.relief;
+        h -= radial * p.edgeFalloff;
+        h += p.landBias;
+        if (mission.kind === "river_run") {
+          const riverY = 0.48 + Math.sin(nx * 11 + 0.7) * 0.13;
+          if (Math.abs(ny - riverY) < 0.035) h = 0.27;
+        }
+        let color: [number, number, number];
+        if (h < 0.34) color = [31, 75, 86];
+        else if (h < 0.4) color = [174, 145, 87];
+        else if (h > 0.72) color = [180, 171, 145];
+        else if (h > 0.62) color = [91, 84, 66];
+        else color = [76, 105, 65];
+        const shade = 0.76 + fbm(nx * 18, ny * 18, seed + 41, 2) * 0.38;
+        const i = (y * width + x) * 4;
+        img.data[i] = color[0] * shade;
+        img.data[i + 1] = color[1] * shade;
+        img.data[i + 2] = color[2] * shade;
+        img.data[i + 3] = 255;
+      }
+    }
+    g.putImageData(img, 0, 0);
+    const vignette = g.createLinearGradient(0, 0, 0, height);
+    vignette.addColorStop(0, "rgba(0,0,0,0.08)");
+    vignette.addColorStop(1, "rgba(0,0,0,0.58)");
+    g.fillStyle = vignette;
+    g.fillRect(0, 0, width, height);
+    textures.addCanvas(key, canvas);
+  }
+}
+
+function createControlLegend(
+  scene: Phaser.Scene,
+  panelW: number,
+  y: number
+): Phaser.GameObjects.GameObject[] {
+  const objects: Phaser.GameObjects.GameObject[] = [];
+  const controlW = panelW / 6;
+  const x0 = -panelW / 2;
+  const controlX = (i: number) => x0 + i * controlW + controlW / 2;
+  objects.push(
+    scene.add.rectangle(0, y, panelW, 72, 0x0b0a08, 0.82).setStrokeStyle(1, 0x6f6244, 0.7)
+  );
+  const keycap = (x: number, py: number, label: string, keyW = 24, keyH = 20) => {
+    const g = scene.add.graphics();
+    g.fillStyle(0x18150f, 0.96).fillRoundedRect(x - keyW / 2, py - keyH / 2, keyW, keyH, 3);
+    g.lineStyle(1.4, 0xe8b84a, 0.9).strokeRoundedRect(x - keyW / 2, py - keyH / 2, keyW, keyH, 3);
+    objects.push(g);
+    objects.push(
+      scene.add
+      .text(x, py, label, {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: keyW > 36 ? "9px" : "11px",
+        color: "#f2d579",
+      })
+      .setOrigin(0.5)
+    );
+  };
+  const mouse = (x: number, py: number, leftLit: boolean, wheelLit = false) => {
+    const g = scene.add.graphics();
+    if (leftLit) g.fillStyle(0xe8b84a, 0.48).fillRoundedRect(x - 12, py - 17, 12, 15, 3);
+    g.lineStyle(1.5, 0xe8b84a, 0.95).strokeRoundedRect(x - 12, py - 17, 24, 34, 9);
+    g.lineBetween(x, py - 16, x, py - 3);
+    g.lineBetween(x - 11, py - 2, x + 11, py - 2);
+    g.fillStyle(wheelLit ? 0xf2d579 : 0x6f6244, 1).fillRoundedRect(x - 2, py - 12, 4, 8, 2);
+    objects.push(g);
+  };
+  const label = (i: number, value: string) => {
+    objects.push(
+      scene.add
+      .text(controlX(i), y + 25, value, {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "9px",
+        color: "#d8d0ba",
+      })
+      .setOrigin(0.5)
+    );
+  };
+  const iconY = y - 6;
+  const moveX = controlX(0);
+  keycap(moveX, iconY - 10, "W", 20, 18);
+  keycap(moveX - 22, iconY + 10, "A", 20, 18);
+  keycap(moveX, iconY + 10, "S", 20, 18);
+  keycap(moveX + 22, iconY + 10, "D", 20, 18);
+  label(0, "MOVE");
+  mouse(controlX(1), iconY, true);
+  label(1, "AIM / FIRE");
+  keycap(controlX(2) - 29, iconY, "SPACE", 52, 22);
+  keycap(controlX(2) + 31, iconY, "SHIFT", 50, 22);
+  label(2, "POP-UP / NAP-OF-EARTH");
+  const weaponX = controlX(3);
+  for (let i = 0; i < 4; i++) keycap(weaponX - 33 + i * 22, iconY, String(i + 1), 18, 19);
+  mouse(weaponX + 50, iconY, false, true);
+  label(3, "SELECT WEAPON");
+  keycap(controlX(4), iconY, "M", 30, 26);
+  label(4, "TACTICAL MAP");
+  keycap(controlX(5), iconY, "H", 30, 26);
+  label(5, "HELP / TIPS");
+  return objects;
+}
+
+function drawControlLegend(scene: Phaser.Scene, width: number, y: number): void {
+  const panelW = Math.min(1040, width - 64);
+  scene.add.container(width / 2, 0, createControlLegend(scene, panelW, y));
+}
+
+function craftPreviewExhaustTint(kind: string): number {
+  if (kind === "prometheus") return 0xc86cff;
+  if (kind === "warthog") return 0xff8a2c;
+  if (kind === "lightning_ii") return 0xbfeaff;
+  return 0x70d8ff;
+}
+
 export class MenuScene extends Phaser.Scene {
   constructor() {
     super("menu");
   }
+
   create(): void {
     const { width: w, height: h } = this.scale;
     this.cameras.main.setBackgroundColor("#1c1812");
+    ensureMissionPreviews(this.textures);
+    ensureExhaustGlow(this.textures);
     if (this.textures.exists("menu_splash")) {
       const bg = this.add.image(w / 2, h / 2, "menu_splash").setDepth(0);
       const sx = w / bg.width;
       const sy = h / bg.height;
       bg.setScale(Math.max(sx, sy));
       this.add
-        .rectangle(w / 2, h / 2, w, h, 0x0c0a08, 0.42)
+        .rectangle(w / 2, h / 2, w, h, 0x0c0a08, 0.58)
         .setDepth(1)
         .setName("menu_scrim");
     }
     this.add
-      .text(w / 2, h * 0.22, "HELISTRIKE", {
+      .text(w / 2, 54, "HELISTRIKE", {
         fontFamily: "Black Ops One, Impact, sans-serif",
-        fontSize: "72px",
+        fontSize: "54px",
         color: "#e8b84a",
         stroke: "#1c1812",
-        strokeThickness: 6,
+        strokeThickness: 5,
       })
       .setOrigin(0.5)
       .setDepth(2)
       .setName("menu_title");
-    this.add
-      .text(w / 2, h * 0.34, "TOP-DOWN GUNSHIP  ·  GULF THEATER", {
+    const crafts = allCrafts();
+    const missions = allMissions();
+    let craftIndex = Math.max(0, crafts.findIndex((c) => c.kind === craftOf().kind));
+    let missionIndex = Math.max(0, missions.findIndex((m) => m.kind === missionOf().kind));
+    let row = 0;
+    let customParamIndex = 0;
+
+    const craftHeader = this.add
+      .text(w / 2, 111, "AIRFRAME", {
         fontFamily: "Share Tech Mono, monospace",
-        fontSize: "16px",
-        color: "#d4cbb0",
+        fontSize: "13px",
+        color: "#e8b84a",
         stroke: "#1c1812",
         strokeThickness: 3,
       })
       .setOrigin(0.5)
-      .setDepth(2)
-      .setName("menu_sub");
-    this.add
-      .text(
-        w / 2,
-        h * 0.54,
-        "WASD  thrust & strafe\nMOUSE  turn  ·  CLICK  fire  ·  1-4 / WHEEL  weapons\nSPACE  pop-up  ·  SHIFT  nap-of-earth  ·  M  map\n+ / -  time scale  ·  ` config rigs",
-        {
-          fontFamily: "Share Tech Mono, monospace",
-          fontSize: "15px",
-          color: "#e8e0cc",
-          align: "center",
-          lineSpacing: 8,
-          stroke: "#1c1812",
-          strokeThickness: 3,
-        }
-      )
+      .setDepth(2);
+    const missionHeader = this.add
+      .text(w / 2, 374, "OPERATION", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "13px",
+        color: "#e8e0cc",
+        stroke: "#1c1812",
+        strokeThickness: 3,
+      })
       .setOrigin(0.5)
-      .setDepth(2)
-      .setName("menu_controls");
+      .setDepth(2);
+
+    const craftW = 112;
+    const craftH = 108;
+    const craftCards = crafts.map((craft, i) => {
+      const x = w / 2;
+      const frame = this.add
+        .rectangle(x, 190, craftW, craftH, 0x0c0b09, 0.82)
+        .setStrokeStyle(1, 0x5d5544, 0.8)
+        .setDepth(2)
+        .setInteractive({ useHandCursor: true });
+      const art = this.add.image(x, 181, craft.body).setDepth(3);
+      const artScale = Math.min(104 / Math.max(1, art.width), 82 / Math.max(1, art.height));
+      art.setScale(artScale);
+      const composite = craftComposite(craft);
+      const rotors = composite.rotors.map((part, rotorI) => {
+        const rotor = this.add
+          .image(x, 181, part.tex)
+          .setOrigin(part.origin.x, part.origin.y)
+          .setDepth(4);
+        this.tweens.add({
+          targets: rotor,
+          rotation: (rotorI % 2 ? -1 : 1) * Math.PI * 2,
+          duration: 60000,
+          repeat: -1,
+          ease: "Linear",
+        });
+        return rotor;
+      });
+      const exhaustMounts = craftExhaustMounts(craft);
+      const exhaustTint = craftPreviewExhaustTint(craft.kind);
+      const exhaustGlows = exhaustMounts.map((_, exhaustI) => {
+        const glow = this.add
+          .image(x, 181, "fx_exhaust_glow")
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setTint(exhaustTint)
+          .setDepth(8.5)
+          .setVisible(false);
+        this.tweens.add({
+          targets: glow,
+          alpha: { from: 0.5 + (exhaustI % 2) * 0.08, to: 0.96 },
+          duration: 780 + exhaustI * 90,
+          yoyo: true,
+          repeat: -1,
+          ease: "Sine.InOut",
+        });
+        return glow;
+      });
+      const label = this.add
+        .text(x, 229, craft.name.toUpperCase(), {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: "11px",
+          color: "#cfc7b1",
+          align: "center",
+        })
+        .setOrigin(0.5)
+        .setDepth(5);
+      frame.on("pointerdown", () => {
+        row = 0;
+        craftIndex = i;
+        refreshSelection();
+      });
+      return {
+        frame,
+        art,
+        label,
+        artScale,
+        rotorParts: composite.rotors,
+        rotors,
+        exhaustMounts,
+        exhaustGlows,
+      };
+    });
+
+    const missionW = 134;
+    const missionH = 134;
+    const missionCards = missions.map((mission, i) => {
+      const x = w / 2;
+      const frame = this.add
+        .rectangle(x, 450, missionW, missionH, 0x0b0a08, 0.88)
+        .setStrokeStyle(1, 0x5d5544, 0.8)
+        .setDepth(2)
+        .setInteractive({ useHandCursor: true });
+      const art = this.add
+        .image(x, 450, `mission_preview_${mission.kind}`)
+        .setDisplaySize(missionW - 8, missionH - 8)
+        .setDepth(3);
+      const artScaleX = art.scaleX;
+      const artScaleY = art.scaleY;
+      const strip = this.add.rectangle(x, 497, missionW - 8, 28, 0x090908, 0.88).setDepth(3);
+      const label = this.add
+        .text(x, 497, mission.label, {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: "14px",
+          color: "#d8d0ba",
+        })
+        .setOrigin(0.5)
+        .setDepth(4);
+      frame.on("pointerdown", () => {
+        row = 1;
+        missionIndex = i;
+        refreshSelection();
+      });
+      return { frame, art, strip, label, artScaleX, artScaleY };
+    });
+
+    const carouselArrow = (x: number, y: number, dir: -1 | 1, targetRow: 0 | 1) => {
+      const arrow = this.add
+        .text(x, y, dir < 0 ? "‹" : "›", {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: "42px",
+          color: "#e8b84a",
+          stroke: "#1c1812",
+          strokeThickness: 4,
+        })
+        .setOrigin(0.5)
+        .setDepth(8)
+        .setInteractive({ useHandCursor: true });
+      arrow.on("pointerdown", () => {
+        row = targetRow;
+        if (targetRow === 0) craftIndex = (craftIndex + dir + crafts.length) % crafts.length;
+        else missionIndex = (missionIndex + dir + missions.length) % missions.length;
+        refreshSelection();
+      });
+      return arrow;
+    };
+    carouselArrow(w / 2 - 112, 179, -1, 0);
+    carouselArrow(w / 2 + 112, 179, 1, 0);
+    carouselArrow(w / 2 - 112, 450, -1, 1);
+    carouselArrow(w / 2 + 112, 450, 1, 1);
+
+    const carouselDots = (count: number, y: number, targetRow: 0 | 1) =>
+      Array.from({ length: count }, (_, i) => {
+        const x = w / 2 + (i - (count - 1) / 2) * 14;
+        const dot = this.add
+          .circle(x, y, 3.5, 0x5d5544, 0.9)
+          .setStrokeStyle(1, 0x1c1812, 0.9)
+          .setDepth(8)
+          .setInteractive({ useHandCursor: true });
+        dot.on("pointerdown", () => {
+          row = targetRow;
+          if (targetRow === 0) craftIndex = i;
+          else missionIndex = i;
+          refreshSelection();
+        });
+        return dot;
+      });
+    const craftDots = carouselDots(crafts.length, 242, 0);
+    const missionDots = carouselDots(missions.length, 524, 1);
+
+    const statDefs = [
+      { label: "SPEED", max: Math.max(...crafts.map((craft) => craft.maxSpeed)), value: (craft: (typeof crafts)[number]) => craft.maxSpeed },
+      { label: "AGILITY", max: 1, value: (craft: (typeof crafts)[number]) => craftAgility(craft) },
+      { label: "SIZE", max: Math.max(...crafts.map((craft) => craft.sizeM)), value: (craft: (typeof crafts)[number]) => craft.sizeM },
+      { label: "ARMOR", max: Math.max(...crafts.map((craft) => craft.health)), value: (craft: (typeof crafts)[number]) => craft.health },
+    ];
+    this.add
+      .rectangle(w / 2, 304, 700, 112, 0x0b0a08, 0.76)
+      .setStrokeStyle(1, 0x554c39, 0.65)
+      .setDepth(2);
+    const infoRule = this.add.graphics().setDepth(3);
+    infoRule.lineStyle(1, 0x554c39, 0.7).lineBetween(w / 2 + 20, 256, w / 2 + 20, 352);
+    const statLabelX = w / 2 - 315;
+    const statBarX = w / 2 - 205;
+    this.add
+      .text(statLabelX, 253, "FLIGHT PROFILE", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "9px",
+        color: "#aaa28f",
+        stroke: "#1c1812",
+        strokeThickness: 2,
+      })
+      .setDepth(3);
+    statDefs.forEach((stat, i) => {
+      this.add
+        .text(statLabelX, 271 + i * 20, stat.label, {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: "10px",
+          color: "#d8d0ba",
+          stroke: "#1c1812",
+          strokeThickness: 2,
+        })
+        .setOrigin(0, 0.5)
+        .setDepth(3);
+    });
+    const statBars = this.add.graphics().setDepth(3);
+    const drawStatBars = (craft: (typeof crafts)[number]) => {
+      statBars.clear();
+      const segments = 8;
+      const segmentW = 11;
+      const segmentH = 6;
+      const segmentGap = 3;
+      statDefs.forEach((stat, statI) => {
+        const filled = Math.max(1, Math.round((stat.value(craft) / stat.max) * segments));
+        const y = 268 + statI * 20;
+        for (let segment = 0; segment < segments; segment++) {
+          const x = statBarX + segment * (segmentW + segmentGap);
+          statBars.fillStyle(segment < filled ? 0xe8b84a : 0x302b22, segment < filled ? 0.96 : 0.82);
+          statBars.fillRoundedRect(x, y, segmentW, segmentH, 2);
+          statBars.lineStyle(1, segment < filled ? 0xf2d579 : 0x5d5544, 0.7);
+          statBars.strokeRoundedRect(x, y, segmentW, segmentH, 2);
+        }
+      });
+    };
+
+    const weaponX = w / 2 + 50;
+    this.add
+      .text(weaponX, 253, "LOADOUT", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "9px",
+        color: "#aaa28f",
+        stroke: "#1c1812",
+        strokeThickness: 2,
+      })
+      .setDepth(3);
+    this.add
+      .text(weaponX + 255, 253, "AMMO", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "9px",
+        color: "#aaa28f",
+        stroke: "#1c1812",
+        strokeThickness: 2,
+      })
+      .setOrigin(1, 0)
+      .setDepth(3);
+    const weaponRows = Array.from({ length: 4 }, (_, i) => {
+      const y = 271 + i * 20;
+      const frame = this.add
+        .rectangle(weaponX + 128, y, 270, 17, i % 2 ? 0x15120d : 0x1b1710, 0.78)
+        .setDepth(3);
+      const slot = this.add
+        .text(weaponX + 7, y, String(i + 1), {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: "10px",
+          color: "#e8b84a",
+          stroke: "#1c1812",
+          strokeThickness: 2,
+        })
+        .setOrigin(0.5)
+        .setDepth(4);
+      const name = this.add
+        .text(weaponX + 23, y, "", {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: "10px",
+          color: "#d8d0ba",
+        })
+        .setOrigin(0, 0.5)
+        .setDepth(4);
+      const ammo = this.add
+        .text(weaponX + 255, y, "", {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: "10px",
+          color: "#f2d579",
+        })
+        .setOrigin(1, 0.5)
+        .setDepth(4);
+      return { frame, slot, name, ammo };
+    });
+
+    const detailTxt = this.add
+      .text(w / 2, 542, "", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "11px",
+        color: "#d8d0ba",
+        align: "center",
+        lineSpacing: 3,
+        wordWrap: { width: Math.min(1120, w - 80) },
+        stroke: "#1c1812",
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5)
+      .setDepth(2);
+
+    const customMission = missions.find((mission) => mission.kind === "custom")!;
+    const customProfile = customMission.profile;
+    const forceMixes = ["mixed", "naval", "heavy"] as const;
+    const customParams = [
+      {
+        label: "LAND",
+        value: () => customProfile.landBias.toFixed(2),
+        adjust: (dir: number) => {
+          customProfile.landBias = Phaser.Math.Clamp(customProfile.landBias + dir * 0.025, -0.2, 0.18);
+        },
+      },
+      {
+        label: "RELIEF",
+        value: () => customProfile.relief.toFixed(2),
+        adjust: (dir: number) => {
+          customProfile.relief = Phaser.Math.Clamp(customProfile.relief + dir * 0.1, 0.7, 1.6);
+        },
+      },
+      {
+        label: "COAST",
+        value: () => customProfile.edgeFalloff.toFixed(2),
+        adjust: (dir: number) => {
+          customProfile.edgeFalloff = Phaser.Math.Clamp(customProfile.edgeFalloff + dir * 0.05, 0.05, 0.55);
+        },
+      },
+      {
+        label: "RIVERS",
+        value: () => String(customProfile.riverTarget),
+        adjust: (dir: number) => {
+          customProfile.riverTarget = Phaser.Math.Clamp(customProfile.riverTarget + dir * 4, 0, 72);
+        },
+      },
+      {
+        label: "OBJECTIVES",
+        value: () => String(customProfile.objectiveCount),
+        adjust: (dir: number) => {
+          customProfile.objectiveCount = Phaser.Math.Clamp(customProfile.objectiveCount + dir, 2, 7);
+        },
+      },
+      {
+        label: "GARRISON",
+        value: () => customProfile.garrisonScale.toFixed(1),
+        adjust: (dir: number) => {
+          customProfile.garrisonScale = Phaser.Math.Clamp(customProfile.garrisonScale + dir * 0.1, 0.4, 1.8);
+        },
+      },
+      {
+        label: "PATROLS",
+        value: () => String(customProfile.patrolCount),
+        adjust: (dir: number) => {
+          customProfile.patrolCount = Phaser.Math.Clamp(customProfile.patrolCount + dir * 2, 8, 40);
+        },
+      },
+      {
+        label: "NAVAL",
+        value: () => customProfile.waterPatrolBias.toFixed(2),
+        adjust: (dir: number) => {
+          customProfile.waterPatrolBias = Phaser.Math.Clamp(customProfile.waterPatrolBias + dir * 0.25, 0.25, 3);
+        },
+      },
+      {
+        label: "FORCES",
+        value: () => customProfile.forceMix.toUpperCase(),
+        adjust: (dir: number) => {
+          const i = forceMixes.indexOf(customProfile.forceMix);
+          customProfile.forceMix = forceMixes[(i + dir + forceMixes.length) % forceMixes.length]!;
+          customProfile.waterPatrolBias =
+            customProfile.forceMix === "naval" ? 2.4 : customProfile.forceMix === "heavy" ? 0.35 : 1;
+        },
+      },
+    ];
+    const customParamCards = customParams.map((param, i) => {
+      const col = i % 5;
+      const line = (i / 5) | 0;
+      const x = w / 2 - 425 + col * 170 + 85;
+      const y = 564 + line * 27;
+      const frame = this.add.rectangle(x, y, 162, 23, 0x0b0a08, 0.86).setDepth(2);
+      const minus = this.add
+        .text(x - 66, y, "−", {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: "16px",
+          color: "#e8b84a",
+        })
+        .setOrigin(0.5)
+        .setDepth(3)
+        .setInteractive({ useHandCursor: true });
+      const value = this.add
+        .text(x, y, "", {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: "11px",
+          color: "#d8d0ba",
+        })
+        .setOrigin(0.5)
+        .setDepth(3);
+      const plus = this.add
+        .text(x + 66, y, "+", {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: "16px",
+          color: "#e8b84a",
+        })
+        .setOrigin(0.5)
+        .setDepth(3)
+        .setInteractive({ useHandCursor: true });
+      minus.on("pointerdown", () => adjustCustomParam(i, -1));
+      plus.on("pointerdown", () => adjustCustomParam(i, 1));
+      value.setText(`${param.label}  ${param.value()}`);
+      return { frame, minus, value, plus };
+    });
+
+    function syncCustomParams(): void {
+      const visible = missions[missionIndex]!.kind === "custom";
+      customParamCards.forEach((card, i) => {
+        card.frame
+          .setVisible(visible)
+          .setStrokeStyle(i === customParamIndex && row === 2 ? 2 : 1, i === customParamIndex && row === 2 ? 0xe8b84a : 0x554c39, 0.9);
+        card.minus.setVisible(visible);
+        card.plus.setVisible(visible);
+        card.value.setVisible(visible).setText(`${customParams[i]!.label}  ${customParams[i]!.value()}`);
+      });
+    }
+
+    function adjustCustomParam(i: number, dir: number): void {
+      row = 2;
+      customParamIndex = i;
+      customParams[i]!.adjust(dir);
+      const key = "mission_preview_custom";
+      const customIndex = missions.findIndex((mission) => mission.kind === "custom");
+      if (customIndex >= 0) missionCards[customIndex]!.art.setTexture("mission_preview_river_run");
+      if (thisScene.textures.exists(key)) thisScene.textures.remove(key);
+      ensureMissionPreviews(thisScene.textures);
+      if (customIndex >= 0) missionCards[customIndex]!.art.setTexture(key);
+      refreshSelection();
+    }
+
+    const thisScene = this;
+    const refreshSelection = () => {
+      const craft = crafts[craftIndex]!;
+      const mission = missions[missionIndex]!;
+      if (row === 2 && mission.kind !== "custom") row = 1;
+      selectCraft(craft.kind);
+      selectMission(mission.kind);
+      craftHeader.setColor(row === 0 ? "#e8b84a" : "#8f8774");
+      missionHeader.setColor(row === 1 ? "#e8b84a" : "#8f8774");
+      craftCards.forEach((card, i) => {
+        const selected = i === craftIndex;
+        card.frame
+          .setVisible(selected)
+          .setPosition(w / 2, 179)
+          .setScale(1.05)
+          .setDepth(7)
+          .setFillStyle(0x241e10, 0.96)
+          .setStrokeStyle(row === 0 ? 3 : 2, 0xe8b84a, 1);
+        card.art
+          .setVisible(selected)
+          .setPosition(w / 2, 170)
+          .setScale(card.artScale * 1.05)
+          .setDepth(8)
+          .setAlpha(1);
+        card.rotors.forEach((rotor, rotorI) => {
+          const part = card.rotorParts[rotorI]!;
+          const at = spriteUvPos(card.art, part.mount.x, part.mount.y);
+          rotor
+            .setVisible(selected)
+            .setPosition(at.x, at.y)
+            .setScale(craftCompositePartScale(part, rotor.width, card.art.scaleX))
+            .setDepth(9)
+            .setAlpha(1);
+        });
+        card.exhaustGlows.forEach((glow, exhaustI) => {
+          const mount = card.exhaustMounts[exhaustI]!;
+          const at = spriteUvPos(card.art, mount.x, mount.y);
+          const scale = card.art.scaleX * 0.55;
+          glow
+            .setVisible(selected)
+            .setPosition(at.x, at.y)
+            .setScale(scale * 0.75, scale)
+            .setDepth(8.5);
+        });
+        card.label
+          .setVisible(selected)
+          .setPosition(w / 2, 220)
+          .setScale(1)
+          .setDepth(10)
+          .setColor("#f2d579");
+      });
+      craftDots.forEach((dot, i) =>
+        dot
+          .setFillStyle(i === craftIndex ? 0xe8b84a : 0x5d5544, i === craftIndex ? 1 : 0.9)
+          .setScale(i === craftIndex ? 1.45 : 1)
+      );
+      missionCards.forEach((card, i) => {
+        const selected = i === missionIndex;
+        card.frame
+          .setVisible(selected)
+          .setPosition(w / 2, 450)
+          .setScale(1)
+          .setDepth(7)
+          .setFillStyle(0x241e10, 0.96)
+          .setStrokeStyle(row === 1 ? 3 : 2, 0xe8b84a, 1);
+        card.art
+          .setVisible(selected)
+          .setPosition(w / 2, 450)
+          .setScale(card.artScaleX, card.artScaleY)
+          .setDepth(8)
+          .setAlpha(1);
+        card.strip
+          .setVisible(selected)
+          .setPosition(w / 2, 497)
+          .setScale(1)
+          .setDepth(8)
+          .setAlpha(0.94);
+        card.label
+          .setVisible(selected)
+          .setPosition(w / 2, 497)
+          .setScale(1)
+          .setDepth(9)
+          .setColor("#f2d579");
+      });
+      missionDots.forEach((dot, i) =>
+        dot
+          .setFillStyle(i === missionIndex ? 0xe8b84a : 0x5d5544, i === missionIndex ? 1 : 0.9)
+          .setScale(i === missionIndex ? 1.45 : 1)
+      );
+      const weapons = playerLoadout(craft.loadout);
+      drawStatBars(craft);
+      weaponRows.forEach((row, i) => {
+        const weapon = weapons[i];
+        row.name.setText(weapon?.name ?? "—");
+        const capacity = weapon ? craftStartingAmmo(weapon.ammo, craft) : 0;
+        row.ammo.setText(capacity === Infinity ? "∞" : String(capacity));
+      });
+      detailTxt.setText(`${mission.label}  ·  ${mission.briefing}`);
+      syncCustomParams();
+    };
+
+    const cycleSelection = (dir: number) => {
+      if (row === 0) craftIndex = (craftIndex + dir + crafts.length) % crafts.length;
+      else if (row === 1) missionIndex = (missionIndex + dir + missions.length) % missions.length;
+      else adjustCustomParam(customParamIndex, dir);
+      refreshSelection();
+    };
+    refreshSelection();
+
     const go = this.add
-      .text(w / 2, h * 0.78, "[  START MISSION  ]", {
+      .text(w / 2, 650, "[  DEPLOY  ]", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "22px",
         color: "#1c1812",
@@ -350,6 +1033,29 @@ export class MenuScene extends Phaser.Scene {
     go.on("pointerdown", () => this.scene.start("load"));
     this.input.keyboard?.once("keydown-ENTER", () => this.scene.start("load"));
     this.input.keyboard?.once("keydown-SPACE", () => this.scene.start("load"));
+
+    const selectUp = () => {
+      const rows = missions[missionIndex]!.kind === "custom" ? 3 : 2;
+      row = (row - 1 + rows) % rows;
+      refreshSelection();
+    };
+    const selectDown = () => {
+      const rows = missions[missionIndex]!.kind === "custom" ? 3 : 2;
+      row = (row + 1) % rows;
+      refreshSelection();
+    };
+    const selectLeft = () => cycleSelection(-1);
+    const selectRight = () => cycleSelection(1);
+    this.input.keyboard?.on("keydown-UP", selectUp);
+    this.input.keyboard?.on("keydown-DOWN", selectDown);
+    this.input.keyboard?.on("keydown-LEFT", selectLeft);
+    this.input.keyboard?.on("keydown-RIGHT", selectRight);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.input.keyboard?.off("keydown-UP", selectUp);
+      this.input.keyboard?.off("keydown-DOWN", selectDown);
+      this.input.keyboard?.off("keydown-LEFT", selectLeft);
+      this.input.keyboard?.off("keydown-RIGHT", selectRight);
+    });
     installConfigRigHotkeys(this);
     nameGeneratedTextures(this);
   }
@@ -357,8 +1063,9 @@ export class MenuScene extends Phaser.Scene {
 
 export class LoadScene extends Phaser.Scene {
   private body!: Phaser.GameObjects.Image;
-  private rotor!: Phaser.GameObjects.Image;
-  private rotorDisc!: Phaser.GameObjects.Image;
+  private rotors: Phaser.GameObjects.Image[] = [];
+  private rotorDiscs: Phaser.GameObjects.Image[] = [];
+  private rotorParts: CraftComposite["rotors"] = [];
   private heliY = 0;
   private rotorAng = 0;
   private rotorSpd = 4;
@@ -374,24 +1081,27 @@ export class LoadScene extends Phaser.Scene {
     const hx = w / 2;
     const zs = 0.925;
     const craft = craftOf();
+    const composite = craftComposite(craft);
     this.body = this.add
-      .image(hx, this.heliY, craft.body)
-      .setOrigin(craftOrigin(craft).x, craftOrigin(craft).y)
+      .image(hx, this.heliY, composite.body.tex)
+      .setOrigin(composite.body.origin.x, composite.body.origin.y)
       .setScale(zs);
-    const rotorTex = craftRotorTex(craft) ?? "heli_rotor";
-    const spinTex = craftRotorSpinTex(craft);
-    this.rotorDisc = this.add
-      .image(hx, this.heliY, spinTex && this.textures.exists(spinTex) ? spinTex : rotorTex)
-      .setOrigin(0.5, 0.5)
-      .setAlpha(0);
-    this.rotor = this.add.image(hx, this.heliY, rotorTex).setOrigin(0.5, 0.5);
-    if (!craft.rotor) {
-      this.rotor.setVisible(false);
-      this.rotorDisc.setVisible(false);
-    }
-    const rotorScale = (124 / Math.max(this.rotor.width, 1)) * 1.08 * zs;
-    this.rotor.setScale(rotorScale);
-    this.rotorDisc.setScale(rotorScale * 1.04);
+    this.rotorParts = composite.rotors;
+    this.rotors = this.rotorParts.map((part) => {
+      const at = spriteUvPos(this.body, part.mount.x, part.mount.y);
+      const rotor = this.add.image(at.x, at.y, part.tex).setOrigin(part.origin.x, part.origin.y);
+      rotor.setScale(craftCompositePartScale(part, rotor.width, zs));
+      return rotor;
+    });
+    this.rotorDiscs = this.rotorParts.map((part, i) => {
+      const at = spriteUvPos(this.body, part.mount.x, part.mount.y);
+      const spinTex = part.spinTex;
+      return this.add
+        .image(at.x, at.y, spinTex && this.textures.exists(spinTex) ? spinTex : part.tex)
+        .setOrigin(part.origin.x, part.origin.y)
+        .setScale(craftCompositePartScale(part, this.rotors[i]?.width ?? 1, zs) * 1.04)
+        .setAlpha(0);
+    });
     this.add
       .text(w / 2, h * 0.48, "SURVEYING THEATER", {
         fontFamily: "Share Tech Mono, monospace",
@@ -424,6 +1134,7 @@ export class LoadScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 0)
       .setName("load_tip");
+    drawControlLegend(this, w, h * 0.87);
     const drawBar = (t: number, label: string) => {
       const u = Phaser.Math.Clamp(t, 0, 1);
       bar.clear();
@@ -447,14 +1158,16 @@ export class LoadScene extends Phaser.Scene {
     this.time.delayedCall(16, () => {
       const seed = (Date.now() ^ (Math.random() * 1e9)) >>> 0;
       const tiles = extractBiomeTiles(this.textures);
+      const mission = missionOf();
+      sub.setText(`${mission.label}  ·  RELIEF  ·  2%`);
       const go = (world: WorldData) => {
         drawBar(1, "ready");
         this.time.delayedCall(240, () => this.scene.start("mission", { world }));
       };
-      generateWorldAsync(seed, tiles, (t, label) => drawBar(t, label))
+      generateWorldAsync(seed, tiles, (t, label) => drawBar(t, label), mission.profile)
         .then(go)
         .catch(() => {
-          go(worldFromGen(generateWorld(seed, tiles, (t, label) => drawBar(t, label))));
+          go(worldFromGen(generateWorld(seed, tiles, (t, label) => drawBar(t, label), mission.profile)));
         });
     });
   }
@@ -464,15 +1177,21 @@ export class LoadScene extends Phaser.Scene {
     const targetSpd = 4 + this.loadU * 30;
     this.rotorSpd = Phaser.Math.Linear(this.rotorSpd, targetSpd, 1 - Math.pow(0.14, dts));
     this.rotorAng += this.rotorSpd * dts;
-    this.rotor.setRotation(this.rotorAng);
-    this.rotorDisc.setRotation(this.rotorAng + Math.PI / 8);
     const disc = Phaser.Math.Clamp((this.rotorSpd - 10) / 22, 0, 1);
-    this.rotor.setAlpha(1 - disc * 0.38);
-    this.rotorDisc.setAlpha(disc * 0.32);
     const bob = Math.sin(_t / 420) * 1.6;
     this.body.y = this.heliY + bob;
-    this.rotor.y = this.heliY + bob;
-    this.rotorDisc.y = this.heliY + bob;
+    this.rotors.forEach((rotor, i) => {
+      const part = this.rotorParts[i]!;
+      const at = spriteUvPos(this.body, part.mount.x, part.mount.y);
+      rotor
+        .setPosition(at.x, at.y)
+        .setRotation(i % 2 ? -this.rotorAng : this.rotorAng)
+        .setAlpha(1 - disc * 0.38);
+      this.rotorDiscs[i]
+        ?.setPosition(at.x, at.y)
+        .setRotation((i % 2 ? -this.rotorAng : this.rotorAng) + Math.PI / 8)
+        .setAlpha(disc * 0.32);
+    });
   }
 }
 
@@ -481,9 +1200,10 @@ export class MissionScene extends Phaser.Scene {
   heli!: Heli;
   units: Unit[] = [];
   shots: Shot[] = [];
-  frags: Frag[] = [];
-  sparks: Spark[] = [];
-  ammo = WPN_LIST.map((w) => w.ammo);
+  debris: Debris[] = [];
+  simParticles: SimParticle[] = [];
+  loadout: PlayerWpnSpec[] = playerLoadout(craftOf().loadout);
+  ammo = this.loadout.map((w) => w.ammo);
   keyW!: Phaser.Input.Keyboard.Key;
   keyA!: Phaser.Input.Keyboard.Key;
   keyS!: Phaser.Input.Keyboard.Key;
@@ -498,7 +1218,10 @@ export class MissionScene extends Phaser.Scene {
   stampBrush!: Phaser.GameObjects.Image;
   body!: Phaser.GameObjects.Image;
   rotor!: Phaser.GameObjects.Image;
+  rotors: Phaser.GameObjects.Image[] = [];
+  craftParts!: CraftComposite;
   gun!: Phaser.GameObjects.Image;
+  guns: Phaser.GameObjects.Image[] = [];
   shadow!: Phaser.GameObjects.Image;
   reticle!: Phaser.GameObjects.Image;
   reticleMark!: Phaser.GameObjects.Graphics;
@@ -513,8 +1236,8 @@ export class MissionScene extends Phaser.Scene {
   lockInbdHudTxt!: Phaser.GameObjects.Text;
   unitG!: Phaser.GameObjects.Group;
   shotG!: Phaser.GameObjects.Group;
-  fragG!: Phaser.GameObjects.Group;
-  sparkG!: Phaser.GameObjects.Group;
+  debrisG!: Phaser.GameObjects.Group;
+  simParticleG!: Phaser.GameObjects.Group;
   smoke!: Phaser.GameObjects.Particles.ParticleEmitter;
   tracer!: Phaser.GameObjects.Particles.ParticleEmitter;
   flame!: Phaser.GameObjects.Particles.ParticleEmitter;
@@ -524,22 +1247,52 @@ export class MissionScene extends Phaser.Scene {
   burn!: Phaser.GameObjects.Particles.ParticleEmitter;
   blastBurn!: Phaser.GameObjects.Particles.ParticleEmitter;
   blastFire!: Phaser.GameObjects.Particles.ParticleEmitter;
+  shortBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
+  muzzleBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
+  splashBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
+  explosionPuff!: Phaser.GameObjects.Particles.ParticleEmitter;
   ember!: Phaser.GameObjects.Particles.ParticleEmitter;
-  fragSmoke!: Phaser.GameObjects.Particles.ParticleEmitter;
+  shortTrailSmoke!: Phaser.GameObjects.Particles.ParticleEmitter;
   lingerSmoke!: Phaser.GameObjects.Particles.ParticleEmitter;
   heliDust!: Phaser.GameObjects.Particles.ParticleEmitter;
+  craftExhaust!: Phaser.GameObjects.Particles.ParticleEmitter;
+  craftExhaustMote!: Phaser.GameObjects.Particles.ParticleEmitter;
+  craftExhaustSmoke!: Phaser.GameObjects.Particles.ParticleEmitter;
+  exhaustFlames: Phaser.GameObjects.Image[] = [];
+  exhaustEmitCarry = 0;
+  exhaustMountCursor = 0;
+  exhaustPrevWorld: ({ x: number; y: number; z: number } | undefined)[] = [];
+  exhaustVx = 0;
+  exhaustVy = 0;
+  exhaustAngle = 0;
+  exhaustTint = 0xffffff;
+  exhaustSmokeTint = 0x8b8b86;
+  exhaustScaleX = 1;
+  exhaustScaleY = 0.4;
+  exhaustLife = 260;
   /** Camera-depth-banded clones: each band keeps fire>smoke without a global restack. */
   fxSlots = new Map<Phaser.GameObjects.Particles.ParticleEmitter, Phaser.GameObjects.Particles.ParticleEmitter[]>();
+  fxPolicies: Record<FxClass, FxPolicy> = {
+    short: { frameCap: 96, activeCap: 384, emitted: 0, emitters: new Set() },
+    fire: { frameCap: 96, activeCap: 768, emitted: 0, emitters: new Set() },
+    smoke: { frameCap: 72, activeCap: 1024, emitted: 0, emitters: new Set() },
+    dust: { frameCap: 96, activeCap: 512, emitted: 0, emitters: new Set() },
+  };
   /** Painter-depth bands so concurrent trails don't all share one emitter depth. */
   fxSlotN = 8;
   fxBandH = 48;
   /** Last applied sim timeScale (skip walking ~N emitters when unchanged). */
   lastSimScale = Number.NaN;
-  /** Per-frame particle emit budget (reset in update). */
-  fxEmitBudget = 0;
-  fxEmitCap = 96;
+  /** Scratch used only by synchronous onEmit callbacks; particles retain update state themselves. */
+  burstLaunch = {
+    x: 0, y: 0, z: 0, bx: 1, by: 0, bz: 0, tight: 0.5,
+    spdMin: 40, spdMax: 120, scale: 1, expBias: 0, gravity: 0,
+  };
   muzzle!: Phaser.GameObjects.Image;
-  muzzleLife = 0;
+  muzzlePool: Phaser.GameObjects.Image[] = [];
+  muzzleLives: number[] = [];
+  muzzleCursor = 0;
+  playerGunSide = 0;
   dmgFlameScale = 1;
   trailFxScale = 1;
   /** Multiplier for trail particle lifespan (mid ≈ 1; large debris > 1). */
@@ -548,11 +1301,13 @@ export class MissionScene extends Phaser.Scene {
   playerCrashLanded = false;
   /** <0 = waiting for crash simmer; >=0 = countdown to BIRD DOWN. */
   playerCrashEndT = -1;
-  /** Scene-owned simmer so BIRD DOWN isn't lost if the hull frag is culled. */
+  /** Scene-owned simmer so BIRD DOWN isn't lost if the hull debris is culled. */
   playerCrashSimmerT = 0;
   /** Camera post-FX (toggle with F). */
   fxBloom?: Phaser.FX.Bloom;
   fxBarrel?: Phaser.FX.Barrel;
+  thermalFx?: Phaser.FX.ColorMatrix;
+  thermalOn = false;
   fxOn = true;
   fxBarrelPulse = 0;
   fxHud!: Phaser.GameObjects.Text;
@@ -600,6 +1355,14 @@ export class MissionScene extends Phaser.Scene {
   hvGfx!: Phaser.GameObjects.Graphics;
   over = false;
   win = false;
+  completedHv = new Set<string>();
+  missionEndQueued = false;
+  stingerRoot?: Phaser.GameObjects.Container;
+  stingerText?: Phaser.GameObjects.Text;
+  stingerT = 0;
+  stingerDuration = 0;
+  stingerDone?: () => void;
+  stingerTarget?: { x: number; y: number };
   shake = 0;
   canFire = false;
   mapView = false;
@@ -633,6 +1396,7 @@ export class MissionScene extends Phaser.Scene {
   /** Cached texture span / trail radius (key → px). */
   private texSpanCache = new Map<string, number>();
   private texTrailCache = new Map<string, number>();
+  private textureAlphaCache = new Map<string, TextureAlphaBounds | null>();
   private fpsHudAt = 0;
   debugHit = false;
   /** Draw fading rings for explosion damage / heli splash radii. */
@@ -642,6 +1406,23 @@ export class MissionScene extends Phaser.Scene {
   showHeightMap = false;
   debugGfx!: Phaser.GameObjects.Graphics;
   timeScale = 1;
+  helpOpen = false;
+  helpPage = 0;
+  helpRoot!: Phaser.GameObjects.Container;
+  helpBody!: Phaser.GameObjects.Text;
+  helpCounter!: Phaser.GameObjects.Text;
+  helpCraftBody!: Phaser.GameObjects.Image;
+  helpCraftRotors: Phaser.GameObjects.Image[] = [];
+  helpCraftRotorParts: CraftComposite["rotors"] = [];
+  helpCraftExhaustGlows: Phaser.GameObjects.Image[] = [];
+  helpCraftExhaustMounts: { x: number; y: number }[] = [];
+  helpCraftName!: Phaser.GameObjects.Text;
+  helpCraftStats!: Phaser.GameObjects.Text;
+  helpCraftBars!: Phaser.GameObjects.Graphics;
+  helpButton!: Phaser.GameObjects.Text;
+  exitOpen = false;
+  exitRoot!: Phaser.GameObjects.Container;
+  exitButton!: Phaser.GameObjects.Text;
   debugOpen = false;
   debugRoot!: Phaser.GameObjects.Container;
   debugPanel!: Phaser.GameObjects.Graphics;
@@ -693,6 +1474,14 @@ export class MissionScene extends Phaser.Scene {
   init(data: { world?: WorldData }): void {
     this.over = false;
     this.win = false;
+    this.completedHv.clear();
+    this.missionEndQueued = false;
+    this.stingerRoot = undefined;
+    this.stingerText = undefined;
+    this.stingerT = 0;
+    this.stingerDuration = 0;
+    this.stingerDone = undefined;
+    this.stingerTarget = undefined;
     this.shake = 0;
     this.canFire = false;
     this.mapView = false;
@@ -711,9 +1500,13 @@ export class MissionScene extends Phaser.Scene {
     this.debugBlast = false;
     this.blastRings = [];
     this.fxOn = true;
+    this.thermalOn = false;
     this.fxBarrelPulse = 0;
     this.showHeightMap = false;
     this.terrainMesh = true;
+    this.helpOpen = false;
+    this.helpPage = 0;
+    this.exitOpen = false;
     this.debugOpen = false;
     this.debugSpawnOpen = false;
     this.debugCamOpen = false;
@@ -724,15 +1517,27 @@ export class MissionScene extends Phaser.Scene {
     this.editInvert = false;
     this.editDirty = null;
     this.shots = [];
-    this.frags = [];
-    this.sparks = [];
+    this.debris = [];
+    this.simParticles = [];
+    this.exhaustPrevWorld = [];
+    this.exhaustMountCursor = 0;
     this.playerCrashStarted = false;
     this.playerCrashLanded = false;
     this.playerCrashEndT = -1;
     this.playerCrashSimmerT = 0;
-    this.ammo = WPN_LIST.map((w) => w.ammo);
+    this.playerGunSide = 0;
+    const selectedCraft = craftOf();
+    this.loadout = playerLoadout(selectedCraft.loadout);
+    this.ammo = this.loadout.map((weapon) => craftStartingAmmo(weapon.ammo, selectedCraft));
     if (!data.world) {
-      this.world = worldFromGen(generateWorld((Date.now() ^ (Math.random() * 1e9)) >>> 0, extractBiomeTiles(this.textures)));
+      this.world = worldFromGen(
+        generateWorld(
+          (Date.now() ^ (Math.random() * 1e9)) >>> 0,
+          extractBiomeTiles(this.textures),
+          undefined,
+          missionOf().profile
+        )
+      );
     } else this.world = data.world;
   }
 
@@ -747,6 +1552,7 @@ export class MissionScene extends Phaser.Scene {
     this.biomeTiles = extractBiomeTiles(this.textures);
     this.input.mouse?.disableContextMenu();
     ensureImpactGlow(this.textures);
+    ensureExhaustGlow(this.textures);
     ensureBlastRingGradient(this.textures);
     this.input.setDefaultCursor("none");
     this.canFire = !this.input.activePointer.isDown;
@@ -783,19 +1589,47 @@ export class MissionScene extends Phaser.Scene {
 
     this.unitG = this.add.group();
     this.shotG = this.add.group();
-    this.fragG = this.add.group();
-    this.sparkG = this.add.group();
+    this.debrisG = this.add.group();
+    this.simParticleG = this.add.group();
 
     this.heli = new Heli(this.world.spawnX, this.world.spawnY, this.world);
-    this.heli.angle = 0.6;
+    if (this.heli.spec.flightModel === "plane") {
+      const inward = Math.atan2(WORLD * 0.5 - this.heli.y, WORLD * 0.5 - this.heli.x);
+      this.heli.startAirborne(inward, this.world);
+    } else this.heli.angle = 0.6;
     setCamera25DFocus(this.heli.x, this.heli.y, this.heli.z);
     const craft = this.heli.spec;
+    this.craftParts = craftComposite(craft);
     this.shadow = this.add.image(0, 0, "shadow").setDepth(Layer.SHADOW);
-    this.gun = this.add.image(0, 0, craft.gun).setDepth(Layer.WORLD).setOrigin(craftGunOrigin(craft).x, craftGunOrigin(craft).y);
-    this.body = this.add.image(0, 0, craft.body).setDepth(Layer.WORLD).setOrigin(craftOrigin(craft).x, craftOrigin(craft).y);
-    const rotorTex = craftRotorTex(craft) ?? "heli_rotor";
-    this.rotor = this.add.image(0, 0, rotorTex).setDepth(Layer.WORLD).setOrigin(0.5, 0.5);
-    if (!craft.rotor) this.rotor.setVisible(false);
+    this.guns = this.craftParts.guns.map((part) =>
+      this.add
+        .image(0, 0, part.tex)
+        .setDepth(Layer.WORLD)
+        .setOrigin(part.origin.x, part.origin.y)
+    );
+    this.gun =
+      this.guns[0] ??
+      this.add
+        .image(0, 0, craft.gun)
+        .setDepth(Layer.WORLD)
+        .setOrigin(craftGunOrigin(craft).x, craftGunOrigin(craft).y)
+        .setVisible(false);
+    this.body = this.add.image(0, 0, this.craftParts.body.tex).setDepth(Layer.WORLD).setOrigin(this.craftParts.body.origin.x, this.craftParts.body.origin.y);
+    this.exhaustFlames = craftExhaustMounts(craft).map(() =>
+      this.add
+        .image(0, 0, "fx_exhaust")
+        .setDepth(Layer.WORLD)
+        .setOrigin(0.04, 0.5)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setVisible(false)
+    );
+    const rotorTex = this.craftParts.rotors[0]?.tex ?? "heli_rotor";
+    this.rotors = this.craftParts.rotors.map((part) =>
+      this.add.image(0, 0, part.tex).setDepth(Layer.WORLD).setOrigin(part.origin.x, part.origin.y)
+    );
+    this.rotor =
+      this.rotors[0] ??
+      this.add.image(0, 0, rotorTex).setDepth(Layer.WORLD).setOrigin(0.5, 0.5).setVisible(false);
     this.muzzle = this.add
       .image(0, 0, "fx_muzzle")
       .setDepth(Layer.WORLD)
@@ -804,6 +1638,16 @@ export class MissionScene extends Phaser.Scene {
       .setScale(0.72)
       .setBlendMode(Phaser.BlendModes.ADD)
       .setTint(0xfff6d0);
+    const secondMuzzle = this.add
+      .image(0, 0, "fx_muzzle")
+      .setDepth(Layer.WORLD)
+      .setVisible(false)
+      .setOrigin(0.14, 0.5)
+      .setScale(0.72)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setTint(0xfff6d0);
+    this.muzzlePool = [this.muzzle, secondMuzzle];
+    this.muzzleLives = [0, 0];
     this.body.setPosition(this.heli.x, this.heli.y);
     this.reticle = this.add.image(0, 0, "reticle").setDepth(Layer.HUD).setScrollFactor(0);
     this.reticleMark = this.add.graphics().setDepth(Layer.HUD).setScrollFactor(0);
@@ -880,6 +1724,7 @@ export class MissionScene extends Phaser.Scene {
       rotate: fxSpin,
     });
     this.smoke.setDepth(Layer.WORLD);
+    this.registerFx("smoke", this.smoke);
     this.tracer = this.add.particles(0, 0, "fx_spark", {
       lifespan: 160,
       speed: { min: 40, max: 140 },
@@ -895,7 +1740,220 @@ export class MissionScene extends Phaser.Scene {
       },
     });
     this.tracer.setDepth(Layer.WORLD);
-    this.flame = this.poolFx(() =>
+    this.registerFx("short", this.tracer);
+    const seedBurst = (p: Phaser.GameObjects.Particles.Particle | undefined, min: number, max: number): number => {
+      this.sampleBurstScreenVelocity(p as BurstParticle | undefined);
+      return range(min, max);
+    };
+    const burstVelocityX = (p?: Phaser.GameObjects.Particles.Particle): number =>
+      (p as BurstParticle | undefined)?.burstVx ?? this.sampleBurstScreenVelocity(p as BurstParticle | undefined).x;
+    const burstVelocityY = (p?: Phaser.GameObjects.Particles.Particle): number =>
+      (p as BurstParticle | undefined)?.burstVy ?? this.sampleBurstScreenVelocity(p as BurstParticle | undefined).y;
+    const burstRotation = (p?: Phaser.GameObjects.Particles.Particle): number =>
+      Phaser.Math.RadToDeg((p as BurstParticle | undefined)?.burstHeading ?? 0);
+    this.shortBurst = this.poolFx("short", () =>
+      this.add.particles(0, 0, "fx_spark", {
+        lifespan: { onEmit: (p) => seedBurst(p, 180, 520) },
+        speedX: { onEmit: burstVelocityX },
+        speedY: { onEmit: burstVelocityY },
+        scaleX: {
+          onEmit: (p) => {
+            const q = p as BurstParticle;
+            q.launchScale = this.burstLaunch.scale * range(0.72, 1.18);
+            return q.launchScale * range(1.5, 2.7);
+          },
+          onUpdate: (p, _k, t) => ((p as BurstParticle).launchScale ?? 1) * 2 * (1 - t),
+        },
+        scaleY: {
+          onEmit: (p) => ((p as BurstParticle).launchScale ?? this.burstLaunch.scale) * 0.34,
+          onUpdate: (p, _k, t) => ((p as BurstParticle).launchScale ?? 1) * 0.34 * (1 - t),
+        },
+        alpha: { start: 1, end: 0 },
+        blendMode: "ADD",
+        tint: [0xfff8d0, 0xffee66, 0xffaa40],
+        gravityY: 180,
+        radial: false,
+        emitting: false,
+        frame: fxFrames,
+        rotate: { onEmit: burstRotation },
+      })
+    );
+    this.muzzleBurst = this.poolFx("short", () =>
+      this.add.particles(0, 0, "fx_flame", {
+        lifespan: { onEmit: (p) => seedBurst(p, 100, 240) },
+        speedX: { onEmit: burstVelocityX },
+        speedY: { onEmit: burstVelocityY },
+        scaleX: {
+          onEmit: (p) => {
+            const q = p as BurstParticle;
+            q.launchScale = this.burstLaunch.scale * range(0.72, 1.18);
+            return q.launchScale * range(1.8, 3.2);
+          },
+          onUpdate: (p, _k, t) => ((p as BurstParticle).launchScale ?? 1) * 2.2 * (1 - t),
+        },
+        scaleY: {
+          onEmit: (p) => ((p as BurstParticle).launchScale ?? this.burstLaunch.scale) * 0.42,
+          onUpdate: (p, _k, t) => ((p as BurstParticle).launchScale ?? 1) * 0.42 * (1 - t),
+        },
+        alpha: { start: 1, end: 0 },
+        blendMode: "ADD",
+        tint: [0xfff8d8, 0xffc050, 0xff7a28],
+        radial: false,
+        emitting: false,
+        frame: fxFrames,
+        rotate: { onEmit: burstRotation },
+      })
+    );
+    this.splashBurst = this.poolFx("short", () =>
+      this.add.particles(0, 0, "fx_splash", {
+        lifespan: { onEmit: (p) => seedBurst(p, 320, 600) },
+        speedX: { onEmit: burstVelocityX },
+        speedY: { onEmit: burstVelocityY },
+        scaleX: {
+          onEmit: (p) => {
+            const q = p as BurstParticle;
+            q.launchScale = this.burstLaunch.scale * range(0.72, 1.18);
+            return q.launchScale;
+          },
+          onUpdate: (p, _k, t) => ((p as BurstParticle).launchScale ?? 1) * (1 - t * 0.82),
+        },
+        scaleY: {
+          onEmit: (p) => ((p as BurstParticle).launchScale ?? this.burstLaunch.scale) * 0.48,
+          onUpdate: (p, _k, t) => ((p as BurstParticle).launchScale ?? 1) * (0.48 - t * 0.36),
+        },
+        alpha: { start: 0.9, end: 0 },
+        tint: [0xffffff, 0x9edcff, 0x6ec4ff],
+        gravityY: 240,
+        radial: false,
+        emitting: false,
+        frame: fxFrames,
+        rotate: { onEmit: burstRotation },
+      })
+    );
+    this.explosionPuff = this.poolFx("fire", () =>
+      this.add.particles(0, 0, "fx_flame", {
+        lifespan: { onEmit: (p) => seedBurst(p, 180, 400) },
+        speedX: { onEmit: burstVelocityX },
+        speedY: { onEmit: burstVelocityY },
+        scaleX: {
+          onEmit: (p) => {
+            const q = p as BurstParticle;
+            q.launchScale = this.burstLaunch.scale * range(0.7, 1.25);
+            q.launchStretch = range(1.8, 3.5);
+            q.swirl = (Math.random() < 0.5 ? -1 : 1) * range(1.8, 4.5);
+            return q.launchScale * q.launchStretch;
+          },
+          onUpdate: (p, _k, t) => {
+            const q = p as BurstParticle;
+            const roundEarly = 1 + ((q.launchStretch ?? 2.4) - 1) * Math.pow(1 - Math.min(1, t / 0.3), 2);
+            return (q.launchScale ?? 1) * roundEarly * Math.pow(1 - t, 1.35);
+          },
+        },
+        scaleY: {
+          onEmit: (p) => (p as BurstParticle).launchScale ?? this.burstLaunch.scale,
+          onUpdate: (p, _k, t) => ((p as BurstParticle).launchScale ?? 1) * Math.pow(1 - t, 1.35),
+        },
+        alpha: 1,
+        blendMode: "ADD",
+        tint: [0xfff8d8, 0xffc050, 0xff7a28, 0xff5420],
+        gravityY: -38,
+        accelerationX: {
+          onUpdate: (p, _k, t) => {
+            const late = Math.pow(Phaser.Math.Clamp((t - 0.52) / 0.48, 0, 1), 1.6);
+            return (-p.velocityY * ((p as BurstParticle).swirl ?? 0) - p.velocityX * 1.5) * late;
+          },
+        },
+        accelerationY: {
+          onUpdate: (p, _k, t) => {
+            const late = Math.pow(Phaser.Math.Clamp((t - 0.52) / 0.48, 0, 1), 1.6);
+            return (p.velocityX * ((p as BurstParticle).swirl ?? 0) - p.velocityY * 1.5) * late;
+          },
+        },
+        radial: false,
+        emitting: false,
+        frame: fxFrames,
+        rotate: {
+          onEmit: burstRotation,
+          onUpdate: (p) => Phaser.Math.RadToDeg(Math.atan2(p.velocityY, p.velocityX)),
+        },
+      })
+    );
+    this.craftExhaust = this.poolFx("fire", () =>
+      this.add.particles(0, 0, "fx_exhaust", {
+        lifespan: { onEmit: () => this.exhaustLife },
+        speedX: { onEmit: () => this.exhaustVx + range(-4, 4) },
+        speedY: { onEmit: () => this.exhaustVy + range(-4, 4) },
+        scaleX: {
+          onEmit: (p) => {
+            const q = p as Phaser.GameObjects.Particles.Particle & { exhaustScaleX?: number };
+            q.exhaustScaleX = this.exhaustScaleX;
+            return q.exhaustScaleX;
+          },
+          onUpdate: (p, _k, t) => {
+            const q = p as Phaser.GameObjects.Particles.Particle & { exhaustScaleX?: number };
+            return (q.exhaustScaleX ?? 1) * (1 - t * 0.72);
+          },
+        },
+        scaleY: {
+          onEmit: (p) => {
+            const q = p as Phaser.GameObjects.Particles.Particle & { exhaustScaleY?: number };
+            q.exhaustScaleY = this.exhaustScaleY;
+            return q.exhaustScaleY;
+          },
+          onUpdate: (p, _k, t) => {
+            const q = p as Phaser.GameObjects.Particles.Particle & { exhaustScaleY?: number };
+            return (q.exhaustScaleY ?? 0.4) * (1 - t * 0.45);
+          },
+        },
+        alpha: { start: 0.92, end: 0 },
+        tint: { onEmit: () => this.exhaustTint },
+        blendMode: "ADD",
+        radial: false,
+        emitting: false,
+        frame: fxFrames,
+        rotate: {
+          onEmit: (p) => {
+            const q = p as Phaser.GameObjects.Particles.Particle & { exhaustAngle?: number };
+            q.exhaustAngle = this.exhaustAngle;
+            return Phaser.Math.RadToDeg(this.exhaustAngle);
+          },
+          onUpdate: (p) => {
+            const q = p as Phaser.GameObjects.Particles.Particle & { exhaustAngle?: number };
+            return Phaser.Math.RadToDeg(q.exhaustAngle ?? this.exhaustAngle);
+          },
+        },
+      })
+    );
+    this.craftExhaustMote = this.poolFx("short", () =>
+      this.add.particles(0, 0, "fx_spark", {
+        lifespan: { min: 280, max: 520 },
+        speedX: { onEmit: () => this.exhaustVx * 0.5 + range(-16, 16) },
+        speedY: { onEmit: () => this.exhaustVy * 0.5 + range(-16, 16) },
+        scale: { start: 0.28, end: 0 },
+        alpha: { start: 0.9, end: 0 },
+        tint: { onEmit: () => this.exhaustTint },
+        blendMode: "ADD",
+        radial: false,
+        emitting: false,
+        frame: fxFrames,
+        rotate: { onEmit: () => Phaser.Math.RadToDeg(this.exhaustAngle) },
+      })
+    );
+    this.craftExhaustSmoke = this.poolFx("smoke", () =>
+      this.add.particles(0, 0, "fx_smoke", {
+        lifespan: { min: 2400, max: 4000 },
+        speedX: { onEmit: () => this.exhaustVx * 0.42 + range(-10, 10) },
+        speedY: { onEmit: () => this.exhaustVy * 0.42 + range(-10, 10) },
+        scale: { start: 0.38, end: 1.2 },
+        alpha: { start: 0.82, end: 0 },
+        tint: { onEmit: () => this.exhaustSmokeTint },
+        radial: false,
+        emitting: false,
+        frame: fxFrames,
+        rotate: fxSpin,
+      })
+    );
+    this.flame = this.poolFx("fire", () =>
       this.add.particles(0, 0, "fx_flame", {
         lifespan: { onEmit: () => 480 * this.trailFxLife },
         speed: { min: 8, max: 40 },
@@ -919,7 +1977,7 @@ export class MissionScene extends Phaser.Scene {
         rotate: fxSpin,
       })
     );
-    this.playerFlame = this.poolFx(() =>
+    this.playerFlame = this.poolFx("fire", () =>
       this.add.particles(0, 0, "fx_flame", {
         lifespan: { onEmit: () => 480 * this.trailFxLife },
         speed: { min: 8, max: 40 },
@@ -943,7 +2001,7 @@ export class MissionScene extends Phaser.Scene {
         rotate: fxSpin,
       })
     );
-    this.hurtSmoke = this.poolFx(() =>
+    this.hurtSmoke = this.poolFx("smoke", () =>
       this.add.particles(0, 0, "fx_smoke", {
         lifespan: {
           onEmit: () => {
@@ -963,7 +2021,7 @@ export class MissionScene extends Phaser.Scene {
         rotate: { min: -70, max: 70 },
       })
     );
-    this.playerHurtSmoke = this.poolFx(() =>
+    this.playerHurtSmoke = this.poolFx("smoke", () =>
       this.add.particles(0, 0, "fx_smoke", {
         lifespan: {
           onEmit: () => {
@@ -998,7 +2056,7 @@ export class MissionScene extends Phaser.Scene {
       const q = p as (Phaser.GameObjects.Particles.Particle & { s0?: number }) | undefined;
       return (q?.s0 ?? fallback) * mul(t);
     };
-    this.burn = this.poolFx(() =>
+    this.burn = this.poolFx("fire", () =>
       this.add.particles(0, 0, "fx_flame", {
         lifespan: { onEmit: () => range(240, 420) * this.trailFxLife },
         speed: { min: 2, max: 14 },
@@ -1015,7 +2073,7 @@ export class MissionScene extends Phaser.Scene {
         rotate: fxSpin,
       })
     );
-    this.blastBurn = this.poolFx(() =>
+    this.blastBurn = this.poolFx("fire", () =>
       this.add.particles(0, 0, "fx_flame", {
         lifespan: { onEmit: () => range(240, 420) * this.trailFxLife },
         speed: { min: 2, max: 14 },
@@ -1044,7 +2102,8 @@ export class MissionScene extends Phaser.Scene {
       rotate: fxSpin,
     });
     this.blastFire.setDepth(Layer.WORLD);
-    this.ember = this.poolFx(() =>
+    this.registerFx("fire", this.blastFire);
+    this.ember = this.poolFx("fire", () =>
       this.add.particles(0, 0, "fx_flame", {
         lifespan: { onEmit: () => range(180, 320) * this.trailFxLife },
         speed: { min: 1, max: 10 },
@@ -1061,7 +2120,7 @@ export class MissionScene extends Phaser.Scene {
         rotate: fxSpin,
       })
     );
-    this.fragSmoke = this.poolFx(() =>
+    this.shortTrailSmoke = this.poolFx("smoke", () =>
       this.add.particles(0, 0, "fx_smoke", {
         lifespan: { onEmit: () => 520 * this.trailFxLife },
         speed: { min: 8, max: 36 },
@@ -1076,7 +2135,7 @@ export class MissionScene extends Phaser.Scene {
         rotate: fxSpin,
       })
     );
-    this.lingerSmoke = this.poolFx(() =>
+    this.lingerSmoke = this.poolFx("smoke", () =>
       this.add.particles(0, 0, "fx_smoke", {
         lifespan: {
           onEmit: () => range(2200, 4000) * Math.max(1, this.trailFxLife * 0.7),
@@ -1122,6 +2181,7 @@ export class MissionScene extends Phaser.Scene {
       accelerationY: { onUpdate: (p) => -p.velocityY * 5.2 },
     });
     this.heliDust.setDepth(Layer.WORLD);
+    this.registerFx("dust", this.heliDust);
     this.applyTimeScale();
 
     this.keyW = this.input.keyboard!.addKey("W");
@@ -1132,28 +2192,33 @@ export class MissionScene extends Phaser.Scene {
     this.keyShift = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT);
     this.input.keyboard!.addKey("ONE").on("down", () => {
       if (this.editOpen) this.setEditBrush(0);
-      else if (this.debugOpen) return;
+      else if (this.debugOpen || this.helpOpen) return;
       else this.heli.weapon = 0;
     });
     this.input.keyboard!.addKey("TWO").on("down", () => {
       if (this.editOpen) this.setEditBrush(1);
-      else if (this.debugOpen) return;
+      else if (this.debugOpen || this.helpOpen) return;
       else this.heli.weapon = 1;
     });
     this.input.keyboard!.addKey("THREE").on("down", () => {
       if (this.editOpen) this.setEditBrush(2);
-      else if (this.debugOpen) return;
+      else if (this.debugOpen || this.helpOpen) return;
       else this.heli.weapon = 2;
     });
     this.input.keyboard!.addKey("FOUR").on("down", () => {
-      if (this.debugOpen) return;
+      if (this.debugOpen || this.helpOpen) return;
       else this.heli.weapon = 3;
     });
     this.input.keyboard!.addKey("E").on("down", () => this.toggleReliefEditor());
     this.input.keyboard!.addKey("I").on("down", () => {
       if (this.editOpen) this.toggleEditInvert();
     });
-    this.input.keyboard!.addKey("M").on("down", () => this.toggleMap());
+    this.input.keyboard!.addKey("M").on("down", () => {
+      if (!this.helpOpen && !this.exitOpen) this.toggleMap();
+    });
+    this.input.keyboard!.addKey("H").on("down", () => {
+      if (!this.exitOpen) this.toggleHelp();
+    });
     this.input.keyboard!.addKey("Q").on("down", () => {
       if (this.editOpen) this.nudgeEditRot(-1);
     });
@@ -1187,10 +2252,12 @@ export class MissionScene extends Phaser.Scene {
     this.input.keyboard!.addKey("P").on("down", () => this.handlePerfKey());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.FORWARD_SLASH).on("down", () => this.toggleDebugMenu());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ESC).on("down", () => {
-      if (this.debugCamOpen) this.closeDebugCam();
+      if (this.helpOpen) this.toggleHelp(false);
+      else if (this.debugCamOpen) this.closeDebugCam();
       else if (this.debugSpawnOpen) this.closeDebugSpawn();
       else if (this.editOpen) this.toggleReliefEditor(false);
       else if (this.debugOpen) this.toggleDebugMenu(false);
+      else this.toggleExitMenu();
     });
     this.input.keyboard!.addKey("R").on("down", () => {
       if (this.editOpen && !this.over) this.nudgeEditRot(1);
@@ -1207,25 +2274,30 @@ export class MissionScene extends Phaser.Scene {
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_SUBTRACT).on("down", () => bumpTime(-1));
     installConfigRigHotkeys(this);
     this.input.keyboard!.addKey("F").on("down", () => this.toggleTestFx());
+    this.input.keyboard!.addKey("T").on("down", () => this.toggleThermal());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.UP).on("down", () => {
       if (configRigsAnyOpen(this)) return;
-      if (this.debugSpawnOpen) this.nudgeDebugSpawn(-1);
+      if (this.helpOpen) this.nudgeHelp(-1);
+      else if (this.debugSpawnOpen) this.nudgeDebugSpawn(-1);
       else if (this.debugCamOpen) this.nudgeDebugCamSel(-1);
       else if (this.debugOpen) this.nudgeDebugMenu(-1);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN).on("down", () => {
       if (configRigsAnyOpen(this)) return;
-      if (this.debugSpawnOpen) this.nudgeDebugSpawn(1);
+      if (this.helpOpen) this.nudgeHelp(1);
+      else if (this.debugSpawnOpen) this.nudgeDebugSpawn(1);
       else if (this.debugCamOpen) this.nudgeDebugCamSel(1);
       else if (this.debugOpen) this.nudgeDebugMenu(1);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT).on("down", () => {
       if (configRigsAnyOpen(this)) return;
-      if (this.debugCamOpen) this.nudgeDebugCam(-1);
+      if (this.helpOpen) this.nudgeHelp(-1);
+      else if (this.debugCamOpen) this.nudgeDebugCam(-1);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT).on("down", () => {
       if (configRigsAnyOpen(this)) return;
-      if (this.debugCamOpen) this.nudgeDebugCam(1);
+      if (this.helpOpen) this.nudgeHelp(1);
+      else if (this.debugCamOpen) this.nudgeDebugCam(1);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER).on("down", () => {
       if (this.debugSpawnOpen) this.debugSpawnSelected();
@@ -1234,6 +2306,10 @@ export class MissionScene extends Phaser.Scene {
     });
     this.input.on("wheel", (_p: Phaser.Input.Pointer, _dx: number, dy: number) => {
       if (configRigsAnyOpen(this)) return;
+      if (this.helpOpen) {
+        this.nudgeHelp(dy > 0 ? 1 : -1);
+        return;
+      }
       if (this.debugCamOpen) {
         this.nudgeDebugCam(dy > 0 ? -1 : 1);
         return;
@@ -1247,8 +2323,8 @@ export class MissionScene extends Phaser.Scene {
         return;
       }
       if (this.debugOpen) return;
-      if (dy > 0) this.heli.weapon = (this.heli.weapon + 1) % 4;
-      else this.heli.weapon = (this.heli.weapon + 3) % 4;
+      if (dy > 0) this.heli.weapon = (this.heli.weapon + 1) % this.loadout.length;
+      else this.heli.weapon = (this.heli.weapon + this.loadout.length - 1) % this.loadout.length;
     });
 
     this.hud = this.add
@@ -1324,7 +2400,7 @@ export class MissionScene extends Phaser.Scene {
         .setDepth(Layer.HUD)
     );
     this.wpnBar = this.add.graphics().setScrollFactor(0).setDepth(Layer.HUD);
-    this.wpnSlots = WPN_LIST.map(() =>
+    this.wpnSlots = this.loadout.map(() =>
       this.add
         .text(0, 0, "", {
           fontFamily: "Share Tech Mono, monospace",
@@ -1440,6 +2516,8 @@ export class MissionScene extends Phaser.Scene {
     this.playViewH = this.scale.height;
     this.playLastFrame = true;
     this.setupDebugMenu();
+    this.setupHelp();
+    this.setupExitMenu();
     this.setupHudCam();
     this.lockTxt.setName("hud_lock");
     this.lockInbdTxt.setName("hud_fire");
@@ -1586,10 +2664,10 @@ export class MissionScene extends Phaser.Scene {
   }
 
   /**
-   * Paint a blood dirt particle onto the terrain with multiply (does not alter the live spark).
-   * Matches mid-life dirt size/rotation from syncSparkSprites.
+   * Paint a blood dirt particle onto the terrain with multiply (does not alter the live sim particle).
+   * Matches mid-life dirt size/rotation from syncSimParticleSprites.
    */
-  stampBloodWorld(s: Spark): void {
+  stampBloodWorld(s: SimParticle): void {
     if (!s.blood || isWater(this.world, s.x, s.y) || !this.textures.exists(s.tex)) return;
     const age = 1 - Phaser.Math.Clamp(s.life / Math.max(s.max, 1e-6), 0, 1);
     const fade = 1 - age;
@@ -1667,7 +2745,7 @@ export class MissionScene extends Phaser.Scene {
     );
   }
 
-  fragStampOrigin(key: string): { x: number; y: number } {
+  debrisStampOrigin(key: string): { x: number; y: number } {
     return spritePivot(key);
   }
 
@@ -1686,9 +2764,18 @@ export class MissionScene extends Phaser.Scene {
     }
     const wallDt = Math.min(dms / 1000, 0.05);
     const mapPause = this.mapWant || this.mapBlend > 0.02;
-    const dt = mapPause ? 0 : wallDt * this.timeScale;
-    this.setSimTimeScale(mapPause ? 0 : this.timeScale);
-    this.fxEmitBudget = 0;
+    const uiPause = mapPause || this.helpOpen || this.exitOpen;
+    let simScale = this.timeScale;
+    if (this.stingerT > 0) simScale = Math.min(simScale, 0.18);
+    for (const shot of this.shots) {
+      if (shot.from === "player" && shot.warpTimeScale != null) {
+        simScale = Math.min(simScale, shot.warpTimeScale);
+      }
+    }
+    const dt = uiPause ? 0 : wallDt * simScale;
+    this.setSimTimeScale(uiPause ? 0 : simScale);
+    this.tickStinger(wallDt);
+    for (const policy of Object.values(this.fxPolicies)) policy.emitted = 0;
     this.syncFpsHud();
     if (this.over) {
       this.drawMinimap();
@@ -1724,10 +2811,7 @@ export class MissionScene extends Phaser.Scene {
         this.syncProjectionPose();
         this.syncHeliGfx(dt);
         this.handleFire(dt);
-        if (this.muzzleLife > 0) {
-          this.muzzleLife -= dt;
-          if (this.muzzleLife <= 0) this.muzzle.setVisible(false);
-        }
+        this.tickPlayerMuzzles(dt);
         timings[2] = performance.now() - t;
 
         t = performance.now();
@@ -1740,11 +2824,11 @@ export class MissionScene extends Phaser.Scene {
 
         if (this.heli.phase === "dead" && !this.playerCrashStarted) this.beginPlayerCrash();
         t = performance.now();
-        this.updateFrags(dt);
+        this.updateDebris(dt);
         timings[7] = performance.now() - t - timings[8]!;
 
         t = performance.now();
-        this.updateSparks(dt);
+        this.updateSimParticles(dt);
         timings[9] = performance.now() - t - timings[10]!;
 
         t = performance.now();
@@ -1774,15 +2858,12 @@ export class MissionScene extends Phaser.Scene {
         this.syncProjectionPose();
         this.syncHeliGfx(dt);
         this.handleFire(dt);
-        if (this.muzzleLife > 0) {
-          this.muzzleLife -= dt;
-          if (this.muzzleLife <= 0) this.muzzle.setVisible(false);
-        }
+        this.tickPlayerMuzzles(dt);
         this.updateUnits(dt);
         this.updateShots(dt);
         if (this.heli.phase === "dead" && !this.playerCrashStarted) this.beginPlayerCrash();
-        this.updateFrags(dt);
-        this.updateSparks(dt);
+        this.updateDebris(dt);
+        this.updateSimParticles(dt);
         this.updateLock();
         this.drawUnitBars();
         this.emitDamageFx();
@@ -1828,16 +2909,41 @@ export class MissionScene extends Phaser.Scene {
     this.tickTestPostFx(wallDt);
 
     let hvAlive = false;
+    let completedTarget: { x: number; y: number } | undefined;
     for (const h of this.world.hv) {
+      let objectiveAlive = false;
       for (const u of this.units) {
         if (u.hv === h.id && !u.dead) {
           hvAlive = true;
+          objectiveAlive = true;
           break;
         }
       }
-      if (hvAlive) break;
+      if (!objectiveAlive && !this.completedHv.has(h.id)) {
+        this.completedHv.add(h.id);
+        completedTarget = { x: h.x, y: h.y };
+        if (this.heli.phase !== "dead" && this.completedHv.size < this.world.hv.length) {
+          this.showStinger(
+            "OBJECTIVE COMPLETE",
+            `${h.name} neutralized`,
+            0xe8b84a,
+            4.2,
+            completedTarget
+          );
+        }
+      }
     }
-    if (!hvAlive) this.end(true);
+    if (!hvAlive && this.heli.phase !== "dead" && !this.missionEndQueued) {
+      this.missionEndQueued = true;
+      this.showStinger(
+        "MISSION COMPLETE",
+        `${missionOf().label} · all objectives neutralized`,
+        0xe8b84a,
+        5.2,
+        completedTarget,
+        () => this.end(true)
+      );
+    }
     if (this.heli.phase === "dead") {
       if (!this.playerCrashStarted) this.beginPlayerCrash();
       else if (this.playerCrashLanded && this.playerCrashEndT < 0) {
@@ -1845,7 +2951,7 @@ export class MissionScene extends Phaser.Scene {
         if (this.playerCrashSimmerT <= 0) this.playerCrashEndT = 0.55;
       } else if (this.playerCrashLanded && this.playerCrashEndT >= 0) {
         this.playerCrashEndT -= wallDt;
-        if (this.playerCrashEndT <= 0) this.end(false);
+        if (this.playerCrashEndT <= 0 && this.stingerT <= 0) this.end(false);
       }
     }
     if (perfOn && !mapPause) {
@@ -2062,10 +3168,12 @@ export class MissionScene extends Phaser.Scene {
     const h = this.heli;
     if (h.phase === "dead") {
       this.body.setVisible(false);
-      this.rotor.setVisible(false);
+      for (const rotor of this.rotors) rotor.setVisible(false);
+      for (const gun of this.guns) gun.setVisible(false);
       this.gun.setVisible(false);
       this.shadow.setVisible(false);
-      this.muzzle.setVisible(false);
+      for (const muzzle of this.muzzlePool) muzzle.setVisible(false);
+      for (const flame of this.exhaustFlames) flame.setVisible(false);
       return;
     }
     const craft = h.spec;
@@ -2073,7 +3181,10 @@ export class MissionScene extends Phaser.Scene {
     this.shadow.setOrigin(craftOrigin(craft).x, craftOrigin(craft).y);
     const scr = worldToScreen(h.x, h.y, h.z);
     const zs = scr.scale;
-    const bob = h.phase === "flight" ? Math.sin(this.time.now * 0.0026) * 2.2 * zs : 0;
+    const bob =
+      h.phase === "flight" && craft.flightModel !== "plane"
+        ? Math.sin(this.time.now * 0.0026) * 2.2 * zs
+        : 0;
     const bodyRot = projectHeading(h.angle + craft.rotOff, h.x, h.y, h.z);
     this.body.setOrigin(craftOrigin(craft).x, craftOrigin(craft).y);
     this.body.setPosition(scr.x, scr.y - bob);
@@ -2081,48 +3192,190 @@ export class MissionScene extends Phaser.Scene {
     const sx = 1 + Math.abs(h.roll) * 0.12;
     const sy = 1 - Math.abs(h.pitch) * 0.14;
     this.body.setScale(sx * zs, sy * zs);
-    this.rotor.setOrigin(0.5, 0.5);
     const tiltRot = projectHeading(h.angle, h.x, h.y, h.z);
     const rOffF = h.pitch * 16 * zs;
     const rOffS = h.roll * 14 * zs;
-    this.rotor.setPosition(
-      this.body.x + Math.cos(tiltRot) * rOffF - Math.sin(tiltRot) * rOffS,
-      this.body.y + Math.sin(tiltRot) * rOffF + Math.cos(tiltRot) * rOffS
-    );
-    const mount = spriteUvPos(this.body, craftGunMount(craft).x, craftGunMount(craft).y);
-    this.gun.setPosition(mount.x, mount.y);
+    const gunParts = this.craftParts.guns;
+    const aimMountUv = gunParts[0]?.mount ?? craftOrigin(craft);
+    const aimMount = spriteUvPos(this.body, aimMountUv.x, aimMountUv.y);
     // Aim in world XY (mount unprojected; pointer is ground-unprojected).
-    if (h.phase === "flight" || h.phase === "ready" || h.phase === "spool") {
+    if (craft.gunMode === "fixed") {
+      h.gunAngle = h.angle;
+    } else if (h.phase === "flight" || h.phase === "ready" || h.phase === "spool") {
       const aim = this.worldPointer();
-      const mountW = screenToWorldAtZ(mount.x, mount.y + bob, h.z);
+      const mountW = screenToWorldAtZ(aimMount.x, aimMount.y + bob, h.z);
       const want = Math.atan2(aim.y - mountW.y, aim.x - mountW.x);
       // Snappy chin traverse, but slow enough to read as a turret (not mouse lock).
       h.gunAngle = Phaser.Math.Angle.RotateTo(h.gunAngle, want, 3.6 * dt);
     }
-    this.rotor.setRotation(h.rotor);
-    this.gun.setRotation(projectHeading(h.gunAngle + Math.PI / 2, h.x, h.y, h.z));
-    const liveRotor = craftRotorTex(craft);
-    if (!liveRotor) {
-      this.rotor.setVisible(false);
+    const gunRot = projectHeading(h.gunAngle + Math.PI / 2, h.x, h.y, h.z);
+    this.guns.forEach((gun, i) => {
+      const gunMount = gunParts[i]?.mount ?? aimMountUv;
+      const at = spriteUvPos(this.body, gunMount.x, gunMount.y);
+      gun
+        .setVisible(true)
+        .setPosition(at.x, at.y)
+        .setRotation(gunRot)
+        .setScale(zs)
+        .setDepth(worldDepth(h.z, ZOff.gun + i * 0.001, h.y));
+      applyEdgeLight(gun, gun.rotation);
+    });
+    const rotorParts = this.craftParts.rotors;
+    if (!rotorParts.length) {
+      for (const rotor of this.rotors) rotor.setVisible(false);
     } else {
-      this.rotor.setVisible(true);
-      const spinKey = craftRotorSpinTex(craft);
-      const useSpin = !!spinKey && h.rotorSpd >= 16 && this.textures.exists(spinKey);
-      const rotorKey = useSpin ? spinKey! : liveRotor;
-      if (this.rotor.texture.key !== rotorKey) this.rotor.setTexture(rotorKey);
-      this.rotor.setScale((this.liveRotorDrawPx(liveRotor) / Math.max(this.rotor.width, 1)) * zs);
-      this.rotor.setAlpha(1);
+      this.rotors.forEach((rotor, i) => {
+        const part = rotorParts[i]!;
+        const spinKey = part.spinTex;
+        const useSpin = !!spinKey && h.rotorSpd >= 16 && this.textures.exists(spinKey);
+        const rotorKey = useSpin ? spinKey! : part.tex;
+        rotor.setVisible(true);
+        if (rotor.texture.key !== rotorKey) rotor.setTexture(rotorKey);
+        const rotorAt = spriteUvPos(
+          this.body,
+          part.mount.x,
+          part.mount.y
+        );
+        rotor
+          .setPosition(
+            rotorAt.x + Math.cos(tiltRot) * rOffF - Math.sin(tiltRot) * rOffS,
+            rotorAt.y + Math.sin(tiltRot) * rOffF + Math.cos(tiltRot) * rOffS
+          )
+          .setRotation(i % 2 ? -h.rotor : h.rotor)
+          .setScale(craftCompositePartScale(part, rotor.width, zs))
+          .setAlpha(1)
+          .setDepth(worldDepth(h.z, ZOff.rotor + i * 0.001, h.y));
+        clearEdgeLight(rotor);
+      });
     }
-    this.gun.setScale(zs);
     applyEdgeLight(this.body, bodyRot);
-    applyEdgeLight(this.gun, this.gun.rotation);
-    clearEdgeLight(this.rotor);
     this.body.setDepth(worldDepth(h.z, ZOff.body, h.y));
-    this.rotor.setDepth(worldDepth(h.z, ZOff.rotor, h.y));
-    this.gun.setDepth(worldDepth(h.z, ZOff.gun, h.y));
     this.muzzle.setDepth(worldDepth(h.z, ZOff.muzzle, h.y));
     this.syncReticles();
     this.emitDustOff(dt);
+    this.emitCraftExhaust(dt);
+  }
+
+  emitCraftExhaust(dt: number): void {
+    const h = this.heli;
+    const mounts = craftExhaustMounts(h.spec);
+    if (!mounts.length || h.phase === "dead" || h.thrustPower <= 0.03) {
+      this.exhaustEmitCarry = 0;
+      this.exhaustPrevWorld.length = 0;
+      for (const flame of this.exhaustFlames) flame.setVisible(false);
+      return;
+    }
+    const profile =
+      h.spec.kind === "cyberhawk"
+        ? { rate: 18, speed: 105, tint: 0x70d8ff, smoke: 0x485761, sx: 0.58, sy: 0.28, life: 760, flame: 0.68, gap: 10 }
+        : h.spec.kind === "prometheus"
+          ? { rate: 12, speed: 72, tint: 0xc86cff, smoke: 0x6b3a78, sx: 0.52, sy: 0.34, life: 920, flame: 0.78, gap: 12 }
+          : h.spec.kind === "warthog"
+            ? { rate: 25, speed: 170, tint: 0xff8a2c, smoke: 0x3d3935, sx: 0.72, sy: 0.3, life: 680, flame: 0.92, gap: 14 }
+            : h.spec.kind === "lightning_ii"
+              ? { rate: 24, speed: 195, tint: 0xbfeaff, smoke: 0x3b4145, sx: 0.68, sy: 0.25, life: 640, flame: 0.82, gap: 14 }
+              : undefined;
+    if (!profile) {
+      this.exhaustPrevWorld.length = 0;
+      for (const flame of this.exhaustFlames) flame.setVisible(false);
+      return;
+    }
+
+    const power = Phaser.Math.Clamp(h.thrustPower, 0, 1);
+    const jetAng = projectHeading(h.angle + Math.PI, h.x, h.y, h.z);
+    this.exhaustAngle = jetAng;
+    const zs = worldToScreen(h.x, h.y, h.z).scale;
+    const frameStep = Math.floor(this.time.now / 55);
+    this.exhaustFlames.forEach((flame, i) => {
+      const mount = mounts[i];
+      if (!mount) {
+        flame.setVisible(false);
+        return;
+      }
+      const at = spriteUvPos(this.body, mount.x, mount.y);
+      const flicker = 0.92 + Math.sin(this.time.now * 0.043 + i * 2.17) * 0.08;
+      const sc = profile.flame * zs * (0.35 + power * 0.75);
+      flame
+        .setVisible(true)
+        .setFrame((frameStep + i) % FX_VARIANTS)
+        .setPosition(at.x, at.y)
+        .setRotation(jetAng)
+        .setScale(sc * flicker, sc * (1.04 - flicker * 0.12))
+        .setTint(profile.tint)
+        .setAlpha(0.62 + power * 0.34)
+        // The attached flame lights the nozzle and belongs just above the hull.
+        .setDepth(this.body.depth + 0.2);
+    });
+
+    this.exhaustEmitCarry += profile.rate * power * mounts.length * Math.min(dt, 0.05);
+    const emitN = Math.min(8, Math.floor(this.exhaustEmitCarry));
+    this.exhaustEmitCarry -= emitN;
+    if (!emitN) return;
+
+    const jetSpeed = profile.speed * (0.45 + power * 0.75);
+    this.exhaustTint = profile.tint;
+    this.exhaustSmokeTint = profile.smoke;
+    this.exhaustScaleY = profile.sy * (0.75 + power * 0.25);
+    this.exhaustLife = profile.life;
+
+    const glow = this.fxAt(h.z, h.y, this.craftExhaust, ZOff.exhaust + 0.04);
+    const mote = this.fxAt(h.z, h.y, this.craftExhaustMote, ZOff.exhaust + 0.08);
+    const smoke = this.fxAt(h.z, h.y, this.craftExhaustSmoke, ZOff.exhaust - 0.35);
+    // Depth-band rounding can otherwise put a trail over the hull. Exhaust particles
+    // always remain beneath it; only the attached nozzle flame is allowed above.
+    glow.setDepth(this.body.depth - 1.2);
+    mote.setDepth(this.body.depth - 1);
+    smoke.setDepth(this.body.depth - 1.4);
+    for (let i = 0; i < emitN; i++) {
+      const mountI = this.exhaustMountCursor++ % mounts.length;
+      const mount = mounts[mountI]!;
+      const nozzle = this.craftBodyMountWorldPos(mount);
+      const gap = profile.gap * (0.7 + power * 0.3);
+      const jetWorldAngle = h.angle + Math.PI;
+      const current = {
+        x: nozzle.x + Math.cos(jetWorldAngle) * gap,
+        y: nozzle.y + Math.sin(jetWorldAngle) * gap,
+        z: h.z,
+      };
+      const currentAt = worldToScreen(current.x, current.y, current.z);
+      const currentScreenX = currentAt.x;
+      const currentScreenY = currentAt.y;
+      let emitX = currentScreenX;
+      let emitY = currentScreenY;
+      let connectionAngle = jetAng;
+      const baseScaleX = profile.sx * (0.65 + power * 0.55);
+      this.exhaustScaleX = baseScaleX;
+
+      const previous = this.exhaustPrevWorld[mountI];
+      if (previous && Math.hypot(current.x - previous.x, current.y - previous.y) < 180) {
+        const previousAt = worldToScreen(previous.x, previous.y, previous.z);
+        const dx = previousAt.x - currentScreenX;
+        const dy = previousAt.y - currentScreenY;
+        const span = Math.hypot(dx, dy);
+        if (span > 0.5) {
+          emitX = (currentScreenX + previousAt.x) * 0.5;
+          emitY = (currentScreenY + previousAt.y) * 0.5;
+          connectionAngle = Math.atan2(dy, dx);
+          const frameWidth = Math.max(1, this.textures.get("fx_exhaust").get(0).cutWidth);
+          this.exhaustScaleX = Math.max(baseScaleX * 0.22, (span / frameWidth) * 1.12);
+        }
+      }
+      this.exhaustPrevWorld[mountI] = current;
+
+      // Spawn over the chord between consecutive nozzle positions, then drift
+      // down that chord with a small amount of directional jitter.
+      this.exhaustAngle = connectionAngle;
+      const motionAngle = connectionAngle + range(-0.045, 0.045);
+      const motionSpeed = jetSpeed * range(0.94, 1.06);
+      this.exhaustVx = Math.cos(motionAngle) * motionSpeed;
+      this.exhaustVy = Math.sin(motionAngle) * motionSpeed;
+      this.emitBudgeted("fire", glow, emitX, emitY, 1);
+      if (Math.random() < 0.52 + power * 0.28) this.emitBudgeted("short", mote, currentScreenX, currentScreenY, 1);
+      const smokeX = currentScreenX + Math.cos(jetAng) * gap * zs * 0.65;
+      const smokeY = currentScreenY + Math.sin(jetAng) * gap * zs * 0.65;
+      // Every exhaust pulse gets smoke; category budgets still provide the hard cap.
+      this.emitBudgeted("smoke", smoke, smokeX, smokeY, 1);
+    }
   }
 
   emitDustOff(dt: number): void {
@@ -2148,24 +3401,23 @@ export class MissionScene extends Phaser.Scene {
       const wy = h.y + Math.sin(a) * r;
       const at = worldToScreen(wx, wy, groundZ(this.world, wx, wy));
       this.heliDust.setEmitterAngle(Phaser.Math.RadToDeg(a) + (Math.random() - 0.5) * 28);
-      this.heliDust.emitParticleAt(at.x, at.y, 1);
+      this.emitBudgeted("dust", this.heliDust, at.x, at.y, 1);
     }
     if (wet) return;
     const n = Math.max(0, Math.round((takeoff ? 0.5 + power * 9 : 1 + power * 3) * rate));
     if (n < 1) return;
-    const extra = this.sparks.length + n - 360;
-    if (extra > 0) this.sparks.splice(0, extra);
+    const admitted = this.reserveSimParticleSlots("dust", n);
     const biome = sampleBiome(this.world, h.x, h.y);
     const spinSign = h.rotorSpd >= 0 ? 1 : -1;
-    for (let i = 0; i < n; i++) {
+    for (let i = 0; i < admitted; i++) {
       const a = Math.random() * Math.PI * 2;
       const ca = Math.cos(a);
       const sa = Math.sin(a);
       const r0 = range(8, 26);
       const spd = range(420, 800) * (0.35 + power * 0.9);
       const life = range(0.48, 0.86);
-      const look = sparkLook("dirt", biome);
-      this.sparks.push({
+      const look = simParticleLook("dirt", biome);
+      this.simParticles.push({
         x: h.x + ca * r0,
         y: h.y + sa * r0,
         z: gnd + range(2, 8),
@@ -2177,19 +3429,40 @@ export class MissionScene extends Phaser.Scene {
         scale: range(0.62, 1),
         bounces: 0,
         kind: "dirt",
-        tex: sparkTexKey("dirt"),
+        tex: simParticleTexKey("dirt"),
         frame: (Math.random() * FX_VARIANTS) | 0,
         angJit: range(-0.06, 0.06),
         spin: spinSign * range(1.1, 3.2),
         tint: look.tint,
         additive: look.add,
         heading: a,
+        capacityClass: "dust",
         dart: true,
         ox: h.x,
         oy: h.y,
         swirl: spinSign * range(180, 420),
       });
     }
+  }
+
+  /** Reserve within one semantic pool; no dirt effect may evict another category. */
+  reserveSimParticleSlots(capacityClass: SimParticle["capacityClass"], wanted: number): number {
+    const cap = capacityClass === "impact" ? 280 : capacityClass === "dust" ? 360 : 96;
+    let classCount = this.simParticles.reduce(
+      (n, particle) => n + (particle.capacityClass === capacityClass ? 1 : 0),
+      0
+    );
+    let need = Math.max(0, classCount + wanted - cap);
+    for (let i = 0; i < this.simParticles.length && need > 0;) {
+      const s = this.simParticles[i]!;
+      if (s.capacityClass !== capacityClass || (s.blood && !s.stamped)) i++;
+      else {
+        this.simParticles.splice(i, 1);
+        classCount--;
+        need--;
+      }
+    }
+    return Math.min(wanted, Math.max(0, cap - classCount));
   }
 
   emitDustShock(x: number, y: number, power = 1): void {
@@ -2203,29 +3476,29 @@ export class MissionScene extends Phaser.Scene {
       targets: ring,
       radius: 58 + power * 48,
       alpha: 0,
-      duration: 380,
+      duration: 520,
       ease: "Cubic.Out",
       onComplete: () => ring.destroy(),
     });
     if (wet) return;
     const n = Math.round(64 * power);
-    const extra = this.sparks.length + n - 360;
-    if (extra > 0) this.sparks.splice(0, extra);
+    const admitted = this.reserveSimParticleSlots("dust", n);
     const biome = sampleBiome(this.world, x, y);
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2 + range(-0.12, 0.12);
+    for (let i = 0; i < admitted; i++) {
+      // If capacity trims this burst, retain a complete ring rather than a visibly chopped arc.
+      const a = (i / Math.max(1, admitted)) * Math.PI * 2 + range(-0.12, 0.12);
       const ca = Math.cos(a);
       const sa = Math.sin(a);
-      const spd = range(220, 420) * (0.92 + power * 0.1);
-      const life = range(0.78, 1.25);
-      const look = sparkLook("dirt", biome);
+      const spd = range(145, 290) * (0.92 + power * 0.1);
+      const life = range(1.2, 1.8);
+      const look = simParticleLook("dirt", biome);
       const tint = Phaser.Display.Color.Interpolate.ColorWithColor(
         Phaser.Display.Color.IntegerToColor(look.tint),
         Phaser.Display.Color.IntegerToColor(0xd8c9a4),
         100,
         42
       );
-      this.sparks.push({
+      this.simParticles.push({
         x: x + ca * range(2, 12),
         y: y + sa * range(2, 12),
         z: gnd + range(3, 14),
@@ -2237,13 +3510,14 @@ export class MissionScene extends Phaser.Scene {
         scale: range(1.15, 1.85),
         bounces: 0,
         kind: "dirt",
-        tex: sparkTexKey("dirt"),
+        tex: simParticleTexKey("dirt"),
         frame: (Math.random() * FX_VARIANTS) | 0,
         angJit: range(-0.04, 0.04),
         spin: 0,
         tint: Phaser.Display.Color.GetColor(tint.r, tint.g, tint.b),
         additive: false,
         heading: a,
+        capacityClass: "dust",
         shock: true,
       });
     }
@@ -2254,10 +3528,10 @@ export class MissionScene extends Phaser.Scene {
     this.reticle.setPosition(p.x, p.y);
     const h = this.heli;
     const aim = this.worldPointer();
-    const wpn = WPN_LIST[h.weapon]!.kind;
+    const wpn = this.loadout[h.weapon]!.kind;
     const missile = wpn !== "cannon";
     this.reticle.setTexture(missile && this.textures.exists("reticle_sq") ? "reticle_sq" : "reticle");
-    this.drawReticleTally(p.x, p.y, missile ? (this.ammo[h.weapon] ?? 0) : 0, WPN_LIST[h.weapon]!.ammo);
+    this.drawReticleTally(p.x, p.y, missile ? (this.ammo[h.weapon] ?? 0) : 0, this.loadout[h.weapon]!.ammo);
     if (wpn === "hellfire") {
       this.sight.clear();
       this.sight.setVisible(false);
@@ -2272,7 +3546,8 @@ export class MissionScene extends Phaser.Scene {
     let by: number;
     const oz = h.z + ZOff.shot;
     if (!missile) {
-      const tip = this.gunTip();
+      const bodyMuzzle = craftFixedMuzzles(h.spec)[0];
+      const tip = bodyMuzzle ? this.craftBodyMountWorldPos(bodyMuzzle) : this.gunTip();
       wx = tip.x;
       wy = tip.y;
       const tipScr = worldToScreen(tip.x, tip.y, h.z);
@@ -2411,21 +3686,22 @@ export class MissionScene extends Phaser.Scene {
     };
   }
 
-  gunTip(): { x: number; y: number } {
-    const d = this.gun.displayHeight * this.gun.originY * 0.92;
+  gunTip(index = 0): { x: number; y: number } {
+    const gun = this.guns[index] ?? this.gun;
+    const d = gun.displayHeight * gun.originY * 0.92;
     // The gun texture points along local -Y, so its rendered barrel heading is
     // one quarter-turn behind the projected sprite rotation.
-    const a = this.gun.rotation - Math.PI / 2;
-    const sx = this.gun.x + Math.cos(a) * d;
-    const sy = this.gun.y + Math.sin(a) * d;
+    const a = gun.rotation - Math.PI / 2;
+    const sx = gun.x + Math.cos(a) * d;
+    const sy = gun.y + Math.sin(a) * d;
     // Gun sprite sits in projected space; return world XY for ballistics / aim.
     // Fresh object — must not alias shared screenToWorldAtZ scratch.
     const at = screenToWorldAtZ(sx, sy, this.heli.z);
     return { x: at.x, y: at.y };
   }
 
-  /** World position of a craft secondary hardpoint UV. */
-  secondaryWorldPos(mount: { x: number; y: number }): { x: number; y: number } {
+  /** World position of an authored mount UV on the active craft body. */
+  craftBodyMountWorldPos(mount: { x: number; y: number }): { x: number; y: number } {
     const h = this.heli;
     const craft = h.spec;
     const pivot = craftOrigin(craft);
@@ -2443,102 +3719,137 @@ export class MissionScene extends Phaser.Scene {
     };
   }
 
+  /** World position of a craft secondary hardpoint UV. */
+  secondaryWorldPos(mount: { x: number; y: number }): { x: number; y: number } {
+    return this.craftBodyMountWorldPos(mount);
+  }
+
   /** World position of the next missile hardpoint (alternates left/right by ammo). */
   missilePylon(): { x: number; y: number; side: number } {
     const mounts = craftSecondaryMounts(this.heli.spec);
     const ammo = this.ammo[this.heli.weapon] ?? 0;
-    // Even remaining ammo → right (index 1); odd → left (index 0).
-    const index = mounts.length > 1 ? (ammo % 2 === 0 ? 1 : 0) : 0;
+    // Remaining-ammo phase cycles every authored hardpoint; for two mounts this
+    // preserves the original right/left alternation.
+    const index = mounts.length > 1 ? ((ammo - 1) % mounts.length + mounts.length) % mounts.length : 0;
     const mount = mounts[index] ?? mounts[0]!;
-    const side = index === 0 ? -1 : 1;
+    const side = mount.x < craftOrigin(this.heli.spec).x ? -1 : 1;
     return { ...this.secondaryWorldPos(mount), side };
   }
 
   handleFire(dt: number): void {
     const h = this.heli;
-    if (h.phase !== "flight" || !this.canFire || this.debugOpen || this.editOpen) return;
-    const slot = WPN_LIST[h.weapon]!;
-    const spec = PLAYER_WPNS[slot.id]!;
+    if (h.phase !== "flight" || !this.canFire || this.debugOpen || this.editOpen || this.helpOpen || this.exitOpen) return;
+    const spec = this.loadout[h.weapon]!;
     const wpn = spec.kind;
     const ptr = this.worldPointer();
     const down = this.input.activePointer.isDown;
 
-    if (wpn === "cannon" && down && h.fireCd <= 0) {
+    if (wpn === "cannon" && down && h.fireCd <= 0 && this.hasAmmo(h.weapon)) {
       h.fireCd = spec.fireCd;
-      const spread = (Math.random() - 0.5) * 0.08;
+      if (Number.isFinite(this.ammo[h.weapon]!)) this.spendAmmo(h.weapon);
       const air = this.hoverAerial();
-      const ang = h.gunAngle + spread;
       const spd = spec.speed;
-      const tip = this.gunTip();
-      const tipScr = worldToScreen(tip.x, tip.y, h.z);
-      const tipScreenX = tipScr.x;
-      const tipScreenY = tipScr.y;
-      const tipScale = tipScr.scale;
-      const z0 = h.z + ZOff.shot;
-      const along = projectAlong(tip.x, tip.y, ang, air ? air.x : ptr.x, air ? air.y : ptr.y);
-      const dist = Math.max(80, along);
-      const t = dist / spd;
-      const tx = tip.x + Math.cos(ang) * dist;
-      const ty = tip.y + Math.sin(ang) * dist;
-      const tz = air ? air.z + heightOf(air.kind) * 0.5 : groundZ(this.world, tx, ty);
-      this.spawnShot({
-        kind: spec.kind,
-        from: "player",
-        x: tip.x,
-        y: tip.y,
-        z: z0,
-        vx: Math.cos(ang) * spd,
-        vy: Math.sin(ang) * spd,
-        vz: (tz - z0) / t,
-        angle: ang,
-        life: t + (air ? 0.55 : spec.life),
-        blast: spec.blast,
-        dmg: spec.dmg,
-        look: spec.look,
-        scale: spec.scale,
-      });
-      this.spawnSparks(tip.x, tip.y, h.z, {
-        style: "muzzle",
-        n: 6,
-        spdMin: 220,
-        spdMax: 520,
-        bx: Math.cos(ang),
-        by: Math.sin(ang),
-        bz: (tz - z0) / Math.max(40, dist),
-        tight: 0.9,
-      });
-      this.tracer.setDepth(worldDepth(z0, ZOff.muzzle, tip.y));
-      this.tracer.emitParticleAt(tipScreenX, tipScreenY, 5);
-      this.showMuzzle(
-        tipScreenX,
-        tipScreenY,
-        projectHeading(ang, tip.x, tip.y, h.z),
-        0.78 * tipScale,
-        0.1
-      );
-      const craft = h.spec;
-      const side = this.shellEjectSide({
-        muzzleUv: lookupSpriteMuzzles(craft.gun)[0],
-        mountUv: craftGunMount(craft),
-      });
-      const gunW = screenToWorldAtZ(this.gun.x, this.gun.y, h.z);
-      this.spawnShellEject({
-        x: gunW.x,
-        y: gunW.y,
-        // Drop from under the chin / belly so casings read below the craft.
-        z: h.z - 12,
-        barrelAng: h.gunAngle,
-        dmg: spec.dmg,
-        side,
-        aerial: true,
-        fireCd: spec.fireCd,
-      });
+      const authored = spec.fixed ? craftFixedMuzzles(h.spec) : [];
+      const mountedGunI =
+        authored.length === 0 && this.guns.length > 1
+          ? this.playerGunSide++ % this.guns.length
+          : 0;
+      const muzzleUvs =
+        authored.length === 0
+          ? [undefined]
+          : spec.muzzleFire === "simultaneous"
+            ? authored
+            : spec.muzzleFire === "alternate"
+              ? [authored[this.playerGunSide++ % authored.length]]
+              : [authored[0]];
+      const fxInterval = spec.fireCd / Math.max(1, muzzleUvs.length);
+      const shotFxScale = projectileFxScale("player", fxInterval);
+      for (const muzzleUv of muzzleUvs) {
+        const spread = spec.beam ? 0 : (Math.random() - 0.5) * (spec.silent ? 0.025 : 0.08);
+        const ang = (spec.fixed ? h.angle : h.gunAngle) + spread;
+        const tip = muzzleUv ? this.craftBodyMountWorldPos(muzzleUv) : this.gunTip(mountedGunI);
+        const tipScr = worldToScreen(tip.x, tip.y, h.z);
+        const tipScreenX = tipScr.x;
+        const tipScreenY = tipScr.y;
+        const tipScale = tipScr.scale;
+        const z0 = h.z + ZOff.shot;
+        const along = projectAlong(tip.x, tip.y, ang, air ? air.x : ptr.x, air ? air.y : ptr.y);
+        const dist = Math.max(80, along);
+        const t = dist / spd;
+        const tx = tip.x + Math.cos(ang) * dist;
+        const ty = tip.y + Math.sin(ang) * dist;
+        const tz = air ? air.z + heightOf(air.kind) * 0.5 : groundZ(this.world, tx, ty);
+        this.spawnShot({
+          kind: spec.kind,
+          from: "player",
+          x: tip.x,
+          y: tip.y,
+          z: z0,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd,
+          vz: (tz - z0) / t,
+          angle: ang,
+          life: t + (air ? 0.55 : spec.life),
+          blast: spec.blast,
+          dmg: spec.dmg,
+          look: spec.look,
+          scale: spec.scale,
+          fxInterval,
+        });
+        if (spec.beam) {
+          const beamEnd = worldToScreen(tx, ty, tz);
+          const beam = this.add.graphics().setDepth(worldDepth(z0, ZOff.muzzle, tip.y));
+          beam.lineStyle(5 * tipScale, 0x55ddff, 0.24).lineBetween(tipScreenX, tipScreenY, beamEnd.x, beamEnd.y);
+          beam.lineStyle(1.5 * tipScale, 0xffffff, 0.95).lineBetween(tipScreenX, tipScreenY, beamEnd.x, beamEnd.y);
+          this.tweens.add({ targets: beam, alpha: 0, duration: 110, onComplete: () => beam.destroy() });
+        } else if (!spec.silent) {
+          this.emitVisualBurst(tip.x, tip.y, h.z, {
+            n: scaledProjectileFxCount(6, shotFxScale),
+            spdMin: 220,
+            spdMax: 520,
+            bx: Math.cos(ang),
+            by: Math.sin(ang),
+            bz: (tz - z0) / Math.max(40, dist),
+            tight: 0.9,
+            scaleMul: 0.3,
+          }, this.muzzleBurst);
+          this.tracer.setDepth(worldDepth(z0, ZOff.muzzle, tip.y));
+          this.emitBudgeted("short", this.tracer, tipScreenX, tipScreenY, scaledProjectileFxCount(5, shotFxScale));
+          this.showMuzzle(
+            tipScreenX,
+            tipScreenY,
+            projectHeading(ang, tip.x, tip.y, h.z),
+            0.78 * tipScale,
+            0.1
+          );
+          const craft = h.spec;
+          const mountedGun = this.guns[mountedGunI] ?? this.gun;
+          const mountedGunUv = craftGunMounts(craft)[mountedGunI] ?? craftGunMount(craft);
+          const side = muzzleUv
+            ? (muzzleUv.x < craftOrigin(craft).x ? -1 : 1)
+            : this.shellEjectSide({
+                muzzleUv: lookupSpriteMuzzles(craft.gun)[0],
+                mountUv: mountedGunUv,
+              });
+          const ejectAt = muzzleUv ? tip : screenToWorldAtZ(mountedGun.x, mountedGun.y, h.z);
+          this.spawnShellEject({
+            x: ejectAt.x,
+            y: ejectAt.y,
+            z: h.z - 12,
+            barrelAng: ang,
+            dmg: spec.dmg,
+            side,
+            aerial: true,
+            fireCd: spec.fireCd,
+          });
+        }
+      }
     }
 
-    if (wpn === "rocket" && down && h.fireCd <= 0 && this.hasAmmo(1)) {
+    if (wpn === "rocket" && down && h.fireCd <= 0 && this.hasAmmo(h.weapon)) {
       h.fireCd = spec.fireCd;
       const { x: px, y: py } = this.missilePylon();
-      this.spendAmmo(1);
+      this.spendAmmo(h.weapon);
       const air = this.hoverAerial();
       const along = projectAlong(px, py, h.angle, air ? air.x : ptr.x, air ? air.y : ptr.y);
       const dist = Math.max(80, along);
@@ -2561,8 +3872,9 @@ export class MissionScene extends Phaser.Scene {
         dmg: spec.dmg,
         look: spec.look,
         scale: spec.scale,
+        fxInterval: spec.fireCd,
       });
-      this.missileMuzzle(px, py, h.z, h.angle);
+      this.missileMuzzle(px, py, h.z, h.angle, projectileFxScale("player", spec.fireCd));
     }
 
     this.tickHellfireLock(dt, ptr);
@@ -2570,12 +3882,12 @@ export class MissionScene extends Phaser.Scene {
       if (
         down &&
         h.fireCd <= 0 &&
-        this.hasAmmo(2) &&
+        this.hasAmmo(h.weapon) &&
         h.hellfireLock
       ) {
         h.fireCd = spec.fireCd;
         const { x: px, y: py, side } = this.missilePylon();
-        this.spendAmmo(2);
+        this.spendAmmo(h.weapon);
         const kick = spec.speed;
         this.spawnShot({
           kind: spec.kind,
@@ -2593,17 +3905,18 @@ export class MissionScene extends Phaser.Scene {
           dmg: spec.dmg,
           look: spec.look,
           scale: spec.scale,
+          fxInterval: spec.fireCd,
           motor: -MISSILE_IGNITE,
           yaw: side * (1.05 + Math.random() * 0.45),
         });
-        this.missileMuzzle(px, py, h.z, h.angle);
+        this.missileMuzzle(px, py, h.z, h.angle, projectileFxScale("player", spec.fireCd));
       }
     }
 
-    if (wpn === "tow" && down && h.fireCd <= 0 && this.hasAmmo(3)) {
+    if (wpn === "tow" && down && h.fireCd <= 0 && this.hasAmmo(h.weapon)) {
       h.fireCd = spec.fireCd;
       const { x: px, y: py, side } = this.missilePylon();
-      this.spendAmmo(3);
+      this.spendAmmo(h.weapon);
       this.spawnShot({
         kind: spec.kind,
         from: "player",
@@ -2619,30 +3932,32 @@ export class MissionScene extends Phaser.Scene {
         dmg: spec.dmg,
         look: spec.look,
         scale: spec.scale,
+        fxInterval: spec.fireCd,
         guided: true,
         motor: -(MISSILE_IGNITE + 0.06),
         cruise: 300,
         yaw: side * (0.42 + Math.random() * 0.22),
         wireSide: side,
-        wire: [],
+        wire: spec.warpTimeScale ? undefined : [],
+        warpTimeScale: spec.warpTimeScale,
       });
-      this.missileMuzzle(px, py, h.z, h.angle);
+      this.missileMuzzle(px, py, h.z, h.angle, projectileFxScale("player", spec.fireCd));
     }
   }
 
-  missileMuzzle(x: number, y: number, z: number, ang: number): void {
+  missileMuzzle(x: number, y: number, z: number, ang: number, fxScale = 1): void {
     const ca = Math.cos(ang);
     const sa = Math.sin(ang);
-    this.spawnSparks(x, y, z, {
-      style: "muzzle",
-      n: 12,
+    this.emitVisualBurst(x, y, z, {
+      n: scaledProjectileFxCount(12, fxScale),
       spdMin: 200,
       spdMax: 520,
       bx: ca,
       by: sa,
       bz: 0.2,
       tight: 0.84,
-    });
+      scaleMul: 0.3,
+    }, this.muzzleBurst);
     const at = worldToScreen(x, y, z);
     this.showMuzzle(at.x, at.y, projectHeading(ang, x, y, z), 0.62 * at.scale, 0.12);
   }
@@ -2650,7 +3965,10 @@ export class MissionScene extends Phaser.Scene {
   showMuzzle(x: number, y: number, drawAng: number, scale: number, life: number): void {
     const sc = scale * range(0.9, 1.12);
     const rot = drawAng + range(-0.1, 0.1);
-    this.muzzle
+    let index = this.muzzleLives.findIndex((remaining) => remaining <= 0);
+    if (index < 0) index = this.muzzleCursor++ % this.muzzlePool.length;
+    const muzzle = this.muzzlePool[index] ?? this.muzzle;
+    muzzle
       .setVisible(true)
       .setFrame((Math.random() * FX_VARIANTS) | 0)
       .setOrigin(0.14, 0.5)
@@ -2661,8 +3979,16 @@ export class MissionScene extends Phaser.Scene {
       .setTint(0xfff6d0)
       .setAlpha(1)
       .setDepth(worldDepth(this.heli.z, ZOff.muzzle, this.heli.y));
-    this.muzzleLife = life;
+    this.muzzleLives[index] = life;
     this.spawnMuzzleLight(x, y, this.heli.z, 26 * sc);
+  }
+
+  tickPlayerMuzzles(dt: number): void {
+    for (let i = 0; i < this.muzzleLives.length; i++) {
+      if (this.muzzleLives[i]! <= 0) continue;
+      this.muzzleLives[i] -= dt;
+      if (this.muzzleLives[i]! <= 0) this.muzzlePool[i]?.setVisible(false);
+    }
   }
 
   /** Soft additive light bloom under a muzzle flash. */
@@ -2714,6 +4040,26 @@ export class MissionScene extends Phaser.Scene {
     return this.shellEjectSide({ muzzleUv, mountUv });
   }
 
+  /** Admit debris by lifecycle importance; only ephemeral trail carriers are replaceable. */
+  admitDebris(piece: Debris): boolean {
+    const debrisClass = piece.debrisClass ?? "consequential";
+    piece.debrisClass = debrisClass;
+    if (debrisClass === "consequential") {
+      if (this.debris.reduce((n, f) => n + ((f.debrisClass ?? "consequential") === "consequential" ? 1 : 0), 0) >= 192) {
+        return false;
+      }
+    } else if (debrisClass === "ephemeral") {
+      const ephemeral = this.debris.reduce((n, f) => n + (f.debrisClass === "ephemeral" ? 1 : 0), 0);
+      if (ephemeral >= 48) {
+        const oldest = this.debris.findIndex((f) => f.debrisClass === "ephemeral");
+        if (oldest >= 0) this.debris.splice(oldest, 1);
+        else return false;
+      }
+    }
+    this.debris.push(piece);
+    return true;
+  }
+
   /**
    * Eject a spent casing sideways from a cannon mount (90° ± jitter).
    * Falls with gravity, bounces with heavy friction, stamps onto the wreck layer.
@@ -2745,7 +4091,7 @@ export class MissionScene extends Phaser.Scene {
     if (!available.length) return;
     const key = available[(Math.random() * available.length) | 0]!;
     const vzBase = opts.aerial ? range(-8, 14) : range(28, 58);
-    this.frags.push({
+    this.admitDebris({
       x: opts.x + range(-1.2, 1.2),
       y: opts.y + range(-1.2, 1.2),
       z: opts.z,
@@ -2874,12 +4220,32 @@ export class MissionScene extends Phaser.Scene {
     };
   }
 
-  spawnSparks(
+  sampleBurstScreenVelocity(p?: BurstParticle): { x: number; y: number } {
+    const opt = this.burstLaunch;
+    const d = opt.expBias > 0
+      ? expBiasDir(opt.bx, opt.by, opt.bz, opt.expBias)
+      : biasedDir(opt.bx, opt.by, opt.bz, opt.tight, false);
+    const align = (d as { align?: number }).align ?? 1;
+    const speedBias = opt.expBias > 0 ? Math.exp(opt.expBias * 0.55 * align) / Math.exp(opt.expBias * 0.55) : 1;
+    const speed = range(opt.spdMin, opt.spdMax) * speedBias;
+    const vx = d.x * speed;
+    const vy = d.y * speed;
+    const vz = d.z * speed;
+    const screenX = screenVelX(vx, vy, vz, opt.x, opt.y, opt.z);
+    const screenY = screenVelY(vy, vz, opt.z, opt.y);
+    if (p) {
+      p.burstVx = screenX;
+      p.burstVy = screenY;
+      p.burstHeading = Math.atan2(screenY, screenX);
+    }
+    return { x: screenX, y: screenY };
+  }
+
+  emitVisualBurst(
     x: number,
     y: number,
     z: number,
     opt: {
-      style: "muzzle" | "ground" | "water" | "object";
       n: number;
       spdMin: number;
       spdMax: number;
@@ -2887,23 +4253,46 @@ export class MissionScene extends Phaser.Scene {
       by: number;
       bz: number;
       tight: number;
-      sparkFrac?: number;
       scaleMul?: number;
-      forceKind?: SparkKind;
+      expBias?: number;
+      gravity?: number;
+    },
+    emitter: Phaser.GameObjects.Particles.ParticleEmitter,
+    kind: FxClass = "short"
+  ): void {
+    Object.assign(this.burstLaunch, {
+      x, y, z, bx: opt.bx, by: opt.by, bz: opt.bz, tight: opt.tight,
+      spdMin: opt.spdMin, spdMax: opt.spdMax, scale: opt.scaleMul ?? 1,
+      expBias: opt.expBias ?? 0, gravity: opt.gravity ?? 0,
+    });
+    const at = worldToScreen(x, y, z);
+    this.emitBudgeted(kind, this.fxAt(z, y, emitter, ZOff.fire + 0.4), at.x, at.y, opt.n);
+  }
+
+  /** Retained manually simulated dirt/blood because it interacts with and stamps terrain. */
+  spawnDirtParticles(
+    x: number,
+    y: number,
+    z: number,
+    opt: {
+      n: number;
+      spdMin: number;
+      spdMax: number;
+      bx: number;
+      by: number;
+      bz: number;
+      tight: number;
+      scaleMul?: number;
       blood?: boolean;
-      /**
-       * Exponential travel-dir bias (missile / chain-gun mech hits).
-       * Concentration k for direction sampling; speed scales with alignment.
-       */
       expBias?: number;
     }
   ): void {
-    const extra = this.sparks.length + opt.n - 280;
-    if (extra > 0) this.sparks.splice(0, extra);
+    const capacityClass: SimParticle["capacityClass"] = opt.blood ? "blood" : "impact";
+    const take = this.reserveSimParticleSlots(capacityClass, opt.n);
+    if (take <= 0) return;
     const biome = sampleBiome(this.world, x, y);
     const k = opt.expBias;
-    for (let i = 0; i < opt.n; i++) {
-      const kind = opt.forceKind ?? pickSparkKind(opt.style, opt.sparkFrac);
+    for (let i = 0; i < take; i++) {
       let dx: number;
       let dy: number;
       let dz: number;
@@ -2916,40 +4305,19 @@ export class MissionScene extends Phaser.Scene {
         // Forward align=1 → full speed; opposite align=-1 → much slower.
         spdMul = Math.exp(k * 0.55 * d.align) / Math.exp(k * 0.55);
       } else {
-        const reverse = opt.style === "object" && Math.random() < 0.5;
-        const d = biasedDir(opt.bx, opt.by, opt.bz, opt.tight, reverse);
+        const d = biasedDir(opt.bx, opt.by, opt.bz, opt.tight, false);
         dx = d.x;
         dy = d.y;
         dz = d.z;
       }
-      const onUnit = opt.style === "object" && opt.forceKind !== "flame";
-      const impact = opt.style !== "muzzle" && opt.forceKind !== "flame";
-      const spd =
-        range(opt.spdMin, opt.spdMax) *
-        spdMul *
-        (kind === "dirt" && opt.style === "ground" ? 1.25 : 1) *
-        (onUnit ? 2.42 : impact ? 1.32 : 1);
-      let life =
-        kind === "dirt"
-          ? range(0.45, 0.8)
-          : kind === "spark"
-            ? range(0.42, 0.74)
-            : kind === "splash"
-              ? range(0.32, 0.6)
-              : range(0.18, 0.4);
-      if (onUnit) life *= kind === "spark" ? 0.38 : 0.5;
-      const look = sparkLook(kind, biome, opt.blood);
+      const spd = range(opt.spdMin, opt.spdMax) * spdMul * 1.12;
+      const life = range(0.75, 1.2);
+      const look = simParticleLook("dirt", biome, opt.blood);
       const vx = dx * spd;
       const vy = dy * spd;
-      const vz = dz * spd + (onUnit ? 0 : kind === "dirt" || kind === "splash" ? 50 : 20);
-      const sizeMul =
-        (opt.scaleMul ?? (opt.style === "muzzle" ? 0.3 : 1)) *
-        (kind === "spark" && opt.style === "ground" ? 0.42 : 1) *
-        (impact ? 0.74 : 1) *
-        (k != null ? Phaser.Math.Linear(0.72, 1.12, spdMul) : 1);
-      const angW = kind === "dirt" ? 0.175 : kind === "spark" ? 0.09 : 0.425;
-      const spinW = kind === "dirt" ? 1.2 : 3;
-      this.sparks.push({
+      const vz = dz * spd + 50;
+      const sizeMul = (opt.scaleMul ?? 1) * 0.74 * (k != null ? Phaser.Math.Linear(0.72, 1.12, spdMul) : 1);
+      this.simParticles.push({
         x,
         y,
         z: z + range(1, 5),
@@ -2958,41 +4326,37 @@ export class MissionScene extends Phaser.Scene {
         vz,
         life,
         max: life,
-        scale:
-          (kind === "dirt" ? range(0.52, 0.8) : kind === "spark" ? range(0.65, 1.15) : range(0.45, 1)) *
-          sizeMul,
-        bounces: onUnit ? 0 : kind === "flame" ? 1 : kind === "splash" ? 2 : 2 + ((Math.random() * 3) | 0),
-        kind,
-        tex: sparkTexKey(kind),
+        scale: range(0.52, 0.8) * sizeMul,
+        bounces: 2 + ((Math.random() * 3) | 0),
+        kind: "dirt",
+        tex: simParticleTexKey("dirt"),
         frame: (Math.random() * FX_VARIANTS) | 0,
-        angJit: onUnit ? 0 : range(-angW, angW),
-        spin: onUnit ? 0 : range(-spinW, spinW),
+        angJit: range(-0.175, 0.175),
+        spin: range(-1.2, 1.2),
         tint: look.tint,
         additive: look.add,
         heading: Math.atan2(
           screenVelY(vy, vz, z, y),
           screenVelX(vx, vy, vz, x, y, z)
         ),
-        streak: opt.style === "muzzle",
+        capacityClass,
         blood: opt.blood,
-        straight: onUnit,
       });
     }
   }
 
-  updateSparks(dt: number): void {
+  updateSimParticles(dt: number): void {
     const drag = Math.pow(0.045, dt);
-    const sparkDrag = Math.pow(0.5, dt);
     const zDrag = Math.pow(0.18, dt);
     let bloodDirty = false;
     let w = 0;
-    const sparks = this.sparks;
-    for (let i = 0; i < sparks.length; i++) {
-      const s = sparks[i]!;
+    const simParticles = this.simParticles;
+    for (let i = 0; i < simParticles.length; i++) {
+      const s = simParticles[i]!;
       s.x += s.vx * dt;
       s.y += s.vy * dt;
       s.z += s.vz * dt;
-      if ((s.kind === "dirt" || s.kind === "spark") && !s.shock && !s.straight) {
+      if (!s.shock) {
         s.vz -= Z_GRAVITY * dt;
       }
       if (s.dart && s.ox != null && s.oy != null && s.swirl != null) {
@@ -3015,25 +4379,18 @@ export class MissionScene extends Phaser.Scene {
         s.vy *= Math.pow(0.64, dt);
         s.vy += 165 * dt;
         s.vz -= Z_GRAVITY * 0.42 * dt;
-      } else if (s.straight) {
-        /* keep launch velocity */
       } else if (s.dart) {
         s.vx *= Math.pow(0.72, dt);
         s.vy *= Math.pow(0.72, dt);
         s.vz *= Math.pow(0.55, dt);
       } else {
-        const xyDrag = s.kind === "spark" ? sparkDrag : drag;
-        s.vx *= xyDrag;
-        s.vy *= xyDrag;
+        s.vx *= drag;
+        s.vy *= drag;
         s.vz *= zDrag;
-      }
-      if (s.kind === "flame" && !s.straight) {
-        s.vy -= 90 * dt;
-        s.vz += 170 * dt;
       }
       s.life -= dt;
       const g = groundZ(this.world, s.x, s.y);
-      if (s.z < g && !s.straight) {
+      if (s.z < g) {
         s.z = g;
         if (s.shock) {
           if (s.vz < 0) s.vz = 0;
@@ -3041,7 +4398,7 @@ export class MissionScene extends Phaser.Scene {
           s.vz = Math.max(2, -s.vz * 0.12);
         } else if (s.bounces > 0 && s.vz < -30) {
           s.bounces--;
-          s.vz = -s.vz * (s.kind === "dirt" ? 0.18 : 0.38);
+          s.vz = -s.vz * 0.18;
           const spd = Math.hypot(s.vx, s.vy);
           const jit = range(-spd * 0.25, spd * 0.25);
           s.vx = (s.vx + jit) * 0.55;
@@ -3050,7 +4407,7 @@ export class MissionScene extends Phaser.Scene {
           s.vz = 0;
           s.vx *= 0.35;
           s.vy *= 0.35;
-          s.life = Math.min(s.life, 0.06);
+          s.life = Math.min(s.life, 0.22);
         }
       }
       if (s.blood && !s.stamped && s.life / s.max <= 0.5) {
@@ -3058,119 +4415,82 @@ export class MissionScene extends Phaser.Scene {
         this.stampBloodWorld(s);
         bloodDirty = true;
       }
-      if (s.life > 0) sparks[w++] = s;
+      if (s.life > 0) simParticles[w++] = s;
     }
-    sparks.length = w;
+    simParticles.length = w;
     if (bloodDirty && this.textures.exists("terrain")) {
       (this.textures.get("terrain") as Phaser.Textures.CanvasTexture).refresh();
     }
     if (this.perfEnabled) {
       const t = performance.now();
-      this.syncSparkSprites();
+      this.syncSimParticleSprites();
       this.perfCurrent![10] = performance.now() - t;
     } else {
-      this.syncSparkSprites();
+      this.syncSimParticleSprites();
     }
   }
 
-  syncSparkSprites(): void {
-    while (this.sparkG.getLength() < this.sparks.length) {
-      this.sparkG.add(this.add.image(0, 0, "fx_spark").setScale(0.7));
+  syncSimParticleSprites(): void {
+    while (this.simParticleG.getLength() < this.simParticles.length) {
+      this.simParticleG.add(this.add.image(0, 0, "fx_spark").setScale(0.7));
     }
-    const kids = this.sparkG.getChildren() as Phaser.GameObjects.Image[];
+    const kids = this.simParticleG.getChildren() as Phaser.GameObjects.Image[];
     for (const k of kids) k.setVisible(false);
-    this.sparks.forEach((s, i) => {
+    this.simParticles.forEach((s, i) => {
       if (!cameraPointVisible(s.z, s.y)) return;
       const im = kids[i]!;
       const fade = Phaser.Math.Clamp(s.life / s.max, 0, 1);
       const age = 1 - fade;
       const spd = Math.hypot(s.vx, s.vy, s.vz);
-      const dirt = s.kind === "dirt";
-      const spark = s.kind === "spark";
-      const flame = s.kind === "flame";
-      const streak = flame && s.streak;
-      const dart = dirt && s.dart;
-      const shock = dirt && s.shock;
+      const dart = !!s.dart;
+      const shock = !!s.shock;
       const grow = 1 - Math.pow(1 - age, 3.4);
       const edge =
         dart && s.ox != null && s.oy != null
           ? Phaser.Math.Clamp((Math.hypot(s.x - s.ox, s.y - s.oy) - 40) / 110, 0, 1)
           : 0;
       const round = dart ? Math.max(edge, Phaser.Math.Clamp(1 - spd / 220, 0, 1)) : 0;
-      const stretch = s.straight
-        ? Math.min(3.15, 1 + spd * 0.0017)
-        : shock
-          ? Math.min(2.8, 1 + spd * 0.0022)
-          : 1 + spd * (spark ? 0.012 : streak ? 0.0064 : dart ? 0.0052 : 0.0048);
+      const stretch = shock
+          ? Math.min(3.2, 1 + spd * 0.0032)
+          : 1 + spd * (dart ? 0.0052 : 0.0048);
       const thick = shock
         ? s.scale * (1.05 + 0.95 * age)
         : dart
         ? s.scale * (0.78 + 0.28 * fade + 0.72 * round)
-        : dirt
-          ? s.scale * (0.06 + 3.6 * grow)
-          : s.scale * (spark ? 0.48 + fade * 0.42 : 0.4 + fade * 0.7);
+        : s.scale * (0.06 + 3.6 * grow);
       const scrX = screenVelX(s.vx, s.vy, s.vz, s.x, s.y, s.z);
       const scrY = screenVelY(s.vy, s.vz, s.z, s.y);
       const heading = Math.atan2(scrY, scrX);
-      const rot = s.straight || shock
+      const rot = shock
         ? s.heading
         : dart
         ? heading + s.angJit * 0.08 + age * s.spin * (0.22 + round * 1.05)
-        : dirt
-          ? s.heading + s.angJit * 0.14
-          : streak
-            ? heading + s.angJit * 0.1
-            : flame
-              ? s.angJit + age * s.spin * 0.35
-              : heading + s.angJit + age * s.spin * 0.12;
+        : s.heading + s.angJit * 0.14;
       const sx = shock
         ? thick * stretch
         : dart
         ? thick * (stretch * 1.28 * (1 - round) + (1.12 + 0.38 * grow) * round)
-        : dirt
-          ? thick * (0.85 + 0.55 * grow)
-          : streak
-            ? thick * stretch
-            : flame
-              ? thick
-              : thick * stretch;
+        : thick * (0.85 + 0.55 * grow);
       const late = Math.pow(Phaser.Math.Clamp((age - 0.52) / 0.48, 0, 1), 1.7);
       const sy = shock
         ? thick * (0.48 + 0.7 * age)
         : dart
         ? thick * ((0.58 + 0.16 / Math.max(stretch, 1)) * (1 - round) + (1.08 + 0.28 * grow) * round)
-        : dirt
-          ? thick * (0.28 + 0.42 * late)
-        : streak
-          ? thick / Math.pow(stretch, 0.42)
-          : s.straight
-            ? (thick * 0.86) / Math.pow(stretch, 0.18)
-          : spark
-            ? (thick * 0.7) / Math.pow(stretch, 0.32)
-            : flame
-              ? thick
-              : thick / Math.sqrt(stretch);
+        : thick * (0.28 + 0.42 * late);
       const baseA = s.additive ? 0.45 + fade * 0.55 : 0.55 + fade * 0.4;
-      const spdFade = Phaser.Math.Clamp(spd / 280, 0, 1);
       const alpha = s.blood
         ? 0.35 + fade * 0.65
         : shock
-          ? 0.28 + 0.62 * Math.pow(fade, 0.55)
+          ? 0.38 + 0.58 * Math.pow(fade, 0.55)
           : dart
             ? (0.16 + 0.2 * fade) * (1 - round * 0.25)
-            : dirt
-              ? baseA * (0.35 + 0.65 * fade)
-              : flame
-                ? Math.min(1, 0.72 + fade * 0.32)
-                : spark
-                  ? baseA * (0.45 + 0.55 * fade)
-                  : baseA * (0.06 + 0.94 * spdFade);
+            : baseA * (0.35 + 0.65 * fade);
       const at = worldToScreen(s.x, s.y, s.z);
       const zs = at.scale;
       const depth = worldDepth(s.z, 0.3, s.y);
       im.setVisible(true);
       if (im.texture.key !== s.tex || im.frame.name !== String(s.frame)) im.setTexture(s.tex, s.frame);
-      im.setOrigin(dart ? 0.12 + 0.38 * round : dirt || streak || spark ? 0.12 : 0.5, 0.5)
+      im.setOrigin(dart ? 0.12 + 0.38 * round : 0.12, 0.5)
         .setPosition(at.x, at.y)
         .setRotation(rot)
         .setScale(sx * zs, sy * zs)
@@ -3325,7 +4645,7 @@ export class MissionScene extends Phaser.Scene {
         }
       }
       s.life -= dt;
-      if (s.kind === "tow" && s.from === "player") this.simulateTowWire(s, dt);
+      if (s.kind === "tow" && s.from === "player" && !s.warpTimeScale) this.simulateTowWire(s, dt);
       // Repel Hellfire/TOW off ground during pre-ignition instead of detonating
       const preIgnite = (s.kind === "hellfire" || s.kind === "tow") && s.from === "player" && s.motor != null && s.motor < 0;
       if (preIgnite) {
@@ -3355,7 +4675,7 @@ export class MissionScene extends Phaser.Scene {
       let hitPlayer = false;
       if (
         s.from === "enemy" &&
-        Math.hypot(s.x - this.heli.x, s.y - this.heli.y) < 26 &&
+        Math.hypot(s.x - this.heli.x, s.y - this.heli.y) < this.heli.spec.radius &&
         s.z <= this.heli.z + this.heli.height &&
         s.z >= this.heli.z &&
         this.heli.phase === "flight"
@@ -3386,7 +4706,20 @@ export class MissionScene extends Phaser.Scene {
           this.towLookY = s.y;
           this.towLookHold = 0.9;
         }
-        this.explode(s.x, s.y, s.z, s.blast, s.dmg, victim, s.vx, s.vy, s.vz, !!victim || hitPlayer, s.kind);
+        this.explode(
+          s.x,
+          s.y,
+          s.z,
+          s.blast,
+          s.dmg,
+          victim,
+          s.vx,
+          s.vy,
+          s.vz,
+          !!victim || hitPlayer,
+          s.kind,
+          projectileFxScale(s.from, s.fxInterval)
+        );
         continue;
       }
       if (s.from === "enemy" && this.enemyShotExpired(s)) continue;
@@ -3419,16 +4752,15 @@ export class MissionScene extends Phaser.Scene {
     const n = small ? Math.max(2, Math.round(5 * sc)) : Math.max(2, Math.round(8 * sc));
     const tail = this.shotUvScreenPos(s, SHOT_TAIL.x, SHOT_TAIL.y);
     this.withTrailFx(sc, () => {
-      const { fire, smoke } = this.pairFx(s.z, s.y, this.burn, this.fragSmoke, ZOff.fire, ZOff.smoke);
-      fire.emitParticleAt(tail.x, tail.y, n);
-      smoke.emitParticleAt(tail.x, tail.y, Math.max(1, Math.round((small ? 3 : 6) * sc)));
+      const { fire, smoke } = this.pairFx(s.z, s.y, this.burn, this.shortTrailSmoke, ZOff.fire, ZOff.smoke);
+      this.emitBudgeted("fire", fire, tail.x, tail.y, n);
+      this.emitBudgeted("smoke", smoke, tail.x, tail.y, Math.max(1, Math.round((small ? 3 : 6) * sc)));
       if (!small) {
         this.blastFire.setDepth(worldDepth(s.z, ZOff.fire + 0.2, s.y));
-        this.blastFire.explode(Math.max(1, Math.round(4 * sc)), tail.x, tail.y);
+        this.emitBudgeted("fire", this.blastFire, tail.x, tail.y, Math.max(1, Math.round(4 * sc)));
       }
     });
-    this.spawnSparks(s.x, s.y, s.z, {
-      style: "muzzle",
+    this.emitVisualBurst(s.x, s.y, s.z, {
       n: Math.max(4, Math.round(10 * sc)),
       spdMin: 80,
       spdMax: 240,
@@ -3437,14 +4769,13 @@ export class MissionScene extends Phaser.Scene {
       bz: 0.1,
       tight: 0.55,
       scaleMul: sc,
-    });
+    }, this.muzzleBurst);
   }
 
   emitShotTrail(s: Shot, x0: number, y0: number, z0: number): void {
     if (s.kind === "cannon") return;
     if ((s.kind === "hellfire" || s.kind === "tow") && (s.motor == null || s.motor < 0) && !s.homePlayer) return;
     if (s.homePlayer && s.motor != null && s.motor < 0) return;
-    if (this.fxEmitBudget >= this.fxEmitCap) return;
     const isRocket = s.kind === "rocket";
     const small = troopMissileTrail(s);
     // Troop RPGs can sit above 0.6 scale — don't treat them as Hydra (smoke-only).
@@ -3461,18 +4792,18 @@ export class MissionScene extends Phaser.Scene {
     this.withTrailFx(sc, () => {
       if (small) {
         const { fire, smoke } = this.pairFx(z, y, this.burn, this.lingerSmoke);
-        if (Math.random() < 0.4) this.emitBudgeted(fire, tx, ty, 1);
-        if (Math.random() < 0.28) this.emitBudgeted(smoke, tx, ty, 1);
+        if (Math.random() < 0.4) this.emitBudgeted("fire", fire, tx, ty, 1);
+        if (Math.random() < 0.28) this.emitBudgeted("smoke", smoke, tx, ty, 1);
       } else if (hydra) {
-        if (Math.random() < 0.55) this.emitBudgeted(this.fxAt(z, y, this.lingerSmoke, ZOff.smoke), tx, ty, 1);
+        if (Math.random() < 0.55) this.emitBudgeted("smoke", this.fxAt(z, y, this.lingerSmoke, ZOff.smoke), tx, ty, 1);
       } else if (isRocket) {
         const { fire, smoke } = this.pairFx(z, y, this.burn, this.lingerSmoke);
-        if (Math.random() < 0.38) this.emitBudgeted(fire, tx, ty, 1);
-        if (Math.random() < 0.28) this.emitBudgeted(smoke, tx, ty, 1);
+        if (Math.random() < 0.38) this.emitBudgeted("fire", fire, tx, ty, 1);
+        if (Math.random() < 0.28) this.emitBudgeted("smoke", smoke, tx, ty, 1);
       } else {
         const { fire, smoke } = this.pairFx(z, y, this.burn, this.lingerSmoke);
-        if (Math.random() < 0.55) this.emitBudgeted(fire, tx, ty, 1);
-        if (Math.random() < 0.42) this.emitBudgeted(smoke, tx, ty, 1);
+        if (Math.random() < 0.55) this.emitBudgeted("fire", fire, tx, ty, 1);
+        if (Math.random() < 0.42) this.emitBudgeted("smoke", smoke, tx, ty, 1);
       }
     });
   }
@@ -3562,15 +4893,16 @@ export class MissionScene extends Phaser.Scene {
     dy: number,
     dz: number,
     objectHit: boolean,
-    kind: ShotKind
+    kind: ShotKind,
+    impactFxScale: number
   ): void {
     const water = isWater(this.world, x, y);
     const he = kind !== "cannon";
-    const fx = hitSparkFx(dmg);
+    const fx = hitSimParticleFx(dmg);
     const travel = Math.hypot(dx, dy, dz) || 1;
-    const sparkBx = dx;
-    const sparkBy = dy;
-    const sparkBz = he ? dz : Math.max(22, dz);
+    const simParticleBx = dx;
+    const simParticleBy = dy;
+    const simParticleBz = he ? dz : Math.max(22, dz);
     const missileBias = he ? 2.4 : undefined;
     const mechGunBias = !he && objectHit && !(direct && isOrganic(direct.kind)) ? 2.1 : undefined;
     const expBias = missileBias ?? mechGunBias;
@@ -3581,80 +4913,96 @@ export class MissionScene extends Phaser.Scene {
       const graze = Phaser.Math.Clamp(Math.hypot(dx, dy) / travel, 0, 1);
       const distN = Phaser.Math.Clamp(Math.hypot(x - this.heli.x, y - this.heli.y) / 780, 0, 1);
       const acute = Math.max(graze, distN);
-      this.spawnSparks(x, y, z + 3, {
-        style: "ground",
+      this.spawnDirtParticles(x, y, z + 3, {
         n: 22,
         spdMin: Phaser.Math.Linear(36, 200, acute * acute),
         spdMax: Phaser.Math.Linear(200, 520, acute * acute),
-        bx: sparkBx,
-        by: sparkBy,
+        bx: simParticleBx,
+        by: simParticleBy,
         bz: Phaser.Math.Linear(110, 40, acute),
         tight: Phaser.Math.Linear(0.28, 0.72, acute),
-        sparkFrac: 0,
-        forceKind: "dirt",
         blood: true,
       });
     }
     if (objectHit) {
       // Troops: blood only. Motorcycle: blood + mech sparks. Everything else: mech sparks.
       if (!softBloodHit || !isOrganic(direct!.kind)) {
-        this.spawnSparks(x, y, z + 4, {
-          style: "object",
-          n: Math.min(56, Math.round((he ? 36 : 18) * fx.n)),
+        this.emitVisualBurst(x, y, z + 4, {
+          n: scaledProjectileFxCount(
+            Math.min(56, Math.round((he ? 36 : 18) * fx.n)),
+            impactFxScale
+          ),
           spdMin: (he ? 110 : 90) * fx.spd,
           spdMax: (he ? 480 : 340) * fx.spd,
-          bx: sparkBx,
-          by: sparkBy,
-          bz: sparkBz,
+          bx: simParticleBx,
+          by: simParticleBy,
+          bz: simParticleBz,
           tight: he ? 0.28 : 0.52,
           scaleMul: fx.size,
           expBias,
-        });
+          gravity: 180,
+        }, this.shortBurst);
       }
     } else if (water) {
-      this.spawnSparks(x, y, z + 3, {
-        style: "water",
+      this.emitVisualBurst(x, y, z + 3, {
         n: Math.min(80, Math.round(20 * fx.n)),
         spdMin: 50 * fx.spd,
         spdMax: 220 * fx.spd,
-        bx: sparkBx,
-        by: sparkBy,
-        bz: he ? Math.max(sparkBz, 20) : Math.max(40, dz),
+        bx: simParticleBx,
+        by: simParticleBy,
+        bz: he ? Math.max(simParticleBz, 20) : Math.max(40, dz),
         tight: 0.48,
         scaleMul: fx.size,
         expBias: missileBias,
-      });
+        gravity: 240,
+      }, this.splashBurst);
     } else {
       const graze = Phaser.Math.Clamp(Math.hypot(dx, dy) / travel, 0, 1);
       const distN = Phaser.Math.Clamp(Math.hypot(x - this.heli.x, y - this.heli.y) / 780, 0, 1);
       const acute = Math.max(graze, distN);
       if (he) {
-        this.spawnSparks(x, y, z + 3, {
-          style: "ground",
-          n: Math.min(96, Math.round(62 * fx.n)),
+        const total = Math.min(96, Math.round(62 * fx.n));
+        const baseSparkN = Math.max(1, Math.round(total * 0.02));
+        const sparkN = scaledProjectileFxCount(baseSparkN, impactFxScale);
+        this.spawnDirtParticles(x, y, z + 3, {
+          n: Math.max(0, total - baseSparkN),
           spdMin: Phaser.Math.Linear(50, 160, acute) * fx.spd,
           spdMax: Phaser.Math.Linear(220, 420, acute) * fx.spd,
-          bx: sparkBx,
-          by: sparkBy,
-          bz: sparkBz,
+          bx: simParticleBx,
+          by: simParticleBy,
+          bz: simParticleBz,
           tight: 0.22,
-          sparkFrac: 0.02,
           scaleMul: fx.size,
           expBias: missileBias,
         });
+        this.emitVisualBurst(x, y, z + 3, {
+          n: sparkN,
+          spdMin: Phaser.Math.Linear(50, 160, acute) * fx.spd,
+          spdMax: Phaser.Math.Linear(220, 420, acute) * fx.spd,
+          bx: simParticleBx, by: simParticleBy, bz: simParticleBz,
+          tight: 0.22, scaleMul: fx.size * 0.42, expBias: missileBias, gravity: 180,
+        }, this.shortBurst);
       } else {
-        this.spawnSparks(x, y, z + 3, {
-          style: "ground",
-          n: Math.min(80, Math.round(26 * fx.n)),
+        const total = Math.min(80, Math.round(26 * fx.n));
+        const baseSparkN = Math.max(1, Math.round(total * 0.04));
+        const sparkN = scaledProjectileFxCount(baseSparkN, impactFxScale);
+        this.spawnDirtParticles(x, y, z + 3, {
+          n: Math.max(0, total - baseSparkN),
           spdMin: Phaser.Math.Linear(36, 200, acute * acute) * fx.spd,
           spdMax: Phaser.Math.Linear(200, 520, acute * acute) * fx.spd,
-          bx: sparkBx,
-          by: sparkBy,
+          bx: simParticleBx,
+          by: simParticleBy,
           bz: Phaser.Math.Linear(90, 22, acute),
           tight: Phaser.Math.Linear(0.28, 0.72, acute),
-          sparkFrac: 0.04,
           scaleMul: fx.size,
         });
+        this.emitVisualBurst(x, y, z + 3, {
+          n: sparkN,
+          spdMin: Phaser.Math.Linear(36, 200, acute * acute) * fx.spd,
+          spdMax: Phaser.Math.Linear(200, 520, acute * acute) * fx.spd,
+          bx: simParticleBx, by: simParticleBy, bz: Phaser.Math.Linear(90, 22, acute),
+          tight: Phaser.Math.Linear(0.28, 0.72, acute), scaleMul: fx.size * 0.42, gravity: 180,
+        }, this.shortBurst);
       }
     }
     const impactAt = worldToScreen(x, y, z);
@@ -3673,7 +5021,7 @@ export class MissionScene extends Phaser.Scene {
     }
     if (!water) {
       this.smoke.setDepth(worldDepth(z, 0.2, y));
-      this.smoke.emitParticleAt(impactX, impactY + 12, he ? 16 : objectHit ? 6 : 8);
+      this.emitBudgeted("smoke", this.smoke, impactX, impactY + 12, he ? 16 : objectHit ? 6 : 8);
     }
     this.shake = Math.min(8, this.shake + blast * (he ? 0.055 : 0.028));
     if (!he) this.spawnImpactFlash(impactX, impactY, z, 0xffc878, 34 * impactScale, 0.85, 160);
@@ -3776,8 +5124,7 @@ export class MissionScene extends Phaser.Scene {
     const spdBoost = Phaser.Math.Linear(0.95, 1.35, t);
     const biasLen = Math.hypot(dx, dy, dz);
     const expK = soft ? undefined : biasLen > 40 ? Phaser.Math.Linear(1.85, 2.7, t) : 1.5;
-    this.spawnSparks(x, y, z + 10, {
-      style: "object",
+    this.emitVisualBurst(x, y, z + 10, {
       n: Math.max(4, Math.round(22 * mul)),
       spdMin: 140 * spdBoost,
       spdMax: 480 * spdBoost,
@@ -3785,10 +5132,9 @@ export class MissionScene extends Phaser.Scene {
       by: dy,
       bz: dz,
       tight: Phaser.Math.Linear(0.48, 0.72, t),
-      forceKind: "flame",
       scaleMul: (soft ? 0.42 : 1) * Phaser.Math.Linear(0.4, 1.35, size01),
       expBias: expK,
-    });
+    }, this.explosionPuff, "fire");
     this.blastFire.setDepth(worldDepth(z, ZOff.fire + 1, y));
     // Aim a cone along impact; stronger kills tighten.
     const horiz = Math.hypot(dx, dy);
@@ -3801,7 +5147,7 @@ export class MissionScene extends Phaser.Scene {
       this.blastFire.particleAngle = { min: 0, max: 360 };
       this.blastFire.speed = { min: 180, max: 480 };
     }
-    this.blastFire.explode(Math.max(3, Math.round(26 * mul)), blastX, blastY);
+    this.emitBudgeted("fire", this.blastFire, blastX, blastY, Math.max(3, Math.round(26 * mul)));
     this.spawnImpactFlash(
       blastX,
       blastY,
@@ -3870,22 +5216,6 @@ export class MissionScene extends Phaser.Scene {
     size01 = 0.7,
     power = 1
   ): void {
-    const extra = this.frags.filter((f) => f.trailOnly).length + 8 - 40;
-    if (extra > 0) {
-      let drop = extra;
-      let w = 0;
-      const frags = this.frags;
-      for (let i = 0; i < frags.length; i++) {
-        const f = frags[i]!;
-        // Never cull crash hulls — simmer drives the player death end screen.
-        if (f.heliCrash || f.playerCrash || !f.trailOnly || drop <= 0) {
-          frags[w++] = f;
-          continue;
-        }
-        drop--;
-      }
-      frags.length = w;
-    }
     const p = Phaser.Math.Clamp(power, 0.5, 2.4);
     const t = Math.min(1, (p - 0.5) / 1.9);
     const n =
@@ -3897,7 +5227,7 @@ export class MissionScene extends Phaser.Scene {
       const d = biasedDir(dx, dy, dz, tight, reverse);
       const sp = range(70, 250) * spdMul;
       const jit = soft ? 0.55 : 0.3;
-      this.frags.push({
+      this.admitDebris({
         x,
         y,
         z: z + range(6, 18),
@@ -3907,11 +5237,12 @@ export class MissionScene extends Phaser.Scene {
         angle: 0,
         spin: 0,
         life: range(1.6, 3),
-        key: "fx_frag_metal",
+        key: "fx_debris_metal",
         settled: false,
         gravity: true,
         bounces: Math.random() < 0.4 ? 1 : 0,
         trailOnly: true,
+        debrisClass: "ephemeral",
         linger: true,
         // Soft (troop) blast trails share the same mid flame size as organic debris trails.
         trailR: soft
@@ -4027,7 +5358,7 @@ export class MissionScene extends Phaser.Scene {
       if (building) this.emitDustShock(u.x, u.y, 1);
       const smokeAt = worldToScreen(u.x, u.y, u.z);
       this.smoke.setDepth(worldDepth(u.z, 0.2, u.y));
-      this.smoke.emitParticleAt(smokeAt.x, smokeAt.y + 12, 16);
+      this.emitBudgeted("smoke", this.smoke, smokeAt.x, smokeAt.y + 12, 16);
       this.shake = Math.min(10, this.shake + 3);
       // Buildings/vehicles: weak splash at ~3× body radius (FX blast can be larger).
       if (!skipSplash && !sp.organic) {
@@ -4049,13 +5380,13 @@ export class MissionScene extends Phaser.Scene {
         }
       }
       const n = Math.max(2, Math.round((sp.organic ? 4 : building ? 16 : 10) * Phaser.Math.Linear(0.4, 1.2, boom)));
-      const keys = fragKeys(u.kind);
+      const keys = debrisKeys(u.kind);
       const debrisSpdMul = burst ? Phaser.Math.Linear(0.98, 1.35, Math.min(1, (burst.power - 0.5) / 1.9)) : 1;
       const debrisTight = burst ? Phaser.Math.Linear(0.48, 0.72, Math.min(1, (burst.power - 0.5) / 1.9)) : 0;
       for (let i = 0; i < n; i++) {
         const key = this.textures.exists(keys[i % keys.length]!)
           ? keys[i % keys.length]!
-          : "fx_frag_metal";
+          : "fx_debris_metal";
         const organic = !!sp.organic;
         // HV buildings were throwing outsized chunks; keep mid/vehicle debris as-is.
         const maxSc = u.hv && !organic ? 1.18 : 1.5;
@@ -4080,8 +5411,8 @@ export class MissionScene extends Phaser.Scene {
           vy = Math.sin(angle) * spd;
           vz = range(170, 330);
         }
-        // Organic debris sprite scale stays varied; flame size is a fixed mid band (see emitFragTrail).
-        this.frags.push({
+        // Organic debris sprite scale stays varied; flame size is a fixed mid band (see emitDebrisTrail).
+        this.admitDebris({
           x: u.x,
           y: u.y,
           z: u.z + range(8, 22),
@@ -4148,10 +5479,10 @@ export class MissionScene extends Phaser.Scene {
           hp.y,
           hs.sy
         );
-        const throwOff = (key: string, ang: number, x: number, y: number, scale = 1, extra: Partial<Frag> = {}) => {
+        const throwOff = (key: string, ang: number, x: number, y: number, scale = 1, extra: Partial<Debris> = {}) => {
           const a = Math.random() * Math.PI * 2;
           const throwSp = range(90, 200);
-          this.frags.push({
+          this.admitDebris({
             x,
             y,
             z: u.z + 18,
@@ -4167,6 +5498,7 @@ export class MissionScene extends Phaser.Scene {
             bounces: Math.random() < 1 / 3 ? 2 + ((Math.random() * 2) | 0) : 0,
             trailR: this.texTrailR(key) * scale,
             scale,
+            debrisClass: "critical",
             ...extra,
           });
         };
@@ -4191,32 +5523,27 @@ export class MissionScene extends Phaser.Scene {
             const rk = this.textures.exists(r.hulk ?? "") ? r.hulk! : r.tex;
             const at = this.mountAt(u, resolveSkin(this.textures, textureOf(u.kind), u.camo), r.mount);
             const scale = this.rotorHulkScale(r.tex, rk, r.scale ?? 1);
-      const bladeOffs = Math.random() < 0.55 ? [0.36, -0.4] : [0.4];
-      const rotorSpan = this.texSpan(rk) * scale * 0.42;
-      const heliRotor = r.tex.includes("rotor") && r.tex !== "enemy_drone_rotor";
-      if (heliRotor) {
-        const nBlades = 1 + ((Math.random() * 3) | 0);
-        const offs = Array.from({ length: nBlades }, () => {
-          const mag = range(0.28, 0.5);
-          return Math.random() < 0.5 ? -mag : mag;
-        });
-        this.throwRotorHulk({
-          key: rk,
-          x: at.x,
-          y: at.y,
-          z: u.z + 18,
-          rotorAng: ri % 2 ? -u.rotor : u.rotor,
-          scale,
-          bladeOffs: offs,
-          rotorSpan,
-        });
-      } else {
-        throwOff(rk, ri % 2 ? -u.rotor : u.rotor, at.x, at.y, scale, {
-          rotorFlames: true,
-          bladeOffs,
-          rotorSpan,
-        });
-      }
+            const flamePts = this.sampleSolidLocalPoints(
+              rk,
+              radius(u.kind) / Math.max(scale, 0.01),
+              2 + ((Math.random() * 3) | 0)
+            );
+            const heliRotor = r.tex.includes("rotor") && r.tex !== "enemy_drone_rotor";
+            if (heliRotor) {
+              this.throwRotorHulk({
+                key: rk,
+                x: at.x,
+                y: at.y,
+                z: u.z + 18,
+                rotorAng: ri % 2 ? -u.rotor : u.rotor,
+                scale,
+                flamePts,
+              });
+            } else {
+              throwOff(rk, ri % 2 ? -u.rotor : u.rotor, at.x, at.y, scale, {
+                flamePts,
+              });
+            }
           });
         }
         if (throwDish && sp.dish) {
@@ -4299,7 +5626,7 @@ export class MissionScene extends Phaser.Scene {
   spawnWheelDebris(u: Unit): void {
     const maxW = specOf(u.kind).wheels;
     if (!maxW) return;
-    const keys = wheelFragKeys().filter((k) => this.textures.exists(k));
+    const keys = wheelDebrisKeys().filter((k) => this.textures.exists(k));
     if (!keys.length) return;
     const n = Math.min(maxW, 1 + ((Math.random() * 2) | 0));
     const sc =
@@ -4308,7 +5635,7 @@ export class MissionScene extends Phaser.Scene {
       const a = Math.random() * Math.PI * 2;
       const throwSp = range(120, 260);
       const key = keys[(Math.random() * keys.length) | 0]!;
-      this.frags.push({
+      this.admitDebris({
         x: u.x + range(-10, 10),
         y: u.y + range(-10, 10),
         z: u.z + range(14, 32),
@@ -4344,14 +5671,110 @@ export class MissionScene extends Phaser.Scene {
     return v;
   }
 
+  textureAlphaBounds(key: string): TextureAlphaBounds | null {
+    if (this.textureAlphaCache.has(key)) return this.textureAlphaCache.get(key) ?? null;
+    if (!this.textures.exists(key)) {
+      this.textureAlphaCache.set(key, null);
+      return null;
+    }
+    try {
+      const src = this.textures.get(key).getSourceImage() as CanvasImageSource & {
+        width: number;
+        height: number;
+      };
+      const width = Math.max(1, src.width);
+      const height = Math.max(1, src.height);
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(src, 0, 0);
+      const rgba = ctx.getImageData(0, 0, width, height).data;
+      const alpha = new Uint8ClampedArray(width * height);
+      let minX = width;
+      let minY = height;
+      let maxX = -1;
+      let maxY = -1;
+      for (let i = 0; i < alpha.length; i++) {
+        const a = rgba[i * 4 + 3]!;
+        alpha[i] = a;
+        if (a < 48) continue;
+        const x = i % width;
+        const y = (i / width) | 0;
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+      const result =
+        maxX >= minX
+          ? { width, height, alpha, minX, minY, maxX, maxY }
+          : null;
+      this.textureAlphaCache.set(key, result);
+      return result;
+    } catch {
+      this.textureAlphaCache.set(key, null);
+      return null;
+    }
+  }
+
+  solidAtUv(key: string, u: number, v: number): boolean {
+    const tex = this.textureAlphaBounds(key);
+    if (!tex) return false;
+    const x = Phaser.Math.Clamp(Math.floor(u * tex.width), 0, tex.width - 1);
+    const y = Phaser.Math.Clamp(Math.floor(v * tex.height), 0, tex.height - 1);
+    return tex.alpha[y * tex.width + x]! >= 48;
+  }
+
+  /** Bounded random solid-pixel pick, with an object-radius fallback around the pivot. */
+  sampleSolidUv(key: string, fallbackRadius: number, attempts = 24): { u: number; v: number } {
+    const tex = this.textureAlphaBounds(key);
+    if (tex) {
+      for (let i = 0; i < attempts; i++) {
+        const x = tex.minX + ((Math.random() * (tex.maxX - tex.minX + 1)) | 0);
+        const y = tex.minY + ((Math.random() * (tex.maxY - tex.minY + 1)) | 0);
+        if (tex.alpha[y * tex.width + x]! >= 48) {
+          return { u: (x + 0.5) / tex.width, v: (y + 0.5) / tex.height };
+        }
+      }
+    }
+    const width = tex?.width ?? Math.max(1, this.texSpan(key));
+    const height = tex?.height ?? Math.max(1, this.texSpan(key));
+    const pivot = spritePivot(key);
+    const ang = Math.random() * Math.PI * 2;
+    const dist = Math.sqrt(Math.random()) * Math.max(1, fallbackRadius);
+    return {
+      u: Phaser.Math.Clamp(pivot.x + (Math.cos(ang) * dist) / width, 0, 1),
+      v: Phaser.Math.Clamp(pivot.y + (Math.sin(ang) * dist) / height, 0, 1),
+    };
+  }
+
+  sampleSolidLocalPoints(
+    key: string,
+    fallbackRadius: number,
+    count: number
+  ): { lx: number; ly: number; sc: number }[] {
+    const tex = this.textureAlphaBounds(key);
+    const width = tex?.width ?? Math.max(1, this.texSpan(key));
+    const height = tex?.height ?? Math.max(1, this.texSpan(key));
+    const pivot = spritePivot(key);
+    return Array.from({ length: count }, (_, i) => {
+      const uv = this.sampleSolidUv(key, fallbackRadius);
+      return {
+        lx: (uv.u - pivot.x) * width,
+        ly: (uv.v - pivot.y) * height,
+        sc: i === 0 ? 1 : range(0.42, 0.62),
+      };
+    });
+  }
+
   /** On-screen rotor span (pre-zScale), matching syncHeli / syncUnitSprites. */
   liveRotorDrawPx(tex: string, partScale = 1): number {
-    if (tex === "heli_rotor") return 124 * 1.08 * partScale;
-    if (tex.includes("rotor") && tex !== "enemy_drone_rotor") return 108 * partScale;
+    if (tex.includes("rotor") && tex !== "enemy_drone_rotor") return rotorDrawSpan(tex, partScale);
     return this.texSpan(tex) * partScale;
   }
 
-  /** Frag scale so a rotor hulk draws ~60% of the live rotor size. */
+  /** Debris scale so a rotor hulk draws ~60% of the live rotor size. */
   rotorHulkScale(liveTex: string, hulkKey: string, partScale = 1): number {
     return (this.liveRotorDrawPx(liveTex, partScale) * 0.6) / Math.max(this.texSpan(hulkKey), 1);
   }
@@ -4372,7 +5795,7 @@ export class MissionScene extends Phaser.Scene {
         const at = this.gunMountPos(u, gi);
         const a = Math.random() * Math.PI * 2;
         const throwSp = range(70, 160);
-        this.frags.push({
+        this.admitDebris({
           x: at.x,
           y: at.y,
           z: u.z + 14,
@@ -4388,6 +5811,7 @@ export class MissionScene extends Phaser.Scene {
           bounces: Math.random() < 1 / 3 ? 2 + ((Math.random() * 2) | 0) : 0,
           trailR: this.texTrailR(turretKey) * scale * 0.38,
           scale,
+          debrisClass: "critical",
         });
       });
     }
@@ -4395,7 +5819,7 @@ export class MissionScene extends Phaser.Scene {
     const sinkKey = `${baseKey}_sink`;
     const key = this.textures.exists(sinkKey) ? sinkKey : baseKey;
     const surface = waterSurfaceZ();
-    this.frags.push({
+    this.admitDebris({
       x: u.x,
       y: u.y,
       z: surface,
@@ -4414,6 +5838,7 @@ export class MissionScene extends Phaser.Scene {
       boatSink: true,
       sinkT: 0,
       sinkMax: range(5.2, 7.5),
+      debrisClass: "critical",
     });
   }
 
@@ -4427,7 +5852,7 @@ export class MissionScene extends Phaser.Scene {
     rotor: number;
     kind?: Unit["kind"];
     camo?: Unit["camo"];
-    dmgSites?: { poi: number; scale: number }[] | { u: number; v: number; scale: number }[];
+    dmgSites?: { u: number; v: number; scale: number }[];
     radius: number;
     player?: boolean;
     kickDx?: number;
@@ -4442,13 +5867,13 @@ export class MissionScene extends Phaser.Scene {
         : craft!.body
       : resolveSkin(this.textures, sp!.hulk, opts.camo);
     const hullAng = opts.angle + (craft?.rotOff ?? Math.PI / 2);
-    const dmgFlames = this.crashDmgFlames(opts.dmgSites, player, opts.kind);
+    const dmgFlames = this.crashDmgFlames(opts.dmgSites, hullKey, opts.radius);
     const spinSign = Math.random() < 0.5 ? -1 : 1;
     const kn = Math.hypot(opts.kickDx ?? 0, opts.kickDy ?? 0);
     const boost = range(110, 170);
     const kx = kn > 1 ? ((opts.kickDx ?? 0) / kn) * boost : 0;
     const ky = kn > 1 ? ((opts.kickDy ?? 0) / kn) * boost : 0;
-    const hull: Frag = {
+    const hull: Debris = {
       x: opts.x,
       y: opts.y,
       z: opts.z,
@@ -4467,22 +5892,21 @@ export class MissionScene extends Phaser.Scene {
       scale: 1,
       heliCrash: true,
       playerCrash: player,
+      debrisClass: "critical",
       impactDust: Phaser.Math.Clamp(opts.radius / 48, 0.32, 0.72),
       dmgFlames,
       simmer: 0,
     };
-    this.frags.push(hull);
+    this.admitDebris(hull);
 
     const rotors = player
       ? craft!.rotor
-        ? [
-            {
-              tex: craft!.rotor,
+        ? craftRotorMounts(craft!).map((mount) => ({
+              tex: craft!.rotor!,
               hulk: craft!.rotorHulk ?? `${craft!.rotor}_hulk`,
-              mount: { x: craftOrigin(craft!).x, y: craftOrigin(craft!).y },
-              scale: 1,
-            },
-          ]
+              mount,
+              scale: (craft!.rotorScale ?? 1) * (mount.scale ?? 1),
+            }))
         : []
       : (sp?.rotors ?? []).map((r) => ({
           tex: r.tex,
@@ -4495,7 +5919,15 @@ export class MissionScene extends Phaser.Scene {
       const rk = this.textures.exists(r.hulk) ? r.hulk : r.tex;
       let x = opts.x;
       let y = opts.y;
-      if (!player && opts.kind) {
+      if (player && craft) {
+        const pivot = craftOrigin(craft);
+        const source = this.textures.get(craft.body).getSourceImage() as { width: number; height: number };
+        const hullRot = opts.angle + craft.rotOff;
+        const mx = (r.mount.x - pivot.x) * source.width;
+        const my = (r.mount.y - pivot.y) * source.height;
+        x += mx * Math.cos(hullRot) - my * Math.sin(hullRot);
+        y += mx * Math.sin(hullRot) + my * Math.cos(hullRot);
+      } else if (opts.kind) {
         const at = this.mountAt(
           {
             id: 0,
@@ -4527,18 +5959,17 @@ export class MissionScene extends Phaser.Scene {
         y = at.y;
       }
       const scale = this.rotorHulkScale(r.tex, rk, r.scale);
-      const nBlades = 1 + ((Math.random() * 3) | 0);
-      const bladeOffs = Array.from({ length: nBlades }, () => {
-        const mag = range(0.28, 0.5);
-        return Math.random() < 0.5 ? -mag : mag;
-      });
-      const rotorSpan = this.texSpan(rk) * scale * 0.42;
+      const flamePts = this.sampleSolidLocalPoints(
+        rk,
+        opts.radius / Math.max(scale, 0.01),
+        2 + ((Math.random() * 3) | 0)
+      );
       const rotorAng = ri % 2 ? -opts.rotor : opts.rotor;
       // Drones: all rotors always fly off — never pin to the falling hull.
       const pin = opts.kind !== "drone" && Math.random() < 0.4;
       if (pin) {
         const spinSign = rotorAng >= 0 ? 1 : -1;
-        this.frags.push({
+        this.admitDebris({
           x,
           y,
           z: opts.z + 6,
@@ -4554,13 +5985,12 @@ export class MissionScene extends Phaser.Scene {
           bounces: 0,
           trailR: this.texTrailR(rk) * 0.35,
           scale,
-          rotorFlames: true,
-          bladeOffs,
-          rotorSpan,
+          flamePts,
           pinHost: hull,
           pinMount: { ...r.mount },
           rotorSkew: true,
           skewAng: range(-0.4, 0.4) + (Math.random() < 0.5 ? 0 : Math.PI / 2),
+          debrisClass: "critical",
         });
       } else {
         this.throwRotorHulk({
@@ -4570,8 +6000,7 @@ export class MissionScene extends Phaser.Scene {
           z: opts.z + 8,
           rotorAng,
           scale,
-          bladeOffs,
-          rotorSpan,
+          flamePts,
         });
       }
     });
@@ -4584,13 +6013,12 @@ export class MissionScene extends Phaser.Scene {
     z: number;
     rotorAng: number;
     scale: number;
-    bladeOffs: number[];
-    rotorSpan: number;
+    flamePts: { lx: number; ly: number; sc: number }[];
   }): void {
     const a = Math.random() * Math.PI * 2;
     const throwSp = range(240, 420);
     const spinSign = opts.rotorAng >= 0 ? 1 : -1;
-    this.frags.push({
+    this.admitDebris({
       x: opts.x,
       y: opts.y,
       z: opts.z,
@@ -4606,89 +6034,48 @@ export class MissionScene extends Phaser.Scene {
       bounces: 0,
       trailR: this.texTrailR(opts.key) * 0.35,
       scale: opts.scale,
-      rotorFlames: true,
       rotorThrow: true,
       rotorSkew: true,
       skewAng: range(-0.5, 0.5) + (Math.random() < 0.5 ? 0 : Math.PI / 2),
-      bladeOffs: opts.bladeOffs,
-      rotorSpan: opts.rotorSpan,
+      flamePts: opts.flamePts,
+      debrisClass: "critical",
     });
   }
 
-  /** UV interest points for damage: body center, each gun mount, each rotor mount. */
-  unitDmgPoiUvs(kind: Unit["kind"], parts?: Unit["parts"]): { u: number; v: number }[] {
-    const pois: { u: number; v: number }[] = [{ u: 0.5, v: 0.5 }];
-    for (const g of gunsOf({ kind, parts })) {
-      const m = g.mount;
-      pois.push({ u: m.x, v: m.y });
-    }
-    for (const r of specOf(kind).rotors) {
-      pois.push({ u: r.mount.x, v: r.mount.y });
-    }
-    return pois;
-  }
-
-  /** Screen-space interest points matching unitDmgPoiUvs order. */
-  unitDmgPois(u: Unit): { x: number; y: number }[] {
-    const center = worldToScreen(u.x, u.y, u.z);
-    const pois: { x: number; y: number }[] = [{ x: center.x, y: center.y }];
-    const guns = gunsOf(u);
-    for (let i = 0; i < guns.length; i++) {
-      const at = this.gunMountPos(u, i);
-      const scr = worldToScreen(at.x, at.y, u.z);
-      pois.push({ x: scr.x, y: scr.y });
-    }
-    const tex = resolveSkin(this.textures, textureOf(u.kind), u.camo);
-    for (const r of specOf(u.kind).rotors) {
-      const at = this.mountAt(u, tex, r.mount);
-      const scr = worldToScreen(at.x, at.y, u.z);
-      pois.push({ x: scr.x, y: scr.y });
-    }
-    return pois;
-  }
-
-  /** Craft dmg POIs as u/v (crash / HUD). */
-  craftDmgPoiUvs(): { u: number; v: number }[] {
-    return craftDmgPois(this.heli.spec).map((p) => ({ u: p.x, v: p.y }));
-  }
-
-  playerDmgPois(): { x: number; y: number }[] {
-    return craftDmgPois(this.heli.spec).map((p) => spriteUvPos(this.body, p.x, p.y));
-  }
-
   crashDmgFlames(
-    sites: { poi: number; scale: number }[] | { u: number; v: number; scale: number }[] | undefined,
-    player: boolean,
-    kind?: Unit["kind"]
+    sites: { u: number; v: number; scale: number }[] | undefined,
+    hulkKey: string,
+    fallbackRadius: number
   ): { u: number; v: number; scale: number }[] {
     if (!sites?.length) {
       const n = 1 + ((Math.random() * 2) | 0);
-      const pool = player ? this.craftDmgPoiUvs() : CRASH_DMG_UV;
       return Array.from({ length: n }, () => {
-        const uv = pool[(Math.random() * pool.length) | 0]!;
+        const uv = this.sampleSolidUv(hulkKey, fallbackRadius);
         return { u: uv.u, v: uv.v, scale: range(0.42, 0.8) };
       });
     }
-    const poiUvs = player
-      ? this.craftDmgPoiUvs()
-      : kind
-        ? this.unitDmgPoiUvs(kind)
-        : CRASH_DMG_UV;
     return sites.map((s) => {
-      if ("poi" in s) {
-        const uv = poiUvs[s.poi] ?? poiUvs[0] ?? { u: 0.5, v: 0.5 };
-        return { u: uv.u, v: uv.v, scale: s.scale };
-      }
-      return { u: s.u, v: s.v, scale: s.scale };
+      const uv = this.solidAtUv(hulkKey, s.u, s.v)
+        ? s
+        : this.sampleSolidUv(hulkKey, fallbackRadius);
+      return { u: uv.u, v: uv.v, scale: s.scale };
     });
   }
 
   beginPlayerCrash(): void {
     if (this.playerCrashStarted) return;
     this.playerCrashStarted = true;
+    this.showStinger(
+      "AIRCRAFT DOWN",
+      `${this.heli.spec.name} lost · impact site marked`,
+      0xff6a3a,
+      4.6,
+      { x: this.heli.x, y: this.heli.y }
+    );
     const h = this.heli;
     this.body.setVisible(false);
-    this.rotor.setVisible(false);
+    for (const rotor of this.rotors) rotor.setVisible(false);
+    for (const gun of this.guns) gun.setVisible(false);
     this.gun.setVisible(false);
     this.shadow.setVisible(false);
     const hz = h.z + h.height * 0.5;
@@ -4696,15 +6083,15 @@ export class MissionScene extends Phaser.Scene {
     this.heFireBurst(h.x, h.y, hz, 0, 0, 1, blast, false, 1, 0.55);
     const smokeAt = worldToScreen(h.x, h.y, h.z);
     this.smoke.setDepth(worldDepth(h.z, 0.2, h.y));
-    this.smoke.emitParticleAt(smokeAt.x, smokeAt.y + 12, 14);
+    this.emitBudgeted("smoke", this.smoke, smokeAt.x, smokeAt.y + 12, 14);
     this.shake = Math.min(10, this.shake + 4);
     const n = 8;
-    const keys = fragKeys("heli");
+    const keys = debrisKeys("heli");
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
       const spd = range(55, 220);
-      const key = this.textures.exists(keys[i % keys.length]!) ? keys[i % keys.length]! : "fx_frag_metal";
-      this.frags.push({
+      const key = this.textures.exists(keys[i % keys.length]!) ? keys[i % keys.length]! : "fx_debris_metal";
+      this.admitDebris({
         x: h.x,
         y: h.y,
         z: h.z + range(8, 22),
@@ -4730,7 +6117,7 @@ export class MissionScene extends Phaser.Scene {
       vy: h.vy,
       angle: h.angle,
       rotor: h.rotor,
-      radius: 28,
+      radius: h.spec.radius,
       player: true,
       dmgSites: h.dmgSites,
       kickDx: h.killDx,
@@ -4738,9 +6125,9 @@ export class MissionScene extends Phaser.Scene {
     });
   }
 
-  updateFrags(dt: number): void {
-    const keep: Frag[] = [];
-    for (const f of this.frags) {
+  updateDebris(dt: number): void {
+    const keep: Debris[] = [];
+    for (const f of this.debris) {
       if (f.trailOnly && !f.settled) f.life -= dt;
       if (f.settled) {
         if (f.heliCrash) {
@@ -4753,7 +6140,7 @@ export class MissionScene extends Phaser.Scene {
           continue;
         }
         // Boat hulks leave a wreck stamp only — never burn/smoke trails.
-        if (!f.boatSink) this.tickFragTrailFade(f, dt);
+        if (!f.boatSink) this.tickDebrisTrailFade(f, dt);
         if (!f.trailOnly || (f.trailFade ?? 0) > 0) keep.push(f);
         continue;
       }
@@ -4819,13 +6206,13 @@ export class MissionScene extends Phaser.Scene {
               const spd = Math.hypot(f.vx, f.vy, f.vz);
               if (f.bounces > 0 && spd > 35) {
                 f.bounces--;
-                this.bounceFragSlope(f, 0.45);
+                this.bounceDebrisSlope(f, 0.45);
                 f.vx *= 0.22;
                 f.vy *= 0.22;
                 f.vz = Math.abs(f.vz) * 0.28;
                 f.spin *= 0.4;
               } else {
-                this.settleFrag(f);
+                this.settleDebris(f);
               }
             }
           }
@@ -4834,7 +6221,7 @@ export class MissionScene extends Phaser.Scene {
           f.vx *= Math.pow(drag, dt);
           f.vy *= Math.pow(drag, dt);
           if (f.z > groundZ(this.world, f.x, f.y) + 2) {
-            this.emitFragTrail(f, 1);
+            this.emitDebrisTrail(f, 1);
           }
           const g = groundZ(this.world, f.x, f.y);
           if (f.z <= g) {
@@ -4842,16 +6229,16 @@ export class MissionScene extends Phaser.Scene {
             if (!f.linger) this.stampDirtSmears(f.x, f.y, f.vx, f.vy);
             if (f.heliCrash) {
               this.impactHeliCrash(f);
-              this.settleFrag(f);
+              this.settleDebris(f);
             } else if (f.rotorThrow) {
               f.spin *= 0.15;
               f.vx *= 0.2;
               f.vy *= 0.2;
-              this.settleFrag(f);
+              this.settleDebris(f);
             } else if (f.wheelRoll) {
               if (f.bounces > 0 && f.vz < -40) {
                 f.bounces--;
-                this.bounceFragSlope(f, 1);
+                this.bounceDebrisSlope(f, 1);
                 f.spin *= 0.65;
                 this.stampDirtSmears(f.x, f.y, f.vx, f.vy);
                 const bang = Math.hypot(f.vx, f.vy) > 8 ? Math.atan2(f.vy, f.vx) : f.angle;
@@ -4870,12 +6257,12 @@ export class MissionScene extends Phaser.Scene {
             ) {
               f.bounces--;
               // Same elevation bounce as wheels, weaker so flight path barely turns.
-              this.bounceFragSlope(f, 0.32);
+              this.bounceDebrisSlope(f, 0.32);
               f.spin *= range(0.78, 1.22);
               f.spin += range(-2.4, 2.4);
               f.angle += range(-0.28, 0.28);
             } else {
-              this.settleFrag(f);
+              this.settleDebris(f);
             }
           }
         }
@@ -4884,25 +6271,25 @@ export class MissionScene extends Phaser.Scene {
         f.vy *= Math.pow(0.08, dt);
         f.life -= dt;
         if (f.life <= 0 || Math.hypot(f.vx, f.vy) < 8) {
-          this.settleFrag(f);
+          this.settleDebris(f);
         }
       }
       if (!(f.trailOnly && f.life <= 0 && !f.settled)) keep.push(f);
     }
-    this.frags = keep;
+    this.debris = keep;
     if (this.perfEnabled) {
       const t = performance.now();
-      this.syncFragSprites();
+      this.syncDebrisSprites();
       this.perfCurrent![8] = performance.now() - t;
     } else {
-      this.syncFragSprites();
+      this.syncDebrisSprites();
     }
   }
 
-  tickPinnedRotor(f: Frag, dt: number): void {
+  tickPinnedRotor(f: Debris, dt: number): void {
     const host = f.pinHost!;
     const mount = f.pinMount ?? { x: 0.5, y: 0.5 };
-    const at = this.fragMountAt(host, mount);
+    const at = this.debrisMountAt(host, mount);
     f.x = at.x;
     f.y = at.y;
     f.z = host.z + 4;
@@ -4914,14 +6301,14 @@ export class MissionScene extends Phaser.Scene {
     const spinMag = Math.abs(f.spin);
     if (spinMag > 0.12 || !host.settled) {
       const dim = host.settled ? Phaser.Math.Clamp(spinMag / 8, 0.2, 1) : 1;
-      this.emitFragTrail(f, dim);
+      this.emitDebrisTrail(f, dim);
     }
     if (host.settled && spinMag < 0.1) {
-      this.settleFrag(f);
+      this.settleDebris(f);
     }
   }
 
-  fragMountAt(host: Frag, mount: { x: number; y: number }): { x: number; y: number } {
+  debrisMountAt(host: Debris, mount: { x: number; y: number }): { x: number; y: number } {
     const pivot = spritePivot(host.key);
     const src = this.textures.exists(host.key)
       ? (this.textures.get(host.key).getSourceImage() as { width: number; height: number })
@@ -4940,10 +6327,10 @@ export class MissionScene extends Phaser.Scene {
   }
 
   /**
-   * Reflect a frag off the height-map slope (same field as wheel roll / rivers).
+   * Reflect debris off the height-map slope (same field as wheel roll / rivers).
    * strength 1 = full wheel bounce; ~0.3 nudges trajectory without redirecting it.
    */
-  bounceFragSlope(f: Frag, strength: number): void {
+  bounceDebrisSlope(f: Debris, strength: number): void {
     const s = Phaser.Math.Clamp(strength, 0, 1);
     const sl = groundSlope(this.world, f.x, f.y);
     let nx = -sl.dx;
@@ -4982,7 +6369,7 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 
-  tickWheelRoll(f: Frag, dt: number): void {
+  tickWheelRoll(f: Debris, dt: number): void {
     const sl = groundSlope(this.world, f.x, f.y);
     const steep = Math.hypot(sl.dx, sl.dy);
     let ax = -sl.dx;
@@ -5012,8 +6399,8 @@ export class MissionScene extends Phaser.Scene {
     f.x += f.vx * dt;
     f.y += f.vy * dt;
     f.z = groundZ(this.world, f.x, f.y);
-    if (spd > 22) this.emitFragTrail(f, 1);
-    else if (spd > 10) this.emitFragTrail(f, 0.5);
+    if (spd > 22) this.emitDebrisTrail(f, 1);
+    else if (spd > 10) this.emitDebrisTrail(f, 0.5);
     if (!wet && spd > 4) {
       f.track = (f.track ?? 0) + spd * dt;
       const gap = range(5, 14);
@@ -5025,11 +6412,11 @@ export class MissionScene extends Phaser.Scene {
       }
     }
     if (wet || (spd < 6 && steep < 0.04)) {
-      this.settleFrag(f);
+      this.settleDebris(f);
     }
   }
 
-  tickBoatSink(f: Frag, dt: number): void {
+  tickBoatSink(f: Debris, dt: number): void {
     const max = Math.max(0.5, f.sinkMax ?? 6);
     f.sinkT = (f.sinkT ?? 0) + dt;
     const u = Phaser.Math.Clamp(f.sinkT / max, 0, 1);
@@ -5051,13 +6438,13 @@ export class MissionScene extends Phaser.Scene {
     if (u >= 1) this.settleBoatSink(f);
   }
 
-  settleBoatSink(f: Frag): void {
+  settleBoatSink(f: Debris): void {
     f.settled = true;
     f.vx = 0;
     f.vy = 0;
     f.vz = 0;
     if (!f.trailOnly) {
-      const o = this.fragStampOrigin(f.key);
+      const o = this.debrisStampOrigin(f.key);
       const hs = this.wreckDrawScale(f.x, f.y, f.z || 0, f.scale ?? 0.55);
       // Pre-baked blue sink art — no runtime tintFill.
       this.stampWreck(f.key, f.x, f.y, f.angle, hs.sx, 0.8, o.x, o.y, hs.sy);
@@ -5067,7 +6454,7 @@ export class MissionScene extends Phaser.Scene {
     f.life = 0;
   }
 
-  impactHeliCrash(f: Frag): void {
+  impactHeliCrash(f: Debris): void {
     const blast = 38 + (f.impactDust ?? 0.5) * 36;
     this.heFireBurst(f.x, f.y, f.z + 6, 0, 0, 1, blast, false, 1.15, 0.42);
     this.emitDustShock(f.x, f.y, f.impactDust ?? 0.5);
@@ -5086,7 +6473,7 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 
-  settleFrag(f: Frag): void {
+  settleDebris(f: Debris): void {
     if (f.linger) this.stampLightBlast(f.x, f.y, f.vx, f.vy);
     if (f.dishFlat) {
       this.emitDustShock(f.x, f.y, 0.95);
@@ -5097,7 +6484,7 @@ export class MissionScene extends Phaser.Scene {
     f.vy = 0;
     f.vz = 0;
     if (!f.trailOnly) {
-      const o = this.fragStampOrigin(f.key);
+      const o = this.debrisStampOrigin(f.key);
       const hs = this.wreckDrawScale(f.x, f.y, f.z || 0, f.scale ?? 1);
       let sx = hs.sx;
       let sy = hs.sy;
@@ -5111,12 +6498,12 @@ export class MissionScene extends Phaser.Scene {
       this.stampWreck(f.key, f.x, f.y, f.angle, sx, 0.92, o.x, o.y, sy);
       f.trailOnly = true;
     }
-    if (!f.heliCrash && !f.shellEject) this.beginFragTrailFade(f);
+    if (!f.heliCrash && !f.shellEject) this.beginDebrisTrailFade(f);
   }
 
-  beginFragTrailFade(f: Frag): void {
-    // Unclamped size (emitFragTrail still clamps draw scale). Mid (~1) keeps current fade.
-    const flameSc = this.fragTrailSize(f);
+  beginDebrisTrailFade(f: Debris): void {
+    // Unclamped size (emitDebrisTrail still clamps draw scale). Mid (~1) keeps current fade.
+    const flameSc = this.debrisTrailSize(f);
     const over = Math.max(0, flameSc - 1.05);
     const stretch = 1 + over * (f.linger ? 0.7 : 1.35);
     const base = f.linger ? range(2.2, 3.8) : range(0.55, 1.05);
@@ -5125,7 +6512,7 @@ export class MissionScene extends Phaser.Scene {
   }
 
   /** Unclamped trail size band used for fade duration and particle lifespan. */
-  fragTrailSize(f: Frag): number {
+  debrisTrailSize(f: Debris): number {
     const r = f.trailR;
     if (f.trailSoft) return r / 4.8;
     let size = (r * Math.min(f.scale ?? 1, 1)) / (f.linger ? 6 : 6.5);
@@ -5137,33 +6524,33 @@ export class MissionScene extends Phaser.Scene {
   }
 
   /** Particle life multiplier — mid (~1) unchanged; large debris leave a long tail. */
-  fragTrailLifeMul(size: number): number {
+  debrisTrailLifeMul(size: number): number {
     const over = Math.max(0, size - 1.05);
     // Linear near mid stays mild; quadratic stretches big radar-scale trails further.
     return 1 + over * 0.4 + over * over * 1.65;
   }
 
-  tickFragTrailFade(f: Frag, dt: number): void {
-    if (f.trailFade == null) this.beginFragTrailFade(f);
+  tickDebrisTrailFade(f: Debris, dt: number): void {
+    if (f.trailFade == null) this.beginDebrisTrailFade(f);
     if ((f.trailFade ?? 0) <= 0) return;
     f.trailFade! -= dt;
     const dim = Phaser.Math.Clamp(f.trailFade! / (f.trailFadeMax || 1), 0, 1);
-    if (dim > 0) this.emitFragTrail(f, dim * dim);
+    if (dim > 0) this.emitDebrisTrail(f, dim * dim);
   }
 
-  emitFragTrail(f: Frag, dim: number): void {
-    if (dim <= 0.02 || this.fxEmitBudget >= this.fxEmitCap) return;
+  emitDebrisTrail(f: Debris, dim: number): void {
+    if (dim <= 0.02) return;
     if (!cameraPointVisible(f.z, f.y)) return;
-    const fragScale = worldToScreen(f.x, f.y, f.z).scale;
+    const debrisScale = worldToScreen(f.x, f.y, f.z).scale;
     // Trails sit under the debris sprite (body ≈ 0); keep fire above smoke within the pair.
     const trailFire = -0.35;
     const trailSmoke = -1.15;
-    const lifeMul = this.fragTrailLifeMul(this.fragTrailSize(f));
+    const lifeMul = this.debrisTrailLifeMul(this.debrisTrailSize(f));
     if (f.flamePts?.length) {
       const ca = Math.cos(f.angle);
       const sa = Math.sin(f.angle);
-      const flatX = f.dishFlat ? 1.04 : 1;
-      const flatY = f.dishFlat ? 0.52 : 1;
+      const flatX = f.dishFlat ? 1.04 : f.rotorSkew ? 1.08 : 1;
+      const flatY = f.dishFlat ? 0.52 : f.rotorSkew ? 0.78 : 1;
       const { fire, smoke } = this.pairFx(f.z, f.y, this.flame, this.hurtSmoke, trailFire, trailSmoke);
       const prevLife = this.trailFxLife;
       this.trailFxLife = lifeMul;
@@ -5174,28 +6561,8 @@ export class MissionScene extends Phaser.Scene {
         const worldY = f.y + lx * sa + ly * ca;
         const at = worldToScreen(worldX, worldY, f.z);
         this.dmgFlameScale = p.sc * (f.scale ?? 1) * (f.dishFlat ? 0.85 : 1.15);
-        if (Math.random() < 0.8 * dim) this.emitBudgeted(fire, at.x, at.y, p.lx === 0 && p.ly === 0 ? 2 : 1);
-        if (Math.random() < 0.42 * dim) this.emitBudgeted(smoke, at.x, at.y, 1);
-      }
-      this.trailFxLife = prevLife;
-      return;
-    }
-    if (f.rotorFlames) {
-      const ca = Math.cos(f.angle);
-      const sa = Math.sin(f.angle);
-      const span = f.rotorSpan ?? 36;
-      const pts: { ox: number; sc: number }[] = [{ ox: 0, sc: 1 }];
-      for (const b of f.bladeOffs ?? [0.4]) pts.push({ ox: b * span, sc: 0.48 });
-      const { fire, smoke } = this.pairFx(f.z, f.y, this.flame, this.hurtSmoke, trailFire, trailSmoke);
-      const prevLife = this.trailFxLife;
-      this.trailFxLife = lifeMul;
-      for (const p of pts) {
-        const worldX = f.x + p.ox * ca;
-        const worldY = f.y + p.ox * sa;
-        const at = worldToScreen(worldX, worldY, f.z);
-        this.dmgFlameScale = p.sc * (f.scale ?? 1) * 0.9;
-        if (Math.random() < 0.78 * dim) this.emitBudgeted(fire, at.x, at.y, p.ox === 0 ? 2 : 1);
-        if (p.ox === 0 && Math.random() < 0.4 * dim) this.emitBudgeted(smoke, at.x, at.y, 1);
+        if (Math.random() < 0.8 * dim) this.emitBudgeted("fire", fire, at.x, at.y, p.lx === 0 && p.ly === 0 ? 2 : 1);
+        if (Math.random() < 0.42 * dim) this.emitBudgeted("smoke", smoke, at.x, at.y, 1);
       }
       this.trailFxLife = prevLife;
       return;
@@ -5220,9 +6587,9 @@ export class MissionScene extends Phaser.Scene {
     );
     const r = f.trailR;
     const fireProto = f.trailSoft ? this.ember : f.linger ? this.blastBurn : this.burn;
-    const puffProto = f.linger ? this.lingerSmoke : this.fragSmoke;
-    const rawSc = this.fragTrailSize(f);
-    // Soft trails: size from trailR only (ignore frag sprite scale) so debris + blast embers match.
+    const puffProto = f.linger ? this.lingerSmoke : this.shortTrailSmoke;
+    const rawSc = this.debrisTrailSize(f);
+    // Soft trails: size from trailR only (ignore debris sprite scale) so debris + blast embers match.
     const sc = f.trailSoft
       ? Phaser.Math.Clamp(rawSc, 1.4, 1.65)
       : Phaser.Math.Clamp(rawSc, 0.35, 2.75);
@@ -5230,28 +6597,28 @@ export class MissionScene extends Phaser.Scene {
     const smokeSc = f.trailSoft ? Phaser.Math.Clamp(sc * 0.28, 0.32, 0.48) : sc;
     const jit = Math.max(1.5, r * 0.12);
     const { fire, smoke: puff } = this.pairFx(f.z, f.y, fireProto, puffProto, trailFire, trailSmoke);
-    const p = jitterDisk(trailAt.x, trailAt.y, jit * fragScale);
+    const p = jitterDisk(trailAt.x, trailAt.y, jit * debrisScale);
     if (Math.random() < (f.trailOnly ? 0.85 : 0.7) * dim) {
-      this.withTrailFx(sc, () => this.emitBudgeted(fire, p.x, p.y, 1), lifeMul);
+      this.withTrailFx(sc, () => this.emitBudgeted("fire", fire, p.x, p.y, 1), lifeMul);
     }
     if (Math.random() < (f.trailOnly ? 0.65 : 0.5) * dim) {
-      this.withTrailFx(smokeSc, () => this.emitBudgeted(puff, p.x, p.y, 1), lifeMul);
+      this.withTrailFx(smokeSc, () => this.emitBudgeted("smoke", puff, p.x, p.y, 1), lifeMul);
     }
   }
 
   emitHeliCrashDmgFlames(): void {
-    for (const f of this.frags) {
+    for (const f of this.debris) {
       if (!f.heliCrash) continue;
       if (f.settled) {
         if ((f.simmer ?? 0) <= 0) continue;
-        this.emitFragDmgFlames(f, Phaser.Math.Clamp(f.simmer! / 3.2, 0, 1));
+        this.emitDebrisDmgFlames(f, Phaser.Math.Clamp(f.simmer! / 3.2, 0, 1));
       } else {
-        this.emitFragDmgFlames(f, 1);
+        this.emitDebrisDmgFlames(f, 1);
       }
     }
   }
 
-  emitFragDmgFlames(f: Frag, dim: number): void {
+  emitDebrisDmgFlames(f: Debris, dim: number): void {
     if (!f.dmgFlames?.length || dim <= 0.02) return;
     const pivot = spritePivot(f.key);
     const src = this.textures.exists(f.key)
@@ -5275,8 +6642,8 @@ export class MissionScene extends Phaser.Scene {
     for (const s of f.dmgFlames) {
       const p = spriteUvPos(spr, s.u, s.v);
       this.dmgFlameScale = s.scale * dim * airMul;
-      if (Math.random() < 0.72 * dim) this.emitBudgeted(fire, p.x, p.y, 2);
-      if (Math.random() < 0.35 * dim) this.emitBudgeted(smoke, p.x, p.y, 1);
+      if (Math.random() < 0.72 * dim) this.emitBudgeted("fire", fire, p.x, p.y, 2);
+      if (Math.random() < 0.35 * dim) this.emitBudgeted("smoke", smoke, p.x, p.y, 1);
     }
   }
 
@@ -5291,8 +6658,15 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 
+  registerFx(kind: FxClass, ...emitters: Phaser.GameObjects.Particles.ParticleEmitter[]): void {
+    for (const emitter of emitters) this.fxPolicies[kind].emitters.add(emitter);
+  }
+
   /** Clone an emitter across painter-depth bands so concurrent trails don't thrash one depth. */
-  poolFx(make: () => Phaser.GameObjects.Particles.ParticleEmitter): Phaser.GameObjects.Particles.ParticleEmitter {
+  poolFx(
+    kind: FxClass,
+    make: () => Phaser.GameObjects.Particles.ParticleEmitter
+  ): Phaser.GameObjects.Particles.ParticleEmitter {
     const slots: Phaser.GameObjects.Particles.ParticleEmitter[] = [];
     for (let i = 0; i < this.fxSlotN; i++) {
       const em = make();
@@ -5300,6 +6674,7 @@ export class MissionScene extends Phaser.Scene {
       slots.push(em);
     }
     this.fxSlots.set(slots[0]!, slots);
+    this.registerFx(kind, ...slots);
     return slots[0]!;
   }
 
@@ -5362,17 +6737,27 @@ export class MissionScene extends Phaser.Scene {
     return { fire, smoke };
   }
 
-  /** Emit up to remaining per-frame particle budget. */
+  fxAlive(kind: FxClass): number {
+    let alive = 0;
+    for (const emitter of this.fxPolicies[kind].emitters) alive += emitter.getAliveParticleCount();
+    return alive;
+  }
+
+  /** Emit under independent semantic per-frame and global-active policies. */
   emitBudgeted(
+    kind: FxClass,
     em: Phaser.GameObjects.Particles.ParticleEmitter,
     x: number,
     y: number,
     n: number
-  ): void {
-    if (n <= 0 || this.fxEmitBudget >= this.fxEmitCap) return;
-    const take = Math.min(n, this.fxEmitCap - this.fxEmitBudget);
-    this.fxEmitBudget += take;
+  ): number {
+    const policy = this.fxPolicies[kind];
+    if (n <= 0 || policy.emitted >= policy.frameCap) return 0;
+    const take = Math.min(n, policy.frameCap - policy.emitted, policy.activeCap - this.fxAlive(kind));
+    if (take <= 0) return 0;
+    policy.emitted += take;
     em.emitParticleAt(x, y, take);
+    return take;
   }
 
   withTrailFx(scale: number, fn: () => void, lifeMul = 1): void {
@@ -5421,7 +6806,7 @@ export class MissionScene extends Phaser.Scene {
       }
       u.aiTx = h.x;
       u.aiTy = h.y;
-      if (dist < 26) {
+      if (dist < this.heli.spec.radius) {
         this.heli.damage(38, u.vx, u.vy);
         // Kamikaze: explode in place — no falling crash hull.
         this.destroyUnit(u, false, false, true);
@@ -6236,6 +7621,7 @@ export class MissionScene extends Phaser.Scene {
       const facingOk = Math.abs(Phaser.Math.Angle.Wrap(gunAim - barrelAng)) < 0.16;
       if (wpn && u.fireCd <= 0 && !soldierFlee && !scoutFlee && facingOk && (inRange || continueBurst)) {
         const burstN = wpn.burst ?? 0;
+        const fxInterval = burstN > 0 ? (wpn.burstGap ?? 0.075) : wpn.fireCd;
         if (burstN) {
           if (!u.burstLeft) u.burstLeft = burstN;
           u.burstLeft--;
@@ -6246,13 +7632,17 @@ export class MissionScene extends Phaser.Scene {
         const jitter = (Math.random() - 0.5) * (wpn.jitter ?? 0);
         const tipCount =
           guns[gunI]?.muzzles?.length || lookupSpriteMuzzles(textureOf(u.kind)).length || 1;
-        const tipI = u.muzzleTip % tipCount;
+        const tipI = wpn.muzzleFire === "alternate" ? u.muzzleTip % tipCount : 0;
         u.muzzleFireTip = tipI;
         u.muzzleTip = tipI;
         const muzzle = this.enemyMuzzle(u, gunI);
-        if (tipCount > 1) u.muzzleTip = (tipI + 1) % tipCount;
+        if (tipCount > 1 && wpn.muzzleFire === "alternate") {
+          u.muzzleTip = (tipI + 1) % tipCount;
+        }
         // Stay on the same gun for the whole burst so each mount keeps its own ammo type.
-        if (guns.length > 1 && (u.burstLeft ?? 0) <= 0) u.muzzleGun = (gunI + 1) % guns.length;
+        if (guns.length > 1 && sp.gunFire === "alternate" && (u.burstLeft ?? 0) <= 0) {
+          u.muzzleGun = (gunI + 1) % guns.length;
+        }
         const fireAng = barrelAng + jitter;
         const muzzleZ = u.z + heightOf(u.kind) * 0.7 + ZOff.shot;
         const tgtZ = h.z + h.height * 0.5;
@@ -6312,6 +7702,7 @@ export class MissionScene extends Phaser.Scene {
           homePlayer: home,
           motor: home ? -0.06 : undefined,
           scale: wpn.scale,
+          fxInterval,
         });
         if (wpn.kind === "cannon") {
           const ejectAt = guns.length ? this.gunMountPos(u, gunI) : { x: u.x, y: u.y };
@@ -6342,8 +7733,10 @@ export class MissionScene extends Phaser.Scene {
             u.missileCd = sec.fireCdMin + Math.random() * (sec.fireCdMax - sec.fireCdMin);
             const mounts = sec.mounts;
             const side = (u.missileSide ?? 0) % mounts.length;
-            u.missileSide = side + 1;
-            const mount = mounts[side]!;
+            const firingMounts = sec.mountFire === "simultaneous" ? mounts : [mounts[side]!];
+            const fxInterval =
+              ((sec.fireCdMin + sec.fireCdMax) * 0.5) / Math.max(1, firingMounts.length);
+            if (sec.mountFire === "alternate") u.missileSide = side + 1;
             const pivot = spritePivot(textureOf(u.kind));
             const hullRot = u.angle + sp.rotOff;
             const hullImg = this.textures.exists(textureOf(u.kind))
@@ -6351,43 +7744,46 @@ export class MissionScene extends Phaser.Scene {
               : { width: 64, height: 64 };
             const dw = hullImg.width;
             const dh = hullImg.height;
-            const mx = (mount.x - pivot.x) * dw;
-            const my = (mount.y - pivot.y) * dh;
-            const px = u.x + mx * Math.cos(hullRot) - my * Math.sin(hullRot);
-            const py = u.y + mx * Math.sin(hullRot) + my * Math.cos(hullRot);
-            const muzzleZ = u.z + heightOf(u.kind) * 0.5;
-            const jit = pw.jitter ?? 0.04;
-            const fireAng = u.angle + (Math.random() - 0.5) * jit;
-            const tgtZ = h.z + h.height * 0.5;
-            const spawn = this.shotSpawnXY(
-              px,
-              py,
-              fireAng,
-              muzzleZ,
-              pw.look,
-              pw.scale * (sec.scale ?? 1)
-            );
-            const missileT = Math.max(0.25, Math.hypot(h.x - spawn.x, h.y - spawn.y) / pw.speed);
-            const home = sec.homePlayer !== false;
-            this.spawnShot({
-              kind: pw.kind,
-              from: "enemy",
-              x: px,
-              y: py,
-              z: muzzleZ,
-              vx: Math.cos(fireAng) * pw.speed,
-              vy: Math.sin(fireAng) * pw.speed,
-              vz: Phaser.Math.Clamp((tgtZ - muzzleZ) / missileT, -280, 420),
-              angle: fireAng,
-              life: missileT + 1.5,
-              blast: pw.blast,
-              dmg: pw.dmg,
-              look: pw.look,
-              homePlayer: home,
-              motor: sec.motor,
-              scale: pw.scale * (sec.scale ?? 1),
-            });
-            this.missileMuzzle(px, py, u.z, fireAng);
+            for (const mount of firingMounts) {
+              const mx = (mount.x - pivot.x) * dw;
+              const my = (mount.y - pivot.y) * dh;
+              const px = u.x + mx * Math.cos(hullRot) - my * Math.sin(hullRot);
+              const py = u.y + mx * Math.sin(hullRot) + my * Math.cos(hullRot);
+              const muzzleZ = u.z + heightOf(u.kind) * 0.5;
+              const jit = pw.jitter ?? 0.04;
+              const fireAng = u.angle + (Math.random() - 0.5) * jit;
+              const tgtZ = h.z + h.height * 0.5;
+              const spawn = this.shotSpawnXY(
+                px,
+                py,
+                fireAng,
+                muzzleZ,
+                pw.look,
+                pw.scale * (sec.scale ?? 1)
+              );
+              const missileT = Math.max(0.25, Math.hypot(h.x - spawn.x, h.y - spawn.y) / pw.speed);
+              const home = sec.homePlayer !== false;
+              this.spawnShot({
+                kind: pw.kind,
+                from: "enemy",
+                x: px,
+                y: py,
+                z: muzzleZ,
+                vx: Math.cos(fireAng) * pw.speed,
+                vy: Math.sin(fireAng) * pw.speed,
+                vz: Phaser.Math.Clamp((tgtZ - muzzleZ) / missileT, -280, 420),
+                angle: fireAng,
+                life: missileT + 1.5,
+                blast: pw.blast,
+                dmg: pw.dmg,
+                look: pw.look,
+                homePlayer: home,
+                motor: sec.motor,
+                scale: pw.scale * (sec.scale ?? 1),
+                fxInterval,
+              });
+              this.missileMuzzle(px, py, u.z, fireAng, projectileFxScale("enemy", fxInterval));
+            }
           }
         }
       }
@@ -6691,21 +8087,21 @@ export class MissionScene extends Phaser.Scene {
     });
   }
 
-  syncFragSprites(): void {
+  syncDebrisSprites(): void {
     let visN = 0;
-    for (const f of this.frags) if (!f.trailOnly) visN++;
-    while (this.fragG.getLength() < visN * 2) {
-      this.fragG.add(this.add.image(0, 0, "shadow"));
-      this.fragG.add(this.add.image(0, 0, "fx_frag_metal"));
+    for (const f of this.debris) if (!f.trailOnly) visN++;
+    while (this.debrisG.getLength() < visN * 2) {
+      this.debrisG.add(this.add.image(0, 0, "shadow"));
+      this.debrisG.add(this.add.image(0, 0, "fx_debris_metal"));
     }
-    const kids = this.fragG.getChildren() as Phaser.GameObjects.Image[];
+    const kids = this.debrisG.getChildren() as Phaser.GameObjects.Image[];
     for (const k of kids) {
       k.setVisible(false);
       const wrap = k.getData("tiltWrap") as Phaser.GameObjects.Container | undefined;
       if (wrap) wrap.setVisible(false);
     }
     let vi = 0;
-    for (const f of this.frags) {
+    for (const f of this.debris) {
       if (f.trailOnly) continue;
       const i = vi++;
       const sh = kids[i * 2]!;
@@ -6851,7 +8247,7 @@ export class MissionScene extends Phaser.Scene {
     if (h.hellfireLock && !this.unitById(h.hellfireLock.id)) h.hellfireLock = null;
     if (h.hellfireSeek && !this.unitById(h.hellfireSeek.id)) h.hellfireSeek = null;
 
-    if (WPN_LIST[h.weapon]!.kind !== "hellfire") return;
+    if (this.loadout[h.weapon]!.kind !== "hellfire") return;
 
     const tgt = this.hellfirePickTarget(ptr.x, ptr.y, 160);
     if (!tgt || (h.hellfireLock && tgt.id === h.hellfireLock.id)) {
@@ -6949,7 +8345,7 @@ export class MissionScene extends Phaser.Scene {
     this.lockTxt.setVisible(false);
     this.lockInbdTxt.setVisible(false);
 
-    const hellfire = WPN_LIST[h.weapon]!.kind === "hellfire";
+    const hellfire = this.loadout[h.weapon]!.kind === "hellfire";
     const inbound = this.inboundHellfireTargets();
     const locked = hellfire && h.hellfireLock ? this.unitById(h.hellfireLock.id) : undefined;
     const seeking = hellfire && h.hellfireSeek ? this.unitById(h.hellfireSeek.id) : undefined;
@@ -7167,12 +8563,14 @@ export class MissionScene extends Phaser.Scene {
 
   drawHud(): void {
     const h = this.heli;
-    const w = WPN_LIST[h.weapon]!;
+    const w = this.loadout[h.weapon]!;
     const ammo = this.ammo[h.weapon]!;
     const ammoS = this.infAmmo && Number.isFinite(ammo) ? "∞" : Number.isFinite(ammo) ? String(ammo) : "∞";
     const phase =
       h.phase === "grounded" || h.phase === "spool"
-        ? "SPOOLING ROTORS"
+        ? h.spec.rotor
+          ? "SPOOLING ROTORS"
+          : "ENGINE START"
         : h.phase === "ready"
           ? "READY"
           : h.phase === "dead"
@@ -7327,7 +8725,7 @@ export class MissionScene extends Phaser.Scene {
       const avg = averages[i]!;
       lines.push(`${PERF_LABELS[i]!.padEnd(9)} ${avg.toFixed(2)} avg  ${p95s[i]!.toFixed(2)} p95  ${((avg / Math.max(frameAvg, 0.01)) * 100).toFixed(1)}%`);
     }
-    lines.push(`objects  u${this.units.length} s${this.shots.length} f${this.frags.length} k${this.sparks.length}`);
+    lines.push(`objects  u${this.units.length} s${this.shots.length} d${this.debris.length} p${this.simParticles.length}`);
     this.perfHud.setText(lines.join("\n"));
   }
 
@@ -7346,12 +8744,12 @@ export class MissionScene extends Phaser.Scene {
     const slotW = 176;
     const slotH = 30;
     const gap = 6;
-    const n = WPN_LIST.length;
+    const n = this.loadout.length;
     const total = n * slotW + (n - 1) * gap;
     const x0 = this.scale.width / 2 - total / 2;
     const y = this.scale.height - 16 - slotH;
     for (let i = 0; i < n; i++) {
-      const wp = WPN_LIST[i]!;
+      const wp = this.loadout[i]!;
       const a = this.ammo[i]!;
       const empty = !this.infAmmo && Number.isFinite(a) && a <= 0;
       const sel = i === h.weapon;
@@ -7583,8 +8981,8 @@ export class MissionScene extends Phaser.Scene {
       this.debugGfx.strokePath();
     };
 
-    // Player hull: enemy shots use XY radius 26 and Z in [heli.z, heli.z + height].
-    const heliR = 26;
+    // Player hull uses the selected craft radius and height.
+    const heliR = this.heli.spec.radius;
     this.debugGfx.lineStyle(1.25, 0x5ec8ff, 0.9);
     strokeCircle(this.heli.x, this.heli.y, this.heli.z, heliR);
     altSticks(this.heli.x, this.heli.y, this.heli.height, this.heli.z);
@@ -7598,7 +8996,7 @@ export class MissionScene extends Phaser.Scene {
       markPoint(s.x, s.y, s.z);
       altSticks(s.x, s.y, 0, s.z);
     }
-    for (const f of this.frags) {
+    for (const f of this.debris) {
       if (f.trailOnly) continue;
       markPoint(f.x, f.y, f.z);
       altSticks(f.x, f.y, 0, f.z);
@@ -7707,6 +9105,293 @@ export class MissionScene extends Phaser.Scene {
       .setText(this.mapWant ? "THEATER MAP   HV sites marked   M close" : "RETURNING");
   }
 
+  setupExitMenu(): void {
+    const { width: w, height: h } = this.scale;
+    const panel = this.add
+      .rectangle(w / 2, h / 2, 360, 210, 0x0b0a08, 0.96)
+      .setStrokeStyle(2, 0xe8b84a, 0.9);
+    const title = this.add
+      .text(w / 2, h / 2 - 70, "PAUSED", {
+        fontFamily: "Black Ops One, Impact, sans-serif",
+        fontSize: "30px",
+        color: "#e8b84a",
+      })
+      .setOrigin(0.5);
+    const resume = this.add
+      .text(w / 2, h / 2 - 10, "[ RESUME ]", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "18px",
+        color: "#e8e0cc",
+        backgroundColor: "#252017",
+        padding: { x: 18, y: 8 },
+      })
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true });
+    const selection = this.add
+      .text(w / 2, h / 2 + 48, "[ RETURN TO SELECTION ]", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "16px",
+        color: "#ffb05a",
+        backgroundColor: "#2b1710",
+        padding: { x: 18, y: 8 },
+      })
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true });
+    resume.on("pointerdown", () => this.toggleExitMenu(false));
+    selection.on("pointerdown", () => this.scene.start("menu"));
+    this.exitRoot = this.add
+      .container(0, 0, [panel, title, resume, selection])
+      .setDepth(Layer.HUD + 600)
+      .setScrollFactor(0)
+      .setVisible(false);
+    this.exitButton = this.add
+      .text(w - 132, h - 18, "[ ESC ]  MENU", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "13px",
+        color: "#d8d0ba",
+        backgroundColor: "#12100c",
+        padding: { x: 8, y: 5 },
+      })
+      .setOrigin(1, 1)
+      .setDepth(Layer.HUD + 200)
+      .setScrollFactor(0)
+      .setInteractive({ useHandCursor: true });
+    this.exitButton.on("pointerdown", () => this.toggleExitMenu());
+  }
+
+  toggleExitMenu(force?: boolean): void {
+    const want = force ?? !this.exitOpen;
+    if (want && (this.mapWant || this.mapBlend > 0.02)) return;
+    if (want && this.helpOpen) this.toggleHelp(false);
+    this.exitOpen = want;
+    this.exitRoot.setVisible(want);
+    this.input.setDefaultCursor(want ? "default" : "none");
+  }
+
+  setupHelp(): void {
+    const w = this.scale.width;
+    const h = this.scale.height;
+    const panelW = Math.min(960, w - 40);
+    const panelH = Math.min(620, h - 30);
+    const halfW = panelW / 2;
+    const halfH = panelH / 2;
+    const shade = this.add.rectangle(0, 0, w, h, 0x080705, 0.78).setInteractive();
+    const panel = this.add
+      .rectangle(0, 0, panelW, panelH, 0x12100c, 0.98)
+      .setStrokeStyle(2, 0xe8b84a, 0.9);
+    const title = this.add
+      .text(0, -halfH + 28, "FIELD MANUAL", {
+        fontFamily: "Black Ops One, Impact, sans-serif",
+        fontSize: "28px",
+        color: "#e8b84a",
+      })
+      .setOrigin(0.5);
+    const craftX = -panelW * 0.27;
+    this.helpCraftName = this.add
+      .text(craftX, -halfH + 72, "", {
+        fontFamily: "Black Ops One, Impact, sans-serif",
+        fontSize: "17px",
+        color: "#f2d579",
+        align: "center",
+      })
+      .setOrigin(0.5);
+    const helpCraft = craftOf();
+    this.helpCraftBody = this.add.image(craftX, -halfH + 160, helpCraft.body).setOrigin(0.5);
+    this.helpCraftRotorParts = craftComposite(helpCraft).rotors;
+    this.helpCraftRotors = this.helpCraftRotorParts.map((part, rotorI) => {
+      const rotor = this.add.image(craftX, -halfH + 160, part.tex).setOrigin(part.origin.x, part.origin.y);
+      this.tweens.add({
+        targets: rotor,
+        rotation: (rotorI % 2 ? -1 : 1) * Math.PI * 2,
+        duration: 60000,
+        repeat: -1,
+        ease: "Linear",
+      });
+      return rotor;
+    });
+    this.helpCraftExhaustMounts = craftExhaustMounts(helpCraft);
+    this.helpCraftExhaustGlows = this.helpCraftExhaustMounts.map((_, exhaustI) => {
+      const glow = this.add
+        .image(craftX, -halfH + 160, "fx_exhaust_glow")
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setTint(craftPreviewExhaustTint(helpCraft.kind));
+      this.tweens.add({
+        targets: glow,
+        alpha: { from: 0.5 + (exhaustI % 2) * 0.08, to: 0.96 },
+        duration: 780 + exhaustI * 90,
+        yoyo: true,
+        repeat: -1,
+        ease: "Sine.InOut",
+      });
+      return glow;
+    });
+    this.helpCraftStats = this.add
+      .text(-halfW + 54, -halfH + 265, "", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "11px",
+        color: "#d8d0ba",
+        lineSpacing: 9,
+      })
+      .setOrigin(0, 0);
+    this.helpCraftBars = this.add.graphics();
+    const divider = this.add.graphics();
+    divider.lineStyle(1, 0x6f6244, 0.6).lineBetween(0, -halfH + 68, 0, halfH - 166);
+    const tipTitle = this.add
+      .text(panelW * 0.25, -halfH + 78, "TACTICAL TIP", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "12px",
+        color: "#e8b84a",
+      })
+      .setOrigin(0.5);
+    this.helpBody = this.add
+      .text(panelW * 0.25, -halfH + 185, "", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "18px",
+        color: "#f0e6c8",
+        align: "center",
+        lineSpacing: 8,
+        wordWrap: { width: panelW * 0.42 },
+      })
+      .setOrigin(0.5);
+    const controls = createControlLegend(this, panelW - 32, halfH - 120);
+    const tipNavY = -halfH + 372;
+    const tipCenterX = panelW * 0.25;
+    const prev = this.add
+      .text(tipCenterX - 112, tipNavY, "‹  PREV", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "16px",
+        color: "#e8b84a",
+      })
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true });
+    const next = this.add
+      .text(tipCenterX + 112, tipNavY, "NEXT  ›", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "16px",
+        color: "#e8b84a",
+      })
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true });
+    this.helpCounter = this.add
+      .text(tipCenterX, tipNavY, "", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "13px",
+        color: "#8a8470",
+      })
+      .setOrigin(0.5);
+    const close = this.add
+      .text(0, halfH - 28, "H / ESC  CLOSE", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "12px",
+        color: "#8a8470",
+      })
+      .setOrigin(0.5);
+    prev.on("pointerdown", () => this.nudgeHelp(-1));
+    next.on("pointerdown", () => this.nudgeHelp(1));
+    this.helpRoot = this.add
+      .container(w / 2, h / 2, [
+        shade,
+        panel,
+        title,
+        this.helpCraftName,
+        this.helpCraftBody,
+        ...this.helpCraftExhaustGlows,
+        ...this.helpCraftRotors,
+        this.helpCraftStats,
+        this.helpCraftBars,
+        divider,
+        tipTitle,
+        this.helpBody,
+        ...controls,
+        prev,
+        next,
+        this.helpCounter,
+        close,
+      ])
+      .setDepth(Layer.HUD + 500)
+      .setScrollFactor(0)
+      .setVisible(false);
+    this.helpButton = this.add
+      .text(w - 18, h - 18, "[ H ]  HELP", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "13px",
+        color: "#e8b84a",
+        backgroundColor: "#12100c",
+        padding: { x: 8, y: 5 },
+      })
+      .setOrigin(1, 1)
+      .setDepth(Layer.HUD + 200)
+      .setScrollFactor(0)
+      .setInteractive({ useHandCursor: true });
+    this.helpButton.on("pointerdown", () => this.toggleHelp());
+    this.syncHelp();
+  }
+
+  toggleHelp(force?: boolean): void {
+    const want = force ?? !this.helpOpen;
+    if (want && (this.mapWant || this.mapBlend > 0.02 || this.over)) return;
+    if (want && this.debugOpen) this.toggleDebugMenu(false);
+    if (want && this.editOpen) this.toggleReliefEditor(false);
+    this.helpOpen = want;
+    this.helpRoot.setVisible(want);
+    this.input.setDefaultCursor(want ? "default" : "none");
+    this.syncHelp();
+  }
+
+  nudgeHelp(dir: number): void {
+    if (!this.helpOpen) return;
+    this.helpPage = (this.helpPage + dir + LOAD_TIPS.length) % LOAD_TIPS.length;
+    this.syncHelp();
+  }
+
+  syncHelp(): void {
+    if (!this.helpBody || !this.helpCounter) return;
+    const craft = craftOf();
+    if (this.helpCraftBody.texture.key !== craft.body) this.helpCraftBody.setTexture(craft.body);
+    const previewScale = Math.min(
+      170 / Math.max(1, this.helpCraftBody.width),
+      165 / Math.max(1, this.helpCraftBody.height)
+    );
+    this.helpCraftBody.setScale(previewScale);
+    this.helpCraftRotors.forEach((rotor, rotorI) => {
+      const part = this.helpCraftRotorParts[rotorI]!;
+      const at = spriteUvPos(this.helpCraftBody, part.mount.x, part.mount.y);
+      rotor
+        .setPosition(at.x, at.y)
+        .setScale(craftCompositePartScale(part, rotor.width, this.helpCraftBody.scaleX));
+    });
+    this.helpCraftExhaustGlows.forEach((glow, exhaustI) => {
+      const mount = this.helpCraftExhaustMounts[exhaustI]!;
+      const at = spriteUvPos(this.helpCraftBody, mount.x, mount.y);
+      const scale = this.helpCraftBody.scaleX * 0.55;
+      glow.setPosition(at.x, at.y).setScale(scale * 0.75, scale);
+    });
+    this.helpCraftName.setText(craft.fullName.toUpperCase());
+    const stats = [
+      { label: "SPEED", value: craft.maxSpeed, max: Math.max(...allCrafts().map((c) => c.maxSpeed)), display: String(craft.maxSpeed) },
+      { label: "AGILITY", value: craftAgility(craft), max: 1, display: `${Math.max(1, Math.round(craftAgility(craft) * 8))}/8` },
+      { label: "SIZE", value: craft.sizeM, max: Math.max(...allCrafts().map((c) => c.sizeM)), display: `${craft.sizeM.toFixed(1)}m` },
+      { label: "ARMOR", value: craft.health, max: Math.max(...allCrafts().map((c) => c.health)), display: String(craft.health) },
+    ];
+    this.helpCraftStats.setText(
+      stats.map((stat) => `${stat.label.padEnd(8)} ${stat.display}`).join("\n")
+    );
+    const panelW = Math.min(960, this.scale.width - 40);
+    const panelH = Math.min(620, this.scale.height - 30);
+    const x0 = -panelW / 2 + 160;
+    const y0 = -panelH / 2 + 269;
+    this.helpCraftBars.clear();
+    stats.forEach((stat, row) => {
+      const filled = Math.max(1, Math.round((stat.value / stat.max) * 8));
+      for (let i = 0; i < 8; i++) {
+        this.helpCraftBars.fillStyle(i < filled ? 0xe8b84a : 0x302b22, i < filled ? 0.96 : 0.82);
+        this.helpCraftBars.fillRoundedRect(x0 + i * 13, y0 + row * 20, 10, 6, 2);
+      }
+    });
+    this.helpBody.setText(LOAD_TIPS[this.helpPage] ?? "");
+    this.helpCounter.setText(`${this.helpPage + 1} / ${LOAD_TIPS.length}   ← →`);
+  }
+
   hasAmmo(slot: number): boolean {
     if (this.infAmmo) return true;
     return (this.ammo[slot] ?? 0) > 0;
@@ -7769,13 +9454,32 @@ export class MissionScene extends Phaser.Scene {
   }
 
   toggleDebugMenu(force?: boolean): void {
-    this.debugOpen = force ?? !this.debugOpen;
+    const want = force ?? !this.debugOpen;
+    if (want && this.helpOpen) return;
+    this.debugOpen = want;
     if (!this.debugOpen) {
       this.debugSpawnOpen = false;
       this.debugCamOpen = false;
     }
     this.debugRoot.setVisible(this.debugOpen);
     if (this.debugOpen) this.syncDebugMenu();
+  }
+
+  toggleThermal(): void {
+    this.thermalOn = !this.thermalOn;
+    const cam = this.cameras.main;
+    if (this.thermalOn) {
+      if (!this.thermalFx) this.thermalFx = cam.postFX.addColorMatrix();
+      this.thermalFx.set([
+        0.52, 0.92, 0.18, 0, -0.24,
+        0.42, 0.82, 0.12, 0, -0.08,
+        0.08, 0.2, 0.36, 0, 0.04,
+        0, 0, 0, 1, 0,
+      ]);
+    } else if (this.thermalFx) {
+      this.thermalFx.reset();
+    }
+    this.syncDebugMenu();
   }
 
   setupTestPostFx(): void {
@@ -8041,9 +9745,11 @@ export class MissionScene extends Phaser.Scene {
                       ? this.terrainMesh
                       : item.action === "fx"
                         ? this.fxOn
-                        : item.action === "relief"
-                          ? this.editOpen
-                          : undefined;
+                        : item.action === "thermal"
+                          ? this.thermalOn
+                          : item.action === "relief"
+                            ? this.editOpen
+                            : undefined;
       const label = `${item.label}${shortcut ? `  ${shortcut}` : ""}`;
       if (on != null) {
         row.setText(`${mark}  ${label.padEnd(25)} ${on ? "ON" : "OFF"}`);
@@ -8076,6 +9782,7 @@ export class MissionScene extends Phaser.Scene {
     else if (item.action === "blast") this.setDebugBlast(!this.debugBlast);
     else if (item.action === "terrainMesh") this.toggleTerrainMesh();
     else if (item.action === "fx") this.toggleTestFx();
+    else if (item.action === "thermal") this.toggleThermal();
     else if (item.action === "relief") this.toggleReliefEditor();
     else if (item.action === "camera") this.openDebugCam();
     else if (item.action === "spawn") this.openDebugSpawn();
@@ -8199,6 +9906,7 @@ export class MissionScene extends Phaser.Scene {
 
   toggleReliefEditor(force?: boolean): void {
     const want = force ?? !this.editOpen;
+    if (want && this.helpOpen) return;
     if (!want && !this.editRoot) return;
     if (want && !this.editRoot) {
       this.setupReliefEditor();
@@ -8442,9 +10150,10 @@ export class MissionScene extends Phaser.Scene {
     const d = this.editDirty;
     if (!d) return;
     this.editDirty = null;
-    rebuildWorldPatch(this.world, d.x0, d.y0, d.x1, d.y1, this.biomeTiles, (g, x0, y0, x1, y1) =>
-      this.stampDecorRect(g, x0, y0, x1, y1)
-    );
+    rebuildWorldPatch(this.world, d.x0, d.y0, d.x1, d.y1, this.biomeTiles, (g, x0, y0, x1, y1) => {
+      paintRoadsRect(this.world, g, x0, y0, x1, y1);
+      this.stampDecorRect(g, x0, y0, x1, y1);
+    });
     paintHeightMapRect(this.heightMapCanvas, this.world.height, d.x0, d.y0, d.x1, d.y1);
     (this.textures.get("terrain") as Phaser.Textures.CanvasTexture).refresh();
     (this.textures.get("heightmap") as Phaser.Textures.CanvasTexture).refresh();
@@ -8564,6 +10273,10 @@ export class MissionScene extends Phaser.Scene {
       if (list) for (const ch of list) markHudTree(ch);
     };
     markHudTree(this.debugRoot);
+    markHudTree(this.helpRoot);
+    markHudTree(this.exitRoot);
+    this.bindHud(this.helpButton);
+    this.bindHud(this.exitButton);
     if (this.editRoot) markHudTree(this.editRoot);
     this.children.each((obj) => {
       if (!this.hudSet.has(obj)) this.bindWorld(obj);
@@ -8643,7 +10356,11 @@ export class MissionScene extends Phaser.Scene {
     if (this.mapBlend < 0.12 && !this.over && this.heli.phase !== "dead") {
       const heli = this.heli;
       const spdN = Phaser.Math.Clamp(Math.hypot(heli.vx, heli.vy) / 320, 0, 1);
-      const altN = Phaser.Math.Clamp(castZ(this.world, heli.x, heli.y, heli.z) / MAX_AGL, 0, 1);
+      const altN = Phaser.Math.Clamp(
+        castZ(this.world, heli.x, heli.y, heli.z) / heli.spec.maxAgl,
+        0,
+        1
+      );
       wantS = Phaser.Math.Clamp(1 - spdN * 0.07 - altN * 0.08, 0.86, 1);
       wantX = -heli.roll * 24;
       wantY = -heli.pitch * 20;
@@ -8671,9 +10388,14 @@ export class MissionScene extends Phaser.Scene {
   playZoom(): number {
     const h = this.heli;
     // Perspective keeps chase-focus scale stable; Phaser zoom is framing only.
-    const base = camZoomAt(h.z);
-    const spdN = Phaser.Math.Clamp(Math.hypot(h.vx, h.vy) / 340, 0, 1);
-    return base * (1 - spdN * 0.06);
+    const base = camZoomAt(h.z) * craftCameraScale(h.spec);
+    const spdN = Phaser.Math.Clamp(Math.hypot(h.vx, h.vy) / h.spec.maxSpeed, 0, 1);
+    // Apache-class craft pull back 10% at top speed. Faster airframes earn
+    // diminishing additional framing rather than scaling zoom linearly with
+    // absolute speed (Warthog tops out near 15%, not 22%).
+    const speedClass = Math.sqrt(h.spec.maxSpeed / 340);
+    const maxPullback = Phaser.Math.Clamp(0.1 * speedClass, 0.08, 0.16);
+    return base * (1 - spdN * maxPullback);
   }
 
   syncProjectionPose(): void {
@@ -8787,9 +10509,26 @@ export class MissionScene extends Phaser.Scene {
   }
 
   syncLookCam(dt: number): void {
+    if (this.stingerT > 0 && this.stingerTarget) {
+      const elapsed = this.stingerDuration - this.stingerT;
+      const ease = (t: number) => {
+        const u = Phaser.Math.Clamp(t, 0, 1);
+        return u * u * (3 - 2 * u);
+      };
+      const focusIn = ease(elapsed / 0.9);
+      const focusOut = ease(this.stingerT / 1.15);
+      const focus = Math.min(focusIn, focusOut);
+      const ox = (this.stingerTarget.x - this.heli.x) * focus;
+      const oy = (this.stingerTarget.y - this.heli.y) * focus;
+      const k = 1 - Math.exp(-4.2 * dt);
+      this.lookCamX = Phaser.Math.Linear(this.lookCamX, ox, k);
+      this.lookCamY = Phaser.Math.Linear(this.lookCamY, oy, k);
+      this.syncProjectionPose();
+      return;
+    }
     const p = this.pointerScreen();
     const pointerAtFocus = screenToWorldAtZ(p.x, p.y, this.heli.z);
-    const wpn = WPN_LIST[this.heli.weapon]!.kind;
+    const wpn = this.loadout[this.heli.weapon]!.kind;
     const look =
       wpn === "hellfire"
         ? { pull: 0.86, max: 360, rate: 5.2 }
@@ -9018,7 +10757,7 @@ export class MissionScene extends Phaser.Scene {
     const g = this.playerHud;
     g.clear();
     const h = this.heli;
-    const hp = Phaser.Math.Clamp(h.health / 100, 0, 1);
+    const hp = Phaser.Math.Clamp(h.health / h.spec.health, 0, 1);
     const margin = 18;
     const bake = this.heliHudWireBake;
     const ox = bake.pivot.x;
@@ -9065,13 +10804,12 @@ export class MissionScene extends Phaser.Scene {
     this.heliHudWireSh.setPosition(wirePos.x, wirePos.y);
     this.heliHudWire.setPosition(wirePos.x, wirePos.y).setTint(hpCol).setAlpha(0.92 * pulse);
 
-    for (const site of h.dmgSites) {
-      const uv = this.craftDmgPoiUvs()[site.poi];
-      if (!uv) continue;
-      const mapped = heliHudWireUv(bake, uv.u, uv.v);
+    for (let siteI = 0; siteI < h.dmgSites.length; siteI++) {
+      const site = h.dmgSites[siteI]!;
+      const mapped = heliHudWireUv(bake, site.u, site.v);
       const mx = wireX + (mapped.u - ox) * drawW;
       const my = wireY + (mapped.v - oy) * drawH;
-      const hmPulse = 0.65 + 0.35 * Math.sin(this.time.now * 0.022 + site.poi * 1.7);
+      const hmPulse = 0.65 + 0.35 * Math.sin(this.time.now * 0.022 + siteI * 1.7);
       g.fillStyle(0xff2020, 0.9 * hmPulse);
       g.fillCircle(mx, my, 9.5);
       g.lineStyle(2.2, 0xff6644, 0.75 * hmPulse);
@@ -9102,27 +10840,22 @@ export class MissionScene extends Phaser.Scene {
   emitDamageFx(): void {
     const h = this.heli;
     this.emitUnitDamageFx();
-    if (h.phase !== "dead" && h.health < 98) {
-      const want = h.health < 25 ? 3 : h.health < 45 ? 2 : h.health < 75 ? 1 : 0;
-      const poiN = this.playerDmgPois().length;
+    const hp = h.health / h.spec.health;
+    if (h.phase !== "dead" && hp < 0.98) {
+      const want = hp < 0.25 ? 3 : hp < 0.45 ? 2 : hp < 0.75 ? 1 : 0;
       while (h.dmgSites.length > want) h.dmgSites.pop();
       while (h.dmgSites.length < want) {
-        const used = new Set(h.dmgSites.map((s) => s.poi));
-        const free: number[] = [];
-        for (let i = 0; i < poiN; i++) if (!used.has(i)) free.push(i);
-        if (!free.length) break;
-        const poi = free[(Math.random() * free.length) | 0]!;
-        h.dmgSites.push({ poi, scale: range(0.42, 0.8) });
+        const uv = this.sampleSolidUv(h.spec.body, h.spec.radius);
+        h.dmgSites.push({ ...uv, scale: range(0.42, 0.8) });
       }
-      if (want && this.fxEmitBudget < this.fxEmitCap) {
+      if (want) {
         const { fire, smoke } = this.pairFx(h.z, h.y, this.playerFlame, this.playerHurtSmoke, ZOff.dmg, ZOff.smoke);
-        const pois = this.playerDmgPois();
         for (const s of h.dmgSites) {
-          const base = pois[s.poi] ?? pois[0]!;
+          const base = spriteUvPos(this.body, s.u, s.v);
           const p = jitterDisk(base.x, base.y, 2.2 + s.scale * 1.5);
           this.dmgFlameScale = s.scale * 1.65;
-          if (Math.random() < 0.48) this.emitBudgeted(fire, p.x, p.y, 1);
-          if (Math.random() < 0.28) this.emitBudgeted(smoke, p.x, p.y, 1);
+          if (Math.random() < 0.48) this.emitBudgeted("fire", fire, p.x, p.y, 1);
+          if (Math.random() < 0.28) this.emitBudgeted("smoke", smoke, p.x, p.y, 1);
         }
       }
     } else if (h.phase !== "dead") {
@@ -9131,7 +10864,6 @@ export class MissionScene extends Phaser.Scene {
   }
 
   emitUnitDamageFx(): void {
-    if (this.fxEmitBudget >= this.fxEmitCap) return;
     const view = this.cameras.main.worldView;
     const pad = 120;
     for (const u of this.units) {
@@ -9152,28 +10884,87 @@ export class MissionScene extends Phaser.Scene {
         at.y > view.bottom + pad
       )
         continue;
-      const pois = this.unitDmgPois(u);
+      const tex = resolveSkin(this.textures, textureOf(u.kind), u.camo);
       while (u.dmgSites.length > want) u.dmgSites.pop();
       while (u.dmgSites.length < want) {
-        const used = new Set(u.dmgSites.map((s) => s.poi));
-        const free: number[] = [];
-        for (let i = 0; i < pois.length; i++) if (!used.has(i)) free.push(i);
-        if (!free.length) break;
-        const poi = free[(Math.random() * free.length) | 0]!;
-        u.dmgSites.push({ poi, scale: range(0.38, 0.75) });
+        const uv = this.sampleSolidUv(tex, radius(u.kind));
+        u.dmgSites.push({ ...uv, scale: range(0.38, 0.75) });
       }
-      if (this.fxEmitBudget >= this.fxEmitCap) return;
       const zBias = u.pinId != null ? ZOff.posted : 0;
       const { fire, smoke } = this.pairFx(u.z, u.y, this.flame, this.hurtSmoke, ZOff.dmg + zBias, ZOff.smoke + zBias);
       const sp = specOf(u.kind);
       const sizeMul = sp.aerial ? 1.65 : sp.building ? 1.15 : 1;
       for (const s of u.dmgSites) {
-        const base = pois[s.poi] ?? pois[0]!;
+        const mount = this.mountAt(u, tex, { x: s.u, y: s.v });
+        const base = worldToScreen(mount.x, mount.y, u.z);
         const p = jitterDisk(base.x, base.y, 1.8 + s.scale * 1.6);
         this.dmgFlameScale = s.scale * sizeMul;
-        if (Math.random() < 0.45) this.emitBudgeted(fire, p.x, p.y, 1);
-        if (Math.random() < 0.26) this.emitBudgeted(smoke, p.x, p.y, 1);
+        if (Math.random() < 0.45) this.emitBudgeted("fire", fire, p.x, p.y, 1);
+        if (Math.random() < 0.26) this.emitBudgeted("smoke", smoke, p.x, p.y, 1);
       }
+    }
+  }
+
+  showStinger(
+    title: string,
+    detail: string,
+    color: number,
+    duration: number,
+    target?: { x: number; y: number },
+    done?: () => void
+  ): void {
+    this.stingerRoot?.destroy(true);
+    const { width, height } = this.scale;
+    const bg = this.add.rectangle(width / 2, height / 2, width, 92, 0x090908, 0.82);
+    const edgeTop = this.add.rectangle(width / 2, height / 2 - 46, width, 2, color, 0.9);
+    const edgeBottom = this.add.rectangle(width / 2, height / 2 + 46, width, 2, color, 0.9);
+    const text = this.add
+      .text(width / 2, height / 2 - 8, title, {
+        fontFamily: "Black Ops One, Impact, sans-serif",
+        fontSize: "38px",
+        color: `#${color.toString(16).padStart(6, "0")}`,
+        align: "center",
+      })
+      .setOrigin(0.5);
+    const sub = this.add
+      .text(width / 2, height / 2 + 26, detail, {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "14px",
+        color: "#e8e0cc",
+      })
+      .setOrigin(0.5);
+    const root = this.add
+      .container(0, 0, [bg, edgeTop, edgeBottom, text, sub])
+      .setScrollFactor(0)
+      .setDepth(Layer.HUD + 80)
+      .setAlpha(0);
+    this.bindHud(root);
+    this.stingerRoot = root;
+    this.stingerText = text;
+    this.stingerT = duration;
+    this.stingerDuration = duration;
+    this.stingerTarget = target;
+    this.stingerDone = done;
+  }
+
+  tickStinger(wallDt: number): void {
+    if (this.stingerT <= 0 || !this.stingerRoot) return;
+    this.stingerT = Math.max(0, this.stingerT - wallDt);
+    const elapsed = this.stingerDuration - this.stingerT;
+    const fadeIn = Phaser.Math.Clamp(elapsed / 0.12, 0, 1);
+    const fadeOut = Phaser.Math.Clamp(this.stingerT / 0.22, 0, 1);
+    this.stingerRoot.setAlpha(Math.min(fadeIn, fadeOut));
+    if (this.stingerText) {
+      this.stingerText.setScale(Phaser.Math.Linear(1.12, 1, Phaser.Math.Clamp(elapsed / 0.3, 0, 1)));
+    }
+    if (this.stingerT === 0) {
+      this.stingerRoot.destroy(true);
+      this.stingerRoot = undefined;
+      this.stingerText = undefined;
+      this.stingerTarget = undefined;
+      const done = this.stingerDone;
+      this.stingerDone = undefined;
+      done?.();
     }
   }
 
@@ -9199,7 +10990,7 @@ export class MissionScene extends Phaser.Scene {
   }
 }
 
-function hitSparkFx(dmg: number): { n: number; spd: number; size: number } {
+function hitSimParticleFx(dmg: number): { n: number; spd: number; size: number } {
   const t = Phaser.Math.Clamp(Math.pow(Math.max(0.35, dmg) / 8, 0.32), 0.28, 1.5);
   return {
     n: t,
@@ -9208,15 +10999,8 @@ function hitSparkFx(dmg: number): { n: number; spd: number; size: number } {
   };
 }
 
-function sparkTexKey(kind: SparkKind): string {
+function simParticleTexKey(kind: SimParticleKind): string {
   return `fx_${kind}`;
-}
-
-function pickSparkKind(style: "muzzle" | "ground" | "water" | "object", sparkFrac = 0.18): SparkKind {
-  if (style === "water") return "splash";
-  if (style === "muzzle") return "flame";
-  if (style === "object") return "spark";
-  return Math.random() < sparkFrac ? "spark" : "dirt";
 }
 
 function troopMissileTrail(s: Shot): boolean {
@@ -9306,19 +11090,10 @@ function expBiasDir(
   return { x: x / n, y: y / n, z: z / n, align };
 }
 
-function sparkLook(kind: SparkKind, biome: Biome, blood = false): { tint: number; add: boolean } {
+function simParticleLook(_kind: SimParticleKind, biome: Biome, blood = false): { tint: number; add: boolean } {
   if (blood) {
     const pal = [0xee2828, 0xdd2020, 0xe83838, 0xcc1a1a, 0xf04040];
     return { tint: pal[(Math.random() * pal.length) | 0]!, add: false };
-  }
-  if (kind === "flame") {
-    return { tint: Math.random() < 0.4 ? 0xfff4b0 : Math.random() < 0.5 ? 0xffb040 : 0xff7a28, add: true };
-  }
-  if (kind === "spark") {
-    return { tint: Math.random() < 0.5 ? 0xffee66 : 0xfff3b0, add: true };
-  }
-  if (kind === "splash") {
-    return { tint: Math.random() < 0.4 ? 0xffffff : 0x6ec4ff, add: Math.random() < 0.55 };
   }
   const dirt: Record<Biome, number[]> = {
     water: [0x3a3a32, 0x2a2c28],
@@ -9423,6 +11198,27 @@ function ensureBlastRingGradient(textures: Phaser.Textures.TextureManager): void
     frameHeight: size,
     endFrame: BLAST_RING_FRAMES - 1,
   });
+}
+
+function ensureExhaustGlow(textures: Phaser.Textures.TextureManager): void {
+  if (textures.exists("fx_exhaust_glow")) return;
+  const w = 48;
+  const h = 20;
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const g = c.getContext("2d")!;
+  const grad = g.createRadialGradient(w * 0.5, h * 0.5, 0, w * 0.5, h * 0.5, w * 0.5);
+  grad.addColorStop(0, "rgba(255,255,255,1)");
+  grad.addColorStop(0.2, "rgba(255,255,255,0.92)");
+  grad.addColorStop(0.58, "rgba(255,255,255,0.34)");
+  grad.addColorStop(1, "rgba(255,255,255,0)");
+  g.save();
+  g.scale(1, h / w);
+  g.fillStyle = grad;
+  g.fillRect(0, 0, w, w);
+  g.restore();
+  textures.addCanvas("fx_exhaust_glow", c);
 }
 
 function ensureImpactGlow(textures: Phaser.Textures.TextureManager): void {
