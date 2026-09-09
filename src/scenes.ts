@@ -1724,7 +1724,7 @@ export class MissionScene extends Phaser.Scene {
         .setBlendMode(Phaser.BlendModes.ADD)
         .setVisible(false)
     );
-    const rotorTex = this.craftParts.rotors[0]?.tex ?? "heli_rotor";
+    const rotorTex = this.craftParts.rotors[0]?.tex ?? "craft_apache_rotor";
     this.rotors = this.craftParts.rotors.map((part) =>
       this.add.image(0, 0, part.tex).setDepth(Layer.WORLD).setOrigin(part.origin.x, part.origin.y)
     );
@@ -3179,7 +3179,7 @@ export class MissionScene extends Phaser.Scene {
   }
 
   spriteOrigin(key: string): { x: number; y: number } {
-    if (key === "heli_rotor") return { x: this.rotor.originX, y: this.rotor.originY };
+    if (key === "craft_apache_rotor") return { x: this.rotor.originX, y: this.rotor.originY };
     return spritePivot(key);
   }
 

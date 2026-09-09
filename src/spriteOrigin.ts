@@ -56,7 +56,7 @@ function pts(role: SpritePointRole, list: Uv[], idPrefix?: string): SpritePoint[
  */
 export const SPRITE_SPECS: Record<string, SpriteSpec> = {
   // —— Player craft ——
-  heli_body: {
+  craft_apache: {
     origin: uv(0.498, 0.453),
     points: [
       { role: "rotor", x: 0.498, y: 0.453 },
@@ -65,6 +65,8 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
       ...pts("hardpoint", [uv(0.112, 0.448), uv(0.859, 0.445)]),
     ],
   },
+  craft_apache_rotor: { origin: uv(0.5, 0.5) },
+  craft_apache_rotor_hulk: { origin: uv(0.5, 0.5) },
   // Shared turret gun bodies (barrel-up); no swivel-track art.
   gun_gatling: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.05 }] },
   gun_minigun: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.05 }] },

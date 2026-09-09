@@ -128,10 +128,10 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     health: 100,
     radius: 20,
     height: 14,
-    body: "heli_body",
-    hulk: "heli_body_hulk",
-    rotor: "heli_rotor",
-    rotorHulk: "heli_rotor_hulk",
+    body: "craft_apache",
+    hulk: "craft_apache_hulk",
+    rotor: "craft_apache_rotor",
+    rotorHulk: "craft_apache_rotor_hulk",
     rotOff: Math.PI / 2,
     forwardThrust: 520, strafeThrust: 340, maxSpeed: 340, minSpeed: 0, yawRate: 2.55, yawAccel: 11, drag: 1.65,
     verticalThrust: 340, cruiseThrust: 36, cruiseAgl: 46, maxAgl: 118,
@@ -558,7 +558,7 @@ export type CraftComposite = {
 
 /** Shared live-rotor diameter policy used by world rendering and previews. */
 export function rotorDrawSpan(tex: string, partScale = 1): number {
-  if (tex === "heli_rotor") return 124 * 1.08 * partScale;
+  if (tex === "craft_apache_rotor") return 124 * 1.08 * partScale;
   if (tex.includes("rotor") && tex !== "enemy_drone_rotor") return 108 * partScale;
   return 108 * partScale;
 }

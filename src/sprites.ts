@@ -3,33 +3,33 @@ import { craftOf, craftPivot } from "./craft";
 import { lookupSpriteOrigin, setSpriteOrigin } from "./spriteOrigin";
 
 const SRC = {
-  heli: "sprites/units/heli-player-nrotor.png",
-  enemy: "sprites/units/heli-enemy-nrotor.png",
-  tankParts: "sprites/units/tank-parts.png",
-  bunker: "sprites/units/bunker.png",
-  bunkerHulk: "sprites/units/bunker-hulk.png",
+  enemyHeli: "sprites/units/enemy_heli.png",
+  enemyHeliHulk: "sprites/units/enemy_heli_hulk.png",
+  enemyTankParts: "sprites/units/enemy_tank_parts.png",
+  enemyTankWreck: "sprites/units/enemy_tank_wreck_parts.png",
+  enemyRotors: "sprites/units/enemy_rotors.png",
+  enemyRotorsHulk: "sprites/units/enemy_rotors_hulk.png",
+  enemyVehicles: "sprites/units/enemy_vehicles.png",
+  enemyVehiclesHulk: "sprites/units/enemy_vehicles_hulk.png",
+  enemyTroops: "sprites/units/enemy_troops.png",
+  enemyTroopsHulk: "sprites/units/enemy_troops_hulk.png",
+  enemyAirShip: "sprites/units/enemy_air_ship.png",
+  enemyAirShipHulk: "sprites/units/enemy_air_ship_hulk.png",
+  enemyMotoMg: "sprites/units/enemy_moto_mg.png",
+  enemyMotoMgHulk: "sprites/units/enemy_moto_mg_hulk.png",
+  buildingBunker: "sprites/units/building_bunker.png",
+  buildingBunkerHulk: "sprites/units/building_bunker_hulk.png",
+  buildingStructures: "sprites/units/building_structures.png",
+  buildingStructuresHulk: "sprites/units/building_structures_hulk.png",
+  buildingTowerGuns: "sprites/units/building_tower_guns.png",
+  buildingTowerGunsHulk: "sprites/units/building_tower_guns_hulk.png",
+  buildingRadarDish: "sprites/units/building_radar_dish.png",
+  buildingRadarDishHulk: "sprites/units/building_radar_dish_hulk.png",
   debrisMech: "sprites/debris/mech.png",
   debrisStruct: "sprites/debris/struct.png",
   debrisOrganic: "sprites/debris/organic.png",
   debrisWheels: "sprites/debris/wheels.png",
-  tankWreck: "sprites/units/tank-wreck-parts.png",
   blasts: "sprites/fx/blasts.png",
-  rotors: "sprites/units/rotors.png",
-  vehicles: "sprites/units/vehicles.png",
-  troops: "sprites/units/troops.png",
-  buildings: "sprites/units/buildings.png",
-  airShip: "sprites/units/air-ship.png",
-  vehiclesHulk: "sprites/units/vehicles-hulk.png",
-  buildingsHulk: "sprites/units/buildings-hulk.png",
-  airShipHulk: "sprites/units/air-ship-hulk.png",
-  troopsHulk: "sprites/units/troops-hulk.png",
-  towerGuns: "sprites/units/tower-guns.png",
-  towerGunsHulk: "sprites/units/tower-guns-hulk.png",
-  rotorsHulk: "sprites/units/rotors-hulk.png",
-  motoMg: "sprites/units/moto-mg.png",
-  motoMgHulk: "sprites/units/moto-mg-hulk.png",
-  radarDish: "sprites/units/radar-dish.png",
-  radarDishHulk: "sprites/units/radar-dish-hulk.png",
 } as const;
 
 /**
@@ -102,6 +102,10 @@ export const PLAYER_GUN_MOUNT_ART: readonly { key: string; size: number }[] = [
  * background from the image border, and skip magenta spill desaturation.
  */
 const CRAFT_ART: { key: string; file: string; fit: number; rotor?: boolean; keyPreserve?: boolean }[] = [
+  { key: "craft_apache", file: "sprites/craft/apache.png", fit: 120 },
+  { key: "craft_apache_hulk", file: "sprites/craft/apache-hulk.png", fit: 120 },
+  { key: "craft_apache_rotor", file: "sprites/craft/apache-rotor.png", fit: 134, rotor: true },
+  { key: "craft_apache_rotor_hulk", file: "sprites/craft/apache-rotor-hulk.png", fit: 80, rotor: true },
   { key: "craft_littlebird", file: "sprites/craft/littlebird.png", fit: 62 },
   { key: "craft_littlebird_hulk", file: "sprites/craft/littlebird-hulk.png", fit: 62 },
   { key: "craft_littlebird_rotor", file: "sprites/craft/littlebird-rotor.png", fit: 130, rotor: true },
@@ -182,9 +186,7 @@ export const FX_BLAST_CELLS = 4;
 
 export function preloadArt(scene: Phaser.Scene): void {
   scene.load.image("menu_splash", "menu-splash.png");
-  scene.load.image("src_heli", SRC.heli);
   scene.load.image("src_enemy", SRC.enemy);
-  scene.load.image("src_heli_hulk", "sprites/units/heli-player-hulk.png");
   scene.load.image("src_enemy_heli_hulk", "sprites/units/heli-enemy-hulk.png");
   scene.load.image("src_tank_parts", SRC.tankParts);
   scene.load.image("src_bunker", SRC.bunker);
@@ -249,7 +251,7 @@ export type HeliHudWireBake = {
   cropY: number;
 };
 
-/** Map a full heli_body UV into cropped HUD wireframe UV space. */
+/** Map a full craft-body UV into cropped HUD wireframe UV space. */
 export function heliHudWireUv(bake: HeliHudWireBake, u: number, v: number): { u: number; v: number } {
   return {
     u: (u * bake.srcW - bake.cropX) / bake.w,
@@ -538,22 +540,7 @@ export function spriteUvPos(
 }
 
 export function prepareArt(textures: Phaser.Textures.TextureManager): void {
-  const body = fit(keyImage(src(textures, "src_heli"), "magenta"), 120);
   const enemy = fit(keyImage(src(textures, "src_enemy"), "magenta"), 104);
-  put(textures, "heli_body", body);
-  if (textures.exists("src_heli_hulk")) {
-    put(
-      textures,
-      "heli_body_hulk",
-      darkenWreck(fit(keyImage(src(textures, "src_heli_hulk"), "magenta"), 120))
-    );
-  } else {
-    const hc = document.createElement("canvas");
-    hc.width = body.width;
-    hc.height = body.height;
-    hc.getContext("2d")!.drawImage(body, 0, 0);
-    put(textures, "heli_body_hulk", darkenWreck(hc));
-  }
   put(textures, "enemy_heli", enemy);
   if (textures.exists("src_enemy_heli_hulk")) {
     const enemyHulkSrc = keyImage(src(textures, "src_enemy_heli_hulk"), "magenta");
@@ -571,11 +558,9 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   }
   const rotors = splitRotorSheet(keyPixels(src(textures, "src_rotors"), "magenta"));
   // Hub-centered square (axis at canvas middle) — required for spin-blur registration.
-  const playerRotor = fit(squareCenter(rotors[0]!), 134);
+  // Sheet cell 0 unused (Apache rotor is CRAFT_ART); cell 1 = enemy heli.
   const enemyRotor = fit(squareCenter(rotors[1]!), 108);
-  put(textures, "heli_rotor", playerRotor);
   put(textures, "enemy_heli_rotor", enemyRotor);
-  put(textures, "heli_rotor_spin", radialStampBlur(playerRotor, spritePivot("heli_rotor")));
   put(textures, "enemy_heli_rotor_spin", radialStampBlur(enemyRotor, spritePivot("enemy_heli_rotor")));
 
   // Selectable craft bodies / custom rotors.
@@ -718,8 +703,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     ["building_tower_sam_hulk", 48],
   ]);
   const rotorHulks = splitRotorSheet(keyPixels(src(textures, "src_rotors_hulk"), "magenta"));
-  // ~60% of live rotor bake size (player 134 → 80, enemy 108 → 65).
-  put(textures, "heli_rotor_hulk", fit(stripBakedDropShadow(squareCenter(rotorHulks[0]!)), 80));
+  // ~60% of live rotor bake size (enemy 108 → 65). Apache rotor hulk is CRAFT_ART.
   put(textures, "enemy_heli_rotor_hulk", fit(stripBakedDropShadow(squareCenter(rotorHulks[1]!)), 65));
   if (textures.exists("enemy_drone_rotor")) {
     const droneRotor = textures.get("enemy_drone_rotor").getSourceImage() as CanvasImageSource;
@@ -774,12 +758,6 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   }
 
   const shadowSrc = [
-    "heli_body",
-    "heli_body_hulk",
-    "craft_blackhawk",
-    "craft_blackhawk_hulk",
-    "craft_chinook",
-    "craft_chinook_hulk",
     "enemy_heli",
     "enemy_heli_hulk",
     ...CRAFT_ART.map((a) => a.key),

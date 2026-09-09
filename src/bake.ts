@@ -605,8 +605,6 @@ function collectArtKeys(): string[] {
     addKey(c.rotor);
   }
   for (const k of [
-    "heli_rotor",
-    "heli_rotor_spin",
     "enemy_heli_rotor",
     "enemy_heli_rotor_spin",
     "enemy_drone_rotor",

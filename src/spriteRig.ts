@@ -96,7 +96,7 @@ export class SpriteRig {
       .setVisible(false);
     this.frameStripGfx = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH + 2).setVisible(false);
     for (let i = 0; i < FRAME_STRIP_MAX; i++) {
-      // Don't nameGameTexture — that renames the shared art key (e.g. heli_body).
+      // Don't nameGameTexture — that renames the shared art key (e.g. craft_apache).
       const im = scene.add
         .image(0, 0, "__DEFAULT")
         .setName(`ui_rig_frame_${i}`)
