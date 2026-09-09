@@ -18,6 +18,7 @@ import {
   shotBehaviorOf,
   legacyShotLook,
   guidanceUsesLock,
+  PLAYER_WPNS,
   type Debris,
   type Shot,
   type ShotState,
@@ -51,7 +52,7 @@ import { allMissions, missionOf, selectMission } from "./mission";
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
 import { configRigsAnyOpen, installConfigRigHotkeys } from "./configRigs";
 import { applyEdgeLight, clearEdgeLight, ensureEdgeLightPipeline } from "./edgeLight";
-import { setThermalPipeline } from "./thermal";
+import { setThermalPipeline, type ThermalPalette } from "./thermal";
 import { createTerrain25D, type Terrain25D } from "./terrain25d";
 import { LOAD_TIPS } from "./tips";
 import { fbm } from "./noise";
@@ -1384,6 +1385,9 @@ export class MissionScene extends Phaser.Scene {
   fxBarrel?: Phaser.FX.Barrel;
   thermalFx?: Phaser.FX.ColorMatrix;
   thermalOn = false;
+  /** Player toggled thermal with T (persists across sensor-view overlays). */
+  thermalManual = false;
+  thermalPalette: ThermalPalette = "white_hot";
   fxOn = true;
   fxBarrelPulse = 0;
   fxHud!: Phaser.GameObjects.Text;
@@ -1459,6 +1463,16 @@ export class MissionScene extends Phaser.Scene {
   pointerWasDown = false;
   /** Latched GPS / designate aim point while holding designate_then_release. */
   designateLatch: { x: number; y: number } | null = null;
+  /** Timed salvo rounds queued after the first instantaneous fire. */
+  pendingSalvos: {
+    t: number;
+    slot: number;
+    wpnId: string;
+    yawOff: number;
+    gx?: number;
+    gy?: number;
+    autoTargetId?: number;
+  }[] = [];
   /** Per-slot cooldown for automatic stations (independent of selected weapon). */
   stationFireCd: number[] = [0, 0, 0, 0];
   /** Persistent LOS-blocking smoke screens. */
@@ -1587,7 +1601,10 @@ export class MissionScene extends Phaser.Scene {
     this.blastRings = [];
     this.fxOn = true;
     this.thermalOn = false;
+    this.thermalManual = false;
+    this.thermalPalette = "white_hot";
     this.fxBarrelPulse = 0;
+    this.pendingSalvos = [];
     this.showHeightMap = false;
     this.terrainMesh = true;
     this.helpOpen = false;
@@ -3958,6 +3975,8 @@ export class MissionScene extends Phaser.Scene {
       this.stationFireCd[i] = Math.max(0, (this.stationFireCd[i] ?? 0) - dt);
     }
 
+    this.tickPendingSalvos(dt, ptr);
+
     if (h.phase === "flight" && this.canFire && !this.debugOpen && !this.editOpen && !this.helpOpen && !this.exitOpen) {
       this.tickAutomaticStations(dt, ptr);
     }
@@ -4031,6 +4050,7 @@ export class MissionScene extends Phaser.Scene {
 
     h.fireCd = spec.fireCd;
     const salvoN = spec.salvo?.count ?? 1;
+    const interval = spec.salvo?.interval ?? 0;
     const spread = spec.salvo?.spread ?? 0;
     const gx = this.designateLatch?.x;
     const gy = this.designateLatch?.y;
@@ -4044,11 +4064,38 @@ export class MissionScene extends Phaser.Scene {
       return;
     }
 
-    for (let i = 0; i < salvoN; i++) {
-      const yawOff = salvoN > 1 ? (i - (salvoN - 1) / 2) * spread : 0;
-      this.firePlayerWeapon(slot, spec, ptr, yawOff, gx, gy);
+    const yaw0 = salvoN > 1 ? (0 - (salvoN - 1) / 2) * spread : 0;
+    this.firePlayerWeapon(slot, spec, ptr, yaw0, gx, gy);
+    for (let i = 1; i < salvoN; i++) {
+      this.pendingSalvos.push({
+        t: interval * i,
+        slot,
+        wpnId: spec.id,
+        yawOff: (i - (salvoN - 1) / 2) * spread,
+        gx,
+        gy,
+      });
     }
     this.pointerWasDown = down;
+  }
+
+  tickPendingSalvos(dt: number, ptr: { x: number; y: number }): void {
+    if (!this.pendingSalvos.length) return;
+    const h = this.heli;
+    for (let i = this.pendingSalvos.length - 1; i >= 0; i--) {
+      const p = this.pendingSalvos[i]!;
+      p.t -= dt;
+      if (p.t > 0) continue;
+      this.pendingSalvos.splice(i, 1);
+      if (h.phase !== "flight" || !this.canFire) continue;
+      const spec = this.loadout[p.slot];
+      if (!spec || spec.id !== p.wpnId || !this.hasAmmo(p.slot)) continue;
+      const auto =
+        p.autoTargetId != null
+          ? this.units.find((u) => !u.dead && u.id === p.autoTargetId)
+          : undefined;
+      this.firePlayerWeapon(p.slot, spec, ptr, p.yawOff, p.gx, p.gy, auto);
+    }
   }
 
   /** Spawn one player round from the selected (or automatic) loadout slot. */
@@ -4426,10 +4473,18 @@ export class MissionScene extends Phaser.Scene {
       }
       this.stationFireCd[slot] = spec.fireCd;
       const salvoN = spec.salvo?.count ?? 1;
+      const interval = spec.salvo?.interval ?? 0;
       const spread = spec.salvo?.spread ?? 0;
-      for (let i = 0; i < salvoN; i++) {
-        const yawOff = salvoN > 1 ? (i - (salvoN - 1) / 2) * spread : 0;
-        this.firePlayerWeapon(slot, spec, ptr, yawOff, undefined, undefined, tgt);
+      const yaw0 = salvoN > 1 ? (0 - (salvoN - 1) / 2) * spread : 0;
+      this.firePlayerWeapon(slot, spec, ptr, yaw0, undefined, undefined, tgt);
+      for (let i = 1; i < salvoN; i++) {
+        this.pendingSalvos.push({
+          t: interval * i,
+          slot,
+          wpnId: spec.id,
+          yawOff: (i - (salvoN - 1) / 2) * spread,
+          autoTargetId: tgt.id,
+        });
       }
     }
   }
@@ -8178,14 +8233,21 @@ export class MissionScene extends Phaser.Scene {
         u.aiTy = undefined;
       }
     } else if (dist < (u.kind === "motorcycle" ? 1200 : 520) && h.phase === "flight") {
-      u.aware = true;
-      const away = Math.atan2(u.y - h.y, u.x - h.x);
-      wantX = u.x + Math.cos(away) * 240;
-      wantY = u.y + Math.sin(away) * 240;
-      drive = true;
-      u.aiState = "FLEE";
-      u.aiTx = wantX;
-      u.aiTy = wantY;
+      if (!smokeBlocksLos(this.smokeVolumes, u.x, u.y, h.x, h.y)) {
+        u.aware = true;
+        const away = Math.atan2(u.y - h.y, u.x - h.x);
+        wantX = u.x + Math.cos(away) * 240;
+        wantY = u.y + Math.sin(away) * 240;
+        drive = true;
+        u.aiState = "FLEE";
+        u.aiTx = wantX;
+        u.aiTy = wantY;
+      } else {
+        u.aware = false;
+        u.aiState = Math.hypot(u.vx, u.vy) > 8 ? "COAST" : "IDLE";
+        u.aiTx = undefined;
+        u.aiTy = undefined;
+      }
     } else {
       u.aware = false;
       u.aiState = Math.hypot(u.vx, u.vy) > 8 ? "COAST" : "IDLE";
@@ -8325,13 +8387,17 @@ export class MissionScene extends Phaser.Scene {
           if (downed) u.aiMood = undefined;
           else if (wounded && u.aiMood !== "flee") this.rollSoldierMood(u, true);
           else if (sp.move === "flee" && !u.aware && dist < seeR && h.phase === "flight") {
-            u.aware = true;
-            u.aiMood = "flee";
-            u.moodT = 4;
+            if (!smokeBlocksLos(this.smokeVolumes, u.x, u.y, h.x, h.y)) {
+              u.aware = true;
+              u.aiMood = "flee";
+              u.moodT = 4;
+            }
           }
           if (!u.aware && dist < seeR && dist > 36 && h.phase === "flight") {
-            u.aware = true;
-            this.rollSoldierMood(u, wounded || !canShoot || Math.random() < 0.4);
+            if (!smokeBlocksLos(this.smokeVolumes, u.x, u.y, h.x, h.y)) {
+              u.aware = true;
+              this.rollSoldierMood(u, wounded || !canShoot || Math.random() < 0.4);
+            }
           }
           if (u.aiMood) {
             u.moodT = (u.moodT ?? 0) - dt;
@@ -8469,6 +8535,10 @@ export class MissionScene extends Phaser.Scene {
       const barrelAng = softTurret ? u.turret : !guns.length ? u.angle : (u.turrets[gunI] ?? u.turret);
       const facingOk = Math.abs(Phaser.Math.Angle.Wrap(gunAim - barrelAng)) < 0.16;
       const losBlocked = smokeBlocksLos(this.smokeVolumes, u.x, u.y, h.x, h.y);
+      if (losBlocked && u.aware) {
+        u.aware = false;
+        if (u.aiMood === "kite") u.aiMood = undefined;
+      }
       if (wpn && u.fireCd <= 0 && !soldierFlee && !scoutFlee && facingOk && !losBlocked && (inRange || continueBurst)) {
         const burstN = wpn.burst ?? 0;
         const fxInterval = burstN > 0 ? (wpn.burstGap ?? 0.075) : wpn.fireCd;
@@ -10455,14 +10525,57 @@ export class MissionScene extends Phaser.Scene {
   }
 
   toggleThermal(): void {
-    this.thermalOn = !this.thermalOn;
+    this.thermalManual = !this.thermalManual;
+    this.applyThermalMode();
+  }
+
+  /** Map weapon sensor palette onto the runtime thermal pipeline. */
+  sensorPaletteOf(palette: "white_hot" | "black_hot" | "full_spectrum"): ThermalPalette {
+    if (palette === "full_spectrum") return "full_spectrum";
+    return "white_hot";
+  }
+
+  /** Active Spike / Specter / warp sensor projectile, preferring the selected weapon. */
+  activeSensorShot(): Shot | undefined {
+    const selected = this.loadout[this.heli.weapon];
+    if (selected?.sensorView) {
+      const mine = this.shots.find(
+        (s) =>
+          s.from === "player" &&
+          s.wpnId === selected.id &&
+          !!s.st &&
+          !s.st.detonate &&
+          !s.st.bomblet
+      );
+      if (mine) return mine;
+    }
+    for (let i = this.shots.length - 1; i >= 0; i--) {
+      const s = this.shots[i]!;
+      if (s.from !== "player" || !s.wpnId || !s.st || s.st.detonate || s.st.bomblet) continue;
+      if (PLAYER_WPNS[s.wpnId]?.sensorView) return s;
+    }
+    return undefined;
+  }
+
+  /** Enable/disable thermal from manual T and/or weapon sensorView. */
+  applyThermalMode(): void {
+    const sensor = this.activeSensorShot();
+    const view = sensor?.wpnId ? PLAYER_WPNS[sensor.wpnId]?.sensorView : undefined;
+    const want = this.thermalManual || !!view;
+    const palette: ThermalPalette = view
+      ? this.sensorPaletteOf(view.palette)
+      : this.heli.spec.kind === "prometheus"
+        ? "full_spectrum"
+        : "white_hot";
+    if (want === this.thermalOn && (!want || this.thermalPalette === palette)) return;
+
+    this.thermalOn = want;
+    this.thermalPalette = palette;
     const cam = this.cameras.main;
     if (this.thermalOn) {
-      const palette = this.heli.spec.kind === "prometheus" ? "full_spectrum" : "white_hot";
       const customPipeline = setThermalPipeline(cam, true, palette);
       if (customPipeline) this.thermalFx?.reset();
       else {
-        // Canvas fallback: white-hot grayscale without semantic shader grain/palette.
         if (!this.thermalFx) this.thermalFx = cam.postFX.addColorMatrix();
         this.thermalFx.set([
           0.34, 0.58, 0.08, 0, -0.08,
@@ -10472,14 +10585,12 @@ export class MissionScene extends Phaser.Scene {
         ]);
       }
       this.syncAllThermalWreckMarks();
-      // Neutral bloom after the thermal shader so hot pixels bleed, not the raw scene.
       this.applyTestFxActive();
       this.applyThermalFxBlendMode();
     } else {
       setThermalPipeline(cam, false);
       this.thermalFx?.reset();
       this.syncAllThermalWreckMarks();
-      // Restore bloom after thermal is off (if F-key FX still enabled).
       this.applyTestFxActive();
       this.applyThermalFxBlendMode();
     }
@@ -11601,6 +11712,7 @@ export class MissionScene extends Phaser.Scene {
   }
 
   syncLookCam(dt: number): void {
+    this.applyThermalMode();
     if (this.stingerT > 0 && this.stingerTarget) {
       const elapsed = this.stingerDuration - this.stingerT;
       const ease = (t: number) => {
@@ -11613,6 +11725,18 @@ export class MissionScene extends Phaser.Scene {
       const ox = (this.stingerTarget.x - this.heli.x) * focus;
       const oy = (this.stingerTarget.y - this.heli.y) * focus;
       const k = 1 - Math.exp(-4.2 * dt);
+      this.lookCamX = Phaser.Math.Linear(this.lookCamX, ox, k);
+      this.lookCamY = Phaser.Math.Linear(this.lookCamY, oy, k);
+      this.syncProjectionPose();
+      return;
+    }
+    const sensor = this.activeSensorShot();
+    const sensorView = sensor?.wpnId ? PLAYER_WPNS[sensor.wpnId]?.sensorView : undefined;
+    if (sensor && sensorView) {
+      const pull = sensorView.source === "seeker" ? 0.92 : 0.78;
+      const ox = (sensor.x - this.heli.x) * pull;
+      const oy = (sensor.y - this.heli.y) * pull;
+      const k = 1 - Math.exp(-(sensorView.source === "seeker" ? 5.6 : 4.4) * dt);
       this.lookCamX = Phaser.Math.Linear(this.lookCamX, ox, k);
       this.lookCamY = Phaser.Math.Linear(this.lookCamY, oy, k);
       this.syncProjectionPose();

@@ -43,6 +43,14 @@ const SRC = {
 } as const;
 
 /**
+ * Authored rocket/missile/bomb projectile PNGs (nose-up, magenta key) under
+ * `public/sprites/shots/`. Filled as image-gen assets land; cannons use bake.
+ */
+export const PLAYER_ORDNANCE_SHOT_ART: readonly { look: string; size: number }[] = [
+  // e.g. { look: "shot_wpn_rocket", size: 28 },
+];
+
+/**
  * Selectable craft body/hulk/rotor source sheets (magenta).
  * `keyPreserve` keeps intentional purple/magenta craft paint: only flood-key the
  * background from the image border, and skip magenta spill desaturation.
@@ -180,6 +188,9 @@ export function preloadArt(scene: Phaser.Scene): void {
     for (let i = 1; i < FX_VARIANTS; i++) {
       scene.load.image(`src_fx_${kind}_${i}`, `sprites/helistrike-fx-${kind}-${i}.png`);
     }
+  }
+  for (const art of PLAYER_ORDNANCE_SHOT_ART) {
+    scene.load.image(`src_${art.look}`, `sprites/shots/${art.look}.png`);
   }
 }
 
@@ -739,6 +750,12 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   put(textures, "shot_hellfire", fit(rotateCw90(wpn[2]!), 36));
   put(textures, "shot_tow", fit(rotateCw90(wpn[3]!), 34));
 
+  for (const art of PLAYER_ORDNANCE_SHOT_ART) {
+    const srcKey = `src_${art.look}`;
+    if (!textures.exists(srcKey)) continue;
+    put(textures, art.look, fit(rotateCw90(keyImage(src(textures, srcKey), "magenta")), art.size));
+  }
+
   const blastSrc = src(textures, "src_blasts");
   const blasts = sliceGrid(matteMagenta(copyToCanvas(blastSrc, blastSrc.width, blastSrc.height)), 2, 2);
   blasts.forEach((c, i) => {
@@ -767,6 +784,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     "shot_rocket",
     "shot_hellfire",
     "shot_tow",
+    ...PLAYER_ORDNANCE_SHOT_ART.map((a) => a.look),
     "enemy_tank",
     "enemy_tank_gun",
     "enemy_tank_gun_hulk",
@@ -1276,7 +1294,8 @@ export function bakeThermalHeatFromAlpha(src: HTMLCanvasElement): HTMLCanvasElem
 
 /**
  * Encode blast darkness into thermal semantic heat.
- * Dark opaque centers → hot (opaque magenta); soft/pale edges → transparent.
+ * Dark opaque centers → warm (magenta); soft/pale edges → transparent.
+ * Peak is intentionally below open-flame semantic heat (~0.95+).
  */
 export function bakeThermalHeatFromDarkness(src: HTMLCanvasElement): HTMLCanvasElement {
   const out = document.createElement("canvas");
@@ -1286,6 +1305,8 @@ export function bakeThermalHeatFromDarkness(src: HTMLCanvasElement): HTMLCanvasE
   g.drawImage(src, 0, 0);
   const pix = g.getImageData(0, 0, out.width, out.height);
   const d = pix.data;
+  /** Residual scorched ground — cooler than live flame particles. */
+  const peak = 0.58;
   for (let i = 0; i < d.length; i += 4) {
     const a = d[i + 3]! / 255;
     if (a < 0.004) {
@@ -1296,8 +1317,8 @@ export function bakeThermalHeatFromDarkness(src: HTMLCanvasElement): HTMLCanvasE
       continue;
     }
     const luma = (d[i]! * 0.299 + d[i + 1]! * 0.587 + d[i + 2]! * 0.114) / 255;
-    // Darker scorched cores read hotter; soft rims stay transparent, not cold-opaque.
-    const heat = Math.pow(Math.min(1, Math.max(0, (1 - luma) * a)), 0.92);
+    // Darker scorched cores read warmer; soft rims stay transparent, not cold-opaque.
+    const heat = Math.pow(Math.min(1, Math.max(0, (1 - luma) * a)), 0.92) * peak;
     if (heat < 0.04) {
       d[i] = 0;
       d[i + 1] = 0;

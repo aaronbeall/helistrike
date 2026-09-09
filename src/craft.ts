@@ -132,6 +132,12 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     verticalThrust: 340, cruiseThrust: 36, cruiseAgl: 46, maxAgl: 118,
     gunMode: "turret",
     loadout: ["chain_gun", "rocket", "hellfire_missile", "tv_missile"],
+    stations: [
+      { mount: "turret", controller: "pilot", displayName: "M230" },
+      { mount: "hardpoint", controller: "pilot", displayName: "HYDRA 70" },
+      { mount: "hardpoint", controller: "pilot", displayName: "HELLFIRE" },
+      { mount: "hardpoint", controller: "pilot", displayName: "SPIKE NLOS" },
+    ],
   },
   little_bird: {
     kind: "little_bird",
@@ -214,6 +220,12 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     verticalThrust: 410, cruiseThrust: 42, cruiseAgl: 46, maxAgl: 118,
     gunMode: "turret",
     loadout: ["light_gatling_cannon", "rocket", "tow_missile", "sidewinder_missile"],
+    stations: [
+      { mount: "turret", controller: "pilot", displayName: "M197" },
+      { mount: "hardpoint", controller: "pilot", displayName: "HYDRA 70" },
+      { mount: "hardpoint", controller: "pilot", displayName: "TOW" },
+      { mount: "hardpoint", controller: "pilot", displayName: "SIDEWINDER" },
+    ],
   },
   viper: {
     kind: "viper",
@@ -236,6 +248,12 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     verticalThrust: 420, cruiseThrust: 43, cruiseAgl: 48, maxAgl: 122,
     gunMode: "turret",
     loadout: ["light_gatling_cannon", "rocket", "tow_missile", "sidewinder_missile"],
+    stations: [
+      { mount: "turret", controller: "pilot", displayName: "M197" },
+      { mount: "hardpoint", controller: "pilot", displayName: "HYDRA 70" },
+      { mount: "hardpoint", controller: "pilot", displayName: "TOW" },
+      { mount: "hardpoint", controller: "pilot", displayName: "SIDEWINDER" },
+    ],
   },
   blackhawk: {
     kind: "blackhawk",
@@ -347,6 +365,12 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     loadout: ["concealed_cannon", "hellfire_missile", "smoke_bomb", "stinger_missile"],
     enemyAimMul: 0.55,
     enemySeekerMul: 0.42,
+    stations: [
+      { mount: "turret", controller: "pilot", displayName: "LOW-RCS CANNON" },
+      { mount: "hardpoint", controller: "pilot", displayName: "HELLFIRE" },
+      { mount: "hardpoint", controller: "pilot", displayName: "SMOKE NLOS" },
+      { mount: "hardpoint", controller: "pilot", displayName: "STINGER" },
+    ],
   },
   cyberhawk: {
     kind: "cyberhawk",
@@ -369,6 +393,12 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     verticalThrust: 480, cruiseThrust: 48, cruiseAgl: 46, maxAgl: 118,
     gunMode: "turret",
     loadout: ["railgun", "swarm_missile", "attack_drone", "emp"],
+    stations: [
+      { mount: "turret", controller: "pilot", displayName: "RAILGUN" },
+      { mount: "hardpoint", controller: "pilot", displayName: "STARSTREAK" },
+      { mount: "bay", controller: "pilot", displayName: "SPECTER" },
+      { mount: "turret", controller: "pilot", displayName: "EMP" },
+    ],
   },
   prometheus: {
     kind: "prometheus",
@@ -469,6 +499,12 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     verticalThrust: 260, cruiseThrust: 32, cruiseAgl: 150, maxAgl: 360,
     gunMode: "fixed",
     loadout: ["heavy_cannon", "heavy_guided_missile", "bomb", "gps_bomb"],
+    stations: [
+      { mount: "fixed", controller: "pilot", traverse: { center: 0, arc: 10 }, displayName: "GAU-8" },
+      { mount: "hardpoint", controller: "pilot", displayName: "MAVERICK" },
+      { mount: "bay", controller: "pilot", displayName: "MK82" },
+      { mount: "bay", controller: "pilot", displayName: "JDAM" },
+    ],
   },
 };
 

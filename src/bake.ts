@@ -3,6 +3,7 @@
  * Unit/building art comes from PNG sheets via prepareArt — not from here.
  */
 import type Phaser from "phaser";
+import { PLAYER_WPNS, type PlayerWpnSpec } from "./combat";
 import { allCraftKinds, craftOf } from "./craft";
 import { bakeToonBlast } from "./toonBlast";
 import { allKinds, gunsOf, specOf, type UnitKind } from "./roster";
@@ -245,21 +246,29 @@ function drawShellCasing(variant: number): HTMLCanvasElement {
   return c;
 }
 
-function drawTracer(style: "chain" | "shell" | "small" | "aa"): HTMLCanvasElement {
-  const cfg = {
-    chain: { w: 64, h: 10, core: [255, 250, 220], mid: [255, 210, 80], rim: [255, 140, 32] },
-    shell: { w: 72, h: 13, core: [255, 252, 236], mid: [255, 188, 64], rim: [255, 110, 24] },
-    small: { w: 36, h: 7, core: [255, 236, 180], mid: [220, 160, 56], rim: [168, 96, 28] },
-    aa: { w: 110, h: 6, core: [255, 250, 210], mid: [255, 170, 48], rim: [255, 90, 20] },
-  }[style];
-  const { w, h } = cfg;
+type TracerRgb = [number, number, number];
+
+function drawTracerShape(opts: {
+  w: number;
+  h: number;
+  core: TracerRgb;
+  mid: TracerRgb;
+  rim: TracerRgb;
+  /** 0 = soft tear tracer, 1 = blunt slug. */
+  blunt?: number;
+  glow?: number;
+  twin?: boolean;
+}): HTMLCanvasElement {
+  const { w, h, core, mid, rim } = opts;
+  const blunt = opts.blunt ?? 0;
+  const glow = opts.glow ?? 0.55;
   const c = canvas(w, h);
   const g = ctxOf(c);
   const cy = h / 2;
-  const headX = w * 0.8;
-  const headR = h * 0.28;
+  const headX = w * (0.76 + blunt * 0.06);
+  const headR = h * (0.26 + blunt * 0.08);
   const tailX = w * 0.05;
-  const rgb = (ch: number[], a: number) => `rgba(${ch[0]},${ch[1]},${ch[2]},${a})`;
+  const rgb = (ch: TracerRgb, a: number) => `rgba(${ch[0]},${ch[1]},${ch[2]},${a})`;
 
   const tear = (scaleX: number, scaleY: number) => {
     const hx = headX;
@@ -274,7 +283,13 @@ function drawTracer(style: "chain" | "shell" | "small" | "aa"): HTMLCanvasElemen
       hx,
       cy - hr
     );
-    g.quadraticCurveTo(hx + hr * 1.2 * scaleX, cy, hx, cy + hr);
+    if (blunt > 0.55) {
+      g.lineTo(hx + hr * (0.55 + blunt * 0.35), cy - hr * 0.35);
+      g.lineTo(hx + hr * (0.55 + blunt * 0.35), cy + hr * 0.35);
+      g.lineTo(hx, cy + hr);
+    } else {
+      g.quadraticCurveTo(hx + hr * 1.2 * scaleX, cy, hx, cy + hr);
+    }
     g.bezierCurveTo(
       hx - hr * 1.35,
       cy + hr,
@@ -286,37 +301,133 @@ function drawTracer(style: "chain" | "shell" | "small" | "aa"): HTMLCanvasElemen
     g.closePath();
   };
 
-  const along = g.createLinearGradient(tailX, cy, headX + headR, cy);
-  along.addColorStop(0, rgb(cfg.rim, 0));
-  along.addColorStop(0.22, rgb(cfg.rim, 0.22));
-  along.addColorStop(0.55, rgb(cfg.mid, 0.85));
-  along.addColorStop(0.82, rgb(cfg.core, 1));
-  along.addColorStop(1, rgb(cfg.core, 0.15));
+  const paint = () => {
+    const along = g.createLinearGradient(tailX, cy, headX + headR, cy);
+    along.addColorStop(0, rgb(rim, 0));
+    along.addColorStop(0.22, rgb(rim, 0.22));
+    along.addColorStop(0.55, rgb(mid, 0.85));
+    along.addColorStop(0.82, rgb(core, 1));
+    along.addColorStop(1, rgb(core, 0.15));
 
-  g.save();
-  tear(1.06, 1.12);
-  g.fillStyle = rgb(cfg.rim, 0.28);
-  g.fill();
-  g.restore();
+    g.save();
+    tear(1.06, 1.12);
+    g.fillStyle = rgb(rim, 0.28);
+    g.fill();
+    g.restore();
 
-  tear(1, 1);
-  g.fillStyle = along;
-  g.fill();
+    tear(1, 1);
+    g.fillStyle = along;
+    g.fill();
 
-  const core = g.createRadialGradient(headX, cy, 0, headX, cy, headR * 1.15);
-  core.addColorStop(0, rgb(cfg.core, 1));
-  core.addColorStop(0.45, rgb(cfg.mid, 0.7));
-  core.addColorStop(1, rgb(cfg.rim, 0));
-  g.beginPath();
-  g.arc(headX, cy, headR * 1.05, 0, Math.PI * 2);
-  g.fillStyle = core;
-  g.fill();
+    const coreGrad = g.createRadialGradient(headX, cy, 0, headX, cy, headR * 1.15);
+    coreGrad.addColorStop(0, rgb(core, 1));
+    coreGrad.addColorStop(0.45, rgb(mid, 0.7));
+    coreGrad.addColorStop(1, rgb(rim, 0));
+    g.beginPath();
+    g.arc(headX, cy, headR * 1.05, 0, Math.PI * 2);
+    g.fillStyle = coreGrad;
+    g.fill();
 
-  g.fillStyle = rgb([255, 255, 255], style === "small" ? 0.35 : 0.55);
-  g.beginPath();
-  g.ellipse(headX + headR * 0.12, cy - headR * 0.12, headR * 0.28, headR * 0.18, -0.4, 0, Math.PI * 2);
-  g.fill();
+    g.fillStyle = rgb([255, 255, 255], glow);
+    g.beginPath();
+    g.ellipse(headX + headR * 0.12, cy - headR * 0.12, headR * 0.28, headR * 0.18, -0.4, 0, Math.PI * 2);
+    g.fill();
+  };
+
+  if (opts.twin) {
+    g.save();
+    g.translate(0, -h * 0.18);
+    paint();
+    g.restore();
+    g.save();
+    g.translate(0, h * 0.18);
+    paint();
+    g.restore();
+  } else {
+    paint();
+  }
   return c;
+}
+
+function drawTracer(style: "chain" | "shell" | "small" | "aa"): HTMLCanvasElement {
+  const cfg = {
+    chain: { w: 64, h: 10, core: [255, 250, 220] as TracerRgb, mid: [255, 210, 80] as TracerRgb, rim: [255, 140, 32] as TracerRgb, glow: 0.55 },
+    shell: { w: 72, h: 13, core: [255, 252, 236] as TracerRgb, mid: [255, 188, 64] as TracerRgb, rim: [255, 110, 24] as TracerRgb, glow: 0.55 },
+    small: { w: 36, h: 7, core: [255, 236, 180] as TracerRgb, mid: [220, 160, 56] as TracerRgb, rim: [168, 96, 28] as TracerRgb, glow: 0.35 },
+    aa: { w: 110, h: 6, core: [255, 250, 210] as TracerRgb, mid: [255, 170, 48] as TracerRgb, rim: [255, 90, 20] as TracerRgb, glow: 0.55 },
+  }[style];
+  return drawTracerShape(cfg);
+}
+
+/** Stable hue/shape seed from weapon id (unique cannon looks without authored PNGs). */
+function hashHue(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) % 360;
+}
+
+function cannonTracerOpts(spec: PlayerWpnSpec): Parameters<typeof drawTracerShape>[0] {
+  const curated: Record<string, Parameters<typeof drawTracerShape>[0]> = {
+    chain_gun: { w: 64, h: 10, core: [255, 250, 220], mid: [255, 210, 80], rim: [255, 140, 32], glow: 0.55 },
+    minigun: { w: 48, h: 7, core: [255, 244, 200], mid: [255, 190, 70], rim: [220, 120, 28], glow: 0.4 },
+    heavy_machine_gun: { w: 70, h: 11, core: [255, 248, 230], mid: [255, 200, 90], rim: [200, 100, 30], blunt: 0.25, glow: 0.5 },
+    light_gatling_cannon: { w: 58, h: 9, core: [255, 252, 210], mid: [255, 175, 55], rim: [230, 95, 20], glow: 0.48 },
+    machine_gun: { w: 42, h: 7, core: [255, 236, 180], mid: [230, 165, 60], rim: [170, 95, 30], glow: 0.35 },
+    auto_machine_gun: { w: 66, h: 10, core: [255, 240, 210], mid: [240, 175, 70], rim: [190, 90, 35], blunt: 0.15, glow: 0.45 },
+    concealed_cannon: { w: 52, h: 8, core: [220, 230, 240], mid: [140, 160, 180], rim: [70, 90, 110], glow: 0.22 },
+    railgun: { w: 96, h: 8, core: [220, 245, 255], mid: [80, 200, 255], rim: [30, 90, 220], glow: 0.75 },
+    plasma_cannon: { w: 72, h: 12, core: [255, 220, 255], mid: [200, 90, 255], rim: [90, 30, 200], twin: true, glow: 0.7 },
+    medium_gatling_cannon: { w: 62, h: 10, core: [255, 248, 220], mid: [255, 185, 60], rim: [240, 110, 25], glow: 0.52 },
+    heavy_artillery: { w: 88, h: 16, core: [255, 250, 230], mid: [255, 170, 50], rim: [180, 70, 20], blunt: 0.85, glow: 0.4 },
+    medium_cannon: { w: 76, h: 13, core: [255, 245, 210], mid: [255, 160, 45], rim: [200, 80, 18], blunt: 0.55, glow: 0.45 },
+    light_cannon: { w: 60, h: 9, core: [255, 250, 215], mid: [255, 195, 70], rim: [235, 120, 28], glow: 0.5 },
+    heavy_cannon: { w: 74, h: 12, core: [255, 252, 225], mid: [255, 175, 55], rim: [210, 95, 22], blunt: 0.35, glow: 0.55 },
+    light_machine_gun: { w: 34, h: 6, core: [255, 230, 170], mid: [210, 150, 50], rim: [150, 85, 28], glow: 0.3 },
+    tesla_beam: { w: 80, h: 10, core: [230, 255, 255], mid: [80, 240, 255], rim: [20, 120, 255], twin: true, glow: 0.85 },
+  };
+  const hit = curated[spec.id];
+  if (hit) return hit;
+  const hue = hashHue(spec.id);
+  const rgbAt = (h: number, s: number, l: number): TracerRgb => {
+    const a = (h / 360) * 6;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs((a % 2) - 1));
+    const m = l - c / 2;
+    let r = 0, g = 0, b = 0;
+    if (a < 1) [r, g, b] = [c, x, 0];
+    else if (a < 2) [r, g, b] = [x, c, 0];
+    else if (a < 3) [r, g, b] = [0, c, x];
+    else if (a < 4) [r, g, b] = [0, x, c];
+    else if (a < 5) [r, g, b] = [x, 0, c];
+    else [r, g, b] = [c, 0, x];
+    return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+  };
+  return {
+    w: 48 + (hashHue(spec.id + "w") % 40),
+    h: 7 + (hashHue(spec.id + "h") % 7),
+    core: rgbAt(hue, 0.35, 0.92),
+    mid: rgbAt(hue, 0.75, 0.55),
+    rim: rgbAt((hue + 30) % 360, 0.85, 0.4),
+    blunt: (hashHue(spec.id + "b") % 100) / 140,
+    glow: 0.35 + (hashHue(spec.id + "g") % 40) / 100,
+  };
+}
+
+/**
+ * Unique procedural cannon/beam tracers for each `shot_wpn_*` cannon look.
+ * Rockets/missiles stay on sheet/image-gen PNGs (legacy fallback until authored).
+ */
+export function bakePlayerCannonLooks(textures: Phaser.Textures.TextureManager): void {
+  for (const spec of Object.values(PLAYER_WPNS)) {
+    if (spec.kind !== "cannon") continue;
+    const key = String(spec.look);
+    if (textures.exists(key)) continue;
+    add(textures, key, drawTracerShape(cannonTracerOpts(spec)));
+    bakeShadows(textures, key);
+  }
 }
 
 function drawRocket(): HTMLCanvasElement {
@@ -557,6 +668,9 @@ function collectArtKeys(): string[] {
   ]) {
     keys.add(k);
   }
+  for (const spec of Object.values(PLAYER_WPNS)) {
+    if (spec.kind === "cannon") keys.add(String(spec.look));
+  }
   return [...keys];
 }
 
@@ -565,6 +679,7 @@ function collectArtKeys(): string[] {
  * generic placeholder, then bake drop shadows for those fills.
  */
 export function bakeRosterArt(textures: Phaser.Textures.TextureManager): void {
+  bakePlayerCannonLooks(textures);
   for (const key of collectArtKeys()) {
     if (textures.exists(key)) continue;
     const size = /battleship|fob|bunker|radar/.test(key) ? 128 : 64;
