@@ -11,7 +11,7 @@ import {
 import { allCrafts } from "./craft";
 import { ENEMY_WPNS, usesOfWeapon } from "./roster";
 import { CFG_INFO, CFG_VALUE, dumpConfig, makeConfigText, setStatsAndInfo } from "./configUi";
-import { lookupSpriteOrigin } from "./spriteOrigin";
+import { lookupSpriteMuzzles, lookupSpriteOrigin } from "./spriteOrigin";
 import {
   TOON_BLAST_FRAMES,
   TOON_BLAST_KEY,
@@ -34,6 +34,7 @@ const GOLD = "#e8b84a";
 const PAPER = CFG_VALUE;
 const ORIGIN_COLOR = 0xe8b84a;
 const TAIL_COLOR = 0xff6a40;
+const MUZZLE_COLOR = 0xff7a2a;
 
 const LIST_X = 16;
 const LIST_Y = 40;
@@ -412,17 +413,30 @@ export class CombatConfigTool {
           this.overlay.strokeCircle(shot.spr.x, shot.spr.y, blast * s * 0.35);
         }
       }
-      if (hasMount) {
-        const mount = panels[0]!;
-        const origin = lookupSpriteOrigin(e.mountTex!) ?? { x: 0.5, y: 0.7 };
-        const mx = mount.spr.x + (origin.x - mount.spr.originX) * mount.spr.displayWidth;
-        const my = mount.spr.y + (origin.y - mount.spr.originY) * mount.spr.displayHeight;
-        this.overlay.lineStyle(1.5, ORIGIN_COLOR, 0.95);
-        this.overlay.strokeCircle(mx, my, 4);
-        this.overlay.lineBetween(mx - 7, my, mx + 7, my);
-        this.overlay.lineBetween(mx, my - 7, mx, my + 7);
-      }
+      if (hasMount) this.drawMountMarks(panels[0]!.spr, e.mountTex!);
     }
+  }
+
+  /** Pivot + authored muzzle tips on the gun-mount texture (SPRITE_SPECS). */
+  private drawMountMarks(spr: Phaser.GameObjects.Image, tex: string): void {
+    const g = this.overlay;
+    const toX = (u: number) => spr.x + (u - spr.originX) * spr.displayWidth;
+    const toY = (v: number) => spr.y + (v - spr.originY) * spr.displayHeight;
+    const origin = lookupSpriteOrigin(tex) ?? { x: 0.5, y: 0.7 };
+    const ox = toX(origin.x);
+    const oy = toY(origin.y);
+    for (const p of lookupSpriteMuzzles(tex)) {
+      const x = toX(p.x);
+      const y = toY(p.y);
+      g.fillStyle(MUZZLE_COLOR, 0.95);
+      g.fillCircle(x, y, 5);
+      g.lineStyle(1.25, 0xffe8c0, 0.95);
+      g.strokeCircle(x, y, 5);
+    }
+    g.lineStyle(1.5, ORIGIN_COLOR, 0.95);
+    g.strokeCircle(ox, oy, 4);
+    g.lineBetween(ox - 7, oy, ox + 7, oy);
+    g.lineBetween(ox, oy - 7, ox, oy + 7);
   }
 
   private drawCheckerPanel(bx: number, by: number, boxW: number, boxH: number, pad: number): void {
@@ -479,6 +493,16 @@ function shotLayoutDump(): string[] {
   });
 }
 
+/** Read-only gun-mount UV layout from SPRITE_SPECS (edit in the sprite rig). */
+function mountLayoutDump(tex: string): string[] {
+  const origin = lookupSpriteOrigin(tex) ?? { x: 0.5, y: 0.5 };
+  const muzzles = lookupSpriteMuzzles(tex);
+  return dumpConfig({
+    mountOrigin: origin,
+    mountMuzzles: muzzles.length ? muzzles : "— (none; runtime gunTip)",
+  });
+}
+
 export function buildCombatCatalog(): CombatEntry[] {
   return [...playerEntries(), ...presetEntries(), ...fxEntries()];
 }
@@ -513,6 +537,9 @@ function formatPlayer(w: PlayerWpnSpec): { stats: string[]; info: string[] } {
     crafts.length ? `used by: ${crafts.join(" · ")}` : "used by: —",
     "source: combat.ts PLAYER_WPNS / SHOT_ORIGIN / SHOT_TAIL",
   ];
+  if (w.mount) {
+    info.push(`mount UVs: spriteOrigin.ts SPRITE_SPECS[${w.mount}] (edit in sprite rig)`);
+  }
   if (w.kind === "lock-on-missile" || w.kind === "guided-missile") {
     info.push(
       `MISSILE_IGNITE ${MISSILE_IGNITE}`,
@@ -521,7 +548,11 @@ function formatPlayer(w: PlayerWpnSpec): { stats: string[]; info: string[] } {
     );
   }
   return {
-    stats: [...dumpConfig(w, { skip: ["notes"] }), ...shotLayoutDump()],
+    stats: [
+      ...dumpConfig(w, { skip: ["notes"] }),
+      ...shotLayoutDump(),
+      ...(w.mount ? mountLayoutDump(w.mount) : []),
+    ],
     info,
   };
 }

@@ -16,7 +16,6 @@ import {
   HELLFIRE_LOCK_T,
   HELLFIRE_SEEK_DELAY,
   shotBehaviorOf,
-  legacyShotLook,
   guidanceUsesLock,
   PLAYER_WPNS,
   type Debris,
@@ -242,11 +241,9 @@ const CAMERA_PRESETS = [
 ] as const;
 
 function shotLookOf(s: Shot, textures?: Phaser.Textures.TextureManager): ShotLook {
-  if (s.look) {
-    if (!textures || textures.exists(s.look)) return s.look;
-    return legacyShotLook(s.kind);
-  }
-  return legacyShotLook(s.kind);
+  const look = s.look;
+  if (look && (!textures || textures.exists(look))) return look;
+  return look ?? "shot_rocket";
 }
 
 /** Soft rim where map-edge steering ramps up. */
@@ -1708,14 +1705,14 @@ export class MissionScene extends Phaser.Scene {
     this.shadow = this.add.image(0, 0, "shadow").setDepth(Layer.SHADOW);
     this.guns = this.craftParts.guns.map((part) =>
       this.add
-        .image(0, 0, this.textures.exists(part.tex) ? part.tex : craft.gun)
+        .image(0, 0, part.tex)
         .setDepth(Layer.WORLD)
         .setOrigin(part.origin.x, part.origin.y)
     );
     this.gun =
       this.guns[0] ??
       this.add
-        .image(0, 0, craft.gun)
+        .image(0, 0, "fx_muzzle")
         .setDepth(Layer.WORLD)
         .setOrigin(craftGunOrigin(craft).x, craftGunOrigin(craft).y)
         .setVisible(false);
@@ -4199,7 +4196,7 @@ export class MissionScene extends Phaser.Scene {
         scale: spec.scale,
         fxInterval: spec.fireCd,
         guided: spec.guidance.mode === "pointer" || undefined,
-        warpTimeScale: spec.warpTimeScale ?? (spec.payload.mode === "warp" ? spec.payload.timeScale : undefined),
+        warpTimeScale: spec.payload.mode === "warp" ? spec.payload.timeScale : undefined,
       });
       this.missileMuzzle(px, py, h.z, ang, projectileFxScale("player", spec.fireCd));
       return;
@@ -4272,7 +4269,7 @@ export class MissionScene extends Phaser.Scene {
         fxInterval,
         guided: spec.guidance.mode === "pointer" || undefined,
         tint: spec.payload.mode === "plasma_helix" ? 0x66eeff : undefined,
-        warpTimeScale: spec.warpTimeScale ?? (spec.payload.mode === "warp" ? spec.payload.timeScale : undefined),
+        warpTimeScale: spec.payload.mode === "warp" ? spec.payload.timeScale : undefined,
       });
       if (spec.beam || spec.payload.mode === "beam") {
         const beamEnd = worldToScreen(tx, ty, tz);
@@ -4303,10 +4300,11 @@ export class MissionScene extends Phaser.Scene {
         const craft = h.spec;
         const mountedGun = this.guns[mountedGunI] ?? this.gun;
         const mountedGunUv = craftGunMounts(craft)[mountedGunI] ?? craftGunMount(craft);
+        const gunTex = mountedGun.texture.key;
         const side = muzzleUv
           ? (muzzleUv.x < craftOrigin(craft).x ? -1 : 1)
           : this.shellEjectSide({
-              muzzleUv: lookupSpriteMuzzles(craft.gun)[0],
+              muzzleUv: lookupSpriteMuzzles(gunTex)[0],
               mountUv: mountedGunUv,
             });
         const ejectAt = muzzleUv ? tip : screenToWorldAtZ(mountedGun.x, mountedGun.y, h.z);
@@ -4379,7 +4377,7 @@ export class MissionScene extends Phaser.Scene {
         : 0.42 + Math.random() * 0.22),
       wireSide: side,
       wire: wantsWire ? [] : undefined,
-      warpTimeScale: spec.warpTimeScale ?? (spec.payload.mode === "warp" ? spec.payload.timeScale : undefined),
+      warpTimeScale: spec.payload.mode === "warp" ? spec.payload.timeScale : undefined,
     });
     this.missileMuzzle(px, py, h.z, ang, projectileFxScale("player", spec.fireCd));
   }
@@ -4418,7 +4416,7 @@ export class MissionScene extends Phaser.Scene {
       look: spec.look,
       scale: spec.scale,
       fxInterval: spec.fireCd,
-      warpTimeScale: spec.warpTimeScale ?? (spec.payload.mode === "warp" ? spec.payload.timeScale : undefined),
+      warpTimeScale: spec.payload.mode === "warp" ? spec.payload.timeScale : undefined,
     });
   }
 
@@ -12228,6 +12226,7 @@ function troopMissileTrail(s: Shot): boolean {
 
 function shotTrailScale(s: Shot): number {
   const vis = s.scale ?? 1;
+  if (s.beh?.trailScale != null) return vis * s.beh.trailScale;
   const small = troopMissileTrail(s);
   if (s.kind === "rocket") return small ? vis * 0.34 : vis * 0.32;
   if (s.kind === "guided-missile") return vis * 0.52;

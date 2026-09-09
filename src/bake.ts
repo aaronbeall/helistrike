@@ -4,7 +4,7 @@
  */
 import type Phaser from "phaser";
 import { PLAYER_WPNS, type PlayerWpnSpec } from "./combat";
-import { allCraftKinds, craftOf } from "./craft";
+import { allCraftKinds, craftGunTexture, craftOf } from "./craft";
 import { bakeToonBlast } from "./toonBlast";
 import { allKinds, gunsOf, specOf, type UnitKind } from "./roster";
 import { bakeShadows, bakeThermalHeatFromDarkness } from "./sprites";
@@ -370,26 +370,7 @@ function hashHue(id: string): number {
 }
 
 function cannonTracerOpts(spec: PlayerWpnSpec): Parameters<typeof drawTracerShape>[0] {
-  const curated: Record<string, Parameters<typeof drawTracerShape>[0]> = {
-    chain_gun: { w: 64, h: 10, core: [255, 250, 220], mid: [255, 210, 80], rim: [255, 140, 32], glow: 0.55 },
-    minigun: { w: 48, h: 7, core: [255, 244, 200], mid: [255, 190, 70], rim: [220, 120, 28], glow: 0.4 },
-    heavy_machine_gun: { w: 70, h: 11, core: [255, 248, 230], mid: [255, 200, 90], rim: [200, 100, 30], blunt: 0.25, glow: 0.5 },
-    light_gatling_cannon: { w: 58, h: 9, core: [255, 252, 210], mid: [255, 175, 55], rim: [230, 95, 20], glow: 0.48 },
-    machine_gun: { w: 42, h: 7, core: [255, 236, 180], mid: [230, 165, 60], rim: [170, 95, 30], glow: 0.35 },
-    auto_machine_gun: { w: 66, h: 10, core: [255, 240, 210], mid: [240, 175, 70], rim: [190, 90, 35], blunt: 0.15, glow: 0.45 },
-    concealed_cannon: { w: 52, h: 8, core: [220, 230, 240], mid: [140, 160, 180], rim: [70, 90, 110], glow: 0.22 },
-    railgun: { w: 96, h: 8, core: [220, 245, 255], mid: [80, 200, 255], rim: [30, 90, 220], glow: 0.75 },
-    plasma_cannon: { w: 72, h: 12, core: [255, 220, 255], mid: [200, 90, 255], rim: [90, 30, 200], twin: true, glow: 0.7 },
-    medium_gatling_cannon: { w: 62, h: 10, core: [255, 248, 220], mid: [255, 185, 60], rim: [240, 110, 25], glow: 0.52 },
-    heavy_artillery: { w: 88, h: 16, core: [255, 250, 230], mid: [255, 170, 50], rim: [180, 70, 20], blunt: 0.85, glow: 0.4 },
-    medium_cannon: { w: 76, h: 13, core: [255, 245, 210], mid: [255, 160, 45], rim: [200, 80, 18], blunt: 0.55, glow: 0.45 },
-    light_cannon: { w: 60, h: 9, core: [255, 250, 215], mid: [255, 195, 70], rim: [235, 120, 28], glow: 0.5 },
-    heavy_cannon: { w: 74, h: 12, core: [255, 252, 225], mid: [255, 175, 55], rim: [210, 95, 22], blunt: 0.35, glow: 0.55 },
-    light_machine_gun: { w: 34, h: 6, core: [255, 230, 170], mid: [210, 150, 50], rim: [150, 85, 28], glow: 0.3 },
-    tesla_beam: { w: 80, h: 10, core: [230, 255, 255], mid: [80, 240, 255], rim: [20, 120, 255], twin: true, glow: 0.85 },
-  };
-  const hit = curated[spec.id];
-  if (hit) return hit;
+  if (spec.tracer) return spec.tracer;
   const hue = hashHue(spec.id);
   const rgbAt = (h: number, s: number, l: number): TracerRgb => {
     const a = (h / 360) * 6;
@@ -646,7 +627,7 @@ function collectArtKeys(): string[] {
     const c = craftOf(kind);
     addKey(c.body);
     addKey(c.hulk);
-    addKey(c.gun);
+    addKey(craftGunTexture(c));
     addKey(c.rotor);
   }
   for (const k of [
@@ -670,6 +651,7 @@ function collectArtKeys(): string[] {
   }
   for (const spec of Object.values(PLAYER_WPNS)) {
     if (spec.kind === "cannon") keys.add(String(spec.look));
+    if (spec.mount) keys.add(spec.mount);
   }
   return [...keys];
 }

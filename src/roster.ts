@@ -34,14 +34,7 @@ export type UnitKind =
 export type DebrisCat = "mech" | "struct" | "organic";
 
 /** Projectile texture key (= Phaser texture name). */
-export type ShotLook =
-  | "shot_chain"
-  | "shot_shell"
-  | "shot_small"
-  | "shot_aa"
-  | "shot_rocket"
-  | "shot_hellfire"
-  | "shot_tow";
+export type ShotLook = string;
 
 /** Projectile flight behavior (independent of art `look`). */
 export type ShotKind = "cannon" | "rocket" | "lock-on-missile" | "guided-missile";

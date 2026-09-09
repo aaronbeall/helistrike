@@ -71,8 +71,8 @@ export interface CraftSpec {
   /** Body texture key. */
   body: string;
   hulk: string;
-  /** Chin / turret gun texture (shared `heli_gun` for most). */
-  gun: string;
+  /** @deprecated Prefer PlayerWpnSpec.mount via sockets; kept only as rare fallback. */
+  gun?: string;
   /** False for craft whose weapons are baked into the body and use authored muzzles. */
   gunVisible?: boolean;
   /**
@@ -132,7 +132,6 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     height: 14,
     body: "heli_body",
     hulk: "heli_body_hulk",
-    gun: "heli_gun",
     rotor: "heli_rotor",
     rotorHulk: "heli_rotor_hulk",
     rotOff: Math.PI / 2,
@@ -157,7 +156,6 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     height: 8,
     body: "craft_littlebird",
     hulk: "craft_littlebird_hulk",
-    gun: "heli_gun",
     gunVisible: false,
     rotor: "craft_littlebird_rotor",
     rotorHulk: "craft_littlebird_rotor_hulk",
@@ -184,7 +182,6 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     height: 3.2,
     body: "craft_quad_drone",
     hulk: "craft_quad_drone_hulk",
-    gun: "heli_gun",
     gunVisible: false,
     rotor: "craft_quad_drone_rotor",
     rotorHulk: "craft_quad_drone_rotor_hulk",
@@ -213,7 +210,6 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     height: 13,
     body: "craft_cobra",
     hulk: "craft_cobra_hulk",
-    gun: "heli_gun",
     rotor: "craft_cobra_rotor",
     rotorHulk: "craft_cobra_rotor_hulk",
     rotorScale: 1.24,
@@ -239,7 +235,6 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     height: 13,
     body: "craft_viper",
     hulk: "craft_viper_hulk",
-    gun: "heli_gun",
     rotor: "craft_viper_rotor",
     rotorHulk: "craft_viper_rotor_hulk",
     rotorScale: 1.24,
@@ -265,7 +260,6 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     height: 15,
     body: "craft_blackhawk",
     hulk: "craft_blackhawk_hulk",
-    gun: "enemy_heli_gun",
     rotor: "craft_blackhawk_rotor",
     rotorHulk: "craft_blackhawk_rotor_hulk",
     rotorScale: 1.39,
@@ -292,7 +286,6 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     height: 25,
     body: "craft_chinook",
     hulk: "craft_chinook_hulk",
-    gun: "enemy_heli_gun",
     rotor: "craft_chinook_rotor",
     rotorHulk: "craft_chinook_rotor_hulk",
     rotorScale: 1.55,
@@ -319,7 +312,6 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     height: 20,
     body: "craft_osprey",
     hulk: "craft_osprey_hulk",
-    gun: "heli_gun",
     rotor: "craft_osprey_rotor",
     rotorHulk: "craft_osprey_rotor_hulk",
     rotorScale: 0.98,
@@ -346,7 +338,6 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     height: 14,
     body: "craft_stealthhawk",
     hulk: "craft_stealthhawk_hulk",
-    gun: "heli_gun",
     rotor: "craft_stealthhawk_rotor",
     rotorHulk: "craft_stealthhawk_rotor_hulk",
     rotorScale: 1.24,
@@ -374,7 +365,6 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     height: 14,
     body: "craft_cyberhawk",
     hulk: "craft_cyberhawk_hulk",
-    gun: "heli_gun",
     rotor: "craft_cyberhawk_rotor",
     rotorHulk: "craft_cyberhawk_rotor_hulk",
     rotorScale: 1.24,
@@ -400,7 +390,6 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     height: 14,
     body: "craft_prometheus",
     hulk: "craft_prometheus_hulk",
-    gun: "heli_gun",
     // No rotor — hover via energy FX later.
     rotOff: Math.PI / 2,
     forwardThrust: 900, strafeThrust: 760, maxSpeed: 600, minSpeed: 0, yawRate: 4.5, yawAccel: 25, drag: 0.95,
@@ -425,7 +414,6 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     height: 13,
     body: "craft_lightning_ii",
     hulk: "craft_lightning_ii_hulk",
-    gun: "heli_gun",
     gunVisible: false,
     rotOff: Math.PI / 2,
     forwardThrust: 1050, reverseThrust: 130, strafeThrust: 260, maxSpeed: 680, maxReverseSpeed: 65, minSpeed: 0, yawRate: 2.35, yawAccel: 10, drag: 1.15,
@@ -449,7 +437,6 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     height: 35,
     body: "craft_gunship",
     hulk: "craft_gunship_hulk",
-    gun: "heli_gun",
     rotor: "craft_osprey_rotor",
     rotorHulk: "craft_osprey_rotor_hulk",
     rotorScale: 0.24,
@@ -475,7 +462,6 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     height: 13,
     body: "craft_warthog",
     hulk: "craft_warthog_hulk",
-    gun: "heli_gun",
     rotOff: Math.PI / 2,
     forwardThrust: 1200, strafeThrust: 0, maxSpeed: 760, minSpeed: 300, yawRate: 1.25, yawAccel: 5.5, drag: 0.75,
     verticalThrust: 260, cruiseThrust: 32, cruiseAgl: 150, maxAgl: 360,
@@ -592,25 +578,16 @@ export function gunMountTexture(wpnId: string): string | undefined {
   return weaponMountTex(wpnId);
 }
 
-/** Texture key for a cannon weapon's turret gun body (no swivel track). */
-export function gunMountKey(wpnId: string): string {
-  return gunMountTexture(wpnId) ?? `gun_${wpnId}`;
-}
-
 /**
  * Visible gun overlay texture for a craft.
- * Prefers the authored mount body for the first turret/cabin/(visible) fixed gun socket.
+ * Prefers PlayerWpnSpec.mount for the first turret/cabin socket that has mount art.
  */
-export function craftGunTexture(c: CraftSpec = craftOf()): string {
-  if (c.gunVisible === false) return c.gun;
-  const sock =
-    c.sockets.find(
-      (s) =>
-        (s.class === "turret" || s.class === "cabin") && !!gunMountTexture(s.weapon)
-    ) ??
-    c.sockets.find((s) => s.class === "turret" || s.class === "cabin") ??
-    c.sockets.find((s) => s.class === "fixed");
-  return sock ? gunMountKey(sock.weapon) : c.gun;
+export function craftGunTexture(c: CraftSpec = craftOf()): string | undefined {
+  if (c.gunVisible === false) return undefined;
+  const sock = c.sockets.find(
+    (s) => (s.class === "turret" || s.class === "cabin") && !!gunMountTexture(s.weapon)
+  );
+  return sock ? gunMountTexture(sock.weapon) : c.gun;
 }
 
 /** Authoritative visual parts and mounts for composing a craft in any view. */
@@ -628,27 +605,16 @@ export function craftComposite(c: CraftSpec = craftOf()): CraftComposite {
     guns:
       c.gunVisible === false
         ? []
-        : gunSockets.length
-          ? gunSockets.map((sock, i) => {
-              const tex = gunMountTexture(sock.weapon)!;
-              return {
-                kind: "gun" as const,
-                tex,
-                origin: lookupSpriteOrigin(tex) ?? craftGunOrigin(c),
-                mount: gunMounts[i] ?? gunMounts[0] ?? craftOrigin(c),
-                layer: "below" as const,
-              };
-            })
-          : gunMounts.map((mount) => {
-              const tex = craftGunTexture(c);
-              return {
-                kind: "gun" as const,
-                tex,
-                origin: lookupSpriteOrigin(tex) ?? craftGunOrigin(c),
-                mount,
-                layer: "below" as const,
-              };
-            }),
+        : gunSockets.map((sock, i) => {
+            const tex = gunMountTexture(sock.weapon)!;
+            return {
+              kind: "gun" as const,
+              tex,
+              origin: lookupSpriteOrigin(tex) ?? craftGunOrigin(c),
+              mount: gunMounts[i] ?? gunMounts[0] ?? craftOrigin(c),
+              layer: "below" as const,
+            };
+          }),
     rotors: rotorTex
       ? craftRotorMounts(c).map((mount) => ({
           kind: "rotor",
@@ -740,7 +706,8 @@ export function craftFixedMuzzles(c: CraftSpec = craftOf()): { x: number; y: num
 
 /** Pivot on the gun sprite. */
 export function craftGunOrigin(c: CraftSpec = craftOf()): { x: number; y: number } {
-  return lookupSpriteOrigin(c.gun) ?? DEFAULT_ORIGIN;
+  const tex = craftGunTexture(c);
+  return (tex ? lookupSpriteOrigin(tex) : undefined) ?? DEFAULT_ORIGIN;
 }
 
 /** Default body UV role for a socket class. */
