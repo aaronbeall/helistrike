@@ -606,7 +606,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   if (textures.exists("src_building_radar_dish")) {
     put(textures, "building_radar_disk", fit(clipRadarDish(keyPixels(src(textures, "src_building_radar_dish"), "magenta")), 160));
   }
-  putGrid(textures, "src_vehicles", 3, 2, [
+  putGrid(textures, "src_enemy_vehicles", 3, 2, [
     ["enemy_pickup", 58],
     ["enemy_truck", 68],
     ["enemy_tanker", 70],
@@ -614,15 +614,15 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     ["enemy_sam", 68],
     ["enemy_ptboat", 50],
   ]);
-  putGrid(textures, "src_moto_mg", 2, 1, [
+  putGrid(textures, "src_enemy_moto_mg", 2, 1, [
     ["enemy_motorcycle", 46],
     ["enemy_troop_mounted_mg", 36],
   ]);
-  putGrid(textures, "src_tower_guns", 2, 1, [
+  putGrid(textures, "src_building_tower_guns", 2, 1, [
     ["building_tower_aa", 48],
     ["building_tower_sam", 48],
   ]);
-  putGrid(textures, "src_troops", 3, 2, [
+  putGrid(textures, "src_enemy_troops", 3, 2, [
     ["enemy_troop_rpg", 26],
     ["enemy_troop_gunner", 26],
     ["enemy_troop_stinger", 26],
@@ -630,13 +630,13 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     ["enemy_troop_officer", 26],
     ["enemy_troop_soldier", 26],
   ]);
-  putGrid(textures, "src_buildings", 2, 2, [
+  putGrid(textures, "src_building_structures", 2, 2, [
     ["building_barn", 86],
     ["building_tent", 64],
     ["building_fob", 128],
     ["building_lookout", 70],
   ]);
-  putGrid(textures, "src_air_ship", 2, 2, [
+  putGrid(textures, "src_enemy_air_ship", 2, 2, [
     ["enemy_drone", 20],
     ["enemy_heli_small", 62],
     ["enemy_heli_heavy", 128],
@@ -653,7 +653,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   if (textures.exists("src_building_radar_dish_hulk")) {
     put(textures, "building_radar_disk_hulk", darkenWreck(fit(clipRadarDish(keyPixels(src(textures, "src_building_radar_dish_hulk"), "magenta")), 150)));
   }
-  putHulkGrid(textures, "src_vehicles_hulk", 3, 2, [
+  putHulkGrid(textures, "src_enemy_vehicles_hulk", 3, 2, [
     ["enemy_pickup_hulk", 58],
     ["enemy_truck_hulk", 68],
     ["enemy_tanker_hulk", 70],
@@ -666,17 +666,17 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     const img = textures.get(key).getSourceImage() as HTMLCanvasElement;
     put(textures, `${key}_sink`, submergeBlue(img));
   }
-  putHulkGrid(textures, "src_moto_mg_hulk", 2, 1, [
+  putHulkGrid(textures, "src_enemy_moto_mg_hulk", 2, 1, [
     ["enemy_motorcycle_hulk", 46],
     ["enemy_troop_mounted_mg_hulk", 36],
   ]);
-  putHulkGrid(textures, "src_buildings_hulk", 2, 2, [
+  putHulkGrid(textures, "src_building_structures_hulk", 2, 2, [
     ["building_barn_hulk", 86],
     ["building_tent_hulk", 64],
     ["building_fob_hulk", 128],
     ["building_lookout_hulk", 70],
   ]);
-  putHulkGrid(textures, "src_air_ship_hulk", 2, 2, [
+  putHulkGrid(textures, "src_enemy_air_ship_hulk", 2, 2, [
     ["enemy_drone_hulk", 20],
     ["enemy_heli_small_hulk", 62],
     ["enemy_heli_heavy_hulk", 128],
@@ -690,7 +690,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   ] as const) {
     grayShiftTexture(textures, key);
   }
-  putHulkGrid(textures, "src_troops_hulk", 3, 2, [
+  putHulkGrid(textures, "src_enemy_troops_hulk", 3, 2, [
     ["enemy_troop_rpg_hulk", 28],
     ["enemy_troop_gunner_hulk", 28],
     ["enemy_troop_stinger_hulk", 28],
@@ -698,11 +698,11 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     ["enemy_troop_officer_hulk", 28],
     ["enemy_troop_soldier_hulk", 28],
   ]);
-  putHulkGrid(textures, "src_tower_guns_hulk", 2, 1, [
+  putHulkGrid(textures, "src_building_tower_guns_hulk", 2, 1, [
     ["building_tower_aa_hulk", 48],
     ["building_tower_sam_hulk", 48],
   ]);
-  const rotorHulks = splitRotorSheet(keyPixels(src(textures, "src_rotors_hulk"), "magenta"));
+  const rotorHulks = splitRotorSheet(keyPixels(src(textures, "src_enemy_rotors_hulk"), "magenta"));
   // ~60% of live rotor bake size (enemy 108 → 65). Apache rotor hulk is CRAFT_ART.
   put(textures, "enemy_heli_rotor_hulk", fit(stripBakedDropShadow(squareCenter(rotorHulks[1]!)), 65));
   if (textures.exists("enemy_drone_rotor")) {
@@ -722,7 +722,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     put(textures, `doodad_${d.key}`, fit(keyDoodad(src(textures, srcKey)), d.size));
   }
 
-  putHulkGrid(textures, "src_bunker_hulk", 2, 1, [
+  putHulkGrid(textures, "src_building_bunker_hulk", 2, 1, [
     ["building_bunker_hulk", 120],
     ["hulk_crater", 48],
   ]);
