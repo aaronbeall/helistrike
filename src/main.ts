@@ -1,7 +1,7 @@
 import "./style.css";
 import Phaser from "phaser";
 import { BootScene, LoadScene, MenuScene, MissionScene } from "./scenes";
-import { ConfigRigsScene } from "./configRigs";
+import { RigsScene } from "./rigs";
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -14,7 +14,7 @@ const config: Phaser.Types.Core.GameConfig = {
     height: 720,
   },
   physics: { default: "arcade" },
-  scene: [BootScene, ConfigRigsScene, MenuScene, LoadScene, MissionScene],
+  scene: [BootScene, RigsScene, MenuScene, LoadScene, MissionScene],
   render: { antialias: true, pixelArt: false },
 };
 

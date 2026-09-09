@@ -42,14 +42,14 @@ import {
 import { footprintOf, strokeFootprint } from "./footprint";
 import { nameGameTexture, spritePivot } from "./sprites";
 import {
-  CFG_INFO,
-  CFG_LIVE,
-  CFG_VALUE,
-  dumpConfig,
+  RIG_INFO,
+  RIG_LIVE,
+  RIG_VALUE,
+  dumpRig,
   formatRotOff,
-  makeConfigText,
+  makeRigText,
   setStackedTexts,
-} from "./configUi";
+} from "./rigUi";
 
 const DEPTH = 9250;
 const MONO = "Share Tech Mono, monospace";
@@ -99,7 +99,7 @@ type RosterEntry = { cat: "craft"; kind: CraftKind } | { cat: "unit"; kind: Unit
  * Lazy debug browser for CRAFTS + SPECS — list, live preview (hull + parts),
  * and a stats dump from the real craft / unit sources.
  */
-export class RosterConfigTool {
+export class RosterRig {
   open = false;
   private built = false;
   private scene: Phaser.Scene;
@@ -178,11 +178,11 @@ export class RosterConfigTool {
       this.shots.push(im);
     }
     this.overlay = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH + 4).setVisible(false);
-    this.listTxt = makeConfigText(scene, DEPTH + 5, { fontSize: "13px", lineSpacing: 3, color: CFG_VALUE });
+    this.listTxt = makeRigText(scene, DEPTH + 5, { fontSize: "13px", lineSpacing: 3, color: RIG_VALUE });
     this.listTxt.setPosition(LIST_X, LIST_Y);
-    this.statsTxt = makeConfigText(scene, DEPTH + 5, { fontSize: "12px", lineSpacing: 4, color: CFG_VALUE, wrapW: STATS_W - 8 });
-    this.liveTxt = makeConfigText(scene, DEPTH + 5, { fontSize: "12px", lineSpacing: 4, color: CFG_LIVE, wrapW: STATS_W - 8 });
-    this.infoTxt = makeConfigText(scene, DEPTH + 5, { fontSize: "12px", lineSpacing: 4, color: CFG_INFO, wrapW: STATS_W - 8 });
+    this.statsTxt = makeRigText(scene, DEPTH + 5, { fontSize: "12px", lineSpacing: 4, color: RIG_VALUE, wrapW: STATS_W - 8 });
+    this.liveTxt = makeRigText(scene, DEPTH + 5, { fontSize: "12px", lineSpacing: 4, color: RIG_LIVE, wrapW: STATS_W - 8 });
+    this.infoTxt = makeRigText(scene, DEPTH + 5, { fontSize: "12px", lineSpacing: 4, color: RIG_INFO, wrapW: STATS_W - 8 });
     this.hintTxt = scene.add
       .text(18, 14, "", { fontFamily: MONO, fontSize: "12px", color: GOLD })
       .setScrollFactor(0)
@@ -644,7 +644,7 @@ export class RosterConfigTool {
           ? roll.weights.find(([id]) => id === pickId)?.[1]
           : undefined;
       this.pendingStats = [
-        ...dumpConfig({
+        ...dumpRig({
           partsRoll: {
             pick: tag,
             i: `${this.rollPickIdx + 1}/${pickIds.length}`,
@@ -953,7 +953,7 @@ export class RosterConfigTool {
     const origin = uv ? { x: uv.im.originX, y: uv.im.originY } : spritePivot(tex);
     const tw = uv?.im.width || 1;
     const th = uv?.im.height || 1;
-    const live = dumpConfig({
+    const live = dumpRig({
       cursor: uv
         ? {
             sprite: uv.tex,
@@ -1227,8 +1227,8 @@ function formatCraft(craft: CraftSpec): { stats: string[]; info: string[] } {
   const selected = craft.kind === craftKind();
   const gunMounts = craftGunMounts(craft);
   const stats = [
-    ...dumpConfig(craft, { format: formatRotOff }),
-    ...dumpConfig({
+    ...dumpRig(craft, { format: formatRotOff }),
+    ...dumpRig({
       selected: selected ? "yes ★" : "no",
       origin: craftOrigin(craft),
       ...(gunMounts.length ? { gunMounts } : {}),
@@ -1256,7 +1256,7 @@ function formatSpec(kind: UnitKind, sp: UnitSpec): { stats: string[]; info: stri
     }
   }
   return {
-    stats: dumpConfig({ kind, ...sp }, { format: formatRotOff }),
+    stats: dumpRig({ kind, ...sp }, { format: formatRotOff }),
     info,
   };
 }

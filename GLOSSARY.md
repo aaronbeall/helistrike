@@ -1,6 +1,6 @@
 # Glossary
 
-Config rigs dump live config objects via `dumpConfig` (`configUi.ts`); row labels are **code field names** (`kind`, `fireCd`, `look`, …). Tags below are for HUD / design talk.
+In-game rigs dump live objects via `dumpRig` (`rigUi.ts`); row labels are **code field names** (`kind`, `fireCd`, `look`, …). Tags below are for HUD / design talk.
 
 ## Short tags
 

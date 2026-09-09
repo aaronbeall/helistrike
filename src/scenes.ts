@@ -49,7 +49,7 @@ import { lookupSpriteMuzzles, lookupSpriteOrigin } from "./spriteOrigin";
 import { allCrafts, craftAgility, craftAimsWithTurret, craftCameraScale, craftComposite, craftCompositePartScale, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftHardpointMounts, craftOf, craftOrigin, craftPreviewExhaustScale, craftPreviewExhaustTint, craftPreviewFitScale, craftRotorMounts, craftSocketPoints, craftStartingAmmo, rotorDrawSpan, selectCraft, type CraftComposite } from "./craft";
 import { allMissions, missionOf, selectMission } from "./mission";
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
-import { configRigsAnyOpen, installConfigRigHotkeys } from "./configRigs";
+import { rigsAnyOpen, installRigHotkeys } from "./rigs";
 import { applyEdgeLight, clearEdgeLight, ensureEdgeLightPipeline } from "./edgeLight";
 import { setThermalPipeline, type ThermalPalette } from "./thermal";
 import { createTerrain25D, type Terrain25D } from "./terrain25d";
@@ -1123,7 +1123,7 @@ export class MenuScene extends Phaser.Scene {
       this.input.keyboard?.off("keydown-LEFT", selectLeft);
       this.input.keyboard?.off("keydown-RIGHT", selectRight);
     });
-    installConfigRigHotkeys(this);
+    installRigHotkeys(this);
     nameGeneratedTextures(this);
   }
 }
@@ -2332,13 +2332,13 @@ export class MissionScene extends Phaser.Scene {
       if (this.editOpen) this.nudgeEditOff(1, 0);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.OPEN_BRACKET).on("down", () => {
-      if (configRigsAnyOpen(this)) return;
+      if (rigsAnyOpen(this)) return;
       if (this.debugSpawnOpen) this.nudgeDebugSpawn(-1);
       else if (this.debugCamOpen) this.nudgeDebugCam(-1);
       else if (this.editOpen) this.nudgeEditSize(-1);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.CLOSED_BRACKET).on("down", () => {
-      if (configRigsAnyOpen(this)) return;
+      if (rigsAnyOpen(this)) return;
       if (this.debugSpawnOpen) this.nudgeDebugSpawn(1);
       else if (this.debugCamOpen) this.nudgeDebugCam(1);
       else if (this.editOpen) this.nudgeEditSize(1);
@@ -2367,7 +2367,7 @@ export class MissionScene extends Phaser.Scene {
       else if (this.over) this.scene.start("load");
     });
     const bumpTime = (dir: number) => {
-      if (configRigsAnyOpen(this)) return;
+      if (rigsAnyOpen(this)) return;
       if (this.debugCamOpen) this.nudgeDebugCam(dir);
       else this.nudgeTimeScale(dir);
     };
@@ -2375,30 +2375,30 @@ export class MissionScene extends Phaser.Scene {
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_ADD).on("down", () => bumpTime(1));
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.MINUS).on("down", () => bumpTime(-1));
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_SUBTRACT).on("down", () => bumpTime(-1));
-    installConfigRigHotkeys(this);
+    installRigHotkeys(this);
     this.input.keyboard!.addKey("F").on("down", () => this.toggleTestFx());
     this.input.keyboard!.addKey("T").on("down", () => this.toggleThermal());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.UP).on("down", () => {
-      if (configRigsAnyOpen(this)) return;
+      if (rigsAnyOpen(this)) return;
       if (this.helpOpen) this.nudgeHelp(-1);
       else if (this.debugSpawnOpen) this.nudgeDebugSpawn(-1);
       else if (this.debugCamOpen) this.nudgeDebugCamSel(-1);
       else if (this.debugOpen) this.nudgeDebugMenu(-1);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN).on("down", () => {
-      if (configRigsAnyOpen(this)) return;
+      if (rigsAnyOpen(this)) return;
       if (this.helpOpen) this.nudgeHelp(1);
       else if (this.debugSpawnOpen) this.nudgeDebugSpawn(1);
       else if (this.debugCamOpen) this.nudgeDebugCamSel(1);
       else if (this.debugOpen) this.nudgeDebugMenu(1);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT).on("down", () => {
-      if (configRigsAnyOpen(this)) return;
+      if (rigsAnyOpen(this)) return;
       if (this.helpOpen) this.nudgeHelp(-1);
       else if (this.debugCamOpen) this.nudgeDebugCam(-1);
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT).on("down", () => {
-      if (configRigsAnyOpen(this)) return;
+      if (rigsAnyOpen(this)) return;
       if (this.helpOpen) this.nudgeHelp(1);
       else if (this.debugCamOpen) this.nudgeDebugCam(1);
     });
@@ -2408,7 +2408,7 @@ export class MissionScene extends Phaser.Scene {
       else if (this.debugOpen && !this.debugCamOpen) this.activateDebugRow(this.debugMenuIdx);
     });
     this.input.on("wheel", (_p: Phaser.Input.Pointer, _dx: number, dy: number) => {
-      if (configRigsAnyOpen(this)) return;
+      if (rigsAnyOpen(this)) return;
       if (this.helpOpen) {
         this.nudgeHelp(dy > 0 ? 1 : -1);
         return;
@@ -2966,12 +2966,12 @@ export class MissionScene extends Phaser.Scene {
     return spritePivot(key);
   }
 
-  /** ` cycles closed → sprite → roster → combat → toon → balance → closed — owned by ConfigRigsScene. */
+  /** ` cycles closed → sprite → roster → combat → toon → balance → closed — owned by RigsScene. */
 
   update(_t: number, dms: number): void {
     const perfOn = this.perfEnabled;
     const perfSceneStart = perfOn ? performance.now() : 0;
-    if (configRigsAnyOpen(this)) {
+    if (rigsAnyOpen(this)) {
       this.reticle.setVisible(false);
       this.reticleMark.setVisible(false);
       this.reticleMark.clear();

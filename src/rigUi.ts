@@ -1,11 +1,11 @@
 import Phaser from "phaser";
 
-/** Bright stats / config values on config rigs. */
-export const CFG_VALUE = "#f0e6c8";
-/** Muted static information / notes on config rigs. */
-export const CFG_INFO = "#8a8470";
-/** Live probe readout (cursor / pin) — distinct from config stats. */
-export const CFG_LIVE = "#7eb8a0";
+/** Bright stats / values on in-game rigs. */
+export const RIG_VALUE = "#f0e6c8";
+/** Muted static information / notes on in-game rigs. */
+export const RIG_INFO = "#8a8470";
+/** Live probe readout (cursor / pin) — distinct from dumped stats. */
+export const RIG_LIVE = "#7eb8a0";
 
 const MONO = "Share Tech Mono, monospace";
 /** Column width for `row` labels — sized for camelCase field names (`homePlayer`, …). */
@@ -53,20 +53,20 @@ export function kvs(...pairs: KvArg[]): string {
   return out;
 }
 
-/** `rotOff` radians → `N.NNπ` for dumpConfig `format`. */
+/** `rotOff` radians → `N.NNπ` for dumpRig `format`. */
 export function formatRotOff(key: string, value: unknown): string | number | undefined {
   if (key === "rotOff" && typeof value === "number") return `${(value / Math.PI).toFixed(2)}π`;
   return undefined;
 }
 
 /**
- * Walk a plain config object into rig stat lines (field names as labels).
+ * Walk a plain object into rig stat lines (field names as labels).
  * - Object fields → `key      value` rows (root; nests that contain arrays)
  * - Object values → `key: value, …` (nested objects as `( … )`)
  * - `{ x, y, z? }` points → `(x, y, z?)`
  * - Point arrays → one wrapping line; other object arrays → one `[i] value` line per index
  */
-export function dumpConfig(value: unknown, opts: DumpOpts = {}): string[] {
+export function dumpRig(value: unknown, opts: DumpOpts = {}): string[] {
   const skip = new Set(opts.skip ?? []);
   const maxDepth = opts.depth ?? DUMP_MAX_DEPTH;
   const out: string[] = [];
@@ -304,7 +304,7 @@ function fmtPoint(point: Point): string {
   return `(${coords.join(", ")})`;
 }
 
-export function makeConfigText(
+export function makeRigText(
   scene: Phaser.Scene,
   depth: number,
   opts: { fontSize?: string; lineSpacing?: number; color?: string; wrapW?: number } = {}
@@ -313,7 +313,7 @@ export function makeConfigText(
     .text(0, 0, "", {
       fontFamily: MONO,
       fontSize: opts.fontSize ?? "12px",
-      color: opts.color ?? CFG_VALUE,
+      color: opts.color ?? RIG_VALUE,
       lineSpacing: opts.lineSpacing ?? 4,
       // Share Tech Mono’s `_` sits below the default canvas metrics and gets clipped → reads as a space.
       padding: { bottom: 3 },

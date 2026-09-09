@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { PLAYER_WPNS, type PlayerWpnSpec } from "./combat";
-import { CFG_INFO, CFG_VALUE, makeConfigText, row, setStackedTexts } from "./configUi";
+import { RIG_INFO, RIG_VALUE, makeRigText, row, setStackedTexts } from "./rigUi";
 import { allCrafts } from "./craft";
 import {
   ENEMY_WPNS,
@@ -16,7 +16,7 @@ import { nameGameTexture } from "./sprites";
 const DEPTH = 9500;
 const MONO = "Share Tech Mono, monospace";
 const GOLD = "#e8b84a";
-const PAPER = CFG_VALUE;
+const PAPER = RIG_VALUE;
 const LIST_X = 16;
 const LIST_Y = 40;
 const LIST_W = 280;
@@ -188,7 +188,7 @@ const GROUP_COLORS: Record<string, number> = {
  * Lazy balance scatter for craft / weapons / enemies.
  * Zero cost until opened — UI + catalog built on first toggle.
  */
-export class BalanceConfigTool {
+export class BalanceRig {
   open = false;
   private built = false;
   private scene: Phaser.Scene;
@@ -237,12 +237,12 @@ export class BalanceConfigTool {
       .setVisible(false);
     this.board = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH + 1).setVisible(false);
     this.chart = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH + 2).setVisible(false);
-    this.listTxt = makeConfigText(scene, DEPTH + 4, { fontSize: "12px", lineSpacing: 2, color: PAPER });
+    this.listTxt = makeRigText(scene, DEPTH + 4, { fontSize: "12px", lineSpacing: 2, color: PAPER });
     this.listTxt.setPosition(LIST_X, LIST_Y);
     const statsStyle = { fontSize: "12px", lineSpacing: 3, wrapW: 360 } as const;
-    this.statsHeadTxt = makeConfigText(scene, DEPTH + 4, { ...statsStyle, color: PAPER });
-    this.statsHotTxt = makeConfigText(scene, DEPTH + 4, { ...statsStyle, color: GOLD });
-    this.statsTxt = makeConfigText(scene, DEPTH + 4, { ...statsStyle, color: PAPER });
+    this.statsHeadTxt = makeRigText(scene, DEPTH + 4, { ...statsStyle, color: PAPER });
+    this.statsHotTxt = makeRigText(scene, DEPTH + 4, { ...statsStyle, color: GOLD });
+    this.statsTxt = makeRigText(scene, DEPTH + 4, { ...statsStyle, color: PAPER });
     this.hintTxt = scene.add
       .text(18, 14, "", { fontFamily: MONO, fontSize: "12px", color: GOLD })
       .setScrollFactor(0)
@@ -575,7 +575,7 @@ export class BalanceConfigTool {
       text: string,
       x: number,
       y: number,
-      color = CFG_INFO,
+      color = RIG_INFO,
       originX = 0,
       originY = 0,
       rotation = 0
@@ -593,11 +593,11 @@ export class BalanceConfigTool {
     // Y title vertical, left of tick numbers.
     place(yTitle, plotL + 12, (iy0 + iy1) * 0.5, GOLD, 0.5, 0.5, -Math.PI / 2);
     // Y ticks against the plot's left edge.
-    place(fmtNum(yDomain.hi), ix0 - 6, iy0, CFG_INFO, 1, 0.5);
-    place(fmtNum(yDomain.lo), ix0 - 6, iy1, CFG_INFO, 1, 0.5);
+    place(fmtNum(yDomain.hi), ix0 - 6, iy0, RIG_INFO, 1, 0.5);
+    place(fmtNum(yDomain.lo), ix0 - 6, iy1, RIG_INFO, 1, 0.5);
     // X ticks under the frame.
-    place(fmtNum(xDomain.lo), ix0, iy1 + 6, CFG_INFO, 0, 0);
-    place(fmtNum(xDomain.hi), ix1, iy1 + 6, CFG_INFO, 1, 0);
+    place(fmtNum(xDomain.lo), ix0, iy1 + 6, RIG_INFO, 0, 0);
+    place(fmtNum(xDomain.hi), ix1, iy1 + 6, RIG_INFO, 1, 0);
     // X title centered below ticks.
     place(xTitle, (ix0 + ix1) * 0.5, iy1 + 24, GOLD, 0.5, 0);
 
@@ -609,7 +609,7 @@ export class BalanceConfigTool {
         const t = this.labelPool[li++]!;
         t.setText(p.short)
           .setPosition(toX(xv) + 8, toY(yv) - 8)
-          .setColor(p === selected ? PAPER : CFG_INFO)
+          .setColor(p === selected ? PAPER : RIG_INFO)
           .setVisible(true)
           .setOrigin(0, 0.5)
           .setRotation(0);
@@ -627,7 +627,7 @@ export class BalanceConfigTool {
         x: 0,
         y: 0,
         text: "",
-        style: { fontFamily: MONO, fontSize: "11px", color: CFG_INFO },
+        style: { fontFamily: MONO, fontSize: "11px", color: RIG_INFO },
         add: false,
       });
       t.setScrollFactor(0).setDepth(DEPTH + 5).setVisible(false);

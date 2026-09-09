@@ -1,21 +1,21 @@
 import Phaser from "phaser";
-import { BalanceConfigTool } from "./balanceConfig";
-import { CombatConfigTool } from "./combatConfig";
-import { ToonBlastConfigTool } from "./toonBlastConfig";
-import { RosterConfigTool } from "./rosterConfig";
-import { SpriteConfigTool } from "./spriteConfig";
+import { BalanceRig } from "./balanceRig";
+import { CombatRig } from "./combatRig";
+import { ToonBlastRig } from "./toonBlastRig";
+import { RosterRig } from "./rosterRig";
+import { SpriteRig } from "./spriteRig";
 import { spritePivot } from "./sprites";
 
 /**
- * Overlay scene for sprite / roster / combat / toon-blast / balance config rigs.
- * Launched lazily (first ` or installConfigRigHotkeys warm-up).
+ * Overlay scene for sprite / roster / combat / toon-blast / balance rigs.
+ * Launched lazily (first ` or installRigHotkeys warm-up).
  */
-export class ConfigRigsScene extends Phaser.Scene {
-  spriteCfg!: SpriteConfigTool;
-  rosterCfg!: RosterConfigTool;
-  combatCfg!: CombatConfigTool;
-  toonBlastCfg!: ToonBlastConfigTool;
-  balanceCfg!: BalanceConfigTool;
+export class RigsScene extends Phaser.Scene {
+  spriteRig!: SpriteRig;
+  rosterRig!: RosterRig;
+  combatRig!: CombatRig;
+  toonBlastRig!: ToonBlastRig;
+  balanceRig!: BalanceRig;
   /** True after create() finishes constructing tools. */
   ready = false;
   /** Open sprite rig once create() finishes (first ` raced launch). */
@@ -24,15 +24,15 @@ export class ConfigRigsScene extends Phaser.Scene {
   private cycling = false;
 
   constructor() {
-    super("configRigs");
+    super("rigs");
   }
 
   create(): void {
-    this.spriteCfg = new SpriteConfigTool(this, (key) => spritePivot(key));
-    this.rosterCfg = new RosterConfigTool(this);
-    this.combatCfg = new CombatConfigTool(this);
-    this.toonBlastCfg = new ToonBlastConfigTool(this);
-    this.balanceCfg = new BalanceConfigTool(this);
+    this.spriteRig = new SpriteRig(this, (key) => spritePivot(key));
+    this.rosterRig = new RosterRig(this);
+    this.combatRig = new CombatRig(this);
+    this.toonBlastRig = new ToonBlastRig(this);
+    this.balanceRig = new BalanceRig(this);
     this.ready = true;
 
     const kb = this.input.keyboard;
@@ -55,16 +55,16 @@ export class ConfigRigsScene extends Phaser.Scene {
         this.activeRig()?.cycle(1);
       });
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT).on("down", () => {
-        if (this.spriteCfg.open) this.spriteCfg.cycleFrame(-1);
+        if (this.spriteRig.open) this.spriteRig.cycleFrame(-1);
       });
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT).on("down", () => {
-        if (this.spriteCfg.open) this.spriteCfg.cycleFrame(1);
+        if (this.spriteRig.open) this.spriteRig.cycleFrame(1);
       });
 
       const bumpZoom = (dir: number) => {
-        if (this.rosterCfg.open) this.rosterCfg.nudgeZoom(dir);
-        else if (this.combatCfg.open) this.combatCfg.nudgeZoom(dir);
-        else if (this.toonBlastCfg.open) this.toonBlastCfg.nudgeZoom(dir);
+        if (this.rosterRig.open) this.rosterRig.nudgeZoom(dir);
+        else if (this.combatRig.open) this.combatRig.nudgeZoom(dir);
+        else if (this.toonBlastRig.open) this.toonBlastRig.nudgeZoom(dir);
       };
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.PLUS).on("down", () => bumpZoom(1));
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_ADD).on("down", () => bumpZoom(1));
@@ -80,7 +80,7 @@ export class ConfigRigsScene extends Phaser.Scene {
     this.bringFront();
     if (this.pendingOpen) {
       this.pendingOpen = false;
-      this.spriteCfg.toggle();
+      this.spriteRig.toggle();
     }
   }
 
@@ -92,21 +92,21 @@ export class ConfigRigsScene extends Phaser.Scene {
   update(_t: number, dms: number): void {
     if (!this.anyOpen()) return;
     const dt = Math.min(dms / 1000, 0.05);
-    if (this.spriteCfg.open) this.spriteCfg.update();
-    if (this.rosterCfg.open) this.rosterCfg.update();
-    if (this.combatCfg.open) this.combatCfg.update(dt);
-    if (this.toonBlastCfg.open) this.toonBlastCfg.update(dt);
-    if (this.balanceCfg.open) this.balanceCfg.update();
+    if (this.spriteRig.open) this.spriteRig.update();
+    if (this.rosterRig.open) this.rosterRig.update();
+    if (this.combatRig.open) this.combatRig.update(dt);
+    if (this.toonBlastRig.open) this.toonBlastRig.update(dt);
+    if (this.balanceRig.open) this.balanceRig.update();
   }
 
   anyOpen(): boolean {
     if (!this.ready) return false;
     return (
-      this.spriteCfg.open ||
-      this.rosterCfg.open ||
-      this.combatCfg.open ||
-      this.toonBlastCfg.open ||
-      this.balanceCfg.open
+      this.spriteRig.open ||
+      this.rosterRig.open ||
+      this.combatRig.open ||
+      this.toonBlastRig.open ||
+      this.balanceRig.open
     );
   }
 
@@ -120,33 +120,33 @@ export class ConfigRigsScene extends Phaser.Scene {
     this.cycling = true;
     try {
       // Open next before closing current so a throw doesn't leave the UI blank.
-      if (this.spriteCfg.open) {
-        this.rosterCfg.toggle();
-        this.spriteCfg.toggle();
+      if (this.spriteRig.open) {
+        this.rosterRig.toggle();
+        this.spriteRig.toggle();
         return;
       }
-      if (this.rosterCfg.open) {
-        this.combatCfg.toggle();
-        this.rosterCfg.toggle();
+      if (this.rosterRig.open) {
+        this.combatRig.toggle();
+        this.rosterRig.toggle();
         return;
       }
-      if (this.combatCfg.open) {
-        this.toonBlastCfg.toggle();
-        this.combatCfg.toggle();
+      if (this.combatRig.open) {
+        this.toonBlastRig.toggle();
+        this.combatRig.toggle();
         return;
       }
-      if (this.toonBlastCfg.open) {
-        this.balanceCfg.toggle();
-        this.toonBlastCfg.toggle();
+      if (this.toonBlastRig.open) {
+        this.balanceRig.toggle();
+        this.toonBlastRig.toggle();
         return;
       }
-      if (this.balanceCfg.open) {
-        this.balanceCfg.toggle();
+      if (this.balanceRig.open) {
+        this.balanceRig.toggle();
         return;
       }
-      this.spriteCfg.toggle();
+      this.spriteRig.toggle();
     } catch (e) {
-      console.error("[configRigs] cycle failed", e);
+      console.error("[rigs] cycle failed", e);
     } finally {
       this.cycling = false;
     }
@@ -157,55 +157,55 @@ export class ConfigRigsScene extends Phaser.Scene {
   }
 
   private activeRig():
-    | SpriteConfigTool
-    | RosterConfigTool
-    | CombatConfigTool
-    | ToonBlastConfigTool
-    | BalanceConfigTool
+    | SpriteRig
+    | RosterRig
+    | CombatRig
+    | ToonBlastRig
+    | BalanceRig
     | undefined {
     if (!this.ready) return undefined;
-    if (this.spriteCfg.open) return this.spriteCfg;
-    if (this.rosterCfg.open) return this.rosterCfg;
-    if (this.combatCfg.open) return this.combatCfg;
-    if (this.toonBlastCfg.open) return this.toonBlastCfg;
-    if (this.balanceCfg.open) return this.balanceCfg;
+    if (this.spriteRig.open) return this.spriteRig;
+    if (this.rosterRig.open) return this.rosterRig;
+    if (this.combatRig.open) return this.combatRig;
+    if (this.toonBlastRig.open) return this.toonBlastRig;
+    if (this.balanceRig.open) return this.balanceRig;
     return undefined;
   }
 }
 
 /** Launch once; returns the shared scene (may still be booting). */
-export function ensureConfigRigs(from: Phaser.Scene): ConfigRigsScene {
-  let s = from.scene.get("configRigs") as ConfigRigsScene | null;
+export function ensureRigs(from: Phaser.Scene): RigsScene {
+  let s = from.scene.get("rigs") as RigsScene | null;
   if (!s || !s.sys.isActive()) {
-    from.scene.launch("configRigs");
-    s = from.scene.get("configRigs") as ConfigRigsScene;
+    from.scene.launch("rigs");
+    s = from.scene.get("rigs") as RigsScene;
   }
   s.bringFront();
   return s;
 }
 
-export function getConfigRigs(from: Phaser.Scene): ConfigRigsScene | undefined {
-  const s = from.scene.get("configRigs") as ConfigRigsScene | null;
+export function getRigs(from: Phaser.Scene): RigsScene | undefined {
+  const s = from.scene.get("rigs") as RigsScene | null;
   if (!s || !s.sys.isActive()) return undefined;
   return s;
 }
 
-export function configRigsAnyOpen(from: Phaser.Scene): boolean {
-  return !!getConfigRigs(from)?.anyOpen();
+export function rigsAnyOpen(from: Phaser.Scene): boolean {
+  return !!getRigs(from)?.anyOpen();
 }
 
-const HOTKEY_FLAG = "__configRigHotkeys";
+const HOTKEY_FLAG = "__rigHotkeys";
 
 /** ` on menu or mission — warm-launches the overlay so the first press isn't a no-op. */
-export function installConfigRigHotkeys(from: Phaser.Scene): void {
+export function installRigHotkeys(from: Phaser.Scene): void {
   const kb = from.input.keyboard;
   if (!kb || (from as unknown as Record<string, boolean>)[HOTKEY_FLAG]) return;
   (from as unknown as Record<string, boolean>)[HOTKEY_FLAG] = true;
 
-  ensureConfigRigs(from);
+  ensureRigs(from);
 
   kb.addKey(Phaser.Input.Keyboard.KeyCodes.BACKTICK).on("down", () => {
-    const rigs = ensureConfigRigs(from);
+    const rigs = ensureRigs(from);
     if (!rigs.ready) {
       rigs.queueOpen();
       return;

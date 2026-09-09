@@ -10,7 +10,7 @@ import {
 } from "./combat";
 import { allCrafts } from "./craft";
 import { ENEMY_WPNS, usesOfWeapon } from "./roster";
-import { CFG_INFO, CFG_VALUE, dumpConfig, makeConfigText, setStatsAndInfo } from "./configUi";
+import { RIG_INFO, RIG_VALUE, dumpRig, makeRigText, setStatsAndInfo } from "./rigUi";
 import { lookupSpriteMuzzles, lookupSpriteOrigin } from "./spriteOrigin";
 import {
   TOON_BLAST_FRAMES,
@@ -31,7 +31,7 @@ import {
 const DEPTH = 9300;
 const MONO = "Share Tech Mono, monospace";
 const GOLD = "#e8b84a";
-const PAPER = CFG_VALUE;
+const PAPER = RIG_VALUE;
 const ORIGIN_COLOR = 0xe8b84a;
 const TAIL_COLOR = 0xff6a40;
 const MUZZLE_COLOR = 0xff7a2a;
@@ -69,7 +69,7 @@ export interface CombatEntry {
  * ENEMY_WPNS (+ usesOfWeapon), and FX_KINDS / blast cells.
  * Per-unit WeaponSpecs / secondary live on the roster rig, not here.
  */
-export class CombatConfigTool {
+export class CombatRig {
   open = false;
   private built = false;
   private scene: Phaser.Scene;
@@ -126,10 +126,10 @@ export class CombatConfigTool {
       .setDepth(DEPTH + 2)
       .setVisible(false);
     this.overlay = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH + 3).setVisible(false);
-    this.listTxt = makeConfigText(scene, DEPTH + 4, { fontSize: "13px", lineSpacing: 3, color: PAPER });
+    this.listTxt = makeRigText(scene, DEPTH + 4, { fontSize: "13px", lineSpacing: 3, color: PAPER });
     this.listTxt.setPosition(LIST_X, LIST_Y);
-    this.statsTxt = makeConfigText(scene, DEPTH + 4, { fontSize: "12px", lineSpacing: 4, color: PAPER, wrapW: STATS_W - 8 });
-    this.infoTxt = makeConfigText(scene, DEPTH + 4, { fontSize: "12px", lineSpacing: 4, color: CFG_INFO, wrapW: STATS_W - 8 });
+    this.statsTxt = makeRigText(scene, DEPTH + 4, { fontSize: "12px", lineSpacing: 4, color: PAPER, wrapW: STATS_W - 8 });
+    this.infoTxt = makeRigText(scene, DEPTH + 4, { fontSize: "12px", lineSpacing: 4, color: RIG_INFO, wrapW: STATS_W - 8 });
     this.hintTxt = scene.add
       .text(18, 14, "", { fontFamily: MONO, fontSize: "12px", color: GOLD })
       .setScrollFactor(0)
@@ -487,7 +487,7 @@ function parseBlast(e: CombatEntry): number {
 }
 
 function shotLayoutDump(): string[] {
-  return dumpConfig({
+  return dumpRig({
     origin: { x: SHOT_ORIGIN.x, y: SHOT_ORIGIN.y },
     tail: { x: SHOT_TAIL.x, y: SHOT_TAIL.y },
   });
@@ -497,7 +497,7 @@ function shotLayoutDump(): string[] {
 function mountLayoutDump(tex: string): string[] {
   const origin = lookupSpriteOrigin(tex) ?? { x: 0.5, y: 0.5 };
   const muzzles = lookupSpriteMuzzles(tex);
-  return dumpConfig({
+  return dumpRig({
     mountOrigin: origin,
     mountMuzzles: muzzles.length ? muzzles : "— (none; runtime gunTip)",
   });
@@ -549,7 +549,7 @@ function formatPlayer(w: PlayerWpnSpec): { stats: string[]; info: string[] } {
   }
   return {
     stats: [
-      ...dumpConfig(w, { skip: ["notes"] }),
+      ...dumpRig(w, { skip: ["notes"] }),
       ...shotLayoutDump(),
       ...(w.mount ? mountLayoutDump(w.mount) : []),
     ],
@@ -568,7 +568,7 @@ function presetEntries(): CombatEntry[] {
       tag: "PRE",
       tex: p.w.look,
       rotOff: 0,
-      stats: [...dumpConfig({ id: p.id, label: p.label, ...p.w }), ...shotLayoutDump()],
+      stats: [...dumpRig({ id: p.id, label: p.label, ...p.w }), ...shotLayoutDump()],
       info: [
         uses.length ? `used by: ${uses.join(" · ")}` : "used by: —",
         "source: roster.ts ENEMY_WPNS / SPECS / usesOfWeapon",
@@ -588,7 +588,7 @@ function fxEntries(): CombatEntry[] {
     label: "BLAST STAMP",
     tag: "FX",
     tex: "fx_blast_0",
-    stats: dumpConfig({
+    stats: dumpRig({
       kind: "blast",
       tex: `fx_blast_0..${FX_BLAST_CELLS - 1}`,
       cells: FX_BLAST_CELLS,
@@ -605,7 +605,7 @@ function fxEntries(): CombatEntry[] {
       tag: "FX",
       tex: key,
       frames: TOON_BLAST_FRAMES,
-      stats: dumpConfig({
+      stats: dumpRig({
         kind: "toon_blast",
         tex: key,
         variant: v,
@@ -632,7 +632,7 @@ function fxSheetEntry(kind: FxKind): CombatEntry {
     tag: "FX",
     tex: key,
     frames: FX_VARIANTS,
-    stats: dumpConfig({
+    stats: dumpRig({
       kind,
       tex: key,
       frames: FX_VARIANTS,

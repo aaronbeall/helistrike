@@ -12,13 +12,13 @@ import {
   spriteSpecOf,
   type SpritePointRole,
 } from "./spriteOrigin";
-import { makeConfigText, setStackedTexts, CFG_VALUE, CFG_INFO, CFG_LIVE, dumpConfig } from "./configUi";
+import { makeRigText, setStackedTexts, RIG_VALUE, RIG_INFO, RIG_LIVE, dumpRig } from "./rigUi";
 import { isUuidTexture, nameGameTexture, nameGeneratedTextures } from "./sprites";
 
 const DEPTH = 9200;
 const MONO = "Share Tech Mono, monospace";
 const GOLD = "#e8b84a";
-const PAPER = CFG_VALUE;
+const PAPER = RIG_VALUE;
 
 const SKIP = /^(src_|__)|_sh[0-3]$/;
 const GENERATED = /^(hud_|ui_|debug_|edit_|wpn_|hv_|lock_|map_|ai_label|menu_|load_|terrain|heightmap|wreck|wrecks|brush_|impact_|gen_)/;
@@ -31,7 +31,7 @@ const FRAME_THUMB = 52;
 const FRAME_GAP = 8;
 const FRAME_STRIP_MAX = 16;
 
-export class SpriteConfigTool {
+export class SpriteRig {
   open = false;
   private built = false;
   private scene: Phaser.Scene;
@@ -107,11 +107,11 @@ export class SpriteConfigTool {
       this.frameThumbs.push(im);
     }
     this.overlay = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH + 3).setVisible(false);
-    this.listTxt = makeConfigText(scene, DEPTH + 4, { fontSize: "13px", lineSpacing: 3, color: PAPER });
+    this.listTxt = makeRigText(scene, DEPTH + 4, { fontSize: "13px", lineSpacing: 3, color: PAPER });
     this.listTxt.setPosition(LIST_X, LIST_Y);
-    this.statsTxt = makeConfigText(scene, DEPTH + 4, { fontSize: "13px", lineSpacing: 5, color: PAPER, wrapW: STATS_W - 8 });
-    this.liveTxt = makeConfigText(scene, DEPTH + 4, { fontSize: "13px", lineSpacing: 5, color: CFG_LIVE, wrapW: STATS_W - 8 });
-    this.infoTxt = makeConfigText(scene, DEPTH + 4, { fontSize: "13px", lineSpacing: 5, color: CFG_INFO, wrapW: STATS_W - 8 });
+    this.statsTxt = makeRigText(scene, DEPTH + 4, { fontSize: "13px", lineSpacing: 5, color: PAPER, wrapW: STATS_W - 8 });
+    this.liveTxt = makeRigText(scene, DEPTH + 4, { fontSize: "13px", lineSpacing: 5, color: RIG_LIVE, wrapW: STATS_W - 8 });
+    this.infoTxt = makeRigText(scene, DEPTH + 4, { fontSize: "13px", lineSpacing: 5, color: RIG_INFO, wrapW: STATS_W - 8 });
     this.hintTxt = scene.add
       .text(18, 14, "", { fontFamily: MONO, fontSize: "12px", color: GOLD })
       .setScrollFactor(0)
@@ -353,8 +353,8 @@ export class SpriteConfigTool {
     if (!spec) stats.spec = "—";
     const usedBy = usesOfTexture(key);
     stats.usedBy = usedBy.length ? usedBy : "—";
-    this.pendingStats = dumpConfig(stats);
-    this.pendingLive = dumpConfig({
+    this.pendingStats = dumpRig(stats);
+    this.pendingLive = dumpRig({
       cursor: uv
         ? {
             uv: { x: uv.uvx, y: uv.uvy },

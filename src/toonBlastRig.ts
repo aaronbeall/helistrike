@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { CFG_INFO, CFG_VALUE, makeConfigText } from "./configUi";
+import { RIG_INFO, RIG_VALUE, makeRigText } from "./rigUi";
 import {
   TOON_BLAST_DEFAULTS,
   toonBlastParams,
@@ -116,7 +116,7 @@ const PARAMS: ParamDef[] = (Object.keys(PARAM_META) as ParamKey[]).map((key) => 
 /**
  * Live toon-blast tuner: scrub params, preview animation, bake sheets.
  */
-export class ToonBlastConfigTool {
+export class ToonBlastRig {
   open = false;
   private built = false;
   private scene: Phaser.Scene;
@@ -169,15 +169,15 @@ export class ToonBlastConfigTool {
       .setScrollFactor(0)
       .setDepth(DEPTH + 2)
       .setVisible(false);
-    this.listTxt = makeConfigText(scene, DEPTH + 4, { fontSize: "13px", lineSpacing: 3, color: CFG_VALUE });
+    this.listTxt = makeRigText(scene, DEPTH + 4, { fontSize: "13px", lineSpacing: 3, color: RIG_VALUE });
     this.listTxt.setPosition(LIST_X, LIST_Y);
-    this.infoTxt = makeConfigText(scene, DEPTH + 4, {
+    this.infoTxt = makeRigText(scene, DEPTH + 4, {
       fontSize: "12px",
       lineSpacing: 4,
-      color: CFG_INFO,
+      color: RIG_INFO,
       wrapW: 360,
     });
-    this.descTxt = makeConfigText(scene, DEPTH + 4, {
+    this.descTxt = makeRigText(scene, DEPTH + 4, {
       fontSize: "13px",
       lineSpacing: 4,
       color: GOLD,
