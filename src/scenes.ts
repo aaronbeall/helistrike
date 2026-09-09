@@ -240,10 +240,9 @@ const CAMERA_PRESETS = [
   { name: "DRAMATIC", pitch: 0.09, cam: 600, zoom0: 1.45 },
 ] as const;
 
-function shotLookOf(s: Shot, textures?: Phaser.Textures.TextureManager): ShotLook {
-  const look = s.look;
-  if (look && (!textures || textures.exists(look))) return look;
-  return look ?? "shot_rocket";
+function shotLookOf(s: Shot): ShotLook {
+  if (!s.look) throw new Error(`shot ${s.id ?? "?"} missing look`);
+  return s.look;
 }
 
 /** Soft rim where map-edge steering ramps up. */
@@ -3913,14 +3912,14 @@ export class MissionScene extends Phaser.Scene {
 
   gunTip(index = 0): { x: number; y: number } {
     const gun = this.guns[index] ?? this.gun;
-    const d = gun.displayHeight * gun.originY * 0.92;
-    // The gun texture points along local -Y, so its rendered barrel heading is
-    // one quarter-turn behind the projected sprite rotation.
-    const a = gun.rotation - Math.PI / 2;
-    const sx = gun.x + Math.cos(a) * d;
-    const sy = gun.y + Math.sin(a) * d;
-    // Gun sprite sits in projected space; return world XY for ballistics / aim.
-    // Fresh object — must not alias shared screenToWorldAtZ scratch.
+    const tipUv = lookupSpriteMuzzles(gun.texture.key)[0];
+    if (!tipUv) throw new Error(`gunTip: ${gun.texture.key} missing muzzle`);
+    const mx = (tipUv.x - gun.originX) * gun.displayWidth;
+    const my = (tipUv.y - gun.originY) * gun.displayHeight;
+    const ca = Math.cos(gun.rotation);
+    const sa = Math.sin(gun.rotation);
+    const sx = gun.x + mx * ca - my * sa;
+    const sy = gun.y + mx * sa + my * ca;
     const at = screenToWorldAtZ(sx, sy, this.heli.z);
     return { x: at.x, y: at.y };
   }
@@ -4709,7 +4708,7 @@ export class MissionScene extends Phaser.Scene {
   }
 
   spawnShot(s: Shot): void {
-    const look = shotLookOf(s, this.textures);
+    const look = shotLookOf(s);
     const nudge = this.shotTipNudge(look, s.angle, s.x, s.y, s.z, s.scale ?? 1);
     s.x += nudge.x;
     s.y += nudge.y;
@@ -4762,7 +4761,7 @@ export class MissionScene extends Phaser.Scene {
     y = s.y,
     z = s.z
   ): { x: number; y: number } {
-    const look = shotLookOf(s, this.textures);
+    const look = shotLookOf(s);
     const img = this.textures.exists(look)
       ? (this.textures.get(look).getSourceImage() as { width: number; height: number })
       : { width: 48, height: 10 };
@@ -5667,9 +5666,12 @@ export class MissionScene extends Phaser.Scene {
     if (s.homePlayer && s.motor != null && s.motor < 0) return;
     const isRocket = s.kind === "rocket";
     const small = troopMissileTrail(s);
-    // Troop RPGs can sit above 0.6 scale — don't treat them as Hydra (smoke-only).
-    const hydra = isRocket && !small && (s.scale ?? 1) > 0.6;
-    const sc = shotTrailScale(s) * (hydra ? 1.35 : 1);
+    // Unguided player rockets use smoke-heavy trail (Hydra-class).
+    const hydra =
+      isRocket &&
+      s.from === "player" &&
+      (s.beh?.guidance.mode === "none" || s.beh?.guidance == null);
+    const sc = shotTrailScale(s);
     const t = range(0.2, 0.8);
     const x = x0 + (s.x - x0) * t;
     const y = y0 + (s.y - y0) * t;
@@ -8622,6 +8624,7 @@ export class MissionScene extends Phaser.Scene {
           homePlayer: home,
           motor: home ? -0.06 : undefined,
           scale: wpn.scale,
+          trailScale: wpn.trailScale,
           fxInterval,
         });
         if (wpn.kind === "cannon") {
@@ -8700,6 +8703,7 @@ export class MissionScene extends Phaser.Scene {
                 homePlayer: home,
                 motor: sec.motor,
                 scale: pw.scale * (sec.scale ?? 1),
+                trailScale: pw.trailScale,
                 fxInterval,
               });
               this.missileMuzzle(px, py, u.z, fireAng, projectileFxScale("enemy", fxInterval));
@@ -9054,7 +9058,7 @@ export class MissionScene extends Phaser.Scene {
       const sh = kids[i * 2]!;
       const im = kids[i * 2 + 1]!;
       if (!cameraPointVisible(s.z, s.y)) return;
-      const key = shotLookOf(s, this.textures);
+      const key = shotLookOf(s);
       const rot = s.angle;
       let wx = s.x;
       let wy = s.y;
@@ -12220,18 +12224,13 @@ function simParticleTexKey(kind: SimParticleKind): string {
 }
 
 function troopMissileTrail(s: Shot): boolean {
-  // Troop / hardpoint missiles (RPG 0.66, Stinger 0.7, heli secondary ×0.72) vs player Hydra (~1).
-  return s.from === "enemy" && (s.scale ?? 1) <= 0.75;
+  return s.from === "enemy";
 }
 
 function shotTrailScale(s: Shot): number {
   const vis = s.scale ?? 1;
-  if (s.beh?.trailScale != null) return vis * s.beh.trailScale;
-  const small = troopMissileTrail(s);
-  if (s.kind === "rocket") return small ? vis * 0.34 : vis * 0.32;
-  if (s.kind === "guided-missile") return vis * 0.52;
-  if (s.kind === "lock-on-missile") return small ? vis * 0.4 : vis * 0.55;
-  return vis;
+  const ts = s.beh?.trailScale ?? s.trailScale;
+  return ts != null ? vis * ts : vis;
 }
 
 function jitterDisk(x: number, y: number, r: number): { x: number; y: number } {

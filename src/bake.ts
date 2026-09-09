@@ -399,7 +399,7 @@ function cannonTracerOpts(spec: PlayerWpnSpec): Parameters<typeof drawTracerShap
 
 /**
  * Unique procedural cannon/beam tracers for each `shot_wpn_*` cannon look.
- * Rockets/missiles stay on sheet/image-gen PNGs (legacy fallback until authored).
+ * Rockets/missiles use sheet/image-gen PNGs when present.
  */
 export function bakePlayerCannonLooks(textures: Phaser.Textures.TextureManager): void {
   for (const spec of Object.values(PLAYER_WPNS)) {

@@ -64,17 +64,14 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
       ...pts("hardpoint", [uv(0.112, 0.448), uv(0.859, 0.445)]),
     ],
   },
-  heli_gun: {
-    origin: uv(0.5, 0.7),
-  },
   // Shared turret gun bodies (barrel-up); no swivel-track art.
-  gun_gatling: { origin: uv(0.5, 0.7) },
-  gun_minigun: { origin: uv(0.5, 0.7) },
-  gun_machine: { origin: uv(0.5, 0.7) },
-  gun_artillery: { origin: uv(0.5, 0.7) },
-  gun_railgun: { origin: uv(0.5, 0.7) },
-  gun_plasma: { origin: uv(0.5, 0.7) },
-  gun_tesla: { origin: uv(0.5, 0.7) },
+  gun_gatling: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.05 }] },
+  gun_minigun: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.05 }] },
+  gun_machine: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.06 }] },
+  gun_artillery: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.04 }] },
+  gun_railgun: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.04 }] },
+  gun_plasma: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.05 }] },
+  gun_tesla: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.05 }] },
 
   // —— Selectable craft (stub mounts — tune in sprite/roster rig) ——
   craft_littlebird: {

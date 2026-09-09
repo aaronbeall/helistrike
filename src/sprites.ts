@@ -3,43 +3,43 @@ import { craftOf, craftPivot } from "./craft";
 import { lookupSpriteOrigin, setSpriteOrigin } from "./spriteOrigin";
 
 const SRC = {
-  heli: "sprites/helistrike-heli-player-nrotor.png",
-  enemy: "sprites/helistrike-heli-enemy-nrotor.png",
-  tankParts: "sprites/helistrike-tank-parts.png",
-  bunker: "sprites/helistrike-bunker.png",
-  bunkerHulk: "sprites/helistrike-bunker-hulk.png",
-  rock: "sprites/helistrike-rock.png",
-  debrisMech: "sprites/helistrike-debris-mech.png",
-  debrisStruct: "sprites/helistrike-debris-struct.png",
-  debrisOrganic: "sprites/helistrike-debris-organic.png",
-  debrisWheels: "sprites/helistrike-debris-wheels.png",
-  tankWreck: "sprites/helistrike-tank-wreck-parts.png",
-  weapons: "sprites/helistrike-weapons.png",
-  blasts: "sprites/helistrike-blasts.png",
-  rotors: "sprites/helistrike-rotors.png",
-  split: "sprites/helistrike-split-parts.png",
-  vehicles: "sprites/helistrike-vehicles.png",
-  guns: "sprites/helistrike-guns.png",
-  troops: "sprites/helistrike-troops.png",
-  buildings: "sprites/helistrike-buildings.png",
-  airShip: "sprites/helistrike-air-ship.png",
-  splitHulk: "sprites/helistrike-split-parts-hulk.png",
-  vehiclesHulk: "sprites/helistrike-vehicles-hulk.png",
-  buildingsHulk: "sprites/helistrike-buildings-hulk.png",
-  airShipHulk: "sprites/helistrike-air-ship-hulk.png",
-  troopsHulk: "sprites/helistrike-troops-hulk.png",
-  gunsHulk: "sprites/helistrike-guns-hulk.png",
-  gunsExtra: "sprites/helistrike-guns-extra.png",
-  towerGuns: "sprites/helistrike-tower-guns.png",
-  gunsExtraHulk: "sprites/helistrike-guns-extra-hulk.png",
-  towerGunsHulk: "sprites/helistrike-tower-guns-hulk.png",
-  rotorsHulk: "sprites/helistrike-rotors-hulk.png",
-  motoMg: "sprites/helistrike-moto-mg.png",
-  motoMgHulk: "sprites/helistrike-moto-mg-hulk.png",
-  radar: "sprites/helistrike-radar.png",
-  radarDish: "sprites/helistrike-radar-dish.png",
-  radarDishHulk: "sprites/helistrike-radar-dish-hulk.png",
-  radarHulk: "sprites/helistrike-radar-hulk.png",
+  heli: "sprites/units/heli-player-nrotor.png",
+  enemy: "sprites/units/heli-enemy-nrotor.png",
+  tankParts: "sprites/units/tank-parts.png",
+  bunker: "sprites/units/bunker.png",
+  bunkerHulk: "sprites/units/bunker-hulk.png",
+  rock: "sprites/units/rock.png",
+  debrisMech: "sprites/debris/mech.png",
+  debrisStruct: "sprites/debris/struct.png",
+  debrisOrganic: "sprites/debris/organic.png",
+  debrisWheels: "sprites/debris/wheels.png",
+  tankWreck: "sprites/units/tank-wreck-parts.png",
+  weapons: "sprites/units/weapons.png",
+  blasts: "sprites/fx/blasts.png",
+  rotors: "sprites/units/rotors.png",
+  split: "sprites/units/split-parts.png",
+  vehicles: "sprites/units/vehicles.png",
+  guns: "sprites/units/guns.png",
+  troops: "sprites/units/troops.png",
+  buildings: "sprites/units/buildings.png",
+  airShip: "sprites/units/air-ship.png",
+  splitHulk: "sprites/units/split-parts-hulk.png",
+  vehiclesHulk: "sprites/units/vehicles-hulk.png",
+  buildingsHulk: "sprites/units/buildings-hulk.png",
+  airShipHulk: "sprites/units/air-ship-hulk.png",
+  troopsHulk: "sprites/units/troops-hulk.png",
+  gunsHulk: "sprites/units/guns-hulk.png",
+  gunsExtra: "sprites/units/guns-extra.png",
+  towerGuns: "sprites/units/tower-guns.png",
+  gunsExtraHulk: "sprites/units/guns-extra-hulk.png",
+  towerGunsHulk: "sprites/units/tower-guns-hulk.png",
+  rotorsHulk: "sprites/units/rotors-hulk.png",
+  motoMg: "sprites/units/moto-mg.png",
+  motoMgHulk: "sprites/units/moto-mg-hulk.png",
+  radar: "sprites/units/radar.png",
+  radarDish: "sprites/units/radar-dish.png",
+  radarDishHulk: "sprites/units/radar-dish-hulk.png",
+  radarHulk: "sprites/units/radar-hulk.png",
 } as const;
 
 /**
@@ -78,50 +78,50 @@ export const PLAYER_GUN_MOUNT_ART: readonly { key: string; size: number }[] = [
  * background from the image border, and skip magenta spill desaturation.
  */
 const CRAFT_ART: { key: string; file: string; fit: number; rotor?: boolean; keyPreserve?: boolean }[] = [
-  { key: "craft_littlebird", file: "sprites/helistrike-craft-littlebird.png", fit: 62 },
-  { key: "craft_littlebird_hulk", file: "sprites/helistrike-craft-littlebird-hulk.png", fit: 62 },
-  { key: "craft_littlebird_rotor", file: "sprites/helistrike-craft-littlebird-rotor.png", fit: 130, rotor: true },
-  { key: "craft_littlebird_rotor_hulk", file: "sprites/helistrike-craft-littlebird-rotor-hulk.png", fit: 80, rotor: true },
-  { key: "craft_quad_drone", file: "sprites/helistrike-craft-quad-drone.png", fit: 28 },
-  { key: "craft_quad_drone_hulk", file: "sprites/helistrike-craft-quad-drone-hulk.png", fit: 28 },
-  { key: "craft_quad_drone_rotor", file: "sprites/helistrike-craft-quad-drone-rotor.png", fit: 36, rotor: true },
-  { key: "craft_quad_drone_rotor_hulk", file: "sprites/helistrike-craft-quad-drone-rotor-hulk.png", fit: 20, rotor: true },
-  { key: "craft_cobra", file: "sprites/helistrike-craft-cobra.png", fit: 112 },
-  { key: "craft_cobra_hulk", file: "sprites/helistrike-craft-cobra-hulk.png", fit: 112 },
-  { key: "craft_cobra_rotor", file: "sprites/helistrike-craft-cobra-rotor.png", fit: 120, rotor: true },
-  { key: "craft_cobra_rotor_hulk", file: "sprites/helistrike-craft-cobra-rotor-hulk.png", fit: 80, rotor: true },
-  { key: "craft_viper", file: "sprites/helistrike-craft-viper.png", fit: 112 },
-  { key: "craft_viper_hulk", file: "sprites/helistrike-craft-viper-hulk.png", fit: 112 },
-  { key: "craft_viper_rotor", file: "sprites/helistrike-craft-viper-rotor.png", fit: 120, rotor: true },
-  { key: "craft_viper_rotor_hulk", file: "sprites/helistrike-craft-viper-rotor-hulk.png", fit: 80, rotor: true },
-  { key: "craft_blackhawk", file: "sprites/helistrike-craft-blackhawk.png", fit: 125 },
-  { key: "craft_blackhawk_hulk", file: "sprites/helistrike-craft-blackhawk-hulk.png", fit: 125 },
-  { key: "craft_blackhawk_rotor", file: "sprites/helistrike-craft-blackhawk-rotor.png", fit: 130, rotor: true },
-  { key: "craft_blackhawk_rotor_hulk", file: "sprites/helistrike-craft-blackhawk-rotor-hulk.png", fit: 80, rotor: true },
-  { key: "craft_chinook", file: "sprites/helistrike-craft-chinook.png", fit: 155 },
-  { key: "craft_chinook_hulk", file: "sprites/helistrike-craft-chinook-hulk.png", fit: 155 },
-  { key: "craft_chinook_rotor", file: "sprites/helistrike-craft-chinook-rotor.png", fit: 130, rotor: true },
-  { key: "craft_chinook_rotor_hulk", file: "sprites/helistrike-craft-chinook-rotor-hulk.png", fit: 80, rotor: true },
-  { key: "craft_osprey", file: "sprites/helistrike-craft-osprey.png", fit: 143 },
-  { key: "craft_osprey_hulk", file: "sprites/helistrike-craft-osprey-hulk.png", fit: 143 },
-  { key: "craft_osprey_rotor", file: "sprites/helistrike-craft-osprey-rotor.png", fit: 100, rotor: true },
-  { key: "craft_osprey_rotor_hulk", file: "sprites/helistrike-craft-osprey-rotor-hulk.png", fit: 70, rotor: true },
-  { key: "craft_stealthhawk", file: "sprites/helistrike-craft-stealthhawk.png", fit: 120 },
-  { key: "craft_stealthhawk_hulk", file: "sprites/helistrike-craft-stealthhawk-hulk.png", fit: 120 },
-  { key: "craft_stealthhawk_rotor", file: "sprites/helistrike-craft-stealthhawk-rotor.png", fit: 130, rotor: true },
-  { key: "craft_stealthhawk_rotor_hulk", file: "sprites/helistrike-craft-stealthhawk-rotor-hulk.png", fit: 80, rotor: true },
-  { key: "craft_cyberhawk", file: "sprites/helistrike-craft-cyberhawk.png", fit: 120 },
-  { key: "craft_cyberhawk_hulk", file: "sprites/helistrike-craft-cyberhawk-hulk.png", fit: 120 },
-  { key: "craft_cyberhawk_rotor", file: "sprites/helistrike-craft-cyberhawk-rotor.png", fit: 130, rotor: true },
-  { key: "craft_cyberhawk_rotor_hulk", file: "sprites/helistrike-craft-cyberhawk-rotor-hulk.png", fit: 80, rotor: true },
-  { key: "craft_prometheus", file: "sprites/helistrike-craft-prometheus.png", fit: 120, keyPreserve: true },
-  { key: "craft_prometheus_hulk", file: "sprites/helistrike-craft-prometheus-hulk.png", fit: 120, keyPreserve: true },
-  { key: "craft_lightning_ii", file: "sprites/helistrike-craft-lightning-ii.png", fit: 142 },
-  { key: "craft_lightning_ii_hulk", file: "sprites/helistrike-craft-lightning-ii-hulk.png", fit: 142 },
-  { key: "craft_gunship", file: "sprites/helistrike-craft-gunship.png", fit: 324 },
-  { key: "craft_gunship_hulk", file: "sprites/helistrike-craft-gunship-hulk.png", fit: 324 },
-  { key: "craft_warthog", file: "sprites/helistrike-craft-warthog.png", fit: 142 },
-  { key: "craft_warthog_hulk", file: "sprites/helistrike-craft-warthog-hulk.png", fit: 142 },
+  { key: "craft_littlebird", file: "sprites/craft/littlebird.png", fit: 62 },
+  { key: "craft_littlebird_hulk", file: "sprites/craft/littlebird-hulk.png", fit: 62 },
+  { key: "craft_littlebird_rotor", file: "sprites/craft/littlebird-rotor.png", fit: 130, rotor: true },
+  { key: "craft_littlebird_rotor_hulk", file: "sprites/craft/littlebird-rotor-hulk.png", fit: 80, rotor: true },
+  { key: "craft_quad_drone", file: "sprites/craft/quad-drone.png", fit: 28 },
+  { key: "craft_quad_drone_hulk", file: "sprites/craft/quad-drone-hulk.png", fit: 28 },
+  { key: "craft_quad_drone_rotor", file: "sprites/craft/quad-drone-rotor.png", fit: 36, rotor: true },
+  { key: "craft_quad_drone_rotor_hulk", file: "sprites/craft/quad-drone-rotor-hulk.png", fit: 20, rotor: true },
+  { key: "craft_cobra", file: "sprites/craft/cobra.png", fit: 112 },
+  { key: "craft_cobra_hulk", file: "sprites/craft/cobra-hulk.png", fit: 112 },
+  { key: "craft_cobra_rotor", file: "sprites/craft/cobra-rotor.png", fit: 120, rotor: true },
+  { key: "craft_cobra_rotor_hulk", file: "sprites/craft/cobra-rotor-hulk.png", fit: 80, rotor: true },
+  { key: "craft_viper", file: "sprites/craft/viper.png", fit: 112 },
+  { key: "craft_viper_hulk", file: "sprites/craft/viper-hulk.png", fit: 112 },
+  { key: "craft_viper_rotor", file: "sprites/craft/viper-rotor.png", fit: 120, rotor: true },
+  { key: "craft_viper_rotor_hulk", file: "sprites/craft/viper-rotor-hulk.png", fit: 80, rotor: true },
+  { key: "craft_blackhawk", file: "sprites/craft/blackhawk.png", fit: 125 },
+  { key: "craft_blackhawk_hulk", file: "sprites/craft/blackhawk-hulk.png", fit: 125 },
+  { key: "craft_blackhawk_rotor", file: "sprites/craft/blackhawk-rotor.png", fit: 130, rotor: true },
+  { key: "craft_blackhawk_rotor_hulk", file: "sprites/craft/blackhawk-rotor-hulk.png", fit: 80, rotor: true },
+  { key: "craft_chinook", file: "sprites/craft/chinook.png", fit: 155 },
+  { key: "craft_chinook_hulk", file: "sprites/craft/chinook-hulk.png", fit: 155 },
+  { key: "craft_chinook_rotor", file: "sprites/craft/chinook-rotor.png", fit: 130, rotor: true },
+  { key: "craft_chinook_rotor_hulk", file: "sprites/craft/chinook-rotor-hulk.png", fit: 80, rotor: true },
+  { key: "craft_osprey", file: "sprites/craft/osprey.png", fit: 143 },
+  { key: "craft_osprey_hulk", file: "sprites/craft/osprey-hulk.png", fit: 143 },
+  { key: "craft_osprey_rotor", file: "sprites/craft/osprey-rotor.png", fit: 100, rotor: true },
+  { key: "craft_osprey_rotor_hulk", file: "sprites/craft/osprey-rotor-hulk.png", fit: 70, rotor: true },
+  { key: "craft_stealthhawk", file: "sprites/craft/stealthhawk.png", fit: 120 },
+  { key: "craft_stealthhawk_hulk", file: "sprites/craft/stealthhawk-hulk.png", fit: 120 },
+  { key: "craft_stealthhawk_rotor", file: "sprites/craft/stealthhawk-rotor.png", fit: 130, rotor: true },
+  { key: "craft_stealthhawk_rotor_hulk", file: "sprites/craft/stealthhawk-rotor-hulk.png", fit: 80, rotor: true },
+  { key: "craft_cyberhawk", file: "sprites/craft/cyberhawk.png", fit: 120 },
+  { key: "craft_cyberhawk_hulk", file: "sprites/craft/cyberhawk-hulk.png", fit: 120 },
+  { key: "craft_cyberhawk_rotor", file: "sprites/craft/cyberhawk-rotor.png", fit: 130, rotor: true },
+  { key: "craft_cyberhawk_rotor_hulk", file: "sprites/craft/cyberhawk-rotor-hulk.png", fit: 80, rotor: true },
+  { key: "craft_prometheus", file: "sprites/craft/prometheus.png", fit: 120, keyPreserve: true },
+  { key: "craft_prometheus_hulk", file: "sprites/craft/prometheus-hulk.png", fit: 120, keyPreserve: true },
+  { key: "craft_lightning_ii", file: "sprites/craft/lightning-ii.png", fit: 142 },
+  { key: "craft_lightning_ii_hulk", file: "sprites/craft/lightning-ii-hulk.png", fit: 142 },
+  { key: "craft_gunship", file: "sprites/craft/gunship.png", fit: 324 },
+  { key: "craft_gunship_hulk", file: "sprites/craft/gunship-hulk.png", fit: 324 },
+  { key: "craft_warthog", file: "sprites/craft/warthog.png", fit: 142 },
+  { key: "craft_warthog_hulk", file: "sprites/craft/warthog-hulk.png", fit: 142 },
 ];
 
 export const BIOME_TILE_NAMES = ["water", "sand", "grass", "forest", "rock", "peak"] as const;
@@ -156,11 +156,11 @@ export const FX_SHEET_SIZE: Record<FxKind, number> = {
 export const FX_BLAST_CELLS = 4;
 
 export function preloadArt(scene: Phaser.Scene): void {
-  scene.load.image("menu_splash", "helistrike-menu-splash.png");
+  scene.load.image("menu_splash", "menu-splash.png");
   scene.load.image("src_heli", SRC.heli);
   scene.load.image("src_enemy", SRC.enemy);
-  scene.load.image("src_heli_hulk", "sprites/helistrike-heli-player-hulk.png");
-  scene.load.image("src_enemy_heli_hulk", "sprites/helistrike-heli-enemy-hulk.png");
+  scene.load.image("src_heli_hulk", "sprites/units/heli-player-hulk.png");
+  scene.load.image("src_enemy_heli_hulk", "sprites/units/heli-enemy-hulk.png");
   scene.load.image("src_tank_parts", SRC.tankParts);
   scene.load.image("src_bunker", SRC.bunker);
   scene.load.image("src_bunker_hulk", SRC.bunkerHulk);
@@ -200,15 +200,15 @@ export function preloadArt(scene: Phaser.Scene): void {
     scene.load.image(`src_${art.key}`, art.file);
   }
   for (const name of BIOME_TILE_NAMES) {
-    scene.load.image(`src_biome_${name}`, `sprites/helistrike-biome-${name}.png`);
+    scene.load.image(`src_biome_${name}`, `sprites/biome/${name}.png`);
   }
   for (const d of DOODAD_ART) {
-    scene.load.image(`src_doodad_${d.key}`, `sprites/helistrike-doodad-${d.key}.png`);
+    scene.load.image(`src_doodad_${d.key}`, `sprites/doodads/${d.key}.png`);
   }
   for (const kind of FX_KINDS) {
-    scene.load.image(`src_fx_${kind}_0`, `sprites/helistrike-fx-${kind}.png`);
+    scene.load.image(`src_fx_${kind}_0`, `sprites/fx/${kind}.png`);
     for (let i = 1; i < FX_VARIANTS; i++) {
-      scene.load.image(`src_fx_${kind}_${i}`, `sprites/helistrike-fx-${kind}-${i}.png`);
+      scene.load.image(`src_fx_${kind}_${i}`, `sprites/fx/${kind}-${i}.png`);
     }
   }
   for (const art of PLAYER_ORDNANCE_SHOT_ART) {
@@ -769,7 +769,6 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   putWheelDebrisSheet(textures);
 
   const wpn = sliceGrid(keyImage(src(textures, "src_weapons"), "magenta"), 2, 2);
-  put(textures, "heli_gun", fit(wpn[0]!, 46));
   // Weapons sheet is nose-up; rotate to nose-along-+X like tracer shots.
   put(textures, "shot_rocket", fit(rotateCw90(wpn[1]!), 28));
   put(textures, "shot_hellfire", fit(rotateCw90(wpn[2]!), 36));
@@ -784,7 +783,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   for (const art of PLAYER_GUN_MOUNT_ART) {
     const srcKey = `src_${art.key}`;
     if (!textures.exists(srcKey)) continue;
-    // Gun mounts are authored barrel-up (same as heli_gun) — no rotate.
+    // Gun mounts are authored barrel-up — no rotate.
     put(textures, art.key, fit(keyImage(src(textures, srcKey), "magenta"), art.size));
   }
 

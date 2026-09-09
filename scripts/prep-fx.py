@@ -8,15 +8,16 @@ from PIL import Image
 SRC = Path(
     "/Users/abeall/.cursor/projects/Users-abeall-Development-github-aaronbeall-abeall-com/assets"
 )
-DST = Path("/Users/abeall/Development/github/aaronbeall/helistrike/public/sprites")
+DST = Path("/Users/abeall/Development/github/aaronbeall/helistrike/public/sprites/fx")
 
+# (source asset name in Cursor downloads, dest basename under sprites/fx/, knockout gamma)
 JOBS = [
-    ("helistrike-fx-spark.png", 0.55),
-    ("helistrike-fx-flame.png", 0.5),
-    ("helistrike-fx-smoke.png", 0.42),
-    ("helistrike-fx-muzzle.png", 0.5),
-    ("helistrike-fx-dirt.png", 0.48),
-    ("helistrike-fx-splash.png", 0.52),
+    ("helistrike-fx-spark.png", "spark.png", 0.55),
+    ("helistrike-fx-flame.png", "flame.png", 0.5),
+    ("helistrike-fx-smoke.png", "smoke.png", 0.42),
+    ("helistrike-fx-muzzle.png", "muzzle.png", 0.5),
+    ("helistrike-fx-dirt.png", "dirt.png", 0.48),
+    ("helistrike-fx-splash.png", "splash.png", 0.52),
 ]
 
 
@@ -56,11 +57,11 @@ def trim(im: Image.Image, pad: int = 6) -> Image.Image:
 
 def main() -> None:
     DST.mkdir(parents=True, exist_ok=True)
-    for name, gamma in JOBS:
-        out = knockout(Image.open(SRC / name), gamma)
-        dest = DST / name
+    for src_name, dest_name, gamma in JOBS:
+        out = knockout(Image.open(SRC / src_name), gamma)
+        dest = DST / dest_name
         out.save(dest, "PNG", optimize=True)
-        print(f"{name} -> {out.size} {dest.stat().st_size} bytes")
+        print(f"{src_name} -> {dest_name} {out.size} {dest.stat().st_size} bytes")
 
 
 if __name__ == "__main__":

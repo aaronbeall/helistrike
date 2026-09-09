@@ -86,6 +86,8 @@ export interface WeaponSpec {
   look: ShotLook;
   /** Projectile draw scale (baked size for this preset). */
   scale: number;
+  /** Trail puff scale vs projectile draw scale (rockets/missiles). */
+  trailScale?: number;
   burst?: number;
   burstGap?: number;
   jitter?: number;
@@ -258,19 +260,21 @@ const gun = (
   weapon?: WeaponSpec
 ): PartMount => {
   const tips = lookupSpriteMuzzles(tex);
+  if (!tips.length) throw new Error(`gun(${tex}): missing SPRITE_SPECS muzzle points`);
   return {
     tex,
     hulk: hulk ?? `${tex}_hulk`,
     origin: lookupSpriteOrigin(tex) ?? { x: 0.5, y: originY },
     mount,
-    muzzles: tips.length ? tips : [{ x: 0.5, y: 0.08 }],
+    muzzles: tips,
     weapon
   };
 };
 
-/** Gun-part emit tips (always ≥1). */
+/** Gun-part emit tips. */
 export function muzzlesOfGun(gun: Pick<PartMount, "muzzles">): { x: number; y: number }[] {
-  return gun.muzzles?.length ? gun.muzzles : [{ x: 0.5, y: 0.08 }];
+  if (!gun.muzzles?.length) throw new Error("muzzlesOfGun: empty muzzles");
+  return gun.muzzles;
 }
 
 export type EnemyWpnId = "he" | "mg" | "arty" | "aa" | "seeker" | "tower_cannon";
@@ -356,6 +360,7 @@ export const ENEMY_WPNS: { id: EnemyWpnId; label: string; w: WeaponSpec }[] = [
       blast: 22,
       look: "shot_hellfire",
       scale: 1,
+      trailScale: 0.55,
       jitter: 0.02,
       muzzleFire: "alternate",
     },
@@ -882,6 +887,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
       kind: "rocket",
       look: "shot_rocket",
       scale: 0.66,
+      trailScale: 0.34,
       fireCd: 2.6,
       range: 360,
       speed: 260,
@@ -964,7 +970,8 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
       speed: 320,
       dmg: 16,
       blast: 18,
-      scale: 0.7
+      scale: 0.7,
+      trailScale: 0.4,
     }),
     guns: [],
     rotors: []
@@ -1208,14 +1215,6 @@ export function pickTroop(rand = Math.random): UnitKind {
     if (r < acc) return kind;
   }
   return "soldier";
-}
-
-export function pickLookoutTroop(): UnitKind {
-  return pickTroop();
-}
-
-export function pickPickupTroop(): UnitKind {
-  return pickTroop();
 }
 
 export function crewOf(kind: UnitKind): CrewSpec | undefined {

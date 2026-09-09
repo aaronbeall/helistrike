@@ -209,7 +209,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   },
   rocket: {
     id: "rocket", name: "HYDRA", fullName: "HYDRA 70 ROCKET PODS", ammo: 38, fireCd: 0.22, speed: 620,
-    dmg: 110, blast: 140, life: 3.4, kind: "rocket", look: ordLook("rocket"), scale: 1, trailScale: 0.32,
+    dmg: 110, blast: 140, life: 3.4, kind: "rocket", look: ordLook("rocket"), scale: 1, trailScale: 0.43,
     guidance: NONE, launch: MUZZLE, payload: HE, control: HOLD,
     fits: FIT_HARDPOINT, notes: ["unguided dumbfire rocket"],
   },
@@ -334,7 +334,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   },
   emp: {
     id: "emp", name: "EMP", fullName: "TACTICAL EMP PULSE EMITTER", ammo: 6, fireCd: 1.8, speed: 1,
-    dmg: 18, blast: 230, life: 0.2, kind: "rocket", look: ordLook("rocket"), scale: 1.4, trailScale: 0.32,
+    dmg: 18, blast: 230, life: 0.2, kind: "rocket", look: ordLook("rocket"), scale: 1.4, trailScale: 0.43,
     guidance: NONE, launch: { mode: "beam", range: 235, duration: 0.25 },
     payload: { mode: "emp", duration: 8, radius: 230, disables: true }, control: CLICK,
     fits: FIT_GUN, notes: ["radial pulse disables affected systems"],
@@ -347,7 +347,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   },
   laser_rocket: {
     id: "laser_rocket", name: "REFRACTOR", fullName: "REFRACTOR CANNON", ammo: 44, fireCd: 0.16, speed: 760,
-    dmg: 125, blast: 150, life: 2.8, kind: "rocket", look: ordLook("rocket"), scale: 0.86, trailScale: 0.32,
+    dmg: 125, blast: 150, life: 2.8, kind: "rocket", look: ordLook("rocket"), scale: 0.86, trailScale: 0.43,
     guidance: { mode: "pointer", steerRate: 1.8, maxAngle: 0.42 }, launch: MUZZLE, payload: HE, control: HOLD,
     steering: { turnRate: 1.8, maxG: 3.4 }, fits: ["hardpoint", "fixed"] as SocketClass[], notes: ["refractive guided energy bolt"],
   },
@@ -667,6 +667,8 @@ export interface Shot {
   look?: ShotLook;
   /** Draw scale from weapon preset (× secondary mul when applicable). */
   scale?: number;
+  /** Trail puff scale vs projectile draw scale (from weapon / behavior). */
+  trailScale?: number;
   /** Effective seconds per projectile, used only to scale muzzle and impact-spark density. */
   fxInterval?: number;
   wire?: { x: number; y: number; z: number }[];

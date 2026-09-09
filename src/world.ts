@@ -390,11 +390,6 @@ export function zScale(z: number, y = Camera25D.focusY): number {
   return Camera25D.focal / camDepth(z, y);
 }
 
-/** Compatibility helper: projected lift at the camera's focus Y. */
-export function pitchLift(z: number): number {
-  return Camera25D.focusY - projectY(Camera25D.focusY, z);
-}
-
 /** Zero-alloc projected screen Y (`worldToScreen(…).y`). Prefer this in hot loops. */
 export function projectY(y: number, z: number): number {
   const ry = y - Camera25D.eyeY;
