@@ -76,6 +76,10 @@ export interface CraftSpec {
   rotorHulk?: string;
   /** Draw multiplier for the rotor overlay relative to its baked texture size. */
   rotorScale?: number;
+  /** Rotor wind-up duration before lift-off; defaults to global heli spool. */
+  spoolDur?: number;
+  /** Steady flight rotor angular speed; defaults to global heli rotor flight speed. */
+  rotorFlight?: number;
   /** Sprite nose-up offset (world aim 0 is +X). */
   rotOff: number;
   forwardThrust: number;
@@ -163,18 +167,20 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     name: "Murder Drone",
     fullName: "MQ-27 Murder Drone",
     flightModel: "heli",
-    sizeM: 3.2,
+    sizeM: 1.9,
     ammoScale: 0.65,
     health: 45,
-    radius: 8,
-    height: 5,
+    radius: 4.5,
+    height: 3.2,
     body: "craft_quad_drone",
     hulk: "craft_quad_drone_hulk",
     gun: "heli_gun",
     gunVisible: false,
     rotor: "craft_quad_drone_rotor",
     rotorHulk: "craft_quad_drone_rotor_hulk",
-    rotorScale: 0.28,
+    rotorScale: 0.4,
+    spoolDur: 0.55,
+    rotorFlight: 52,
     rotOff: Math.PI / 2,
     forwardThrust: 760, strafeThrust: 700, maxSpeed: 440, minSpeed: 0, yawRate: 4.35, yawAccel: 23.5, drag: 1.05,
     verticalThrust: 650, cruiseThrust: 60, cruiseAgl: 38, maxAgl: 105,
@@ -338,7 +344,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 475, strafeThrust: 310, maxSpeed: 305, minSpeed: 0, yawRate: 2.45, yawAccel: 10.5, drag: 1.65,
     verticalThrust: 340, cruiseThrust: 36, cruiseAgl: 46, maxAgl: 118,
     gunMode: "turret",
-    loadout: ["concealed_cannon", "hellfire_missile", "smoke_bomb", "stinger_missile"],
+    loadout: ["concealed_cannon", "smoke_bomb", "stinger_missile", "tv_missile"],
     enemyAimMul: 0.55,
     enemySeekerMul: 0.42,
   },

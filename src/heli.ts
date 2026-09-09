@@ -90,6 +90,20 @@ export class Heli {
     return this.spec.height;
   }
 
+  private get spoolDur(): number {
+    return this.spec.spoolDur ?? SPOOL_DUR;
+  }
+
+  private get rotorFlight(): number {
+    return this.spec.rotorFlight ?? ROTOR_FLIGHT;
+  }
+
+  private get rotorSpoolPeak(): number {
+    return this.spec.rotorFlight != null
+      ? this.spec.rotorFlight * (ROTOR_SPOOL_PEAK / ROTOR_FLIGHT)
+      : ROTOR_SPOOL_PEAK;
+  }
+
   startAirborne(angle: number, world: WorldData): void {
     this.angle = angle;
     this.phase = "flight";
@@ -110,7 +124,7 @@ export class Heli {
   /** 0 at pad start → 1 once flight controls unlock. */
   get takeoffProgress(): number {
     if (this.phase === "grounded") return 0;
-    if (this.phase === "spool") return Phaser.Math.Clamp(this.spool / SPOOL_DUR, 0, 1) * 0.85;
+    if (this.phase === "spool") return Phaser.Math.Clamp(this.spool / this.spoolDur, 0, 1) * 0.85;
     if (this.phase === "ready") return 0.85;
     return 1;
   }
@@ -118,9 +132,11 @@ export class Heli {
   /** Dust-off intensity 0→1: waits for visible rotor speed, then builds; holds on ready. */
   get dustPower(): number {
     if (this.phase === "spool") {
-      if (this.rotorSpd < DUST_ROTOR_MIN) return 0;
+      const peak = this.rotorSpoolPeak;
+      const dustMin = peak * (DUST_ROTOR_MIN / ROTOR_SPOOL_PEAK);
+      if (this.rotorSpd < dustMin) return 0;
       const u = Phaser.Math.Clamp(
-        (this.rotorSpd - DUST_ROTOR_MIN) / Math.max(1, ROTOR_SPOOL_PEAK - DUST_ROTOR_MIN),
+        (this.rotorSpd - dustMin) / Math.max(1, peak - dustMin),
         0,
         1
       );
@@ -152,19 +168,21 @@ export class Heli {
 
     if (this.phase === "spool") {
       this.spool += dt;
-      const t = Phaser.Math.Clamp(this.spool / SPOOL_DUR, 0, 1);
-      // Cubic ease-in: long crawl, then rapid spin-up.
-      const spin = t * t * t;
-      this.rotorSpd = spin * ROTOR_SPOOL_PEAK;
+      const spoolDur = this.spoolDur;
+      const peak = this.rotorSpoolPeak;
+      const t = Phaser.Math.Clamp(this.spool / spoolDur, 0, 1);
+      // Typical helis crawl then snap; short craft spools ramp more aggressively.
+      const spin = spoolDur < 1 ? t * t : t * t * t;
+      this.rotorSpd = spin * peak;
       if (t >= 1) {
         this.phase = "ready";
         this.readySpaceLatch = spaceDown;
-        this.rotorSpd = ROTOR_SPOOL_PEAK;
+        this.rotorSpd = peak;
       }
     }
 
     if (this.phase === "ready") {
-      this.rotorSpd = Phaser.Math.Linear(this.rotorSpd, ROTOR_FLIGHT, 1 - Math.pow(0.12, dt));
+      this.rotorSpd = Phaser.Math.Linear(this.rotorSpd, this.rotorFlight, 1 - Math.pow(0.12, dt));
       if (this.readySpaceLatch) {
         if (!spaceDown) this.readySpaceLatch = false;
       } else if (spaceDown) {
@@ -176,7 +194,7 @@ export class Heli {
     const controllable = this.phase === "flight";
     this.rotor += this.rotorSpd * dt;
     if (controllable) {
-      this.rotorSpd = Phaser.Math.Linear(this.rotorSpd, ROTOR_FLIGHT, 1 - Math.pow(0.2, dt));
+      this.rotorSpd = Phaser.Math.Linear(this.rotorSpd, this.rotorFlight, 1 - Math.pow(0.2, dt));
     }
 
     let desired = Math.atan2(aimY - this.y, aimX - this.x);

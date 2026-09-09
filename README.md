@@ -11,24 +11,26 @@ Arcade 2.5D and lots of sprites:
 * The sim lives in world X/Y plus altitude Z.
 * A chase camera sits above and slightly behind the bird and projects sprites with height, scale, and ground shadows.
 * Painted units sit on a height-mapped landscape (water, river, sand, grass, forest, rock, peak).
-* Hits leave hulks, fire, and debris painted on the field after coming to rest.
+* Destruction is permanently painted on the field: explosion scars, bullet holes, crashed hulks, ejected casings, and debris after coming to rest.
+* Lots and lots of particles: fire, smoke, sparks, trails, lighting, splashes, etc.
 * Bevel lighting effect on live objects (player, enemy units that move)
-* Lots and lots of particles: fire, smoke, sparks, lighting, splashes, etc.
+* Mesh projection on terrain for a psuedo 3d effect.
+* Post-processing effects, like bloom and thermal vision.
 
 ## Flight
 
-Momentum flight, not cursor-follow.
+Momentum based flight, cursor targetting.
 
 - **WASD / arrows** thrust along heading and strafe. Drag and a speed cap keep it arcade-fast, with pitch/roll squash from local velocity.
-- **Mouse** yaws the hull toward the pointer (with angular momentum). The chin gun tracks the aim point faster and almost independently.
-- Altitude is above local ground, not a fixed world height. Cruise settles at mid AGL. **Space** pops up toward a ceiling; **Shift** hugs nap-of-earth. Release both and it eases back to cruise, loosely following terrain.
+- **Mouse** yaws the hull toward the pointer (with angular momentum). Turret guns track the aim point faster and independently.
+- Altitude is above local ground. Cruise settles at mid AGL. **Space** pops up toward a ceiling; **Shift** hugs nap-of-earth. Release eases back to cruise. Flight loosely contours terrain height to avoid ground collisions.
 - Ridgelines block shots and sight. Pop up to fire over a ridge; drop into a ravine to break line of sight.
 
 ## Weapons
 
-Every shot is a 3D projectile: heading in X/Y plus a Z velocity aimed at the reticle height. Cannons and unguided rockets fly ballistically — they drop toward the ground under the cursor, or toward an aerial if one is under the reticle. Missiles are slower and steered: Hellfires lock a unit, then kick, light the motor, and home; TOWs stay on the wire and turn toward the mouse.
+Every shot is a 3D projectile: heading in X/Y plus a Z velocity aimed at the reticle height. Cannons and unguided rockets fly ballistically — they drop toward the ground under the cursor, or toward an aerial if one is under the reticle. Missiles are slower and steered: Hellfires hold to lock-on to an enemy target, fire and forget; TOWs stay on the wire and turn toward the mouse.
 
-Explosions apply splash damage in a blast radius. Wrecks, debris, last marks, and bullet holes stay permanently on the field.
+Explosions apply splash damage in a blast radius. Wrecks, debris, blast marks, and bullet holes stay permanently on the field.
 
 ## Map
 

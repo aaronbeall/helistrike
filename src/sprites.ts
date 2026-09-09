@@ -42,16 +42,20 @@ const SRC = {
   radarHulk: "sprites/helistrike-radar-hulk.png",
 } as const;
 
-/** Selectable craft body/hulk/rotor source sheets (magenta). */
-const CRAFT_ART: { key: string; file: string; fit: number; rotor?: boolean }[] = [
+/**
+ * Selectable craft body/hulk/rotor source sheets (magenta).
+ * `keyPreserve` keeps intentional purple/magenta craft paint: only flood-key the
+ * background from the image border, and skip magenta spill desaturation.
+ */
+const CRAFT_ART: { key: string; file: string; fit: number; rotor?: boolean; keyPreserve?: boolean }[] = [
   { key: "craft_littlebird", file: "sprites/helistrike-craft-littlebird.png", fit: 62 },
   { key: "craft_littlebird_hulk", file: "sprites/helistrike-craft-littlebird-hulk.png", fit: 62 },
   { key: "craft_littlebird_rotor", file: "sprites/helistrike-craft-littlebird-rotor.png", fit: 130, rotor: true },
   { key: "craft_littlebird_rotor_hulk", file: "sprites/helistrike-craft-littlebird-rotor-hulk.png", fit: 80, rotor: true },
-  { key: "craft_quad_drone", file: "sprites/helistrike-craft-quad-drone.png", fit: 48 },
-  { key: "craft_quad_drone_hulk", file: "sprites/helistrike-craft-quad-drone-hulk.png", fit: 48 },
-  { key: "craft_quad_drone_rotor", file: "sprites/helistrike-craft-quad-drone-rotor.png", fit: 48, rotor: true },
-  { key: "craft_quad_drone_rotor_hulk", file: "sprites/helistrike-craft-quad-drone-rotor-hulk.png", fit: 28, rotor: true },
+  { key: "craft_quad_drone", file: "sprites/helistrike-craft-quad-drone.png", fit: 28 },
+  { key: "craft_quad_drone_hulk", file: "sprites/helistrike-craft-quad-drone-hulk.png", fit: 28 },
+  { key: "craft_quad_drone_rotor", file: "sprites/helistrike-craft-quad-drone-rotor.png", fit: 36, rotor: true },
+  { key: "craft_quad_drone_rotor_hulk", file: "sprites/helistrike-craft-quad-drone-rotor-hulk.png", fit: 20, rotor: true },
   { key: "craft_cobra", file: "sprites/helistrike-craft-cobra.png", fit: 112 },
   { key: "craft_cobra_hulk", file: "sprites/helistrike-craft-cobra-hulk.png", fit: 112 },
   { key: "craft_cobra_rotor", file: "sprites/helistrike-craft-cobra-rotor.png", fit: 120, rotor: true },
@@ -80,8 +84,8 @@ const CRAFT_ART: { key: string; file: string; fit: number; rotor?: boolean }[] =
   { key: "craft_cyberhawk_hulk", file: "sprites/helistrike-craft-cyberhawk-hulk.png", fit: 120 },
   { key: "craft_cyberhawk_rotor", file: "sprites/helistrike-craft-cyberhawk-rotor.png", fit: 130, rotor: true },
   { key: "craft_cyberhawk_rotor_hulk", file: "sprites/helistrike-craft-cyberhawk-rotor-hulk.png", fit: 80, rotor: true },
-  { key: "craft_prometheus", file: "sprites/helistrike-craft-prometheus.png", fit: 120 },
-  { key: "craft_prometheus_hulk", file: "sprites/helistrike-craft-prometheus-hulk.png", fit: 120 },
+  { key: "craft_prometheus", file: "sprites/helistrike-craft-prometheus.png", fit: 120, keyPreserve: true },
+  { key: "craft_prometheus_hulk", file: "sprites/helistrike-craft-prometheus-hulk.png", fit: 120, keyPreserve: true },
   { key: "craft_lightning_ii", file: "sprites/helistrike-craft-lightning-ii.png", fit: 142 },
   { key: "craft_lightning_ii_hulk", file: "sprites/helistrike-craft-lightning-ii-hulk.png", fit: 142 },
   { key: "craft_gunship", file: "sprites/helistrike-craft-gunship.png", fit: 324 },
@@ -524,7 +528,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   for (const art of CRAFT_ART) {
     const srcKey = `src_${art.key}`;
     if (!textures.exists(srcKey)) continue;
-    const keyed = keyImage(src(textures, srcKey), "magenta");
+    const keyed = keyImage(src(textures, srcKey), art.keyPreserve ? "edge" : "magenta");
     if (art.rotor) {
       if (art.key.endsWith("_hulk")) {
         put(textures, art.key, fit(stripBakedDropShadow(squareCenter(keyed)), art.fit));
@@ -737,10 +741,14 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
 
   const blastSrc = src(textures, "src_blasts");
   const blasts = sliceGrid(matteMagenta(copyToCanvas(blastSrc, blastSrc.width, blastSrc.height)), 2, 2);
-  blasts.forEach((c, i) => put(textures, `fx_blast_${i}`, fit(c, 88)));
+  blasts.forEach((c, i) => {
+    const blast = fit(c, 88);
+    put(textures, `fx_blast_${i}`, blast);
+    put(textures, `fx_blast_${i}_heat`, bakeThermalHeatFromDarkness(blast));
+  });
 
   for (const kind of FX_KINDS) {
-    putFxSheet(textures, kind, FX_SHEET_SIZE[kind]);
+    putFxSheet(textures, kind, FX_SHEET_SIZE[kind], kind === "dirt");
   }
 
   const shadowSrc = [
@@ -937,10 +945,33 @@ function putWheelDebrisSheet(textures: Phaser.Textures.TextureManager): void {
   });
 }
 
+function putFxSpriteSheet(
+  textures: Phaser.Textures.TextureManager,
+  key: string,
+  cells: HTMLCanvasElement[],
+  size: number
+): void {
+  const n = cells.length;
+  const sheet = document.createElement("canvas");
+  sheet.width = size * n;
+  sheet.height = size;
+  const g = sheet.getContext("2d")!;
+  cells.forEach((c, i) => {
+    g.drawImage(c, i * size + (size - c.width) / 2, (size - c.height) / 2);
+  });
+  if (textures.exists(key)) textures.remove(key);
+  textures.addSpriteSheet(key, sheet as unknown as HTMLImageElement, {
+    frameWidth: size,
+    frameHeight: size,
+    endFrame: n - 1,
+  });
+}
+
 function putFxSheet(
   textures: Phaser.Textures.TextureManager,
   kind: string,
-  size: number
+  size: number,
+  bakeHeat = false
 ): void {
   const destKey = `fx_${kind}`;
   const cells: HTMLCanvasElement[] = [];
@@ -953,20 +984,19 @@ function putFxSheet(
     cells.push(fit(trim(cell, 2), size));
   }
   if (!cells.length) return;
-  const n = cells.length;
-  const sheet = document.createElement("canvas");
-  sheet.width = size * n;
-  sheet.height = size;
-  const g = sheet.getContext("2d")!;
-  cells.forEach((c, i) => {
-    g.drawImage(c, i * size + (size - c.width) / 2, (size - c.height) / 2);
-  });
-  if (textures.exists(destKey)) textures.remove(destKey);
-  textures.addSpriteSheet(destKey, sheet as unknown as HTMLImageElement, {
-    frameWidth: size,
-    frameHeight: size,
-    endFrame: n - 1,
-  });
+  putFxSpriteSheet(textures, destKey, cells, size);
+  if (bakeHeat) {
+    const bakeCell =
+      kind === "dirt"
+        ? bakeThermalHeatFromAlpha
+        : bakeThermalHeatFromDarkness;
+    putFxSpriteSheet(
+      textures,
+      `${destKey}_heat`,
+      cells.map((cell) => bakeCell(cell)),
+      size
+    );
+  }
 }
 
 function fxKnockBlack(src: HTMLCanvasElement): HTMLCanvasElement {
@@ -1010,7 +1040,7 @@ function copyToCanvas(img: CanvasImageSource, w: number, h: number): HTMLCanvasE
   return c;
 }
 
-function keyImage(img: HTMLImageElement, mode: "magenta" | "studio"): HTMLCanvasElement {
+function keyImage(img: HTMLImageElement, mode: "magenta" | "studio" | "edge"): HTMLCanvasElement {
   return trim(keyPixels(img, mode));
 }
 
@@ -1109,7 +1139,7 @@ function clipRadarDish(c: HTMLCanvasElement): HTMLCanvasElement {
   return out;
 }
 
-function keyPixels(img: HTMLImageElement, mode: "magenta" | "studio"): HTMLCanvasElement {
+function keyPixels(img: HTMLImageElement, mode: "magenta" | "studio" | "edge"): HTMLCanvasElement {
   const c = copyToCanvas(img, img.width, img.height);
   const g = c.getContext("2d")!;
   const pix = g.getImageData(0, 0, c.width, c.height);
@@ -1118,6 +1148,9 @@ function keyPixels(img: HTMLImageElement, mode: "magenta" | "studio"): HTMLCanva
   const h = c.height;
   const n = w * h;
   const bg = new Uint8Array(n);
+  // Edge mode only removes background connected to the image border so purple
+  // craft paint (Prometheus) is not punched out as chroma key.
+  const edgeOnly = mode === "edge";
 
   const isKey = (i: number): boolean => {
     const o = i * 4;
@@ -1182,22 +1215,103 @@ function keyPixels(img: HTMLImageElement, mode: "magenta" | "studio"): HTMLCanva
     d[o + 2] = 0;
     d[o + 3] = 0;
   }
-  for (let i = 0; i < n; i++) {
-    if (bg[i]) continue;
-    const o = i * 4;
-    const r = d[o]!;
-    const gc = d[o + 1]!;
-    const b = d[o + 2]!;
-    if (r > 140 && b > 140 && gc < 200) {
-      const spill = Math.min(r, b) - gc;
-      if (spill > 8) {
-        d[o] = Math.min(255, gc + 20);
-        d[o + 2] = Math.min(255, gc + 12);
+  if (!edgeOnly) {
+    for (let i = 0; i < n; i++) {
+      if (bg[i]) continue;
+      const o = i * 4;
+      const r = d[o]!;
+      const gc = d[o + 1]!;
+      const b = d[o + 2]!;
+      if (r > 140 && b > 140 && gc < 200) {
+        const spill = Math.min(r, b) - gc;
+        if (spill > 8) {
+          d[o] = Math.min(255, gc + 20);
+          d[o + 2] = Math.min(255, gc + 12);
+        }
       }
     }
   }
   g.putImageData(pix, 0, 0);
   return c;
+}
+
+/**
+ * Encode opacity into thermal semantic heat — for blood/dirt splats where coverage = warmth.
+ * Hot = opaque magenta; cool/empty = transparent (never opaque cold black).
+ */
+export function bakeThermalHeatFromAlpha(src: HTMLCanvasElement): HTMLCanvasElement {
+  const out = document.createElement("canvas");
+  out.width = src.width;
+  out.height = src.height;
+  const g = out.getContext("2d")!;
+  g.drawImage(src, 0, 0);
+  const pix = g.getImageData(0, 0, out.width, out.height);
+  const d = pix.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const a = d[i + 3]! / 255;
+    if (a < 0.004) {
+      d[i] = 0;
+      d[i + 1] = 0;
+      d[i + 2] = 0;
+      d[i + 3] = 0;
+      continue;
+    }
+    const heat = Math.min(1, Math.pow(a, 0.68) * 1.12);
+    if (heat < 0.04) {
+      d[i] = 0;
+      d[i + 1] = 0;
+      d[i + 2] = 0;
+      d[i + 3] = 0;
+      continue;
+    }
+    // Full semantic magenta; alpha is the heat so cool rims fade out instead of painting cold.
+    d[i] = 255;
+    d[i + 1] = 0;
+    d[i + 2] = 255;
+    d[i + 3] = Math.round(heat * 255);
+  }
+  g.putImageData(pix, 0, 0);
+  return out;
+}
+
+/**
+ * Encode blast darkness into thermal semantic heat.
+ * Dark opaque centers → hot (opaque magenta); soft/pale edges → transparent.
+ */
+export function bakeThermalHeatFromDarkness(src: HTMLCanvasElement): HTMLCanvasElement {
+  const out = document.createElement("canvas");
+  out.width = src.width;
+  out.height = src.height;
+  const g = out.getContext("2d")!;
+  g.drawImage(src, 0, 0);
+  const pix = g.getImageData(0, 0, out.width, out.height);
+  const d = pix.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const a = d[i + 3]! / 255;
+    if (a < 0.004) {
+      d[i] = 0;
+      d[i + 1] = 0;
+      d[i + 2] = 0;
+      d[i + 3] = 0;
+      continue;
+    }
+    const luma = (d[i]! * 0.299 + d[i + 1]! * 0.587 + d[i + 2]! * 0.114) / 255;
+    // Darker scorched cores read hotter; soft rims stay transparent, not cold-opaque.
+    const heat = Math.pow(Math.min(1, Math.max(0, (1 - luma) * a)), 0.92);
+    if (heat < 0.04) {
+      d[i] = 0;
+      d[i + 1] = 0;
+      d[i + 2] = 0;
+      d[i + 3] = 0;
+      continue;
+    }
+    d[i] = 255;
+    d[i + 1] = 0;
+    d[i + 2] = 255;
+    d[i + 3] = Math.round(heat * 255);
+  }
+  g.putImageData(pix, 0, 0);
+  return out;
 }
 
 function matteMagenta(src: HTMLCanvasElement): HTMLCanvasElement {

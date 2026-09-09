@@ -18,6 +18,9 @@
   * [ ] (Secret) Prometheus (alien, cloaking)
   * [ ] Steamship (steampunk airship)
 * [ ] Single player progress, mission/vehicle unlocks, weapon/upgrade purchases
+  * [ ] Campaign: multiple theater hand crafted missions with a light story, craft/weapon unlocks, between mission resource management, and progress pathing
+  * [ ] Rogue Operation: a roguelike mode that uses procedural generated series of increasingly difficult missions, unlocks (craft and weapons) stick across playthroughs
+  * [ ] Skirmish: single randomly generated mission, shares unlocks with Rogue Operation
 * [ ] Additional weapon options (current: chain gun, rockets, hellfires, TOWs), loadout options specific to heli type
   * [ ] Miniguns
   * [ ] Spike NLOS (long-range guided)

@@ -41,6 +41,7 @@ import { allMissions, missionOf, selectMission } from "./mission";
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
 import { configRigsAnyOpen, installConfigRigHotkeys } from "./configRigs";
 import { applyEdgeLight, clearEdgeLight, ensureEdgeLightPipeline } from "./edgeLight";
+import { setThermalPipeline } from "./thermal";
 import { createTerrain25D, type Terrain25D } from "./terrain25d";
 import { LOAD_TIPS } from "./tips";
 import { fbm } from "./noise";
@@ -100,6 +101,49 @@ type BurstParticle = Phaser.GameObjects.Particles.Particle & {
   swirl?: number;
 };
 
+type ThermalWreckKind = "blast" | "blood" | "scar";
+
+type ThermalWreckMark = {
+  image: Phaser.GameObjects.Image;
+  x: number;
+  y: number;
+  z: number;
+  rotation: number;
+  scaleX: number;
+  scaleY: number;
+  /** Seconds at full heat before cooldown begins. */
+  hold: number;
+  /** Cooldown duration after the hold window. */
+  fadeDur: number;
+  /** Elapsed thermal-visible time; only advances while thermal mode is on. */
+  age: number;
+};
+
+function thermalWreckTiming(kind: ThermalWreckKind, scaleX: number, scaleY: number): { hold: number; fadeDur: number } {
+  const span = Math.max(scaleX, scaleY);
+  if (kind === "blood") {
+    return { hold: 0.28, fadeDur: 4.5 + Math.min(5, span * 1.8) };
+  }
+  if (kind === "scar") {
+    return { hold: 0.35, fadeDur: 5 + Math.min(6, span * 2.2) };
+  }
+  return { hold: 0.35, fadeDur: 6 + Math.min(7, span * 2.4) };
+}
+
+/** Chain-gun scars stamp tiny on the wreck layer; thermal overlay needs a readable minimum span. */
+function thermalWreckDisplayScale(
+  scaleX: number,
+  scaleY: number,
+  kind: ThermalWreckKind
+): { scaleX: number; scaleY: number } {
+  if (kind !== "scar") return { scaleX, scaleY };
+  const minSpan = 0.38;
+  const span = Math.max(scaleX, scaleY);
+  if (span >= minSpan) return { scaleX, scaleY };
+  const mul = minSpan / span;
+  return { scaleX: scaleX * mul, scaleY: scaleY * mul };
+}
+
 /** Overlay guns are drawn barrel-up (same as hulls). World aim 0 is +X, so +90°. */
 function gunWorldRot(_tex: string, aim: number): number {
   return aim + Math.PI / 2;
@@ -116,6 +160,26 @@ const ENEMY_PROJECTILE_FX_MUL = 0.72;
 function projectileFxScale(from: Shot["from"], effectiveInterval = PROJECTILE_FX_BASE_INTERVAL): number {
   const cadence = Phaser.Math.Clamp(effectiveInterval / PROJECTILE_FX_BASE_INTERVAL, 0.18, 1);
   return cadence * (from === "enemy" ? ENEMY_PROJECTILE_FX_MUL : 1);
+}
+
+function thermalSignalTint(heat: number): number {
+  const signal = Phaser.Math.Clamp(Math.round((0.06 + heat * 0.94) * 255), 0, 255);
+  // Magenta is an internal semantic heat signal. The thermal post shader decodes
+  // it to white-hot; this separates authored heat from bright terrain albedo.
+  return (signal << 16) | signal;
+}
+
+function applyThermalHeat(
+  image: Phaser.GameObjects.Image,
+  enabled: boolean,
+  heat: number,
+  normalTint?: number
+): void {
+  if (enabled) image.setTintFill(thermalSignalTint(heat));
+  else {
+    image.clearTint();
+    if (normalTint != null) image.setTint(normalTint);
+  }
 }
 
 function scaledProjectileFxCount(base: number, scale: number): number {
@@ -1239,6 +1303,8 @@ export class MissionScene extends Phaser.Scene {
   shotG!: Phaser.GameObjects.Group;
   debrisG!: Phaser.GameObjects.Group;
   simParticleG!: Phaser.GameObjects.Group;
+  thermalHotspotG!: Phaser.GameObjects.Group;
+  thermalWreckMarks: ThermalWreckMark[] = [];
   smoke!: Phaser.GameObjects.Particles.ParticleEmitter;
   tracer!: Phaser.GameObjects.Particles.ParticleEmitter;
   flame!: Phaser.GameObjects.Particles.ParticleEmitter;
@@ -1279,6 +1345,11 @@ export class MissionScene extends Phaser.Scene {
     smoke: { frameCap: 72, activeCap: 1024, emitted: 0, emitters: new Set() },
     dust: { frameCap: 96, activeCap: 512, emitted: 0, emitters: new Set() },
   };
+  /** Saved blend/tintFill so thermal can force NORMAL + fill without losing defaults. */
+  fxThermalSaved = new Map<
+    Phaser.GameObjects.Particles.ParticleEmitter,
+    { blendMode: Phaser.BlendModes | string; tintFill: boolean }
+  >();
   /** Painter-depth bands so concurrent trails don't all share one emitter depth. */
   fxSlotN = 8;
   fxBandH = 48;
@@ -1520,6 +1591,7 @@ export class MissionScene extends Phaser.Scene {
     this.shots = [];
     this.debris = [];
     this.simParticles = [];
+    this.thermalWreckMarks = [];
     this.exhaustPrevWorld = [];
     this.exhaustMountCursor = 0;
     this.playerCrashStarted = false;
@@ -1592,6 +1664,7 @@ export class MissionScene extends Phaser.Scene {
     this.shotG = this.add.group();
     this.debrisG = this.add.group();
     this.simParticleG = this.add.group();
+    this.thermalHotspotG = this.add.group();
 
     this.heli = new Heli(this.world.spawnX, this.world.spawnY, this.world);
     if (this.heli.spec.flightModel === "plane") {
@@ -2183,6 +2256,7 @@ export class MissionScene extends Phaser.Scene {
     });
     this.heliDust.setDepth(Layer.WORLD);
     this.registerFx("dust", this.heliDust);
+    this.events.on(Phaser.Scenes.Events.POST_UPDATE, () => this.tintThermalParticles());
     this.applyTimeScale();
 
     this.keyW = this.input.keyboard!.addKey("W");
@@ -2567,7 +2641,8 @@ export class MissionScene extends Phaser.Scene {
     oy = 0.5,
     scaleY?: number,
     frame?: string | number,
-    tint?: number
+    tint?: number,
+    thermal = true
   ): void {
     if (!this.textures.exists(key)) return;
     const k = WRECK_TEX / WORLD;
@@ -2591,6 +2666,107 @@ export class MissionScene extends Phaser.Scene {
     this.wreckLayer.draw(this.stampBrush);
     this.stampBrush.clearTint();
     this.stampBrush.setBlendMode(Phaser.BlendModes.NORMAL);
+    if (thermal && (key.startsWith("fx_blast_") || (key === "fx_dirt" && tint != null))) {
+      this.addThermalWreckMark(
+        key,
+        x,
+        y,
+        rotation,
+        scale,
+        scaleY ?? scale,
+        ox,
+        oy,
+        frame,
+        key === "fx_dirt" ? "blood" : "blast"
+      );
+    }
+  }
+
+  addThermalWreckMark(
+    key: string,
+    x: number,
+    y: number,
+    rotation: number,
+    scaleX: number,
+    scaleY: number,
+    ox: number,
+    oy: number,
+    frame?: string | number,
+    kind: ThermalWreckKind = "blast"
+  ): void {
+    const heatKey = `${key}_heat`;
+    const tex = this.textures.exists(heatKey) ? heatKey : key;
+    const display = thermalWreckDisplayScale(scaleX, scaleY, kind);
+    const timing = thermalWreckTiming(kind, display.scaleX, display.scaleY);
+    const image = this.add
+      .image(0, 0, tex, frame)
+      .setOrigin(ox, oy)
+      .setBlendMode(Phaser.BlendModes.NORMAL)
+      .clearTint()
+      .setAlpha(1)
+      .setVisible(false);
+    const mark: ThermalWreckMark = {
+      image,
+      x,
+      y,
+      z: groundZ(this.world, x, y) + 0.25,
+      rotation,
+      scaleX: display.scaleX,
+      scaleY: display.scaleY,
+      hold: timing.hold,
+      fadeDur: timing.fadeDur,
+      age: 0,
+    };
+    this.thermalWreckMarks.push(mark);
+    this.syncThermalWreckMark(mark);
+    const cap = 384;
+    if (this.thermalWreckMarks.length > cap) {
+      this.thermalWreckMarks.shift()!.image.destroy();
+    }
+  }
+
+  thermalWreckFade(mark: ThermalWreckMark): number {
+    if (mark.age <= mark.hold) return 1;
+    return Math.max(0, 1 - (mark.age - mark.hold) / mark.fadeDur);
+  }
+
+  syncThermalWreckMark(mark: ThermalWreckMark): void {
+    const visible =
+      this.thermalOn &&
+      this.mapBlend < 0.12 &&
+      cameraPointVisible(mark.z, mark.y);
+    mark.image.setVisible(visible);
+    if (!visible) return;
+    const at = worldToScreen(mark.x, mark.y, mark.z);
+    const fade = this.thermalWreckFade(mark);
+    // Per-pixel heat is in texture alpha; whole-sprite alpha only handles hold/fade lifespan.
+    mark.image
+      .setPosition(at.x, at.y)
+      .setRotation(projectHeading(mark.rotation, mark.x, mark.y, mark.z))
+      .setScale(mark.scaleX * at.scale, mark.scaleY * at.scale)
+      .clearTint()
+      .setAlpha(fade)
+      .setDepth(worldDepth(mark.z, -7, mark.y));
+  }
+
+  syncAllThermalWreckMarks(): void {
+    for (const mark of this.thermalWreckMarks) this.syncThermalWreckMark(mark);
+  }
+
+  updateThermalWreckMarks(dt: number): void {
+    let write = 0;
+    for (const mark of this.thermalWreckMarks) {
+      if (!mark.image.scene) continue;
+      if (this.thermalOn) mark.age += dt;
+      const fade = this.thermalWreckFade(mark);
+      if (fade <= 0) {
+        mark.image.destroy();
+        continue;
+      }
+      this.syncThermalWreckMark(mark);
+      this.thermalWreckMarks[write++] = mark;
+    }
+    this.thermalWreckMarks.length = write;
   }
 
   /** World-space decal scale with optional travel-grade squash. */
@@ -2715,6 +2891,18 @@ export class MissionScene extends Phaser.Scene {
     g.rotate(rot);
     g.drawImage(bloodStampScratch, 0, 0, tw, th, -ox * dw, -oy * dh, dw, dh);
     g.restore();
+    this.addThermalWreckMark(
+      s.tex,
+      s.x,
+      s.y,
+      rot,
+      sx,
+      sy,
+      ox,
+      oy,
+      s.frame,
+      "blood"
+    );
   }
 
   /** Soft, patchy tire print for bouncing / rolling wheel debris. */
@@ -2872,6 +3060,7 @@ export class MissionScene extends Phaser.Scene {
         this.drawDebugHits();
       }
     }
+    this.updateThermalWreckMarks(dt);
     this.tickDebugBlast(wallDt);
 
     if (this.editOpen) this.handleReliefEdit(wallDt);
@@ -3220,6 +3409,7 @@ export class MissionScene extends Phaser.Scene {
         .setScale(zs)
         .setDepth(worldDepth(h.z, ZOff.gun + i * 0.001, h.y));
       applyEdgeLight(gun, gun.rotation);
+      applyThermalHeat(gun, this.thermalOn, 0.9);
     });
     const rotorParts = this.craftParts.rotors;
     if (!rotorParts.length) {
@@ -3247,9 +3437,11 @@ export class MissionScene extends Phaser.Scene {
           .setAlpha(1)
           .setDepth(worldDepth(h.z, ZOff.rotor + i * 0.001, h.y));
         clearEdgeLight(rotor);
+        applyThermalHeat(rotor, this.thermalOn, 0.48);
       });
     }
     applyEdgeLight(this.body, bodyRot);
+    applyThermalHeat(this.body, this.thermalOn, 0.78);
     this.body.setDepth(worldDepth(h.z, ZOff.body, h.y));
     this.muzzle.setDepth(worldDepth(h.z, ZOff.muzzle, h.y));
     this.syncReticles();
@@ -3302,10 +3494,11 @@ export class MissionScene extends Phaser.Scene {
         .setPosition(at.x, at.y)
         .setRotation(jetAng)
         .setScale(sc * flicker, sc * (1.04 - flicker * 0.12))
-        .setTint(profile.tint)
         .setAlpha(0.62 + power * 0.34)
         // The attached flame lights the nozzle and belongs just above the hull.
         .setDepth(this.body.depth + 0.2);
+      if (this.thermalOn) applyThermalHeat(flame, true, 0.96);
+      else flame.clearTint().setTint(profile.tint);
     });
 
     this.exhaustEmitCarry += profile.rate * power * mounts.length * Math.min(dt, 0.05);
@@ -3470,7 +3663,8 @@ export class MissionScene extends Phaser.Scene {
     const gnd = groundZ(this.world, x, y);
     const wet = isWater(this.world, x, y);
     const at = worldToScreen(x, y, gnd);
-    const ring = this.add.circle(at.x, at.y, 8, 0xd2c09a, 0.62)
+    const ring = this.add
+      .circle(at.x, at.y, 8, this.thermalOn ? thermalSignalTint(0.42) : 0xd2c09a, 0.62)
       .setScale(at.scale)
       .setDepth(worldDepth(gnd, 0.45, y));
     this.tweens.add({
@@ -4503,8 +4697,12 @@ export class MissionScene extends Phaser.Scene {
         )
         .setAlpha(alpha);
       if (im.depth !== depth) im.setDepth(depth);
-      if (s.blood) im.setTintFill(s.tint);
-      else {
+      if (this.thermalOn) {
+        // Dirt/dust: medium heat so scars aren't masked black. Blood: hotter live spray.
+        applyThermalHeat(im, true, s.blood ? 0.72 : 0.42);
+      } else if (s.blood) {
+        im.setTintFill(s.tint);
+      } else {
         im.clearTint();
         im.setTint(s.tint);
       }
@@ -5099,7 +5297,10 @@ export class MissionScene extends Phaser.Scene {
     const sx = base * Phaser.Math.Linear(1, 2.55, stretch) * range(0.82, 1.18);
     const sy = base * Phaser.Math.Linear(1, 0.36, graze) * range(0.82, 1.18);
     const alpha = Phaser.Math.Linear(0.72, 0.22, graze) * range(0.78, 1.06);
-    this.stampWreck(this.textures.exists(key) ? key : "fx_blast_0", px, py, ang, sx, alpha, 0.5, 0.5, sy);
+    const scarKey = this.textures.exists(key) ? key : "fx_blast_0";
+    // Wreck stamp stays subtle; thermal overlay is separate at readable scale (instant full heat).
+    this.stampWreck(scarKey, px, py, ang, sx, alpha, 0.5, 0.5, sy, undefined, undefined, false);
+    this.addThermalWreckMark(scarKey, px, py, ang, sx, sy, 0.5, 0.5, undefined, "scar");
   }
 
   heFireBurst(
@@ -6494,7 +6695,7 @@ export class MissionScene extends Phaser.Scene {
       let sy = hs.sy;
       if (f.dishFlat) {
         sx *= 1.04;
-        sy *= 0.52;
+        sy *= 0.76;
       } else if (f.rotorSkew) {
         sx *= 1.08;
         sy *= 0.78;
@@ -6554,7 +6755,7 @@ export class MissionScene extends Phaser.Scene {
       const ca = Math.cos(f.angle);
       const sa = Math.sin(f.angle);
       const flatX = f.dishFlat ? 1.04 : f.rotorSkew ? 1.08 : 1;
-      const flatY = f.dishFlat ? 0.52 : f.rotorSkew ? 0.78 : 1;
+      const flatY = f.dishFlat ? 0.76 : f.rotorSkew ? 0.78 : 1;
       const { fire, smoke } = this.pairFx(f.z, f.y, this.flame, this.hurtSmoke, trailFire, trailSmoke);
       const prevLife = this.trailFxLife;
       this.trailFxLife = lifeMul;
@@ -7844,6 +8045,22 @@ export class MissionScene extends Phaser.Scene {
       const oy = pivot.y;
       const zBias = u.pinId != null ? ZOff.posted : 0;
       const bodyDepth = worldDepth(u.z, ZOff.body + zBias, u.y);
+      const damageHeat = Phaser.Math.Clamp(1 - u.health / Math.max(1, u.max), 0, 1) * 0.14;
+      const bodyHeat = Phaser.Math.Clamp(
+        (sp.organic
+          ? 0.98
+          : sp.aerial
+            ? 0.82
+            : isGroundVehicle(u.kind)
+              ? 0.7
+              : sp.building
+                ? 0.25
+                : sp.water
+                  ? 0.34
+                  : 0.48) + damageHeat,
+        0,
+        1
+      );
       sh.setVisible(true).setOrigin(ox, oy);
       this.applyCastShadow(
         sh,
@@ -7870,6 +8087,7 @@ export class MissionScene extends Phaser.Scene {
       } else im.setScale(zs);
       if (sp.building) clearEdgeLight(im);
       else applyEdgeLight(im, drawRot);
+      applyThermalHeat(im, this.thermalOn, bodyHeat);
       let pi = 0;
       const gunDepth = sp.move === "heli" ? ZOff.gun : ZOff.turret;
       const place = (
@@ -7904,6 +8122,11 @@ export class MissionScene extends Phaser.Scene {
         if (part.depth !== pd) part.setDepth(pd);
         if (edgeLit && !sp.building) applyEdgeLight(part, partRot);
         else clearEdgeLight(part);
+        applyThermalHeat(
+          part,
+          this.thermalOn,
+          texKey.includes("rotor") ? bodyHeat * 0.48 : Math.min(1, bodyHeat + 0.08)
+        );
       };
       guns.forEach((g, gi) => {
         const part = kids[partBase + pi++];
@@ -7952,7 +8175,7 @@ export class MissionScene extends Phaser.Scene {
           wrap
             .setVisible(true)
             .setPosition(px, py)
-            .setScale(im.scaleX * sc * 1.04, im.scaleY * sc * 0.52)
+            .setScale(im.scaleX * sc * 1.04, im.scaleY * sc * 0.76)
             .setRotation(u.rotor);
           if (wrap.depth !== dishDepth) wrap.setDepth(dishDepth);
           part.setVisible(true);
@@ -7964,6 +8187,7 @@ export class MissionScene extends Phaser.Scene {
             .setAlpha(1)
             .setScale(1);
           clearEdgeLight(part);
+          applyThermalHeat(part, this.thermalOn, bodyHeat * 0.62);
         }
       }
       if (u.muzzleT > 0 && (sp.weapon || guns.length)) {
@@ -7992,6 +8216,62 @@ export class MissionScene extends Phaser.Scene {
         clearEdgeLight(flash);
       }
     }
+    this.syncThermalHotspots();
+  }
+
+  /** Low-cost semantic engine heat: one pooled glow per active vehicle/aircraft. */
+  syncThermalHotspots(): void {
+    const kids = this.thermalHotspotG.getChildren() as Phaser.GameObjects.Image[];
+    for (const image of kids) image.setVisible(false);
+    if (!this.thermalOn) return;
+
+    const points: { x: number; y: number; z: number; angle: number; radius: number; heat: number }[] = [];
+    const h = this.heli;
+    if (h.phase !== "dead") {
+      points.push({
+        x: h.x,
+        y: h.y,
+        z: h.z,
+        angle: h.angle,
+        radius: h.spec.radius,
+        heat: 1,
+      });
+    }
+    for (const u of this.units) {
+      if (u.dead) continue;
+      const sp = specOf(u.kind);
+      if (!sp.aerial && !isGroundVehicle(u.kind)) continue;
+      points.push({
+        x: u.x,
+        y: u.y,
+        z: u.z,
+        angle: u.angle,
+        radius: radius(u.kind),
+        heat: sp.aerial ? 0.96 : 0.88,
+      });
+    }
+    while (this.thermalHotspotG.getLength() < points.length) {
+      this.thermalHotspotG.add(
+        this.add
+          .image(0, 0, "fx_exhaust_glow")
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setTintFill(thermalSignalTint(1))
+      );
+    }
+    const pool = this.thermalHotspotG.getChildren() as Phaser.GameObjects.Image[];
+    points.forEach((p, i) => {
+      const back = p.radius * 0.42;
+      const x = p.x - Math.cos(p.angle) * back;
+      const y = p.y - Math.sin(p.angle) * back;
+      const at = worldToScreen(x, y, p.z);
+      const size = Math.max(5, p.radius * 0.7 * at.scale);
+      pool[i]!
+        .setVisible(true)
+        .setPosition(at.x, at.y)
+        .setDisplaySize(size, size)
+        .setAlpha(0.24 + p.heat * 0.2)
+        .setDepth(worldDepth(p.z, ZOff.fire + 0.12, y));
+    });
   }
 
   enemyMuzzle(u: Unit, gunI = 0): { x: number; y: number } {
@@ -8087,6 +8367,7 @@ export class MissionScene extends Phaser.Scene {
         .setRotation(drawRot)
         .setScale(sc * zs * along, sc * zs * across)
         .setAlpha(1);
+      applyThermalHeat(im, this.thermalOn, s.kind === "cannon" ? 0.9 : 1, s.tint);
       if (im.depth !== shotDepth) im.setDepth(shotDepth);
     });
   }
@@ -8122,7 +8403,7 @@ export class MissionScene extends Phaser.Scene {
       let sy = sc;
       if (f.dishFlat) {
         sx = sc * 1.04;
-        sy = sc * 0.52;
+        sy = sc * 0.76;
       } else if (f.rotorSkew) {
         sx = sc * 1.08;
         sy = sc * 0.78;
@@ -8166,6 +8447,7 @@ export class MissionScene extends Phaser.Scene {
           .setRotation(f.angle - travel)
           .setScale(1)
           .setAlpha(1);
+        applyThermalHeat(im, this.thermalOn, f.settled ? 0.27 : 0.62);
         if (canShadow) {
           sh.setVisible(true).setOrigin(ox, oy);
           this.applyCastShadow(sh, f.x, f.y, z, f.key, travel, f.scale ?? 1, 2, f);
@@ -8199,6 +8481,7 @@ export class MissionScene extends Phaser.Scene {
           .setRotation(f.angle - skew)
           .setScale(1)
           .setAlpha(1);
+        applyThermalHeat(im, this.thermalOn, f.settled ? 0.27 : 0.62);
         if (canShadow) {
           sh.setVisible(true).setOrigin(ox, oy);
           this.applyCastShadow(sh, f.x, f.y, z, f.key, skew, f.scale ?? 1, 2, f);
@@ -8211,7 +8494,7 @@ export class MissionScene extends Phaser.Scene {
       if (canShadow) {
         sh.setVisible(true).setOrigin(ox, oy);
         this.applyCastShadow(sh, f.x, f.y, z, f.key, f.angle, f.scale ?? 1, 2, f);
-        if (f.dishFlat) sh.setScale(sh.scaleX * 1.04, sh.scaleY * 0.52);
+        if (f.dishFlat) sh.setScale(sh.scaleX * 1.04, sh.scaleY * 0.76);
         if (f.rotorSkew) sh.setScale(sh.scaleX * 1.08, sh.scaleY * 0.78);
         if (cast < 1) sh.setAlpha(0.22);
       }
@@ -8229,6 +8512,13 @@ export class MissionScene extends Phaser.Scene {
         .setAlpha(
           f.settled ? 0.92 : sinkU >= 0 ? Phaser.Math.Linear(0.92, 0.78, sinkU * sinkU) : 1
         );
+      // Casings: heat tracks speed (same ~35 settle cutoff); no wreck overlay when stamped.
+      if (f.shellEject) {
+        const shellHeat = Phaser.Math.Clamp((Math.hypot(f.vx, f.vy, f.vz) - 35) / 40, 0, 1) * 0.55;
+        if (shellHeat > 0.02) applyThermalHeat(im, this.thermalOn, shellHeat);
+      } else {
+        applyThermalHeat(im, this.thermalOn, f.settled ? 0.27 : 0.64);
+      }
       if (im.depth !== depth) im.setDepth(depth);
     }
   }
@@ -9473,17 +9763,87 @@ export class MissionScene extends Phaser.Scene {
     this.thermalOn = !this.thermalOn;
     const cam = this.cameras.main;
     if (this.thermalOn) {
-      if (!this.thermalFx) this.thermalFx = cam.postFX.addColorMatrix();
-      this.thermalFx.set([
-        0.52, 0.92, 0.18, 0, -0.24,
-        0.42, 0.82, 0.12, 0, -0.08,
-        0.08, 0.2, 0.36, 0, 0.04,
-        0, 0, 0, 1, 0,
-      ]);
-    } else if (this.thermalFx) {
-      this.thermalFx.reset();
+      const palette = this.heli.spec.kind === "prometheus" ? "full_spectrum" : "white_hot";
+      const customPipeline = setThermalPipeline(cam, true, palette);
+      if (customPipeline) this.thermalFx?.reset();
+      else {
+        // Canvas fallback: white-hot grayscale without semantic shader grain/palette.
+        if (!this.thermalFx) this.thermalFx = cam.postFX.addColorMatrix();
+        this.thermalFx.set([
+          0.34, 0.58, 0.08, 0, -0.08,
+          0.34, 0.58, 0.08, 0, -0.06,
+          0.34, 0.58, 0.08, 0, -0.02,
+          0, 0, 0, 1, 0,
+        ]);
+      }
+      this.syncAllThermalWreckMarks();
+      // Neutral bloom after the thermal shader so hot pixels bleed, not the raw scene.
+      this.applyTestFxActive();
+      this.applyThermalFxBlendMode();
+    } else {
+      setThermalPipeline(cam, false);
+      this.thermalFx?.reset();
+      this.syncAllThermalWreckMarks();
+      // Restore bloom after thermal is off (if F-key FX still enabled).
+      this.applyTestFxActive();
+      this.applyThermalFxBlendMode();
     }
     this.syncDebugMenu();
+  }
+
+  /**
+   * Thermal needs fill-tint + NORMAL so smoke/fire/dust encode as semantic heat.
+   * ADD/multiply warm colors read dull/cold in the thermal shader.
+   */
+  applyThermalFxBlendMode(): void {
+    for (const kind of Object.keys(this.fxPolicies) as FxClass[]) {
+      for (const em of this.fxPolicies[kind].emitters) {
+        if (this.thermalOn) {
+          if (!this.fxThermalSaved.has(em)) {
+            this.fxThermalSaved.set(em, {
+              blendMode: em.blendMode as Phaser.BlendModes | string,
+              tintFill: em.tintFill,
+            });
+          }
+          em.tintFill = true;
+          em.setBlendMode(Phaser.BlendModes.NORMAL);
+        } else {
+          const saved = this.fxThermalSaved.get(em);
+          if (!saved) continue;
+          em.tintFill = saved.tintFill;
+          em.setBlendMode(saved.blendMode as Phaser.BlendModes);
+        }
+      }
+    }
+  }
+
+  /** After particle ops run: stamp semantic heat (fire hot, dust medium, smoke cools). */
+  tintThermalParticles(): void {
+    if (!this.thermalOn) return;
+    const sparkTint = thermalSignalTint(0.9);
+    const dustTint = thermalSignalTint(0.42);
+    for (const em of this.fxPolicies.fire.emitters) {
+      em.forEachAlive((p) => {
+        const age = 1 - Phaser.Math.Clamp(p.lifeCurrent / Math.max(1, p.life), 0, 1);
+        p.tint = thermalSignalTint(Phaser.Math.Linear(1, 0.78, age));
+      }, this);
+    }
+    for (const em of this.fxPolicies.short.emitters) {
+      em.forEachAlive((p) => {
+        p.tint = sparkTint;
+      }, this);
+    }
+    for (const em of this.fxPolicies.dust.emitters) {
+      em.forEachAlive((p) => {
+        p.tint = dustTint;
+      }, this);
+    }
+    for (const em of this.fxPolicies.smoke.emitters) {
+      em.forEachAlive((p) => {
+        const age = 1 - Phaser.Math.Clamp(p.lifeCurrent / Math.max(1, p.life), 0, 1);
+        p.tint = thermalSignalTint(Phaser.Math.Linear(0.4, 0.05, age));
+      }, this);
+    }
   }
 
   setupTestPostFx(): void {
@@ -9502,29 +9862,33 @@ export class MissionScene extends Phaser.Scene {
     const cam = this.cameras.main;
     // Phaser bloom blends with mix(scene, bloom*strength, 0.5). Strength 0 ⇒ mix with black
     // ⇒ a permanent faded frame. setActive(false) is unreliable, so remove FX entirely when off.
-    if (this.fxOn) {
-      if (!this.fxBloom) {
-        this.fxBloom = cam.postFX.addBloom(0xffe6b0, 1.1, 1.1, 1.0, 0.85, 3);
-      } else {
-        this.fxBloom.setActive(true);
-        this.fxBloom.strength = 0.85;
-        this.fxBloom.blurStrength = 1.0;
+    const wantBloom = this.fxOn;
+    const wantBarrel = this.fxOn;
+    if (wantBloom) {
+      if (this.fxBloom) {
+        cam.postFX.remove(this.fxBloom);
+        this.fxBloom = undefined;
       }
+      if (this.thermalOn) {
+        // Cheap neutral bloom on the thermal image — white, low strength, single blur pass.
+        this.fxBloom = cam.postFX.addBloom(0xffffff, 1.1, 1.1, 0.55, 0.32, 1);
+      } else {
+        this.fxBloom = cam.postFX.addBloom(0xffe6b0, 1.1, 1.1, 1.0, 0.85, 3);
+      }
+    } else if (this.fxBloom) {
+      cam.postFX.remove(this.fxBloom);
+      this.fxBloom = undefined;
+    }
+    if (wantBarrel) {
       if (!this.fxBarrel) {
         this.fxBarrel = cam.postFX.addBarrel(1);
       } else {
         this.fxBarrel.setActive(true);
         this.fxBarrel.amount = 1;
       }
-    } else {
-      if (this.fxBloom) {
-        cam.postFX.remove(this.fxBloom);
-        this.fxBloom = undefined;
-      }
-      if (this.fxBarrel) {
-        cam.postFX.remove(this.fxBarrel);
-        this.fxBarrel = undefined;
-      }
+    } else if (this.fxBarrel) {
+      cam.postFX.remove(this.fxBarrel);
+      this.fxBarrel = undefined;
     }
   }
 

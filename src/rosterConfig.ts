@@ -619,7 +619,7 @@ export class RosterConfigTool {
         rot: 0,
         scale: (d.scale ?? 1) * 1.04,
         layer: "above",
-        squashY: 0.52,
+        squashY: 0.76,
       });
     }
 

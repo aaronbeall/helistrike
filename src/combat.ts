@@ -83,7 +83,7 @@ export interface WeaponSalvo {
 export interface WeaponSensorView {
   mode: "thermal";
   source: "seeker" | "remote";
-  palette: "white_hot" | "black_hot";
+  palette: "white_hot" | "black_hot" | "full_spectrum";
 }
 
 /** Player loadout — shared by fire logic and the combat config browser. */
@@ -272,7 +272,9 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     dmg: 82, blast: 96, life: 18, kind: "guided-missile", look: stagedLook("attack_drone"), scale: 0.9,
     guidance: { mode: "auto", acquireRadius: 300, retarget: true }, launch: motor(55, 180, 4.5),
     payload: { mode: "drone", duration: 18, persistent: true, autonomous: true }, control: CLICK,
-    steering: { turnRate: 4.8, maxG: 8 }, notes: ["persists and autonomously attacks"],
+    steering: { turnRate: 4.8, maxG: 8 },
+    sensorView: { mode: "thermal", source: "remote", palette: "white_hot" },
+    notes: ["persists and autonomously attacks", "remote view requests a white-hot thermal render"],
   },
   emp: {
     id: "emp", name: "EMP PULSE", fullName: "TACTICAL EMP PULSE EMITTER", ammo: 6, fireCd: 1.8, speed: 1,
@@ -304,7 +306,8 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     dmg: 340, blast: 290, life: 6.2, kind: "guided-missile", look: stagedLook("warp_bomb"), scale: 1.3, warpTimeScale: 0.12,
     guidance: { mode: "gps", steerRate: 2.6, pointOnClick: true }, launch: DROP, payload: { mode: "warp", timeScale: 0.12 },
     control: { mode: "designate_then_release" }, steering: { turnRate: 2.6 }, gravity: GRAVITY,
-    notes: ["GPS-steered falling warp payload"],
+    sensorView: { mode: "thermal", source: "remote", palette: "full_spectrum" },
+    notes: ["GPS-steered falling warp payload", "remote view requests a full-spectrum thermal render"],
   },
   medium_gatling_cannon: {
     id: "medium_gatling_cannon", name: "GAU-22/A", fullName: "25MM GAU-22/A EQUALIZER GATLING GUN", ammo: 500, fireCd: 0.07, speed: 1120,

@@ -6,7 +6,7 @@ import type Phaser from "phaser";
 import { allCraftKinds, craftOf } from "./craft";
 import { bakeToonBlast } from "./toonBlast";
 import { allKinds, gunsOf, specOf, type UnitKind } from "./roster";
-import { bakeShadows } from "./sprites";
+import { bakeShadows, bakeThermalHeatFromDarkness } from "./sprites";
 
 type Ctx = CanvasRenderingContext2D;
 
@@ -480,11 +480,10 @@ export function bakeAll(textures: Phaser.Textures.TextureManager): void {
   add(textures, "shot_shell", drawTracer("shell"));
   add(textures, "shot_small", drawTracer("small"));
   add(textures, "shot_aa", drawTracer("aa"));
-  add(textures, "fx_shell", drawShellCasing(0));
-  add(textures, "fx_shell_1", drawShellCasing(1));
-  add(textures, "fx_shell_2", drawShellCasing(2));
-  add(textures, "fx_shell_3", drawShellCasing(3));
-  add(textures, "fx_shell_4", drawShellCasing(4));
+  for (let i = 0; i < 5; i++) {
+    const key = i === 0 ? "fx_shell" : `fx_shell_${i}`;
+    add(textures, key, drawShellCasing(i));
+  }
   add(textures, "shot_rocket", drawRocket());
   add(textures, "shot_hellfire", drawMissile("#c45c1a"));
   add(textures, "shot_tow", drawMissile("#c8b45a"));
@@ -502,10 +501,11 @@ export function bakeAll(textures: Phaser.Textures.TextureManager): void {
   add(textures, "track_wide", drawTrack("wide"));
   add(textures, "track_mono", drawTrack("mono"));
   add(textures, "fx_flame", drawFlame());
-  add(textures, "fx_blast_0", drawBlast(0));
-  add(textures, "fx_blast_1", drawBlast(1));
-  add(textures, "fx_blast_2", drawBlast(2));
-  add(textures, "fx_blast_3", drawBlast(3));
+  for (let i = 0; i < 4; i++) {
+    const blast = drawBlast(i);
+    add(textures, `fx_blast_${i}`, blast);
+    add(textures, `fx_blast_${i}_heat`, bakeThermalHeatFromDarkness(blast));
+  }
   bakeToonBlast(textures);
 }
 
