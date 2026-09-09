@@ -1,8 +1,16 @@
 import Phaser from "phaser";
-import { PLAYER_WPNS } from "./combat";
+import { PLAYER_WPNS, type PlayerWpnSpec } from "./combat";
 import { CFG_INFO, CFG_VALUE, makeConfigText, row, setStackedTexts } from "./configUi";
 import { allCrafts } from "./craft";
-import { ENEMY_WPNS, allKinds, specOf } from "./roster";
+import {
+  ENEMY_WPNS,
+  allKinds,
+  partsRollOf,
+  specOf,
+  type UnitKind,
+  type UnitSpec,
+  type WeaponSpec,
+} from "./roster";
 import { nameGameTexture } from "./sprites";
 
 const DEPTH = 9500;
@@ -54,6 +62,11 @@ const CRAFT_AXES: AxisDef[] = [
     id: "thrust",
     highlight: ["forwardThrust", "strafeThrust", "verticalThrust"],
   },
+  {
+    id: "firepower",
+    // Component keys are `loadout.<wpnId>` — expanded at highlight time.
+    highlight: [],
+  },
   { id: "yawRate" },
   { id: "radius" },
   { id: "maxAgl" },
@@ -78,7 +91,17 @@ const ENEMY_AXES: AxisDef[] = [
   { id: "drive.maxSpd" },
   {
     id: "dps",
-    highlight: ["weapon.dmg", "weapon.fireCd", "weapon.burst", "weapon.burstGap"],
+    highlight: [
+      "weapon.dps",
+      "guns.dps",
+      "secondary.dps",
+      "guns.count",
+      "secondary.mounts",
+      "weapon.dmg",
+      "weapon.fireCd",
+      "weapon.burst",
+      "weapon.burstGap",
+    ],
   },
   { id: "weapon.blast" },
   { id: "weapon.fireCd" },
@@ -100,6 +123,7 @@ const CAT_DETAIL_ORDER: Record<BalanceCat, string[]> = {
     "forwardThrust",
     "strafeThrust",
     "verticalThrust",
+    "firepower",
     "yawRate",
     "radius",
     "maxAgl",
@@ -124,6 +148,11 @@ const CAT_DETAIL_ORDER: Record<BalanceCat, string[]> = {
     "radius",
     "drive.maxSpd",
     "dps",
+    "weapon.dps",
+    "guns.dps",
+    "secondary.dps",
+    "guns.count",
+    "secondary.mounts",
     "weapon.dmg",
     "weapon.blast",
     "weapon.fireCd",
@@ -635,11 +664,67 @@ function sustainedDps(
   return cycle > 0 ? (dmg * n) / cycle : 0;
 }
 
+function enemyWeaponDps(w: WeaponSpec | undefined): number {
+  if (!w) return 0;
+  return sustainedDps(w.dmg, w.fireCd, w.burst ?? 1, w.burstGap ?? 0);
+}
+
+function playerWeaponDps(w: PlayerWpnSpec): number {
+  return sustainedDps(w.dmg, w.fireCd, w.salvo?.count ?? 1, w.salvo?.interval ?? 0);
+}
+
+/**
+ * Primary gun channel DPS. Runtime fires one gun stream (alternate between mounts),
+ * so identical multi-guns ≈ one weapon's DPS; mixed mounts use the mean.
+ * Pick-mode partsRoll uses a weight-expected option DPS (one mount).
+ */
+function enemyPrimaryChannelDps(
+  kind: UnitKind,
+  sp: UnitSpec
+): { dps: number; count: number } {
+  const roll = partsRollOf(kind);
+  if (roll?.mode === "pick") {
+    let wSum = 0;
+    let dSum = 0;
+    for (const [id, wt] of roll.weights) {
+      const opt = roll.options[id];
+      if (!opt || wt <= 0) continue;
+      wSum += wt;
+      dSum += enemyWeaponDps(opt.w) * wt;
+    }
+    return { dps: wSum > 0 ? dSum / wSum : 0, count: 1 };
+  }
+  const guns = sp.guns ?? [];
+  if (!guns.length) {
+    return { dps: enemyWeaponDps(sp.weapon), count: 0 };
+  }
+  const perGun = guns.map((g) => enemyWeaponDps(g.weapon ?? sp.weapon));
+  const mean = perGun.reduce((a, b) => a + b, 0) / perGun.length;
+  return { dps: mean, count: guns.length };
+}
+
+/** Independent secondary hardpoint DPS (seekers, etc.). */
+function enemySecondaryDps(sp: UnitSpec): { dps: number; mounts: number } {
+  const sec = sp.secondary;
+  if (!sec?.mounts.length) return { dps: 0, mounts: 0 };
+  const avgCd = (sec.fireCdMin + sec.fireCdMax) * 0.5;
+  const w = sec.wpn;
+  const perVolley = sustainedDps(w.dmg, avgCd, w.burst ?? 1, w.burstGap ?? 0);
+  const parallel = sec.mountFire === "simultaneous" ? sec.mounts.length : 1;
+  return { dps: perVolley * parallel, mounts: sec.mounts.length };
+}
+
 type AxisDomain = { lo: number; hi: number };
 
 function axisKeys(def: AxisDef | undefined, values: Record<string, number>, preferred: string[]): string[] {
   if (!def) return [];
   const keys = [def.id, ...(def.highlight ?? [])];
+  // Craft firepower expands to per-slot loadout.<wpnId> components present on the point.
+  if (def.id === "firepower") {
+    for (const k of Object.keys(values)) {
+      if (k.startsWith("loadout.") && !keys.includes(k)) keys.push(k);
+    }
+  }
   const present = keys.filter((k) => k in values);
   const rank = new Map(preferred.map((k, i) => [k, i]));
   present.sort((a, b) => {
@@ -685,6 +770,14 @@ function orderedValueKeys(preferred: string[], values: Record<string, number>): 
       out.push(k);
       seen.add(k);
     }
+    if (k === "firepower") {
+      for (const lk of Object.keys(values)) {
+        if (lk.startsWith("loadout.") && !seen.has(lk)) {
+          out.push(lk);
+          seen.add(lk);
+        }
+      }
+    }
   }
   for (const k of Object.keys(values)) {
     if (!seen.has(k)) out.push(k);
@@ -719,6 +812,15 @@ function buildBalanceCatalog(): BalancePoint[] {
   const out: BalancePoint[] = [];
 
   for (const c of allCrafts()) {
+    const loadoutVals: Record<string, number> = {};
+    let firepower = 0;
+    for (const id of c.loadout) {
+      const w = PLAYER_WPNS[id];
+      if (!w) continue;
+      const dps = playerWeaponDps(w);
+      loadoutVals[`loadout.${id}`] = dps;
+      firepower += dps;
+    }
     out.push({
       id: `craft:${c.kind}`,
       label: c.name,
@@ -732,6 +834,8 @@ function buildBalanceCatalog(): BalancePoint[] {
         forwardThrust: c.forwardThrust,
         strafeThrust: c.strafeThrust,
         verticalThrust: c.verticalThrust,
+        firepower,
+        ...loadoutVals,
         yawRate: c.yawRate,
         radius: c.radius,
         maxAgl: c.maxAgl,
@@ -794,6 +898,9 @@ function buildBalanceCatalog(): BalancePoint[] {
   for (const kind of allKinds()) {
     const sp = specOf(kind);
     const w = sp.weapon;
+    const primary = enemyPrimaryChannelDps(kind, sp);
+    const secondary = enemySecondaryDps(sp);
+    const bodyDps = enemyWeaponDps(w);
     let group = "other";
     if (sp.building) group = "building";
     else if (sp.organic || sp.move === "inf" || sp.move === "flee") group = "troop";
@@ -810,7 +917,13 @@ function buildBalanceCatalog(): BalancePoint[] {
         health: sp.health,
         radius: sp.radius,
         "drive.maxSpd": sp.drive?.maxSpd ?? 0,
-        dps: w ? sustainedDps(w.dmg, w.fireCd, w.burst ?? 1, w.burstGap ?? 0) : 0,
+        // Primary gun stream + independent secondary hardpoints.
+        dps: primary.dps + secondary.dps,
+        "weapon.dps": bodyDps,
+        "guns.dps": primary.dps,
+        "guns.count": primary.count,
+        "secondary.dps": secondary.dps,
+        "secondary.mounts": secondary.mounts,
         "weapon.dmg": w?.dmg ?? 0,
         "weapon.blast": w?.blast ?? 0,
         "weapon.fireCd": w?.fireCd ?? 0,
