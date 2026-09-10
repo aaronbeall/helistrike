@@ -7,7 +7,7 @@ import { PLAYER_WPNS, type PlayerWpnSpec } from "./combat";
 import { allCraftKinds, craftGunTexture, craftOf } from "./craft";
 import { bakeToonBlast } from "./toonBlast";
 import { allKinds, gunsOf, specOf, type UnitKind } from "./roster";
-import { bakeShadows, bakeThermalHeatFromDarkness } from "./sprites";
+import { bakeShadows, bakeThermalHeatFromAlpha, bakeThermalHeatFromDarkness } from "./sprites";
 
 type Ctx = CanvasRenderingContext2D;
 
@@ -585,7 +585,10 @@ export function bakeAll(textures: Phaser.Textures.TextureManager): void {
   add(textures, "shadow", drawShadow());
   for (let i = 0; i < 5; i++) {
     const key = i === 0 ? "fx_shell" : `fx_shell_${i}`;
-    add(textures, key, drawShellCasing(i));
+    const shell = drawShellCasing(i);
+    add(textures, key, shell);
+    // Opaque brass → heat alpha so settle marks can fade smoothly in thermal.
+    add(textures, `${key}_heat`, bakeThermalHeatFromAlpha(shell));
   }
   // Fallback if shots/ PNG fails to load — prepareArt overwrites from library.
   add(textures, "shot_rocket", drawRocket());

@@ -134,3 +134,4 @@
 * [ ] Chroma key bleed
 * [ ] Camera change shouldn't change reticle location
 * [ ] Spash down debris/hulks in water should either disappear or become blue and sink to bottom, and not draw craters
+* [ ] Switching from thermal to normal reveals pink graphics

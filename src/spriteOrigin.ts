@@ -102,8 +102,13 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     origin: uv(0.486, 0.395),
     points: [
       { role: "rotor", x: 0.486, y: 0.395 },
-      { role: "gun", x: 0.503, y: 0.142 },
-      ...pts("hardpoint", [uv(0.16, 0.52), uv(0.84, 0.52)]),
+      // ESSS stub-wing gun tips (outer pylon fronts).
+      ...pts("muzzle", [uv(0.195, 0.405), uv(0.805, 0.405)], "wing"),
+      // Crew-served door guns (L / R cabin).
+      { role: "gun", x: 0.30, y: 0.58, id: "door_l" },
+      { role: "gun", x: 0.70, y: 0.58, id: "door_r" },
+      // Stub-wing stores (inner → outer feel; L / R).
+      ...pts("hardpoint", [uv(0.155, 0.455), uv(0.845, 0.455)]),
     ],
   },
   craft_chinook: {

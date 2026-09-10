@@ -219,7 +219,7 @@ const heat = (lockTime: number, lockRadius: number, maxOffBoresight: number): We
   maxOffBoresight, fireAndForget: true,
 });
 const motor = (speed: number, acceleration: number, burnTime: number): WeaponLaunch => ({
-  mode: "kick_motor", kickSpeed: speed, igniteDelay: MISSILE_IGNITE, acceleration, burnTime, inheritMomentum: 0.55,
+  mode: "kick_motor", kickSpeed: speed, igniteDelay: MISSILE_IGNITE, acceleration, burnTime, inheritMomentum: 1,
 });
 
 /** Canonical weapon identities; craft sockets supply installation policy + default loadout. */
@@ -232,14 +232,14 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   },
   rocket: {
     id: "rocket", name: "HYDRA", fullName: "HYDRA ROCKET PODS", designation: "HYDRA 70 ROCKET PODS", ammo: 38, fireCd: 0.22, speed: 620,
-    dmg: 110, blast: 140, life: 3.4, kind: "rocket", look: ordLook("rocket"), scale: 1, trailScale: 0.56,
+    dmg: 110, blast: 140, life: 3.4, kind: "rocket", look: ordLook("rocket"), scale: 1, trailScale: 0.72,
     guidance: NONE, launch: MUZZLE, payload: HE, control: HOLD,
     fits: FIT_HARDPOINT, notes: ["unguided dumbfire rocket"],
   },
   hellfire_missile: {
     id: "hellfire_missile", name: "HELLFIRE", fullName: "HELLFIRE MISSILE", designation: "AGM-114R HELLFIRE II", ammo: 8, fireCd: 0.55, speed: 380,
     dmg: 185, blast: 175, life: 4.9, kind: "lock-on-missile", look: ordLook("laserGuided"), scale: 1, trailScale: 0.55,
-    guidance: laser(0.5, 160), launch: motor(90, 520, 2.1), payload: HE, control: { mode: "lock_then_click" },
+    guidance: laser(0.5, 160), launch: motor(125, 580, 2.1), payload: HE, control: { mode: "lock_then_click" },
     steering: { turnRate: 7.4, maxG: 12 }, fits: FIT_HARDPOINT, notes: ["laser lock; fire-and-forget after launch"],
   },
   tv_missile: {
@@ -298,7 +298,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   },
   machine_gun: {
     id: "machine_gun", name: "MACHINE GUN", fullName: "MACHINE GUN", designation: "M240D 7.62MM MACHINE GUN", ammo: 3200, fireCd: 0.066, speed: 875,
-    dmg: 5.8, blast: 9, life: 0.08, kind: "cannon", look: cannonLook("machine_gun"), mount: MOUNT_MACHINE, tracer: { w: 42, h: 7, core: [255, 236, 180], mid: [230, 165, 60], rim: [170, 95, 30], glow: 0.35 }, scale: 0.45,
+    dmg: 5.8, blast: 9, life: 0.08, kind: "cannon", look: cannonLook("machine_gun"), mount: MOUNT_MACHINE, tracer: { w: 56, h: 9, core: [255, 242, 200], mid: [240, 175, 70], rim: [190, 100, 35], glow: 0.55 }, scale: 0.58,
     guidance: NONE, launch: MUZZLE, payload: KINETIC, control: HOLD,
     fits: FIT_GUN, notes: ["station metadata supplies cabin count, traverse, and muzzle behavior"],
   },
@@ -329,7 +329,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   },
   auto_machine_gun: {
     id: "auto_machine_gun", name: "AUTO TURRET", fullName: "AUTO MACHINE GUN", designation: "AUTONOMOUS M2HB .50 CAL TURRET", ammo: 900, fireCd: 0.105, speed: 965,
-    dmg: 15, blast: 18, life: 0.11, kind: "cannon", look: cannonLook("auto_machine_gun"), mount: MOUNT_MACHINE, tracer: { w: 66, h: 10, core: [255, 240, 210], mid: [240, 175, 70], rim: [190, 90, 35], blunt: 0.15, glow: 0.45 }, scale: 0.66,
+    dmg: 15, blast: 18, life: 0.11, kind: "cannon", look: cannonLook("auto_machine_gun"), mount: MOUNT_MACHINE, tracer: { w: 78, h: 12, core: [255, 245, 220], mid: [245, 180, 75], rim: [200, 95, 40], blunt: 0.15, glow: 0.6 }, scale: 0.78,
     guidance: { mode: "auto", acquireRadius: 340, retarget: true }, launch: MUZZLE, payload: { mode: "kinetic", penetration: 0.72 },
     control: { mode: "automatic" }, fits: FIT_GUN, notes: ["AI acquires and engages targets automatically"],
   },
@@ -828,6 +828,8 @@ export interface Debris {
   shellEject?: boolean;
   /** Draw under the firer (air craft). Ground casings omit this and draw above. */
   shellUnder?: boolean;
+  /** Thermal heat 1→0 while the casing is still a live debris sprite. */
+  shellHeat?: number;
   /** Patrol/PT boat hull: surface sink (scale down) with pre-baked blue hulk. */
   boatSink?: boolean;
   /** Elapsed / total sink duration for scale progress. */

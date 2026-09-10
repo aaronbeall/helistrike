@@ -48,7 +48,10 @@ export class Heli {
   roll = 0;
   rotor = 0;
   rotorSpd = 0;
+  /** Primary / player-aimed turret bearing (synced from the active gunner station). */
   gunAngle = 0;
+  /** Per-socket aim bearing — automatic stations track independently of player aim. */
+  stationAim: number[] = [];
   health: number;
   phase: Phase = "grounded";
   /** Elapsed time in spool. */
@@ -80,6 +83,13 @@ export class Heli {
     this.health = craftOf(craft).health;
     this.gndSmooth = groundZ(world, x, y);
     this.z = this.gndSmooth + PAD_AGL;
+    this.stationAim = craftOf(craft).sockets.map(() => 0);
+  }
+
+  /** Align all station aims (and gunAngle) to the current hull heading. */
+  syncStationAimToHull(): void {
+    for (let i = 0; i < this.stationAim.length; i++) this.stationAim[i] = this.angle;
+    this.gunAngle = this.angle;
   }
 
   get spec() {
@@ -112,6 +122,7 @@ export class Heli {
     this.vx = Math.cos(angle) * this.spec.minSpeed;
     this.vy = Math.sin(angle) * this.spec.minSpeed;
     this.vz = 0;
+    this.syncStationAimToHull();
   }
 
   get noseX(): number {

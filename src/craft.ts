@@ -168,34 +168,6 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
       { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "tow_missile", points: "hardpoint" },
     ],
   },
-  quad_drone: {
-    kind: "quad_drone",
-    name: "Murder Drone",
-    fullName: "MQ-27 Murder Drone",
-    flightModel: "heli",
-    sizeM: 1.9,
-    ammoScale: 0.65,
-    health: 45,
-    radius: 4.5,
-    height: 3.2,
-    body: "craft_quad_drone",
-    hulk: "craft_quad_drone_hulk",
-    gunVisible: false,
-    rotor: "craft_quad_drone_rotor",
-    rotorHulk: "craft_quad_drone_rotor_hulk",
-    rotorScale: 0.4,
-    spoolDur: 0.55,
-    rotorFlight: 52,
-    rotOff: Math.PI / 2,
-    forwardThrust: 760, strafeThrust: 700, maxSpeed: 440, minSpeed: 0, yawRate: 4.35, yawAccel: 23.5, drag: 1.05,
-    verticalThrust: 650, cruiseThrust: 60, cruiseAgl: 38, maxAgl: 105,
-    sockets: [
-      { id: "belly_gun", class: "fixed", controller: "pilot", weapon: "light_machine_gun", points: "muzzle" },
-      { id: "belly_coil", class: "fixed", controller: "pilot", weapon: "tesla_beam", points: "muzzle" },
-      { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "mini_hellfire_missile", points: "hardpoint" },
-      { id: "bomb_bay", class: "bay", controller: "pilot", weapon: "mini_bomb", points: "hardpoint" },
-    ],
-  },
   cobra: {
     kind: "cobra",
     name: "Cobra",
@@ -217,8 +189,8 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     sockets: [
       { id: "chin_turret", class: "turret", controller: "pilot", weapon: "gatling", points: "gun" },
       { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket", points: "hardpoint" },
-      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "tow_missile", points: "hardpoint" },
-      { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "sidewinder_missile", points: "hardpoint" },
+      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "sidewinder_missile", points: "hardpoint" },
+      { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "tow_missile", points: "hardpoint" },
     ],
   },
   viper: {
@@ -242,8 +214,8 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     sockets: [
       { id: "chin_turret", class: "turret", controller: "pilot", weapon: "gatling", points: "gun" },
       { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket", points: "hardpoint" },
-      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "tow_missile", points: "hardpoint" },
-      { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "sidewinder_missile", points: "hardpoint" },
+      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "sidewinder_missile", points: "hardpoint" },
+      { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "tow_missile", points: "hardpoint" },
     ],
   },
   blackhawk: {
@@ -266,10 +238,11 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     verticalThrust: 300, cruiseThrust: 32, cruiseAgl: 46, maxAgl: 118,
     liftClass: "medium",
     sockets: [
-      { id: "cabin_door", class: "cabin", controller: "gunner", weapon: "minigun", points: "gun", traverse: { center: 0, arc: 270, side: "both" } },
+      { id: "wing_guns", class: "fixed", controller: "pilot", weapon: "gatling", points: "muzzle", traverse: { center: 0, arc: 12 }, muzzleFire: "simultaneous" },
       { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket", points: "hardpoint" },
       { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "hellfire_missile", points: "hardpoint" },
-      { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "tow_missile", points: "hardpoint" },
+      { id: "cabin_door_l", class: "cabin", controller: "automatic", weapon: "light_machine_gun", points: "gun", traverse: { center: 90, arc: 180, side: "left" } },
+      { id: "cabin_door_r", class: "cabin", controller: "automatic", weapon: "light_machine_gun", points: "gun", traverse: { center: -90, arc: 180, side: "right" } },
     ],
   },
   chinook: {
@@ -292,10 +265,11 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     verticalThrust: 340, cruiseThrust: 34, cruiseAgl: 48, maxAgl: 125,
     liftClass: "heavy",
     sockets: [
-      { id: "cabin_forward", class: "cabin", controller: "gunner", weapon: "machine_gun", points: "gun", traverse: { center: 0, arc: 240, side: "both" } },
+      // Traverse unrestricted for now — auto ramp aims full circle; forward gunner free-swivels.
+      { id: "cabin_forward", class: "cabin", controller: "gunner", weapon: "machine_gun", points: "gun" },
       { id: "bomb_bay_1", class: "bay", controller: "pilot", weapon: "heavy_bomb", points: "hardpoint" },
       { id: "bomb_bay_2", class: "bay", controller: "pilot", weapon: "cluster_bomb", points: "hardpoint" },
-      { id: "cabin_ramp_auto", class: "cabin", controller: "automatic", weapon: "auto_machine_gun", points: "gun", traverse: { center: 180, arc: 200, side: "both" } },
+      { id: "cabin_ramp_auto", class: "cabin", controller: "automatic", weapon: "auto_machine_gun", points: "gun" },
     ],
   },
   osprey: {
@@ -376,28 +350,32 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
       { id: "chin_aux", class: "turret", controller: "pilot", weapon: "emp", points: "gun" },
     ],
   },
-  prometheus: {
-    kind: "prometheus",
-    name: "Prometheus",
-    fullName: "XV-99 Prometheus",
-    flightModel: "vtol",
-    sizeM: 14.7,
-    ammoScale: 1.2,
-    health: 130,
-    radius: 36,
-    height: 14,
-    body: "craft_prometheus",
-    hulk: "craft_prometheus_hulk",
-    // No rotor — hover via energy FX later.
+  quad_drone: {
+    kind: "quad_drone",
+    name: "Murder Drone",
+    fullName: "MQ-27 Murder Drone",
+    flightModel: "heli",
+    sizeM: 1.9,
+    ammoScale: 0.65,
+    health: 45,
+    radius: 4.5,
+    height: 3.2,
+    body: "craft_quad_drone",
+    hulk: "craft_quad_drone_hulk",
+    gunVisible: false,
+    rotor: "craft_quad_drone_rotor",
+    rotorHulk: "craft_quad_drone_rotor_hulk",
+    rotorScale: 0.4,
+    spoolDur: 0.55,
+    rotorFlight: 52,
     rotOff: Math.PI / 2,
-    forwardThrust: 900, strafeThrust: 760, maxSpeed: 600, minSpeed: 0, yawRate: 4.5, yawAccel: 25, drag: 0.95,
-    verticalThrust: 700, cruiseThrust: 65, cruiseAgl: 90, maxAgl: 240,
-    liftClass: "heavy",
+    forwardThrust: 760, strafeThrust: 700, maxSpeed: 440, minSpeed: 0, yawRate: 4.35, yawAccel: 23.5, drag: 1.05,
+    verticalThrust: 650, cruiseThrust: 60, cruiseAgl: 38, maxAgl: 105,
     sockets: [
-      { id: "belly_turret", class: "turret", controller: "pilot", weapon: "plasma_cannon", points: "gun" },
-      { id: "nose_rail_1", class: "fixed", controller: "pilot", weapon: "laser_rocket", points: "muzzle", traverse: { center: 0, arc: 12 } },
-      { id: "nose_rail_2", class: "fixed", controller: "pilot", weapon: "photon_missile", points: "muzzle", traverse: { center: 0, arc: 12 } },
-      { id: "bomb_bay", class: "bay", controller: "pilot", weapon: "warp_bomb", points: "hardpoint" },
+      { id: "belly_gun", class: "fixed", controller: "pilot", weapon: "light_machine_gun", points: "muzzle" },
+      { id: "belly_coil", class: "fixed", controller: "pilot", weapon: "tesla_beam", points: "muzzle" },
+      { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "mini_hellfire_missile", points: "hardpoint" },
+      { id: "bomb_bay", class: "bay", controller: "pilot", weapon: "mini_bomb", points: "hardpoint" },
     ],
   },
   lightning_ii: {
@@ -468,6 +446,30 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
       { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "heavy_guided_missile", points: "hardpoint" },
       { id: "bomb_bay_1", class: "bay", controller: "pilot", weapon: "bomb", points: "hardpoint" },
       { id: "bomb_bay_2", class: "bay", controller: "pilot", weapon: "gps_bomb", points: "hardpoint" },
+    ],
+  },
+  prometheus: {
+    kind: "prometheus",
+    name: "Prometheus",
+    fullName: "XV-99 Prometheus",
+    flightModel: "vtol",
+    sizeM: 14.7,
+    ammoScale: 1.2,
+    health: 130,
+    radius: 36,
+    height: 14,
+    body: "craft_prometheus",
+    hulk: "craft_prometheus_hulk",
+    // No rotor — hover via energy FX later.
+    rotOff: Math.PI / 2,
+    forwardThrust: 900, strafeThrust: 760, maxSpeed: 600, minSpeed: 0, yawRate: 4.5, yawAccel: 25, drag: 0.95,
+    verticalThrust: 700, cruiseThrust: 65, cruiseAgl: 90, maxAgl: 240,
+    liftClass: "heavy",
+    sockets: [
+      { id: "belly_turret", class: "turret", controller: "pilot", weapon: "plasma_cannon", points: "gun" },
+      { id: "nose_rail_1", class: "fixed", controller: "pilot", weapon: "laser_rocket", points: "muzzle", traverse: { center: 0, arc: 12 } },
+      { id: "nose_rail_2", class: "fixed", controller: "pilot", weapon: "photon_missile", points: "muzzle", traverse: { center: 0, arc: 12 } },
+      { id: "bomb_bay", class: "bay", controller: "pilot", weapon: "warp_bomb", points: "hardpoint" },
     ],
   },
 };
@@ -581,6 +583,17 @@ export function craftGunTexture(c: CraftSpec = craftOf()): string | undefined {
     (s) => (s.class === "turret" || s.class === "cabin") && !!weaponMountTex(s.weapon)
   );
   return sock ? weaponMountTex(sock.weapon) : undefined;
+}
+
+/** Socket indices that own a visible gun overlay (matches `craftComposite(...).guns` order). */
+export function craftGunSocketSlots(c: CraftSpec = craftOf()): number[] {
+  if (c.gunVisible === false) return [];
+  const out: number[] = [];
+  for (let i = 0; i < c.sockets.length; i++) {
+    const s = c.sockets[i]!;
+    if ((s.class === "turret" || s.class === "cabin") && weaponMountTex(s.weapon)) out.push(i);
+  }
+  return out;
 }
 
 /** Authoritative visual parts and mounts for composing a craft in any view. */
@@ -724,12 +737,46 @@ export function craftHardpointMounts(c: CraftSpec = craftOf()): { x: number; y: 
 
 /** True when the craft aims a chin/cabin gun independently of the hull. */
 export function craftAimsWithTurret(c: CraftSpec = craftOf()): boolean {
-  return c.sockets.some((s) => s.class === "turret" || s.class === "cabin");
+  return c.sockets.some(
+    (s) =>
+      (s.class === "turret" || s.class === "cabin") && s.controller !== "automatic"
+  );
 }
 
 /** Default weapon ids in HUD / fire order. */
 export function craftSocketWeapons(c: CraftSpec = craftOf()): string[] {
   return c.sockets.map((s) => s.weapon);
+}
+
+/**
+ * How many barrels / installs a socket represents for loadout UI.
+ * Dual wing guns (multi-muzzle fixed) and repeated weapon installs both count.
+ */
+export function craftSocketMultiplicity(c: CraftSpec, socketIndex: number): number {
+  const socket = c.sockets[socketIndex];
+  if (!socket) return 1;
+  if (socket.class === "fixed") {
+    const pts = craftSocketPoints(c, socket);
+    if (
+      pts.length > 1 &&
+      (socket.muzzleFire === "simultaneous" || socket.muzzleFire === "alternate")
+    ) {
+      return pts.length;
+    }
+  }
+  const same = c.sockets.filter((s) => s.weapon === socket.weapon).length;
+  return Math.max(1, same);
+}
+
+/** Loadout label with 2× / N× when the install is multi-barrel or multi-socket. */
+export function craftLoadoutLabel(
+  c: CraftSpec,
+  socketIndex: number,
+  fullName: string
+): string {
+  const n = craftSocketMultiplicity(c, socketIndex);
+  if (n <= 1) return fullName;
+  return `${n}× ${fullName}`;
 }
 
 /** Authored visual exhaust emit points on the craft body. */
