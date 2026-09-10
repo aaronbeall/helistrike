@@ -400,9 +400,9 @@ export class RosterRig {
         : "";
     const craftHint = ent.cat === "craft" ? "   ENTER select craft" : "";
     const compositionLabel = this.composition === "assembled" ? "ASSEMBLED" : "UNASSEMBLED";
-    const zoomShown = ent.cat === "craft" ? Math.min(this.zoom, 1) : this.zoom;
+    const zoomShown = this.zoom;
     this.hintTxt.setText(
-      `ROSTER RIG   \` cycle / close   [ ] cycle   , . page   - + zoom ${fmtZoom(zoomShown)}${ent.cat === "craft" ? " (no upscale)" : ""}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   C composition ${compositionLabel}${rollHint}${craftHint}`
+      `ROSTER RIG   \` cycle / close   ↑ ↓ select   , . page   - + zoom ${fmtZoom(zoomShown)}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   C composition ${compositionLabel}${rollHint}${craftHint}`
     );
 
     const size = this.pageSize();
@@ -479,8 +479,7 @@ export class RosterRig {
 
     const composite = craftComposite(craft);
     const pivot = { ...composite.body.origin };
-    // Native pixels only — upscaling makes small craft (drone, etc.) look soft.
-    const s = Math.min(this.zoom, 1);
+    const s = this.zoom;
     const parts: PreviewPart[] = [...composite.guns, ...composite.rotors].map((part) => ({
       tex: part.tex,
       origin: part.origin,

@@ -478,7 +478,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   },
   light_machine_gun: {
     id: "light_machine_gun", name: "LIGHT MG", fullName: "LIGHT MACHINE GUN", designation: "5.56MM LIGHTWEIGHT MACHINE GUN", ammo: 2200, fireCd: 0.046, speed: 890,
-    dmg: 4.2, blast: 6, life: 0.075, kind: "cannon", look: cannonLook("light_machine_gun"), mount: MOUNT_MACHINE, tracer: { w: 34, h: 6, core: [255, 230, 170], mid: [210, 150, 50], rim: [150, 85, 28], glow: 0.3 }, scale: 0.36,
+    dmg: 4.2, blast: 6, life: 0.075, kind: "cannon", look: cannonLook("light_machine_gun"), mount: MOUNT_MACHINE, tracer: { w: 44, h: 8, core: [255, 230, 170], mid: [210, 150, 50], rim: [150, 85, 28], glow: 0.35 }, scale: 0.48,
     guidance: NONE, launch: MUZZLE, payload: KINETIC, control: HOLD, fits: FIT_GUN, notes: ["ultralight drone rotary gun"],
   },
   tesla_beam: {

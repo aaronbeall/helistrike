@@ -356,7 +356,7 @@ export class BalanceRig {
     if (!this.open) return;
     const filter = this.filterLabel();
     this.hintTxt.setText(
-      `BALANCE RIG   \` close   [ ] select   G ${this.cat.toUpperCase()}   F ${filter}   X/Y axes   L log ${this.logScale ? "ON" : "off"}   O labels ${this.showLabels ? "ON" : "OFF"}`
+      `BALANCE RIG   \` close   ↑ ↓ select   G ${this.cat.toUpperCase()}   F ${filter}   X/Y axes   L log ${this.logScale ? "ON" : "off"}   O labels ${this.showLabels ? "ON" : "OFF"}`
     );
   }
 

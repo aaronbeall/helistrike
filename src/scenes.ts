@@ -48,7 +48,7 @@ import {
   pointInFootprint,
 } from "./footprint";
 import { lookupSpriteMuzzles, lookupSpriteOrigin } from "./spriteOrigin";
-import { allCrafts, craftAgility, craftAimsWithTurret, craftCameraScale, craftComposite, craftCompositePartScale, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftGunSocketSlots, craftHardpointMounts, craftLoadoutLabel, craftOf, craftOrigin, craftPreviewExhaustScale, craftPreviewExhaustTint, craftPreviewFitScale, craftRotorMounts, craftSocketPoints, craftStartingAmmo, rotorDrawSpan, selectCraft, type CraftComposite } from "./craft";
+import { allCrafts, craftAgility, craftAimsWithTurret, craftCameraScale, craftComposite, craftCompositePartScale, craftCrewHudTag, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftGunSocketSlots, craftHardpointMounts, craftLoadoutLabel, craftLoadoutParts, craftOf, craftOrigin, craftPreviewExhaustScale, craftPreviewExhaustTint, craftPreviewFitScale, craftRotorMounts, craftSocketBarrelCount, craftSocketPoints, craftSocketStartingAmmo, rotorDrawSpan, selectCraft, type CraftComposite } from "./craft";
 import { allMissions, missionOf, selectMission } from "./mission";
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
 import { rigsAnyOpen, installRigHotkeys } from "./rigs";
@@ -98,6 +98,10 @@ import {
 } from "./world";
 
 type FxClass = "short" | "fire" | "smoke" | "dust";
+/** Player chin / cabin traverse rate (rad/s) — also used by crew-served auto stations. */
+const GUN_STATION_TURN_RATE = 3.6;
+/** Auto fire once the barrel is within this angle of the track (radians). */
+const AUTO_GUN_ALIGN_TOL = 0.14;
 type FxPolicy = {
   frameCap: number;
   activeCap: number;
@@ -824,6 +828,15 @@ export class MenuScene extends Phaser.Scene {
         })
         .setOrigin(0, 0.5)
         .setDepth(4);
+      const crew = this.add
+        .text(weaponX + 23, y, "", {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: "9px",
+          color: "#7ad0ff",
+        })
+        .setOrigin(0, 0.5)
+        .setDepth(4)
+        .setVisible(false);
       const ammo = this.add
         .text(weaponX + 255, y, "", {
           fontFamily: "Share Tech Mono, monospace",
@@ -832,7 +845,7 @@ export class MenuScene extends Phaser.Scene {
         })
         .setOrigin(1, 0.5)
         .setDepth(4);
-      return { frame, slot, name, ammo };
+      return { frame, slot, name, crew, ammo };
     });
 
     const detailTxt = this.add
@@ -1080,10 +1093,20 @@ export class MenuScene extends Phaser.Scene {
         row.frame.setVisible(on);
         row.slot.setVisible(on);
         row.name.setVisible(on);
+        row.crew.setVisible(on);
         row.ammo.setVisible(on);
         if (!weapon) return;
-        row.name.setText(craftLoadoutLabel(craft, i, weapon.fullName));
-        const capacity = craftStartingAmmo(weapon.ammo, craft);
+        const parts = craftLoadoutParts(craft, i, weapon.fullName);
+        row.name.setText(parts.base);
+        if (parts.crew) {
+          row.crew
+            .setText(parts.crew)
+            .setVisible(true)
+            .setPosition(row.name.x + row.name.width, row.name.y);
+        } else {
+          row.crew.setText("").setVisible(false);
+        }
+        const capacity = craftSocketStartingAmmo(weapon.ammo, craft, i);
         row.ammo.setText(capacity === Infinity ? "∞" : String(capacity));
       });
       detailTxt.setText(`${mission.label}  ·  ${mission.briefing}`);
@@ -1166,6 +1189,15 @@ export class LoadScene extends Phaser.Scene {
       .image(hx, this.heliY, composite.body.tex)
       .setOrigin(composite.body.origin.x, composite.body.origin.y)
       .setScale(zs);
+    this.add
+      .text(hx, this.heliY - this.body.displayHeight * composite.body.origin.y - 18, craft.fullName.toUpperCase(), {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "13px",
+        color: "#e8b84a",
+        stroke: "#1c1812",
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5, 1);
     this.rotorParts = composite.rotors;
     this.rotors = this.rotorParts.map((part) => {
       const at = spriteUvPos(this.body, part.mount.x, part.mount.y);
@@ -1493,9 +1525,10 @@ export class MissionScene extends Phaser.Scene {
     gx?: number;
     gy?: number;
     autoTargetId?: number;
+    barrel?: number;
   }[] = [];
-  /** Per-slot cooldown for automatic stations (independent of selected weapon). */
-  stationFireCd: number[] = [0, 0, 0, 0];
+  /** Per-slot, per-barrel cooldown for automatic / crew stations. */
+  stationFireCd: number[][] = [];
   /** Persistent LOS-blocking smoke screens. */
   smokeVolumes: SmokeVolume[] = [];
   playLastFrame = false;
@@ -1564,6 +1597,16 @@ export class MissionScene extends Phaser.Scene {
   debugAi = false;
   aiGfx!: Phaser.GameObjects.Graphics;
   aiLabels: Phaser.GameObjects.Text[] = [];
+  /** Last-frame auto / crew-gun track snapshot for AI debug overlay. */
+  autoGunDbg: {
+    slot: number;
+    barrel: number;
+    aim: number;
+    want: number | null;
+    targetId: number | null;
+    state: string;
+  }[] = [];
+  autoGunLabels: Phaser.GameObjects.Text[] = [];
   editOpen = false;
   editBrush = 0;
   editSize = 110;
@@ -1637,6 +1680,7 @@ export class MissionScene extends Phaser.Scene {
     this.noDamage = false;
     this.infAmmo = false;
     this.debugAi = false;
+    this.autoGunDbg = [];
     this.editOpen = false;
     this.editInvert = false;
     this.editDirty = null;
@@ -1653,8 +1697,12 @@ export class MissionScene extends Phaser.Scene {
     this.playerGunSide = 0;
     const selectedCraft = craftOf();
     this.loadout = playerLoadoutFromSockets(selectedCraft.sockets);
-    this.ammo = this.loadout.map((weapon) => craftStartingAmmo(weapon.ammo, selectedCraft));
-    this.stationFireCd = this.loadout.map(() => 0);
+    this.ammo = this.loadout.map((weapon, i) =>
+      craftSocketStartingAmmo(weapon.ammo, selectedCraft, i)
+    );
+    this.stationFireCd = this.loadout.map((_, i) =>
+      Array.from({ length: craftSocketBarrelCount(selectedCraft, i) }, () => 0)
+    );
     if (!data.world) {
       this.world = worldFromGen(
         generateWorld(
@@ -2570,10 +2618,22 @@ export class MissionScene extends Phaser.Scene {
       if (this.debugCamOpen) this.nudgeDebugCam(dir);
       else this.nudgeTimeScale(dir);
     };
-    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.PLUS).on("down", () => bumpTime(1));
-    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_ADD).on("down", () => bumpTime(1));
-    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.MINUS).on("down", () => bumpTime(-1));
-    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_SUBTRACT).on("down", () => bumpTime(-1));
+    // Use keyboard.on (not addKey) so Mission shutdown doesn't fight RigsScene ± zoom keys.
+    const kb = this.input.keyboard!;
+    const onTimePlus = () => bumpTime(1);
+    const onTimeMinus = () => bumpTime(-1);
+    kb.on("keydown-PLUS", onTimePlus);
+    kb.on("keydown-EQUALS", onTimePlus);
+    kb.on("keydown-NUMPAD_ADD", onTimePlus);
+    kb.on("keydown-MINUS", onTimeMinus);
+    kb.on("keydown-NUMPAD_SUBTRACT", onTimeMinus);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      kb.off("keydown-PLUS", onTimePlus);
+      kb.off("keydown-EQUALS", onTimePlus);
+      kb.off("keydown-NUMPAD_ADD", onTimePlus);
+      kb.off("keydown-MINUS", onTimeMinus);
+      kb.off("keydown-NUMPAD_SUBTRACT", onTimeMinus);
+    });
     installRigHotkeys(this);
     this.input.keyboard!.addKey("F").on("down", () => this.toggleTestFx());
     this.input.keyboard!.addKey("T").on("down", () => this.toggleThermal());
@@ -3647,17 +3707,20 @@ export class MissionScene extends Phaser.Scene {
     const gunParts = this.craftParts.guns;
     const gunSlots = craftGunSocketSlots(craft);
     const aimSlot =
-      gunSlots.find((slot) => craft.sockets[slot]?.controller !== "automatic") ?? gunSlots[0];
+      gunSlots.find((slot) => craft.sockets[slot]?.controller !== "automatic") ??
+      (craft.sockets[h.weapon]?.class === "turret" || craft.sockets[h.weapon]?.class === "cabin"
+        ? h.weapon
+        : gunSlots[0]);
     const aimMountUv =
       (aimSlot != null ? gunParts[gunSlots.indexOf(aimSlot)]?.mount : undefined) ??
       gunParts[0]?.mount ??
       craftOrigin(craft);
     const aimMount = spriteUvPos(this.body, aimMountUv.x, aimMountUv.y);
     // Aim in world XY (mount unprojected; pointer is ground-unprojected).
-    // Player mouse only drives non-automatic turret/cabin stations — autos track on their own.
+    // Player mouse drives automatic stations only when selected; otherwise they track themselves.
     if (!craftAimsWithTurret(craft)) {
       h.gunAngle = h.angle;
-      for (let i = 0; i < h.stationAim.length; i++) h.stationAim[i] = h.angle;
+      h.syncStationAimToHull();
     } else if (h.phase === "flight" || h.phase === "ready" || h.phase === "spool") {
       const aim = this.worldPointer();
       const mountW = screenToWorldAtZ(aimMount.x, aimMount.y + bob, h.z);
@@ -3665,21 +3728,25 @@ export class MissionScene extends Phaser.Scene {
       for (let slot = 0; slot < craft.sockets.length; slot++) {
         const socket = craft.sockets[slot]!;
         if (socket.class !== "turret" && socket.class !== "cabin") continue;
-        if (socket.controller === "automatic") continue;
+        // Unselected automatic stations track in tickAutomaticStations.
+        if (socket.controller === "automatic" && h.weapon !== slot) continue;
         const clamped =
           socket.traverse
             ? clampAimToStationArc(want, h.angle, socket.traverse)
             : want;
-        h.stationAim[slot] = Phaser.Math.Angle.RotateTo(
-          h.stationAim[slot] ?? h.angle,
-          clamped,
-          3.6 * dt
-        );
-        if (socket.traverse) {
-          h.stationAim[slot] = clampAimToStationArc(h.stationAim[slot]!, h.angle, socket.traverse);
+        const barrels = h.stationAim[slot] ?? (h.stationAim[slot] = [h.angle]);
+        for (let b = 0; b < barrels.length; b++) {
+          barrels[b] = Phaser.Math.Angle.RotateTo(
+            barrels[b] ?? h.angle,
+            clamped,
+            GUN_STATION_TURN_RATE * dt
+          );
+          if (socket.traverse) {
+            barrels[b] = clampAimToStationArc(barrels[b]!, h.angle, socket.traverse);
+          }
         }
       }
-      if (aimSlot != null) h.gunAngle = h.stationAim[aimSlot] ?? want;
+      if (aimSlot != null) h.gunAngle = h.stationAim[aimSlot]?.[0] ?? want;
       else h.gunAngle = want;
     }
     this.guns.forEach((gun, i) => {
@@ -3688,7 +3755,11 @@ export class MissionScene extends Phaser.Scene {
       const gunSc =
         craft.kind === "cobra" || craft.kind === "viper" ? 0.42 : 1;
       const slot = gunSlots[i];
-      const ang = slot != null ? (h.stationAim[slot] ?? h.gunAngle) : h.gunAngle;
+      const barrel = this.gunBarrelIndexForVisual(i);
+      const ang =
+        slot != null
+          ? (h.stationAim[slot]?.[barrel] ?? h.gunAngle)
+          : h.gunAngle;
       const gunRot = projectHeading(ang + Math.PI / 2, h.x, h.y, h.z);
       gun
         .setVisible(true)
@@ -4308,7 +4379,10 @@ export class MissionScene extends Phaser.Scene {
     const released = !down && this.pointerWasDown;
 
     for (let i = 0; i < this.stationFireCd.length; i++) {
-      this.stationFireCd[i] = Math.max(0, (this.stationFireCd[i] ?? 0) - dt);
+      const barrels = this.stationFireCd[i]!;
+      for (let b = 0; b < barrels.length; b++) {
+        barrels[b] = Math.max(0, (barrels[b] ?? 0) - dt);
+      }
     }
 
     this.tickPendingSalvos(dt, ptr);
@@ -4328,8 +4402,20 @@ export class MissionScene extends Phaser.Scene {
     const slot = h.weapon;
     const spec = this.loadout[slot]!;
     const socket = h.spec.sockets[slot]!;
-    // Automatic stations always fire from tickAutomaticStations — never player trigger.
+
+    // Crew-served automatic: when selected, player aims (syncHeliGfx) and hold-fires
+    // each barrel on its own cooldown. Unselected autos fire from tickAutomaticStations.
     if (socket.controller === "automatic") {
+      const wantFire =
+        (spec.control.mode === "hold" || spec.control.mode === "automatic") && down;
+      if (wantFire && this.hasAmmo(slot)) {
+        const barrels = this.stationFireCd[slot] ?? [];
+        for (let b = 0; b < barrels.length; b++) {
+          if ((barrels[b] ?? 0) > 0 || !this.hasAmmo(slot)) continue;
+          barrels[b] = spec.fireCd;
+          this.firePlayerWeapon(slot, spec, ptr, 0, undefined, undefined, undefined, b);
+        }
+      }
       this.pointerWasDown = down;
       return;
     }
@@ -4385,12 +4471,11 @@ export class MissionScene extends Phaser.Scene {
       socket.class === "fixed" || socket.class === "hardpoint" || socket.class === "bay";
     if (socket.traverse && !hullAim) {
       // Cabin/turret guns are clamped into traverse while aiming; always legal to fire.
-      h.stationAim[slot] = clampAimToStationArc(
-        h.stationAim[slot] ?? h.gunAngle,
-        h.angle,
-        socket.traverse
-      );
-      h.gunAngle = h.stationAim[slot]!;
+      const barrels = h.stationAim[slot] ?? (h.stationAim[slot] = [h.gunAngle]);
+      for (let b = 0; b < barrels.length; b++) {
+        barrels[b] = clampAimToStationArc(barrels[b] ?? h.gunAngle, h.angle, socket.traverse);
+      }
+      h.gunAngle = barrels[0]!;
     } else if (socket.traverse && hullAim && !aimInStationArc(h.angle, h.angle, socket.traverse)) {
       // Fixed arcs are relative to nose; nose-relative center/arc of 0 always passes.
       this.pointerWasDown = down;
@@ -4451,7 +4536,7 @@ export class MissionScene extends Phaser.Scene {
         p.autoTargetId != null
           ? this.units.find((u) => !u.dead && u.id === p.autoTargetId)
           : undefined;
-      this.firePlayerWeapon(p.slot, spec, ptr, p.yawOff, p.gx, p.gy, auto);
+      this.firePlayerWeapon(p.slot, spec, ptr, p.yawOff, p.gx, p.gy, auto, p.barrel);
     }
   }
 
@@ -4463,7 +4548,8 @@ export class MissionScene extends Phaser.Scene {
     yawOff = 0,
     gx?: number,
     gy?: number,
-    autoTarget?: Unit
+    autoTarget?: Unit,
+    barrelIndex = 0
   ): void {
     const h = this.heli;
     if (!this.hasAmmo(slot)) return;
@@ -4493,14 +4579,14 @@ export class MissionScene extends Phaser.Scene {
         helixFreq,
       };
       if (spec.launch.mode === "muzzle") {
-        this.fireMuzzleShot(slot, spec, beh, st, ptr, yawOff, autoTarget);
+        this.fireMuzzleShot(slot, spec, beh, st, ptr, yawOff, autoTarget, barrelIndex);
       } else if (spec.launch.mode === "kick_motor") {
         this.fireKickMotorShot(slot, spec, beh, st, yawOff, autoTarget);
       } else if (spec.launch.mode === "drop") {
         this.fireDropShot(slot, spec, beh, st, yawOff);
       } else if (spec.launch.mode === "beam") {
         // Tesla / line beams: muzzle projectile with short life + visual.
-        this.fireMuzzleShot(slot, spec, beh, st, ptr, yawOff, autoTarget);
+        this.fireMuzzleShot(slot, spec, beh, st, ptr, yawOff, autoTarget, barrelIndex);
       }
     }
   }
@@ -4512,7 +4598,8 @@ export class MissionScene extends Phaser.Scene {
     st: ShotState,
     ptr: { x: number; y: number },
     yawOff: number,
-    autoTarget?: Unit
+    autoTarget?: Unit,
+    barrelIndex = 0
   ): void {
     const h = this.heli;
     const socket = h.spec.sockets[slot]!;
@@ -4580,7 +4667,7 @@ export class MissionScene extends Phaser.Scene {
     const muzzleFire = socket.muzzleFire;
     const authored = fixed ? craftSocketPoints(h.spec, socket) : [];
     const mountedGunI =
-      authored.length === 0 ? this.gunVisualIndexForSlot(slot) : 0;
+      authored.length === 0 ? this.gunVisualIndexForSlot(slot, barrelIndex) : 0;
     const muzzleUvs =
       authored.length === 0
         ? [undefined]
@@ -4600,7 +4687,9 @@ export class MissionScene extends Phaser.Scene {
         : 0.35;
     const planeish = h.spec.flightModel === "plane" || h.spec.flightModel === "vtol";
     const inherit = planeish ? Math.min(0.72, baseInherit + 0.28) : baseInherit;
-    const stationAng = fixed ? h.angle : (h.stationAim[slot] ?? h.gunAngle);
+    const stationAng = fixed
+      ? h.angle
+      : (h.stationAim[slot]?.[barrelIndex] ?? h.stationAim[slot]?.[0] ?? h.gunAngle);
     for (const muzzleUv of muzzleUvs) {
       const spread = spec.beam ? 0 : (Math.random() - 0.5) * (spec.silent ? 0.025 : 0.08);
       const ang = stationAng + spread + yawOff + ((st.helixSide ?? 0) * 0.012);
@@ -4854,49 +4943,114 @@ export class MissionScene extends Phaser.Scene {
 
   tickAutomaticStations(dt: number, _ptr: { x: number; y: number }): void {
     const h = this.heli;
-    /** Slower than player chin traverse — reads as an AI cupola. */
-    const turnRate = 0.95;
-    /** Fire once the barrel is close enough to the track. */
-    const alignTol = 0.14;
+    this.autoGunDbg = [];
     for (let slot = 0; slot < this.loadout.length; slot++) {
       const socket = h.spec.sockets[slot];
       const spec = this.loadout[slot]!;
       if (!socket || socket.controller !== "automatic") continue;
-      if (!this.hasAmmo(slot)) continue;
+      const barrels = h.stationAim[slot] ?? (h.stationAim[slot] = [h.angle]);
+      const cds = this.stationFireCd[slot] ?? (this.stationFireCd[slot] = [0]);
+      const crewTag = craftCrewHudTag(socket) ?? "CREW";
+      // Player owns this station while selected — manual hold-fire in handleFire.
+      if (h.weapon === slot) {
+        for (let b = 0; b < barrels.length; b++) {
+          this.autoGunDbg.push({
+            slot,
+            barrel: b,
+            aim: barrels[b] ?? h.gunAngle,
+            want: barrels[b] ?? h.gunAngle,
+            targetId: null,
+            state: `${crewTag}${barrels.length > 1 ? ` ${b + 1}` : ""} MANUAL`,
+          });
+        }
+        continue;
+      }
+      if (!this.hasAmmo(slot)) {
+        for (let b = 0; b < barrels.length; b++) {
+          this.autoGunDbg.push({
+            slot,
+            barrel: b,
+            aim: barrels[b] ?? h.angle,
+            want: null,
+            targetId: null,
+            state: `${crewTag}${barrels.length > 1 ? ` ${b + 1}` : ""} EMPTY`,
+          });
+        }
+        continue;
+      }
       const acquire =
         spec.guidance.mode === "auto" ? spec.guidance.acquireRadius : 340;
-      // Full circle when no traverse — don't inherit the nose-front default arc.
-      const tgt = this.pickAutoTarget(
-        h.x,
-        h.y,
-        h.angle,
-        acquire,
-        socket.traverse,
-        !socket.traverse
-      );
-      if (!tgt) continue;
-      const want = Math.atan2(tgt.y - h.y, tgt.x - h.x);
-      if (socket.traverse && !aimInStationArc(want, h.angle, socket.traverse)) continue;
-      let aim = h.stationAim[slot] ?? h.angle;
-      aim = Phaser.Math.Angle.RotateTo(aim, want, turnRate * dt);
-      if (socket.traverse) aim = clampAimToStationArc(aim, h.angle, socket.traverse);
-      h.stationAim[slot] = aim;
-      if (Math.abs(Phaser.Math.Angle.Wrap(want - aim)) > alignTol) continue;
-      if ((this.stationFireCd[slot] ?? 0) > 0) continue;
-      this.stationFireCd[slot] = spec.fireCd;
-      const salvoN = spec.salvo?.count ?? 1;
-      const interval = spec.salvo?.interval ?? 0;
-      const spread = spec.salvo?.spread ?? 0;
-      const yaw0 = salvoN > 1 ? (0 - (salvoN - 1) / 2) * spread : 0;
-      this.firePlayerWeapon(slot, spec, { x: tgt.x, y: tgt.y }, yaw0, undefined, undefined, tgt);
-      for (let i = 1; i < salvoN; i++) {
-        this.pendingSalvos.push({
-          t: interval * i,
+      for (let b = 0; b < barrels.length; b++) {
+        // Full circle when no traverse — don't inherit the nose-front default arc.
+        const tgt = this.pickAutoTarget(
+          h.x,
+          h.y,
+          h.angle,
+          acquire,
+          socket.traverse,
+          !socket.traverse
+        );
+        if (!tgt) {
+          this.autoGunDbg.push({
+            slot,
+            barrel: b,
+            aim: barrels[b] ?? h.angle,
+            want: null,
+            targetId: null,
+            state: `${crewTag}${barrels.length > 1 ? ` ${b + 1}` : ""} IDLE`,
+          });
+          continue;
+        }
+        const want = Math.atan2(tgt.y - h.y, tgt.x - h.x);
+        if (socket.traverse && !aimInStationArc(want, h.angle, socket.traverse)) {
+          this.autoGunDbg.push({
+            slot,
+            barrel: b,
+            aim: barrels[b] ?? h.angle,
+            want: null,
+            targetId: null,
+            state: `${crewTag}${barrels.length > 1 ? ` ${b + 1}` : ""} ARC`,
+          });
+          continue;
+        }
+        let aim = barrels[b] ?? h.angle;
+        aim = Phaser.Math.Angle.RotateTo(aim, want, GUN_STATION_TURN_RATE * dt);
+        if (socket.traverse) aim = clampAimToStationArc(aim, h.angle, socket.traverse);
+        barrels[b] = aim;
+        const err = Math.abs(Phaser.Math.Angle.Wrap(want - aim));
+        const aligned = err <= AUTO_GUN_ALIGN_TOL;
+        const onCd = (cds[b] ?? 0) > 0;
+        let state = `${crewTag}${barrels.length > 1 ? ` ${b + 1}` : ""} `;
+        if (!aligned) state += "SLEW";
+        else if (onCd) state += "CD";
+        else state += "FIRE";
+        this.autoGunDbg.push({
           slot,
-          wpnId: spec.id,
-          yawOff: (i - (salvoN - 1) / 2) * spread,
-          autoTargetId: tgt.id,
+          barrel: b,
+          aim,
+          want,
+          targetId: tgt.id,
+          state,
         });
+        if (!aligned) continue;
+        if (onCd) continue;
+        if (!this.hasAmmo(slot)) continue;
+        cds[b] = spec.fireCd;
+        const salvoN = spec.salvo?.count ?? 1;
+        const interval = spec.salvo?.interval ?? 0;
+        const spread = spec.salvo?.spread ?? 0;
+        const yaw0 = salvoN > 1 ? (0 - (salvoN - 1) / 2) * spread : 0;
+        this.firePlayerWeapon(slot, spec, { x: tgt.x, y: tgt.y }, yaw0, undefined, undefined, tgt, b);
+        for (let i = 1; i < salvoN; i++) {
+          this.pendingSalvos.push({
+            t: interval * i,
+            slot,
+            wpnId: spec.id,
+            yawOff: (i - (salvoN - 1) / 2) * spread,
+            autoTargetId: tgt.id,
+            barrel: b,
+          });
+        }
       }
     }
   }
@@ -5040,10 +5194,28 @@ export class MissionScene extends Phaser.Scene {
     return best;
   }
 
-  /** Gun overlay index for a loadout socket, or 0 if the socket has no overlay. */
-  gunVisualIndexForSlot(slot: number): number {
-    const i = craftGunSocketSlots(this.heli.spec).indexOf(slot);
-    return i >= 0 ? i : 0;
+  /** Gun overlay index for a loadout socket barrel, or 0 if the socket has no overlay. */
+  gunVisualIndexForSlot(slot: number, barrel = 0): number {
+    const slots = craftGunSocketSlots(this.heli.spec);
+    let seen = 0;
+    for (let i = 0; i < slots.length; i++) {
+      if (slots[i] !== slot) continue;
+      if (seen === barrel) return i;
+      seen++;
+    }
+    return 0;
+  }
+
+  /** Barrel index within a socket for a craft gun overlay visual index. */
+  gunBarrelIndexForVisual(visualIndex: number): number {
+    const slots = craftGunSocketSlots(this.heli.spec);
+    const slot = slots[visualIndex];
+    if (slot == null) return 0;
+    let barrel = 0;
+    for (let i = 0; i < visualIndex; i++) {
+      if (slots[i] === slot) barrel++;
+    }
+    return barrel;
   }
 
   nearestUnitInFrontArc(
@@ -5295,6 +5467,34 @@ export class MissionScene extends Phaser.Scene {
     const screenDistance = SHOT_ORIGIN.x * img.width * scale * at.scale;
     const d = screenDistance / projectedUnit;
     return { x: ca * d, y: sa * d };
+  }
+
+  /** World position of the shot exhaust / tail UV (matches trail emit + TOW wire tip). */
+  shotTailWorldPos(s: Shot): { x: number; y: number; z: number } {
+    const look = shotLookOf(s);
+    const at = worldToScreen(s.x, s.y, s.z);
+    const img = this.textures.exists(look)
+      ? (this.textures.get(look).getSourceImage() as { width: number; height: number })
+      : { width: 48, height: 10 };
+    const sc = s.scale ?? 1;
+    const horiz = Math.hypot(s.vx, s.vy);
+    const pitchN = Phaser.Math.Clamp(Math.abs(s.vz) / Math.max(90, Math.hypot(horiz, s.vz)), 0, 1);
+    const along = 1 - pitchN * 0.52;
+    const spd = Math.hypot(s.vx, s.vy, s.vz);
+    const fx = spd > 1e-3 ? s.vx / spd : Math.cos(s.angle);
+    const fy = spd > 1e-3 ? s.vy / spd : Math.sin(s.angle);
+    const fz = spd > 1e-3 ? s.vz / spd : 0;
+    const projectedX = screenVelX(fx, fy, fz, s.x, s.y, s.z);
+    const projectedY = screenVelY(fy, fz, s.z, s.y);
+    const projectedUnit = Math.max(1e-6, Math.hypot(projectedX, projectedY));
+    const screenDistance =
+      (SHOT_ORIGIN.x - SHOT_TAIL.x) * img.width * sc * at.scale * along;
+    const d = screenDistance / projectedUnit;
+    return {
+      x: s.x - fx * d,
+      y: s.y - fy * d,
+      z: s.z - fz * d,
+    };
   }
 
   /** Screen XY of a UV on the shot sprite (matches syncShotSprites scale/origin). */
@@ -6140,11 +6340,11 @@ export class MissionScene extends Phaser.Scene {
         const clampedWant = s.angle + Phaser.Math.Clamp(da, -maxA, maxA);
         const d2 = Phaser.Math.Angle.Wrap(clampedWant - s.angle);
         s.angle += Phaser.Math.Clamp(d2, -rate * dt, rate * dt);
-        const dist = Math.hypot(ptr.x - s.x, ptr.y - s.y);
+        const distPtr = Math.hypot(ptr.x - s.x, ptr.y - s.y);
         const gndAim = groundZ(this.world, ptr.x, ptr.y);
         if (g.groundHugging) {
           // Slight pitch of descent so further reticles land farther; never climb.
-          const rangeFactor = Phaser.Math.Clamp(dist / 520, 0.15, 1);
+          const rangeFactor = Phaser.Math.Clamp(distPtr / 520, 0.15, 1);
           const wantZ = gndAim + 10 + rangeFactor * 28;
           s.vz = Math.min(s.vz, (wantZ - s.z) * 2.4);
           if (s.vz > -40) s.vz = Math.min(s.vz, -40 - rangeFactor * 80);
@@ -6153,23 +6353,58 @@ export class MissionScene extends Phaser.Scene {
             s.z = gnd;
             if (s.vz < 0) s.vz = 0;
           }
+          s.vx = Math.cos(s.angle) * spd;
+          s.vy = Math.sin(s.angle) * spd;
+          s.life = Math.max(s.life, 0.6);
         } else {
-          // TOW: hold player AGL until close to the reticle, then steep dive.
-          // Ground collision (a0/a1) detonates once the late falloff brings it down.
+          // TOW / command pointer: cruise at player AGL, then dive near the aim.
+          // Target is mid-unit under reticle, else ground at mouse — same dive timing either way.
           const tgt = this.reticleUnit() ?? this.hoverAerial();
+          const aimX = tgt ? tgt.x : ptr.x;
+          const aimY = tgt ? tgt.y : ptr.y;
+          const impactZ = tgt
+            ? tgt.z + heightOf(tgt.kind) * 0.5
+            : groundZ(this.world, aimX, aimY);
           const gndHere = groundZ(this.world, s.x, s.y);
           const playerAgl = Math.max(28, this.heli.z - this.heli.gndSmooth);
           const cruiseZ = gndHere + playerAgl;
-          const impactZ = tgt ? tgt.z + heightOf(tgt.kind) * 0.3 : gndAim;
-          const diveRange = 280;
-          const closeness = 1 - Phaser.Math.Clamp(dist / diveRange, 0, 1);
-          const dive = Math.pow(closeness, 2.85);
-          const tz = Phaser.Math.Linear(cruiseZ, impactZ, dive);
-          s.vz = (tz - s.z) * (1.4 + dive * 3.2);
+          const dist = Math.hypot(aimX - s.x, aimY - s.y);
+          const diveRange = 300;
+          const dive = Math.pow(1 - Phaser.Math.Clamp(dist / diveRange, 0, 1), 2.15);
+          // Latch dive so overshoot never pulls altitude back up to cruise.
+          if (!st.terminal && dive > 0.4) st.terminal = true;
+
+          if (st.terminal) {
+            // Same drop curve for unit or ground; only impactZ differs.
+            const dropT = Math.max(dive, 0.55);
+            const wantZ = Phaser.Math.Linear(
+              cruiseZ,
+              impactZ,
+              Phaser.Math.Clamp(dropT * 1.45, 0, 1)
+            );
+            const aimWant = Math.atan2(aimY - s.y, aimX - s.x);
+            const ada = Phaser.Math.Angle.Wrap(aimWant - s.angle);
+            const turn = (beh.steering?.turnRate ?? rate) * (1.4 + dive * 2.6) * dt;
+            s.angle += Phaser.Math.Clamp(ada, -turn, turn);
+            s.vx = Math.cos(s.angle) * spd;
+            s.vy = Math.sin(s.angle) * spd;
+            s.vz = (wantZ - s.z) * (3.4 + dive * 6.2);
+            const prox = Math.hypot(aimX - s.x, aimY - s.y, impactZ - s.z);
+            if (prox < 18 || (!tgt && s.z <= impactZ + 3 && dist < 36)) {
+              st.detonate = true;
+            }
+          } else {
+            const aimWant = Math.atan2(aimY - s.y, aimX - s.x);
+            const ada = Phaser.Math.Angle.Wrap(aimWant - s.angle);
+            const clamped = s.angle + Phaser.Math.Clamp(ada, -maxA, maxA);
+            const dAim = Phaser.Math.Angle.Wrap(clamped - s.angle);
+            s.angle += Phaser.Math.Clamp(dAim, -rate * dt, rate * dt);
+            s.vx = Math.cos(s.angle) * spd;
+            s.vy = Math.sin(s.angle) * spd;
+            s.vz = (cruiseZ - s.z) * 1.4;
+            s.life = Math.max(s.life, 0.6);
+          }
         }
-        s.vx = Math.cos(s.angle) * spd;
-        s.vy = Math.sin(s.angle) * spd;
-        s.life = Math.max(s.life, 0.6);
         return;
       }
 
@@ -6435,7 +6670,7 @@ export class MissionScene extends Phaser.Scene {
 
   simulateTowWire(s: Shot, dt: number): void {
     const player = this.towWing(s.wireSide ?? 1);
-    const missile = { x: s.x, y: s.y, z: s.z };
+    const missile = this.shotTailWorldPos(s);
     if (!s.wire) s.wire = [];
     const trail = s.wire;
     if (trail.length === 0) {
@@ -6459,6 +6694,11 @@ export class MissionScene extends Phaser.Scene {
       p.y += (ty - p.y) * a;
       p.z += (tz - p.z) * a;
     }
+    // Pin tip to exhaust (sag lerp rate is 0 at t=1).
+    const tip = trail[trail.length - 1]!;
+    tip.x = missile.x;
+    tip.y = missile.y;
+    tip.z = missile.z;
     s.wireTrim = (s.wireTrim ?? 0) + dt;
     const trimEvery = 0.08;
     while ((s.wireTrim ?? 0) >= trimEvery && trail.length > 2) {
@@ -10790,19 +11030,20 @@ export class MissionScene extends Phaser.Scene {
       const ammoS = empty ? "X" : this.infAmmo || !Number.isFinite(a) ? "∞" : String(a | 0);
       const t = this.wpnSlots[i]!;
       const lp = this.hudLocal(x + slotW / 2, y + slotH / 2);
-      const auto = this.heli.spec.sockets[i]?.controller === "automatic";
-      const autoTag = auto ? "AUTO " : "";
-      t.setPosition(lp.x, lp.y).setText(`${i + 1}  ${autoTag}${wp.name}  ${ammoS}`);
+      const socket = this.heli.spec.sockets[i];
+      const crew = socket ? craftCrewHudTag(socket) : undefined;
+      const crewTag = crew ? `${crew} ` : "";
+      t.setPosition(lp.x, lp.y).setText(`${i + 1}  ${crewTag}${wp.name}  ${ammoS}`);
       if (sel) {
         t.setColor("#1c1812").setStroke("#1c1812", 0).setFontSize("15px");
       } else if (empty) {
         t.setColor("#ff4a2a").setStroke("#1a0808", 3).setFontSize("15px");
-      } else if (auto) {
+      } else if (crew) {
         t.setColor("#7ad0ff").setStroke("#12100c", 4).setFontSize("15px");
       } else {
         t.setColor("#f0d56a").setStroke("#12100c", 4).setFontSize("15px");
       }
-      if (auto && !sel && !empty) {
+      if (crew && !sel && !empty) {
         g.lineStyle(1.5, 0x4aa8e8, 0.9);
         g.strokeRoundedRect(x, y, slotW, slotH, 3);
       }
@@ -11085,6 +11326,7 @@ export class MissionScene extends Phaser.Scene {
     this.aiGfx.clear();
     if (!this.debugAi || this.mapWorldHidden) {
       for (const t of this.aiLabels) t.setVisible(false);
+      for (const t of this.autoGunLabels) t.setVisible(false);
       return;
     }
     const live = this.units.filter((u) => !u.dead);
@@ -11123,6 +11365,67 @@ export class MissionScene extends Phaser.Scene {
       label.setVisible(true);
       label.setPosition(ux, uy - 18);
       label.setText(u.aiState ?? "—");
+    });
+
+    // Crew-served / automatic player guns.
+    while (this.autoGunLabels.length < this.autoGunDbg.length) {
+      const key = `auto_gun_label_${this.autoGunLabels.length}`;
+      const t = this.add
+        .text(0, 0, "", {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: "11px",
+          color: "#7ad0ff",
+        })
+        .setOrigin(0.5, 1)
+        .setDepth(Layer.FIELD + 9)
+        .setStroke("#12100c", 3)
+        .setName(key);
+      nameGameTexture(this, t, key);
+      this.autoGunLabels.push(t);
+    }
+    for (const t of this.autoGunLabels) t.setVisible(false);
+    const h = this.heli;
+    this.autoGunDbg.forEach((dbg, i) => {
+      let tip: { x: number; y: number };
+      try {
+        tip = this.gunTip(this.gunVisualIndexForSlot(dbg.slot, dbg.barrel));
+      } catch {
+        tip = { x: h.x, y: h.y };
+      }
+      const tipScr = worldToScreen(tip.x, tip.y, h.z);
+      const aimLen = 90;
+      const aimEnd = worldToScreen(
+        tip.x + Math.cos(dbg.aim) * aimLen,
+        tip.y + Math.sin(dbg.aim) * aimLen,
+        h.z
+      );
+      this.aiGfx.lineStyle(1.6, 0x7ad0ff, 0.9);
+      this.aiGfx.lineBetween(tipScr.x, tipScr.y, aimEnd.x, aimEnd.y);
+      this.aiGfx.fillStyle(0x7ad0ff, 0.95);
+      this.aiGfx.fillCircle(tipScr.x, tipScr.y, 2.8);
+      if (dbg.targetId != null) {
+        const tgt = this.units.find((u) => !u.dead && u.id === dbg.targetId);
+        if (tgt) {
+          const tScr = worldToScreen(tgt.x, tgt.y, tgt.z);
+          this.aiGfx.lineStyle(1.2, 0xa8ff7a, 0.85);
+          this.aiGfx.lineBetween(tipScr.x, tipScr.y, tScr.x, tScr.y);
+          this.aiGfx.fillStyle(0xa8ff7a, 0.95);
+          this.aiGfx.fillCircle(tScr.x, tScr.y, 3.2);
+        }
+      } else if (dbg.want != null) {
+        const wantEnd = worldToScreen(
+          tip.x + Math.cos(dbg.want) * aimLen,
+          tip.y + Math.sin(dbg.want) * aimLen,
+          h.z
+        );
+        this.aiGfx.lineStyle(1, 0xa8ff7a, 0.45);
+        this.aiGfx.lineBetween(tipScr.x, tipScr.y, wantEnd.x, wantEnd.y);
+      }
+      const label = this.autoGunLabels[i]!;
+      label
+        .setVisible(true)
+        .setPosition(tipScr.x, tipScr.y - 14)
+        .setText(dbg.state);
     });
   }
 
@@ -11457,6 +11760,7 @@ export class MissionScene extends Phaser.Scene {
     if (!on) {
       this.aiGfx.clear();
       for (const t of this.aiLabels) t.setVisible(false);
+      for (const t of this.autoGunLabels) t.setVisible(false);
     }
     this.syncDebugMenu();
   }

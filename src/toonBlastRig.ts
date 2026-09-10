@@ -124,6 +124,8 @@ export class ToonBlastRig {
   private seed = 0xb1a57e;
   private animT = 0;
   private playSpeed = 1;
+  /** Preview board zoom (speed uses `,` / `.`). */
+  private viewZoom = 1;
   private paused = false;
   private dirtyLayout = true;
   private clusters = makeToonClusters(mulberry32(this.seed));
@@ -293,7 +295,18 @@ export class ToonBlastRig {
 
   nudgeZoom(dir: number): void {
     if (!this.open) return;
-    this.playSpeed = Phaser.Math.Clamp(this.playSpeed * (dir > 0 ? 1.25 : 0.8), 0.25, 4);
+    const steps = [0.5, 1, 1.5, 2, 3, 4, 6, 8];
+    let i = 0;
+    let best = Infinity;
+    for (let k = 0; k < steps.length; k++) {
+      const d = Math.abs(steps[k]! - this.viewZoom);
+      if (d < best) {
+        best = d;
+        i = k;
+      }
+    }
+    this.viewZoom = steps[Phaser.Math.Clamp(i + dir, 0, steps.length - 1)]!;
+    this.dirtyLayout = true;
   }
 
   private nudge(dir: number): void {
@@ -392,7 +405,7 @@ export class ToonBlastRig {
     );
 
     this.hintTxt.setText(
-      `TOON BLAST RIG   \` cycle/close   [ ] param   ← → nudge (unbounded, Shift×)   G randomize   R reseed   Space replay   P pause   , . speed ${this.playSpeed.toFixed(2)}×   B bake   D defaults`
+      `TOON BLAST RIG   \` cycle/close   ↑ ↓ select   ← → nudge (unbounded, Shift×)   G randomize   R reseed   Space replay   P pause   , . speed ${this.playSpeed.toFixed(2)}×   - + zoom ${this.viewZoom}×   B bake   D defaults`
     );
     const sel = PARAMS[this.idx]!;
     this.infoTxt.setPosition(LIST_X + LIST_W + 24, LIST_Y);
@@ -433,7 +446,7 @@ export class ToonBlastRig {
     const h = this.scene.scale.height;
     const listRight = LIST_X + LIST_W + 20;
     const avail = Math.min(h * 0.7, w - listRight - 80);
-    const s = avail / Math.max(size, 1);
+    const s = (avail / Math.max(size, 1)) * this.viewZoom;
     this.preview.setScale(s);
     const cx = listRight + avail * 0.5;
     const cy = h * 0.45;

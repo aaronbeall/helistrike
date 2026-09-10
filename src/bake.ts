@@ -407,9 +407,9 @@ export function bakeEnemyCannonLooks(textures: Phaser.Textures.TextureManager): 
     {
       key: "shot_cannon_enemy_mg",
       opts: {
-        w: 42, h: 6,
+        w: 50, h: 7,
         core: [255, 236, 180], mid: [255, 170, 55], rim: [200, 90, 25],
-        glow: 0.4,
+        glow: 0.45,
       },
     },
     {

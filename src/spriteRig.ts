@@ -37,6 +37,8 @@ export class SpriteRig {
   private scene: Phaser.Scene;
   private idx = 0;
   private frameIdx = 0;
+  /** Multiplier on fit-to-board scale (same steps as combat/roster). */
+  private zoom = 2;
   private pinned: { uvx: number; uvy: number } | null = null;
   private copied = "";
   /** Always present (empty until first open) so HUD wiring can mark it at mission start. */
@@ -255,6 +257,23 @@ export class SpriteRig {
     this.refreshPreview();
   }
 
+  nudgeZoom(dir: number): void {
+    if (!this.open) return;
+    const steps = [0.5, 1, 1.5, 2, 3, 4, 6, 8];
+    let i = 0;
+    let best = Infinity;
+    for (let k = 0; k < steps.length; k++) {
+      const d = Math.abs(steps[k]! - this.zoom);
+      if (d < best) {
+        best = d;
+        i = k;
+      }
+    }
+    this.zoom = steps[Phaser.Math.Clamp(i + dir, 0, steps.length - 1)]!;
+    this.pinned = null;
+    this.refreshPreview();
+  }
+
   cycleFrame(dir: number): void {
     if (!this.open) return;
     const frames = this.framesOf(this.key());
@@ -310,7 +329,7 @@ export class SpriteRig {
 
     const frameHint = frames.length > 1 ? `   ← → frame ${this.frameIdx + 1}/${frames.length}` : "";
     this.hintTxt.setText(
-      `SPRITE RIG   \` cycle / close   [ ] cycle   , . page   G art-only ${this.artOnly ? "ON" : "OFF"}${frameHint}`
+      `SPRITE RIG   \` cycle / close   ↑ ↓ select   , . page   - + zoom ${this.zoom}×   G art-only ${this.artOnly ? "ON" : "OFF"}${frameHint}`
     );
     const size = this.pageSize();
     const pages = Math.max(1, Math.ceil(keys.length / size));
@@ -439,7 +458,8 @@ export class SpriteRig {
     const availW = Math.max(180, w - listRight - STATS_W - gap - 20);
     const stripH = frames.length > 1 ? FRAME_THUMB + 28 : 0;
     const max = Math.min(h * 0.62, availW, h - LIST_Y - stripH - 80);
-    const s = max / Math.max(this.preview.width, this.preview.height, 1);
+    const fit = max / Math.max(this.preview.width, this.preview.height, 1);
+    const s = fit * (this.zoom / 2);
     this.preview.setScale(s);
     const previewCy = Math.min(h * 0.42, h - stripH - FRAME_THUMB - 56);
     this.preview.setPosition(listRight + max * 0.5, previewCy);

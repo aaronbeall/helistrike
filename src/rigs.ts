@@ -9,6 +9,9 @@ import { spritePivot } from "./sprites";
 /**
  * Overlay scene for sprite / roster / combat / toon-blast / balance rigs.
  * Launched lazily (first ` or installRigHotkeys warm-up).
+ *
+ * All rig hotkeys live here (not on menu/mission) so they survive scene
+ * restarts — Mission/Menu KeyboardPlugins shut down and wipe their keys.
  */
 export class RigsScene extends Phaser.Scene {
   spriteRig!: SpriteRig;
@@ -22,6 +25,7 @@ export class RigsScene extends Phaser.Scene {
   private pendingOpen = false;
   /** Ignore re-entrant cycle (duplicate listeners / same-frame doubles). */
   private cycling = false;
+  private hotkeysBound = false;
 
   constructor() {
     super("rigs");
@@ -35,42 +39,7 @@ export class RigsScene extends Phaser.Scene {
     this.balanceRig = new BalanceRig(this);
     this.ready = true;
 
-    const kb = this.input.keyboard;
-    if (kb) {
-      // Navigation only while a rig is open (open/cycle hotkeys live on menu/mission).
-      kb.addKey(Phaser.Input.Keyboard.KeyCodes.OPEN_BRACKET).on("down", () => {
-        if (!this.anyOpen()) return;
-        this.activeRig()?.cycle(-1);
-      });
-      kb.addKey(Phaser.Input.Keyboard.KeyCodes.CLOSED_BRACKET).on("down", () => {
-        if (!this.anyOpen()) return;
-        this.activeRig()?.cycle(1);
-      });
-      kb.addKey(Phaser.Input.Keyboard.KeyCodes.UP).on("down", () => {
-        if (!this.anyOpen()) return;
-        this.activeRig()?.cycle(-1);
-      });
-      kb.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN).on("down", () => {
-        if (!this.anyOpen()) return;
-        this.activeRig()?.cycle(1);
-      });
-      kb.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT).on("down", () => {
-        if (this.spriteRig.open) this.spriteRig.cycleFrame(-1);
-      });
-      kb.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT).on("down", () => {
-        if (this.spriteRig.open) this.spriteRig.cycleFrame(1);
-      });
-
-      const bumpZoom = (dir: number) => {
-        if (this.rosterRig.open) this.rosterRig.nudgeZoom(dir);
-        else if (this.combatRig.open) this.combatRig.nudgeZoom(dir);
-        else if (this.toonBlastRig.open) this.toonBlastRig.nudgeZoom(dir);
-      };
-      kb.addKey(Phaser.Input.Keyboard.KeyCodes.PLUS).on("down", () => bumpZoom(1));
-      kb.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_ADD).on("down", () => bumpZoom(1));
-      kb.addKey(Phaser.Input.Keyboard.KeyCodes.MINUS).on("down", () => bumpZoom(-1));
-      kb.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_SUBTRACT).on("down", () => bumpZoom(-1));
-    }
+    this.bindHotkeys();
 
     this.input.on("wheel", (_p: unknown, _over: unknown, _dx: number, dy: number) => {
       if (!this.anyOpen() || Math.abs(dy) < 1) return;
@@ -82,6 +51,58 @@ export class RigsScene extends Phaser.Scene {
       this.pendingOpen = false;
       this.spriteRig.toggle();
     }
+  }
+
+  /** Bind (or re-bind) rig shortcuts on this scene's keyboard plugin. */
+  bindHotkeys(): void {
+    const kb = this.input.keyboard;
+    if (!kb || this.hotkeysBound) return;
+    this.hotkeysBound = true;
+
+    const onBacktick = () => {
+      if (!this.ready) {
+        this.queueOpen();
+        return;
+      }
+      this.cycle();
+      this.bringFront();
+    };
+    kb.on("keydown-BACKTICK", onBacktick);
+
+    kb.on("keydown-UP", () => {
+      if (!this.anyOpen()) return;
+      this.activeRig()?.cycle(-1);
+    });
+    kb.on("keydown-DOWN", () => {
+      if (!this.anyOpen()) return;
+      this.activeRig()?.cycle(1);
+    });
+    kb.on("keydown-LEFT", () => {
+      if (this.spriteRig.open) this.spriteRig.cycleFrame(-1);
+    });
+    kb.on("keydown-RIGHT", () => {
+      if (this.spriteRig.open) this.spriteRig.cycleFrame(1);
+    });
+
+    const zoomIn = () => this.bumpZoom(1);
+    const zoomOut = () => this.bumpZoom(-1);
+    kb.on("keydown-PLUS", zoomIn);
+    kb.on("keydown-EQUALS", zoomIn);
+    kb.on("keydown-NUMPAD_ADD", zoomIn);
+    kb.on("keydown-MINUS", zoomOut);
+    kb.on("keydown-NUMPAD_SUBTRACT", zoomOut);
+
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.hotkeysBound = false;
+    });
+  }
+
+  private bumpZoom(dir: number): void {
+    if (!this.anyOpen()) return;
+    if (this.spriteRig.open) this.spriteRig.nudgeZoom(dir);
+    else if (this.rosterRig.open) this.rosterRig.nudgeZoom(dir);
+    else if (this.combatRig.open) this.combatRig.nudgeZoom(dir);
+    else if (this.toonBlastRig.open) this.toonBlastRig.nudgeZoom(dir);
   }
 
   /** Queue sprite open when ` arrives before create() finishes. */
@@ -154,6 +175,8 @@ export class RigsScene extends Phaser.Scene {
 
   bringFront(): void {
     this.scene.bringToTop();
+    // Re-bind if this scene was shut down and relaunched without a fresh create path.
+    this.bindHotkeys();
   }
 
   private activeRig():
@@ -194,23 +217,10 @@ export function rigsAnyOpen(from: Phaser.Scene): boolean {
   return !!getRigs(from)?.anyOpen();
 }
 
-const HOTKEY_FLAG = "__rigHotkeys";
-
-/** ` on menu or mission — warm-launches the overlay so the first press isn't a no-op. */
+/**
+ * Warm-launch the rigs overlay from menu/mission create.
+ * Hotkeys live on RigsScene so they survive mission/menu restarts.
+ */
 export function installRigHotkeys(from: Phaser.Scene): void {
-  const kb = from.input.keyboard;
-  if (!kb || (from as unknown as Record<string, boolean>)[HOTKEY_FLAG]) return;
-  (from as unknown as Record<string, boolean>)[HOTKEY_FLAG] = true;
-
   ensureRigs(from);
-
-  kb.addKey(Phaser.Input.Keyboard.KeyCodes.BACKTICK).on("down", () => {
-    const rigs = ensureRigs(from);
-    if (!rigs.ready) {
-      rigs.queueOpen();
-      return;
-    }
-    rigs.cycle();
-    rigs.bringFront();
-  });
 }

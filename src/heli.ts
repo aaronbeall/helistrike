@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { craftOf, type CraftKind } from "./craft";
+import { craftOf, craftSocketBarrelCount, type CraftKind } from "./craft";
 import { groundZ, WORLD, type WorldData } from "./world";
 
 export interface Stick {
@@ -48,10 +48,10 @@ export class Heli {
   roll = 0;
   rotor = 0;
   rotorSpd = 0;
-  /** Primary / player-aimed turret bearing (synced from the active gunner station). */
+  /** Primary / player-aimed turret bearing (synced from the active station). */
   gunAngle = 0;
-  /** Per-socket aim bearing — automatic stations track independently of player aim. */
-  stationAim: number[] = [];
+  /** Per-socket, per-barrel aim bearings — multi-gun cabins track each barrel. */
+  stationAim: number[][] = [];
   health: number;
   phase: Phase = "grounded";
   /** Elapsed time in spool. */
@@ -83,12 +83,17 @@ export class Heli {
     this.health = craftOf(craft).health;
     this.gndSmooth = groundZ(world, x, y);
     this.z = this.gndSmooth + PAD_AGL;
-    this.stationAim = craftOf(craft).sockets.map(() => 0);
+    this.stationAim = craftOf(craft).sockets.map((_, i) =>
+      Array.from({ length: craftSocketBarrelCount(craftOf(craft), i) }, () => 0)
+    );
   }
 
   /** Align all station aims (and gunAngle) to the current hull heading. */
   syncStationAimToHull(): void {
-    for (let i = 0; i < this.stationAim.length; i++) this.stationAim[i] = this.angle;
+    for (let i = 0; i < this.stationAim.length; i++) {
+      const barrels = this.stationAim[i]!;
+      for (let b = 0; b < barrels.length; b++) barrels[b] = this.angle;
+    }
     this.gunAngle = this.angle;
   }
 

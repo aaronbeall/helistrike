@@ -919,7 +919,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
       burst: 10,
       burstGap: 0.05,
       look: "shot_cannon_enemy_mg",
-      scale: 0.28,
+      scale: 0.38,
       jitter: 0.045
     }),
     guns: [],
@@ -946,7 +946,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
       burst: 12,
       burstGap: 0.045,
       look: "shot_cannon_enemy_mg",
-      scale: 0.28,
+      scale: 0.38,
       jitter: 0.04
     }),
     guns: [],

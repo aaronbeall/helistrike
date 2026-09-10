@@ -116,6 +116,7 @@
 * [ ] Drive ground vehicles
 * [ ] Eject, infiltrate, hijack
 * [ ] Hulk break-apart effect (dynamic splitting of hulk graphics into individual parts)
+* [ ] Predictive firing (enemy units and craft gunners, fire at predicted location, accuracy of prediction falls off with range and speed)
 
 ## Fix
 

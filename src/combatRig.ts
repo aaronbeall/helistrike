@@ -272,7 +272,7 @@ export class CombatRig {
     const e = items[this.idx]!;
 
     this.hintTxt.setText(
-      `COMBAT RIG   \` cycle / close   [ ] cycle   , . page   - + zoom ${this.zoom}×   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}`
+      `COMBAT RIG   \` cycle / close   ↑ ↓ select   , . page   - + zoom ${this.zoom}×   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}`
     );
 
     const size = this.pageSize();
