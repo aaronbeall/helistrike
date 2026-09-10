@@ -79,7 +79,6 @@ const WEAPON_AXES: AxisDef[] = [
     highlight: ["dmg", "fireCd", "salvo.count", "salvo.interval", "burst", "burstGap"],
   },
   { id: "blast" },
-  { id: "fireCd" },
   { id: "speed" },
   { id: "range", highlight: ["life"] },
   { id: "ammo" },
@@ -104,7 +103,6 @@ const ENEMY_AXES: AxisDef[] = [
     ],
   },
   { id: "weapon.blast" },
-  { id: "weapon.fireCd" },
   { id: "weapon.range" },
 ];
 
@@ -164,7 +162,7 @@ const CAT_DETAIL_ORDER: Record<BalanceCat, string[]> = {
 
 const DEFAULT_AXES: Record<BalanceCat, { x: string; y: string }> = {
   craft: { x: "maxSpeed", y: "health" },
-  weapons: { x: "fireCd", y: "dps" },
+  weapons: { x: "range", y: "dps" },
   enemies: { x: "health", y: "radius" },
 };
 
