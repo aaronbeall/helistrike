@@ -260,7 +260,7 @@ export function heliHudWireUv(bake: HeliHudWireBake, u: number, v: number): { u:
 }
 
 /** Soft red screen-edge vignette, baked once and stretched to the viewport. */
-export function bakeHurtVignetteTexture(scene: Phaser.Scene, outKey = "hurt_vignette"): void {
+export function bakeHurtVignetteTexture(scene: Phaser.Scene, outKey = "hud_hurt_vignette"): void {
   const tw = 320;
   const th = 180;
   const canvas = document.createElement("canvas");
@@ -293,6 +293,7 @@ export function bakeHurtVignetteTexture(scene: Phaser.Scene, outKey = "hurt_vign
   ctx.putImageData(img, 0, 0);
   if (scene.textures.exists(outKey)) scene.textures.remove(outKey);
   scene.textures.addCanvas(outKey, canvas);
+  registerArt(outKey, "generated");
 }
 
 /** Sobel edge points from a sprite alpha channel, in normalized UV space. */
@@ -409,8 +410,8 @@ function bakeHudWireCanvas(
 export function bakeHeliHudWireTexture(
   scene: Phaser.Scene,
   bodyKey = craftOf().body,
-  outKey = "heli_hud_wire",
-  shadowKey = "heli_hud_wire_sh"
+  outKey = "hud_wire",
+  shadowKey = "hud_wire_sh"
 ): HeliHudWireBake | null {
   if (!scene.textures.exists(bodyKey)) return null;
   const tex = scene.textures.get(bodyKey);
@@ -442,8 +443,10 @@ export function bakeHeliHudWireTexture(
 
   if (scene.textures.exists(outKey)) scene.textures.remove(outKey);
   scene.textures.addCanvas(outKey, bakeHudWireCanvas(points, w, h, minX, minY, cw, ch));
+  registerArt(outKey, "generated");
   if (scene.textures.exists(shadowKey)) scene.textures.remove(shadowKey);
   scene.textures.addCanvas(shadowKey, bakeHudWireShadowCanvas(points, w, h, minX, minY, cw, ch));
+  registerArt(shadowKey, "generated");
 
   const bodyPivot = spritePivot(bodyKey);
   return {
@@ -469,6 +472,54 @@ export function spritePivot(key: string): { x: number; y: number } {
 
 const DEFAULT_ORIGIN = { x: 0.5, y: 0.5 };
 
+/** How a catalog texture was produced. */
+export type ArtSource = "image" | "generated";
+
+/**
+ * Sprite-rig catalog rules (keep these when adding textures):
+ *
+ * 1. Call `registerArt(key, source)` for every gameplay sprite that should appear
+ *    in the sprite rig. `source` is `"image"` (from a loaded PNG / sheet bake) or
+ *    `"generated"` (drawn or synthesized in engine).
+ * 2. Do **not** register UI (Text, menus, buttons, rig chrome). Leave those as
+ *    Phaser UUID canvases — the catalog omits UUIDs.
+ * 3. Do **not** register menu-only chrome (`menu_splash`, mission preview thumbs)
+ *    or authoring intermediates (`src_*` load sheets, relief `brush_*`).
+ * 4. Derived keys:
+ *    - **Art variants (catalog):** alternate appearances of the subject —
+ *      `{rotor}_spin`, `{base}__{camo}`. Standalone generated art like `fx_shadow`
+ *      counts as its own sprite, not a utility map.
+ *    - **Utility maps (hidden):** runtime effect/mode buffers — `{base}_sh0..3`,
+ *      `{base}_heat`, `{base}_sink`, and `hud_wire_sh`. Still bake them for gameplay;
+ *      `isCatalogArt` filters them out.
+ *
+ * Membership = `registerArt` ∧ ¬UUID ∧ ¬`isUtilityDerived`.
+ */
+const ART_SOURCE = new Map<string, ArtSource>();
+
+export function registerArt(key: string, source: ArtSource): void {
+  if (!key) return;
+  ART_SOURCE.set(key, source);
+}
+
+export function artSourceOf(key: string): ArtSource | undefined {
+  return ART_SOURCE.get(key);
+}
+
+/**
+ * Runtime utility maps — not alternate appearances of the subject.
+ * Art variants (`_spin`, `__camo`) and standalone art (`fx_shadow`) stay in the catalog.
+ */
+const UTILITY_DERIVED = /_sh[0-3]$|_heat$|_sink$/;
+
+export function isUtilityDerived(key: string): boolean {
+  return UTILITY_DERIVED.test(key) || key === "hud_wire_sh";
+}
+
+export function isCatalogArt(key: string): boolean {
+  return ART_SOURCE.has(key) && !isUtilityDerived(key);
+}
+
 const UUID_TEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function isUuidTexture(key: string): boolean {
@@ -479,6 +530,11 @@ export function nameTexture(textures: Phaser.Textures.TextureManager, currentKey
   if (!currentKey || currentKey === newKey || !textures.exists(currentKey)) return;
   if (textures.exists(newKey) && newKey !== currentKey) textures.remove(newKey);
   textures.renameTexture(currentKey, newKey);
+  const src = ART_SOURCE.get(currentKey);
+  if (src) {
+    ART_SOURCE.delete(currentKey);
+    ART_SOURCE.set(newKey, src);
+  }
 }
 
 export function nameGameTexture(scene: Phaser.Scene, obj: { texture?: Phaser.Textures.Texture; name?: string }, key: string): void {
@@ -561,7 +617,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   // Sheet cell 0 unused (Apache rotor is CRAFT_ART); cell 1 = enemy heli.
   const enemyRotor = fit(squareCenter(rotors[1]!), 108);
   put(textures, "enemy_heli_rotor", enemyRotor);
-  put(textures, "enemy_heli_rotor_spin", radialStampBlur(enemyRotor, spritePivot("enemy_heli_rotor")));
+  put(textures, "enemy_heli_rotor_spin", radialStampBlur(enemyRotor, spritePivot("enemy_heli_rotor")), "generated");
 
   // Selectable craft bodies / custom rotors.
   for (const art of CRAFT_ART) {
@@ -574,7 +630,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
       } else {
         const rotor = fit(squareCenter(keyed), art.fit);
         put(textures, art.key, rotor);
-        put(textures, `${art.key}_spin`, radialStampBlur(rotor, spritePivot(art.key)));
+        put(textures, `${art.key}_spin`, radialStampBlur(rotor, spritePivot(art.key)), "generated");
       }
     } else if (art.key.endsWith("_hulk")) {
       put(textures, art.key, darkenWreck(fit(keyed, art.fit)));
@@ -664,7 +720,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   for (const key of ["enemy_boat_hulk", "enemy_ptboat_hulk"] as const) {
     if (!textures.exists(key)) continue;
     const img = textures.get(key).getSourceImage() as HTMLCanvasElement;
-    put(textures, `${key}_sink`, submergeBlue(img));
+    put(textures, `${key}_sink`, submergeBlue(img), "generated");
   }
   putHulkGrid(textures, "src_enemy_moto_mg_hulk", 2, 1, [
     ["enemy_motorcycle_hulk", 46],
@@ -724,7 +780,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
 
   putHulkGrid(textures, "src_building_bunker_hulk", 2, 1, [
     ["building_bunker_hulk", 120],
-    ["hulk_crater", 48],
+    ["fx_hulk_crater", 48],
   ]);
 
   putDebrisSheet(textures, "src_debris_mech", "mech");
@@ -750,7 +806,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   blasts.forEach((c, i) => {
     const blast = fit(c, 88);
     put(textures, `fx_blast_${i}`, blast);
-    put(textures, `fx_blast_${i}_heat`, bakeThermalHeatFromDarkness(blast));
+    put(textures, `fx_blast_${i}_heat`, bakeThermalHeatFromDarkness(blast), "generated");
   });
 
   for (const kind of FX_KINDS) {
@@ -880,10 +936,12 @@ function src(textures: Phaser.Textures.TextureManager, key: string): HTMLImageEl
 function put(
   textures: Phaser.Textures.TextureManager,
   key: string,
-  c: HTMLCanvasElement
+  c: HTMLCanvasElement,
+  source: ArtSource = "image"
 ): void {
   if (textures.exists(key)) textures.remove(key);
   textures.addCanvas(key, c);
+  registerArt(key, source);
 }
 
 function putGrid(
@@ -944,7 +1002,8 @@ function putFxSpriteSheet(
   textures: Phaser.Textures.TextureManager,
   key: string,
   cells: HTMLCanvasElement[],
-  size: number
+  size: number,
+  source: ArtSource = "image"
 ): void {
   const n = cells.length;
   const sheet = document.createElement("canvas");
@@ -960,6 +1019,7 @@ function putFxSpriteSheet(
     frameHeight: size,
     endFrame: n - 1,
   });
+  registerArt(key, source);
 }
 
 function putFxSheet(
@@ -989,7 +1049,8 @@ function putFxSheet(
       textures,
       `${destKey}_heat`,
       cells.map((cell) => bakeCell(cell)),
-      size
+      size,
+      "generated"
     );
   }
 }
@@ -1838,6 +1899,6 @@ export function bakeShadows(textures: Phaser.Textures.TextureManager, key: strin
       d[p + 3] = Math.min(200, a * mul);
     }
     g.putImageData(pix, 0, 0);
-    put(textures, `${key}_sh${i}`, c);
+    put(textures, `${key}_sh${i}`, c, "generated");
   });
 }

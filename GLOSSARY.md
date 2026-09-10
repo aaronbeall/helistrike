@@ -68,9 +68,25 @@ In-game rigs dump live objects via `dumpRig` (`rigUi.ts`); row labels are **code
 | **hulk** | Wreck / debris art for a live sprite |
 | **atlas / sheet** | Texture with multiple frames |
 | **bake** | Offline / boot-time art processing |
-| **camo** | Biome skin variant |
+| **camo** | Biome skin variant (`base__woodland` etc.) |
 | **POI** | Damage interest UVs (player `dmg` role); not general mounts |
 | **rig** | Debug config browser (sprite / roster / combat) |
+| **registerArt** | Marks a texture for the sprite-rig catalog (`image` \| `generated`) |
+
+### Sprite-rig catalog
+
+What shows in the sprite rig (`registerArt` + filters in `sprites.ts`):
+
+| Include | Exclude |
+|--------|---------|
+| Gameplay sprites from loaded PNGs / sheet bakes | UI Text, menus, buttons, rig chrome (leave as UUID) |
+| Standalone generated art (`fx_shadow`, marks, tracers, …) | Menu-only chrome (`menu_splash`, mission preview thumbs) |
+| Art variants: `{rotor}_spin`, `{base}__{camo}` | Authoring intermediates (`src_*`, relief `brush_*`) |
+| Player HUD *graphics* (`hud_wire`, `hud_hurt_vignette`, …) | Utility maps: `{base}_sh0..3`, `_heat`, `_sink`, `hud_wire_sh` |
+
+**Rule of thumb for new derived textures:** if it’s another *appearance of the subject*, register it and keep it; if it’s a runtime *effect/mode buffer*, bake it for gameplay but treat it as utility (suffixes above / `isUtilityDerived`).
+
+Stats panel `source` is `"image"` (from loaded art) or `"generated"` (engine-drawn).
 
 ## Units / AI
 

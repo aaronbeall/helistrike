@@ -565,6 +565,8 @@ export type CraftCompositePart = {
   layer: "below" | "above";
   /** Normalized texture span before the body's display scale is applied. */
   drawSpan?: number;
+  /** +1 CW / −1 CCW from above (Phaser rotation sign). */
+  spinSign?: 1 | -1;
 };
 
 export type CraftComposite = {
@@ -580,12 +582,83 @@ export function rotorDrawSpan(tex: string, partScale = 1): number {
   return 108 * partScale;
 }
 
-/** Authored rotor centers and optional per-mount scales; body center if none authored. */
-export function craftRotorMounts(c: CraftSpec = craftOf()): { x: number; y: number; scale?: number }[] {
-  const mounts = lookupSpritePoints(c.body)
+/**
+ * Phaser spin sign for a rotor mount (+1 CW, −1 CCW), viewed from above.
+ * Western single mains → CCW. Tandem / side-by-side / quad use counter-rotation.
+ */
+export function rotorSpinSign(
+  rotors: { x: number; y: number; id?: string; spin?: 1 | -1 }[],
+  index: number
+): 1 | -1 {
+  const n = rotors.length;
+  const p = rotors[index];
+  if (!p || n < 1) return -1;
+  if (p.spin === 1 || p.spin === -1) return p.spin;
+  if (p.id === "tail" || p.id?.startsWith("tail")) return 1;
+  if (n === 1) return -1;
+
+  const xs = rotors.map((r) => r.x);
+  const ys = rotors.map((r) => r.y);
+  const xSpan = Math.max(...xs) - Math.min(...xs);
+  const ySpan = Math.max(...ys) - Math.min(...ys);
+
+  if (n === 2 && ySpan > xSpan * 1.15) {
+    // Chinook-style tandem: forward CCW, aft CW (CH-47 from above).
+    let front = 0;
+    for (let i = 1; i < n; i++) if (rotors[i]!.y < rotors[front]!.y) front = i;
+    return index === front ? -1 : 1;
+  }
+  if (n === 2 && xSpan > ySpan * 1.15) {
+    // Osprey-style: left CW, right CCW from above.
+    let left = 0;
+    for (let i = 1; i < n; i++) if (rotors[i]!.x < rotors[left]!.x) left = i;
+    return index === left ? 1 : -1;
+  }
+  if (n >= 3 && xSpan > ySpan * 2.2) {
+    // Wing props in a row (gunship): adjacent counter-rotate, outer-left CW.
+    const order = rotors.map((_, i) => i).sort((a, b) => rotors[a]!.x - rotors[b]!.x);
+    const rank = order.indexOf(index);
+    return rank % 2 === 0 ? 1 : -1;
+  }
+  if (n >= 4) {
+    // Quad X: FL+RR CW, FR+RL CCW (nose = smaller y).
+    const midX = (Math.min(...xs) + Math.max(...xs)) * 0.5;
+    const midY = (Math.min(...ys) + Math.max(...ys)) * 0.5;
+    const left = p.x < midX;
+    const nose = p.y < midY;
+    if (nose && left) return 1;
+    if (nose && !left) return -1;
+    if (!nose && left) return -1;
+    return 1;
+  }
+  return index % 2 === 0 ? -1 : 1;
+}
+
+/** Rotor UVs for a hull texture (craft body or unit). */
+export function rotorMountsOf(
+  texKey: string
+): { x: number; y: number; scale?: number; id?: string; spin?: 1 | -1 }[] {
+  const mounts = lookupSpritePoints(texKey)
     .filter((point) => point.role === "rotor")
-    .map((point) => ({ x: point.x, y: point.y, ...(point.scale != null ? { scale: point.scale } : {}) }));
+    .map((point) => ({
+      x: point.x,
+      y: point.y,
+      ...(point.scale != null ? { scale: point.scale } : {}),
+      ...(point.id != null ? { id: point.id } : {}),
+      ...(point.spin === 1 || point.spin === -1 ? { spin: point.spin } : {}),
+    }));
   return mounts.length ? mounts : [{ x: 0.5, y: 0.5 }];
+}
+
+/** Authored rotor centers and optional per-mount scales; body center if none authored. */
+export function craftRotorMounts(c: CraftSpec = craftOf()): {
+  x: number;
+  y: number;
+  scale?: number;
+  id?: string;
+  spin?: 1 | -1;
+}[] {
+  return rotorMountsOf(c.body);
 }
 
 /**
@@ -663,13 +736,14 @@ export function craftComposite(c: CraftSpec = craftOf()): CraftComposite {
             };
           }),
     rotors: rotorTex
-      ? craftRotorMounts(c).map((mount) => ({
+      ? craftRotorMounts(c).map((mount, i, mounts) => ({
           kind: "rotor",
           tex: rotorTex,
           spinTex: craftRotorSpinTex(c),
           origin: lookupSpriteOrigin(rotorTex) ?? DEFAULT_ORIGIN,
           mount,
           layer: "above",
+          spinSign: rotorSpinSign(mounts, i),
           drawSpan: rotorDrawSpan(
             rotorTex,
             (c.rotorScale ?? 1) * (mount.scale ?? 1)

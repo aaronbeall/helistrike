@@ -115,13 +115,13 @@ export class CombatRig {
     this.board = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH + 1).setVisible(false);
     this.preview = scene.add
       .image(0, 0, "__DEFAULT")
-      .setName("ui_combat_preview")
+      .setName("rig_combat_preview")
       .setScrollFactor(0)
       .setDepth(DEPTH + 2)
       .setVisible(false);
     this.mountPreview = scene.add
       .image(0, 0, "__DEFAULT")
-      .setName("ui_combat_mount")
+      .setName("rig_combat_mount")
       .setScrollFactor(0)
       .setDepth(DEPTH + 2)
       .setVisible(false);
@@ -135,10 +135,10 @@ export class CombatRig {
       .setScrollFactor(0)
       .setDepth(DEPTH + 4)
       .setVisible(false);
-    nameGameTexture(scene, this.listTxt, "ui_combat_list");
-    nameGameTexture(scene, this.statsTxt, "ui_combat_stats");
-    nameGameTexture(scene, this.infoTxt, "ui_combat_info");
-    nameGameTexture(scene, this.hintTxt, "ui_combat_hint");
+    nameGameTexture(scene, this.listTxt, "rig_combat_list");
+    nameGameTexture(scene, this.statsTxt, "rig_combat_stats");
+    nameGameTexture(scene, this.infoTxt, "rig_combat_info");
+    nameGameTexture(scene, this.hintTxt, "rig_combat_hint");
     this.root.add([
       this.dim,
       this.board,
@@ -272,7 +272,7 @@ export class CombatRig {
     const e = items[this.idx]!;
 
     this.hintTxt.setText(
-      `COMBAT RIG   \` cycle / close   ↑ ↓ select   , . page   - + zoom ${this.zoom}×   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}`
+      `COMBAT RIG   ↑ ↓ select   , . page   - + zoom ${this.zoom}×   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}`
     );
 
     const size = this.pageSize();

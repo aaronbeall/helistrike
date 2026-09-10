@@ -8,20 +8,21 @@ import {
   type HullMountRole,
 } from "./roster";
 import {
+  lookupSpriteOrigin,
   lookupSpritePoints,
   spriteSpecOf,
   type SpritePointRole,
 } from "./spriteOrigin";
 import { makeRigText, setStackedTexts, RIG_VALUE, RIG_INFO, RIG_LIVE, dumpRig } from "./rigUi";
-import { isUuidTexture, nameGameTexture, nameGeneratedTextures } from "./sprites";
+import { artSourceOf, isCatalogArt, isUuidTexture, nameGameTexture } from "./sprites";
 
 const DEPTH = 9200;
 const MONO = "Share Tech Mono, monospace";
 const GOLD = "#e8b84a";
 const PAPER = RIG_VALUE;
 
-const SKIP = /^(src_|__)|_sh[0-3]$/;
-const GENERATED = /^(hud_|ui_|debug_|edit_|wpn_|hv_|lock_|map_|ai_label|menu_|load_|terrain|heightmap|wreck|wrecks|brush_|impact_|gen_)/;
+/** Phaser internals — catalog is registerArt() minus utility maps (see sprites.ts). */
+const SKIP = /^__/;
 const LIST_X = 16;
 const LIST_Y = 40;
 const LIST_W = 248;
@@ -37,7 +38,7 @@ export class SpriteRig {
   private scene: Phaser.Scene;
   private idx = 0;
   private frameIdx = 0;
-  /** Multiplier on fit-to-board scale (same steps as combat/roster). */
+  /** Phaser scale: 1× = native texture pixels. */
   private zoom = 2;
   private pinned: { uvx: number; uvy: number } | null = null;
   private copied = "";
@@ -62,7 +63,9 @@ export class SpriteRig {
   private originOf: (key: string) => { x: number; y: number };
   private onBuilt?: (root: Phaser.GameObjects.Container) => void;
   private uiCam!: Phaser.Cameras.Scene2D.Camera;
-  artOnly = true;
+  /** `"all"` or a first-segment prefix collected from loaded textures (`craft`, `shot`, …). */
+  private filterPrefix: string = "all";
+  private showMarks = true;
 
   constructor(
     scene: Phaser.Scene,
@@ -101,7 +104,7 @@ export class SpriteRig {
       // Don't nameGameTexture — that renames the shared art key (e.g. craft_apache).
       const im = scene.add
         .image(0, 0, "__DEFAULT")
-        .setName(`ui_rig_frame_${i}`)
+        .setName(`rig_sprite_frame_${i}`)
         .setScrollFactor(0)
         .setDepth(DEPTH + 2)
         .setVisible(false)
@@ -119,11 +122,11 @@ export class SpriteRig {
       .setScrollFactor(0)
       .setDepth(DEPTH + 4)
       .setVisible(false);
-    nameGameTexture(scene, this.listTxt, "ui_rig_list");
-    nameGameTexture(scene, this.statsTxt, "ui_rig_stats");
-    nameGameTexture(scene, this.liveTxt, "ui_rig_live");
-    nameGameTexture(scene, this.infoTxt, "ui_rig_info");
-    nameGameTexture(scene, this.hintTxt, "ui_rig_hint");
+    nameGameTexture(scene, this.listTxt, "rig_sprite_list");
+    nameGameTexture(scene, this.statsTxt, "rig_sprite_stats");
+    nameGameTexture(scene, this.liveTxt, "rig_sprite_live");
+    nameGameTexture(scene, this.infoTxt, "rig_sprite_info");
+    nameGameTexture(scene, this.hintTxt, "rig_sprite_hint");
     for (let i = 0; i < 16; i++) {
       const t = scene.add
         .text(0, 0, "", {
@@ -136,7 +139,7 @@ export class SpriteRig {
         .setScrollFactor(0)
         .setDepth(DEPTH + 5)
         .setVisible(false);
-      nameGameTexture(scene, t, `ui_rig_mount_${i}`);
+      nameGameTexture(scene, t, `rig_sprite_mount_${i}`);
       this.mountLabels.push(t);
     }
     this.root.add([
@@ -181,11 +184,17 @@ export class SpriteRig {
       });
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.G).on("down", () => {
         if (!this.open) return;
-        this.artOnly = !this.artOnly;
+        const opts = this.filterOptions();
+        const i = opts.indexOf(this.filterPrefix);
+        this.filterPrefix = opts[(i + 1) % opts.length]!;
         this.idx = 0;
         this.frameIdx = 0;
         this.pinned = null;
-        nameGeneratedTextures(this.scene);
+        this.refreshPreview();
+      });
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.O).on("down", () => {
+        if (!this.open) return;
+        this.showMarks = !this.showMarks;
         this.refreshPreview();
       });
     }
@@ -237,7 +246,6 @@ export class SpriteRig {
     this.scene.input.setDefaultCursor(this.open ? "default" : "none");
     this.uiCam.setVisible(this.open);
     if (this.open) {
-      nameGeneratedTextures(this.scene);
       this.refreshPreview();
     } else {
       this.overlay.clear();
@@ -329,16 +337,17 @@ export class SpriteRig {
 
     const frameHint = frames.length > 1 ? `   ← → frame ${this.frameIdx + 1}/${frames.length}` : "";
     this.hintTxt.setText(
-      `SPRITE RIG   \` cycle / close   ↑ ↓ select   , . page   - + zoom ${this.zoom}×   G art-only ${this.artOnly ? "ON" : "OFF"}${frameHint}`
+      `SPRITE RIG   ↑ ↓ select   , . page   - + zoom ${this.zoom}×   G filter ${this.filterPrefix.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}${frameHint}`
     );
     const size = this.pageSize();
     const pages = Math.max(1, Math.ceil(keys.length / size));
     const page = this.pageOf(this.idx);
     const start = page * size;
     const slice = keys.slice(start, start + size);
+    const totalN = this.catalogKeys().length;
     this.listTxt.setText(
       [
-        `— ${this.artOnly ? "ART" : "ALL"}  ${page + 1} / ${pages}  (${keys.length}) —`,
+        `— ${this.filterPrefix.toUpperCase()}  ${page + 1} / ${pages}  (${keys.length}/${totalN}) —`,
         ...slice.map((k, i) => {
           const mark = start + i === this.idx ? "▸" : " ";
           const n = this.framesOf(k).length;
@@ -352,6 +361,7 @@ export class SpriteRig {
     const spec = spriteSpecOf(key);
     const stats: Record<string, unknown> = {
       key,
+      source: artSourceOf(key) ?? "—",
       size: `${tw}×${th}`,
       origin: {
         x: origin.x,
@@ -391,7 +401,7 @@ export class SpriteRig {
     this.pendingInfo = ["texture space · nose-up · SPRITE_SPECS points"];
     this.applyStatsPanel();
 
-    this.drawOverlay(key, origin);
+    this.drawOverlay(key, uv);
   }
 
   private applyStatsPanel(): void {
@@ -414,13 +424,38 @@ export class SpriteRig {
     return Math.floor(idx / this.pageSize());
   }
 
-  private available(): string[] {
+  /** Texture key prefix before the first `_` (or the whole key if none). */
+  private prefixOf(key: string): string {
+    const i = key.indexOf("_");
+    return i > 0 ? key.slice(0, i) : key;
+  }
+
+  private catalogKeys(): string[] {
     const tex = this.scene.textures as Phaser.Textures.TextureManager & { getTextureKeys?: () => string[] };
     const raw = tex.getTextureKeys ? tex.getTextureKeys() : Object.keys(tex.list);
-    return raw
-      .filter((k) => k && !SKIP.test(k) && !isUuidTexture(k) && this.scene.textures.exists(k))
-      .filter((k) => !this.artOnly || !GENERATED.test(k))
-      .sort((a, b) => a.localeCompare(b));
+    return raw.filter(
+      (k) =>
+        k &&
+        !SKIP.test(k) &&
+        !isUuidTexture(k) &&
+        isCatalogArt(k) &&
+        this.scene.textures.exists(k)
+    );
+  }
+
+  /** `all` plus sorted prefixes present on catalog textures. */
+  private filterOptions(): string[] {
+    const set = new Set<string>();
+    for (const k of this.catalogKeys()) set.add(this.prefixOf(k));
+    return ["all", ...[...set].sort((a, b) => a.localeCompare(b))];
+  }
+
+  private available(): string[] {
+    const keys = this.catalogKeys();
+    const pref = this.filterPrefix;
+    return (pref === "all" ? keys : keys.filter((k) => this.prefixOf(k) === pref)).sort((a, b) =>
+      a.localeCompare(b)
+    );
   }
 
   private key(): string {
@@ -455,19 +490,18 @@ export class SpriteRig {
     this.preview.setOrigin(0.5, 0.5);
     const listRight = LIST_X + LIST_W + 20;
     const gap = 28;
-    const availW = Math.max(180, w - listRight - STATS_W - gap - 20);
     const stripH = frames.length > 1 ? FRAME_THUMB + 28 : 0;
-    const max = Math.min(h * 0.62, availW, h - LIST_Y - stripH - 80);
-    const fit = max / Math.max(this.preview.width, this.preview.height, 1);
-    const s = fit * (this.zoom / 2);
-    this.preview.setScale(s);
-    const previewCy = Math.min(h * 0.42, h - stripH - FRAME_THUMB - 56);
-    this.preview.setPosition(listRight + max * 0.5, previewCy);
+    const pad = 10;
+    // 1× = native texture pixels (same as combat/roster).
+    this.preview.setScale(this.zoom);
     const bw = this.preview.displayWidth;
     const bh = this.preview.displayHeight;
-    const bx = this.preview.x - bw * this.preview.originX;
-    const by = this.preview.y - bh * this.preview.originY;
-    this.statsXY = { x: bx + bw + gap, y: Math.max(LIST_Y, by) };
+    const cx = listRight + pad + bw * 0.5;
+    const cy = Math.min(LIST_Y + pad + bh * 0.5, h - stripH - pad - bh * 0.5);
+    this.preview.setPosition(cx, cy);
+    const bx = cx - bw * 0.5;
+    const by = cy - bh * 0.5;
+    this.statsXY = { x: Math.min(bx + bw + gap, w - STATS_W - 16), y: Math.max(LIST_Y, by) };
     this.applyStatsPanel();
 
     this.board.clear();
@@ -546,18 +580,31 @@ export class SpriteRig {
     return { uvx: px / spr.width, uvy: py / spr.height, px, py };
   }
 
-  private drawOverlay(key: string, origin: { x: number; y: number }): void {
+  private drawOverlay(
+    key: string,
+    hover: { uvx: number; uvy: number } | null
+  ): void {
     const g = this.overlay;
     g.clear();
+    for (const lab of this.mountLabels) lab.setVisible(false);
     const spr = this.preview;
     const toX = (u: number) => spr.x + (u - spr.originX) * spr.displayWidth;
     const toY = (v: number) => spr.y + (v - spr.originY) * spr.displayHeight;
-    const ox = toX(origin.x);
-    const oy = toY(origin.y);
     const left = toX(0);
     const right = toX(1);
     const top = toY(0);
     const bot = toY(1);
+
+    if (hover) {
+      const hx = toX(hover.uvx);
+      const hy = toY(hover.uvy);
+      g.lineStyle(1, 0x7ad0ff, 0.85);
+      g.lineBetween(hx, top, hx, bot);
+      g.lineBetween(left, hy, right, hy);
+    }
+
+    if (!this.showMarks) return;
+
     const midX = toX(0.5);
     const midY = toY(0.5);
     g.lineStyle(1, 0xe8e0c8, 0.28);
@@ -590,10 +637,16 @@ export class SpriteRig {
       g.lineStyle(1.25, 0xffe8c0, 0.95);
       g.strokeCircle(x, y, 5);
     }
-    g.lineStyle(1.5, 0xe8b84a, 0.95);
-    g.lineBetween(ox - 18, oy, ox + 18, oy);
-    g.lineBetween(ox, oy - 18, ox, oy + 18);
-    g.strokeCircle(ox, oy, 6);
+    // Origin mark only when authored in SPRITE_SPECS (not the 0.5/0.5 default).
+    const authored = lookupSpriteOrigin(key);
+    if (authored) {
+      const ox = toX(authored.x);
+      const oy = toY(authored.y);
+      g.lineStyle(1.5, 0xe8b84a, 0.95);
+      g.lineBetween(ox - 18, oy, ox + 18, oy);
+      g.lineBetween(ox, oy - 18, ox, oy + 18);
+      g.strokeCircle(ox, oy, 6);
+    }
     if (this.pinned) {
       const px = toX(this.pinned.uvx);
       const py = toY(this.pinned.uvy);

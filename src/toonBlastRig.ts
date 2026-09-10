@@ -124,14 +124,14 @@ export class ToonBlastRig {
   private seed = 0xb1a57e;
   private animT = 0;
   private playSpeed = 1;
-  /** Preview board zoom (speed uses `,` / `.`). */
-  private viewZoom = 1;
+  /** Preview board zoom: 1× = native canvas pixels (speed uses `,` / `.`). */
+  private viewZoom = 2;
   private paused = false;
   private dirtyLayout = true;
   private clusters = makeToonClusters(mulberry32(this.seed));
   private tmp = document.createElement("canvas");
   private gTmp = this.tmp.getContext("2d")!;
-  private previewKey = "ui_toon_blast_live";
+  private previewKey = "rig_toon_live";
 
   root: Phaser.GameObjects.Container;
   private dim!: Phaser.GameObjects.Rectangle;
@@ -167,7 +167,7 @@ export class ToonBlastRig {
     this.board = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH + 1).setVisible(false);
     this.preview = scene.add
       .image(0, 0, "__DEFAULT")
-      .setName("ui_toon_blast_preview")
+      .setName("rig_toon_preview")
       .setScrollFactor(0)
       .setDepth(DEPTH + 2)
       .setVisible(false);
@@ -190,10 +190,10 @@ export class ToonBlastRig {
       .setScrollFactor(0)
       .setDepth(DEPTH + 4)
       .setVisible(false);
-    nameGameTexture(scene, this.listTxt, "ui_toon_blast_list");
-    nameGameTexture(scene, this.infoTxt, "ui_toon_blast_info");
-    nameGameTexture(scene, this.descTxt, "ui_toon_blast_desc");
-    nameGameTexture(scene, this.hintTxt, "ui_toon_blast_hint");
+    nameGameTexture(scene, this.listTxt, "rig_toon_list");
+    nameGameTexture(scene, this.infoTxt, "rig_toon_info");
+    nameGameTexture(scene, this.descTxt, "rig_toon_desc");
+    nameGameTexture(scene, this.hintTxt, "rig_toon_hint");
     this.root.add([
       this.dim,
       this.board,
@@ -405,7 +405,7 @@ export class ToonBlastRig {
     );
 
     this.hintTxt.setText(
-      `TOON BLAST RIG   \` cycle/close   ↑ ↓ select   ← → nudge (unbounded, Shift×)   G randomize   R reseed   Space replay   P pause   , . speed ${this.playSpeed.toFixed(2)}×   - + zoom ${this.viewZoom}×   B bake   D defaults`
+      `TOON BLAST RIG   ↑ ↓ select   ← → nudge (unbounded, Shift×)   G randomize   R reseed   Space replay   P pause   , . speed ${this.playSpeed.toFixed(2)}×   - + zoom ${this.viewZoom}×   B bake   D defaults`
     );
     const sel = PARAMS[this.idx]!;
     this.infoTxt.setPosition(LIST_X + LIST_W + 24, LIST_Y);
@@ -442,18 +442,17 @@ export class ToonBlastRig {
     this.preview.setTexture(this.previewKey);
     this.preview.setOrigin(0.5, 0.5);
 
-    const w = this.scene.scale.width;
     const h = this.scene.scale.height;
     const listRight = LIST_X + LIST_W + 20;
-    const avail = Math.min(h * 0.7, w - listRight - 80);
-    const s = (avail / Math.max(size, 1)) * this.viewZoom;
-    this.preview.setScale(s);
-    const cx = listRight + avail * 0.5;
-    const cy = h * 0.45;
-    this.preview.setPosition(cx, cy);
-
+    const pad = 10;
+    // 1× = native canvas pixels (same as combat/roster/sprite).
+    this.preview.setScale(this.viewZoom);
     const bw = this.preview.displayWidth;
     const bh = this.preview.displayHeight;
+    const cx = listRight + pad + bw * 0.5;
+    const cy = Math.min(h * 0.45, h - pad - bh * 0.5);
+    this.preview.setPosition(cx, cy);
+
     const bx = cx - bw * 0.5;
     const by = cy - bh * 0.5;
     this.board.clear();

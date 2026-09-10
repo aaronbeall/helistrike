@@ -155,14 +155,14 @@ export class RosterRig {
     this.board = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH + 1).setVisible(false);
     this.hull = scene.add
       .image(0, 0, "__DEFAULT")
-      .setName("ui_roster_hull")
+      .setName("rig_roster_hull")
       .setScrollFactor(0)
       .setDepth(DEPTH + 2)
       .setVisible(false);
     for (let i = 0; i < PART_SLOTS; i++) {
       const im = scene.add
         .image(0, 0, "__DEFAULT")
-        .setName(`ui_roster_part_${i}`)
+        .setName(`rig_roster_part_${i}`)
         .setScrollFactor(0)
         .setDepth(DEPTH + 3)
         .setVisible(false);
@@ -171,7 +171,7 @@ export class RosterRig {
     for (let i = 0; i < SHOT_SLOTS; i++) {
       const im = scene.add
         .image(0, 0, "__DEFAULT")
-        .setName(`ui_roster_shot_${i}`)
+        .setName(`rig_roster_shot_${i}`)
         .setScrollFactor(0)
         .setDepth(DEPTH + 3)
         .setVisible(false);
@@ -188,11 +188,11 @@ export class RosterRig {
       .setScrollFactor(0)
       .setDepth(DEPTH + 5)
       .setVisible(false);
-    nameGameTexture(scene, this.listTxt, "ui_roster_list");
-    nameGameTexture(scene, this.statsTxt, "ui_roster_stats");
-    nameGameTexture(scene, this.liveTxt, "ui_roster_live");
-    nameGameTexture(scene, this.infoTxt, "ui_roster_info");
-    nameGameTexture(scene, this.hintTxt, "ui_roster_hint");
+    nameGameTexture(scene, this.listTxt, "rig_roster_list");
+    nameGameTexture(scene, this.statsTxt, "rig_roster_stats");
+    nameGameTexture(scene, this.liveTxt, "rig_roster_live");
+    nameGameTexture(scene, this.infoTxt, "rig_roster_info");
+    nameGameTexture(scene, this.hintTxt, "rig_roster_hint");
     for (let i = 0; i < LABEL_SLOTS; i++) {
       const t = scene.add
         .text(0, 0, "", {
@@ -205,7 +205,7 @@ export class RosterRig {
         .setScrollFactor(0)
         .setDepth(DEPTH + 6)
         .setVisible(false);
-      nameGameTexture(scene, t, `ui_roster_mount_${i}`);
+      nameGameTexture(scene, t, `rig_roster_mount_${i}`);
       this.mountLabels.push(t);
     }
     this.root.add([
@@ -402,7 +402,7 @@ export class RosterRig {
     const compositionLabel = this.composition === "assembled" ? "ASSEMBLED" : "UNASSEMBLED";
     const zoomShown = this.zoom;
     this.hintTxt.setText(
-      `ROSTER RIG   \` cycle / close   ↑ ↓ select   , . page   - + zoom ${fmtZoom(zoomShown)}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   C composition ${compositionLabel}${rollHint}${craftHint}`
+      `ROSTER RIG   ↑ ↓ select   , . page   - + zoom ${fmtZoom(zoomShown)}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   C composition ${compositionLabel}${rollHint}${craftHint}`
     );
 
     const size = this.pageSize();
@@ -730,7 +730,7 @@ export class RosterRig {
     h: number;
     showShots: boolean;
     wpns: WeaponSpec[];
-    /** Override roster zoom (craft caps at 1× to avoid blurry upscaling). */
+    /** Override roster zoom (1× = native texture pixels). */
     zoom?: number;
   }): void {
     const s = opts.zoom ?? this.zoom;

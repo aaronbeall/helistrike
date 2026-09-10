@@ -1,4 +1,5 @@
 import type Phaser from "phaser";
+import { registerArt } from "./sprites";
 
 /**
  * Cel-shaded blast hierarchy (top → bottom):
@@ -665,6 +666,7 @@ function bakeOneVariant(
     frameHeight: size,
     endFrame: frames - 1,
   });
+  registerArt(key, "generated");
 }
 
 export function bakeToonBlast(textures: Phaser.Textures.TextureManager): void {

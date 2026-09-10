@@ -7,7 +7,7 @@ import { PLAYER_WPNS, type PlayerWpnSpec } from "./combat";
 import { allCraftKinds, craftGunTexture, craftOf } from "./craft";
 import { bakeToonBlast } from "./toonBlast";
 import { allKinds, gunsOf, specOf, type UnitKind } from "./roster";
-import { bakeShadows, bakeThermalHeatFromAlpha, bakeThermalHeatFromDarkness } from "./sprites";
+import { bakeShadows, bakeThermalHeatFromAlpha, bakeThermalHeatFromDarkness, registerArt } from "./sprites";
 
 type Ctx = CanvasRenderingContext2D;
 
@@ -40,6 +40,7 @@ function roundRect(
 function add(textures: Phaser.Textures.TextureManager, key: string, c: HTMLCanvasElement): void {
   if (textures.exists(key)) textures.remove(key);
   textures.addCanvas(key, c);
+  registerArt(key, "generated");
 }
 
 /** Magenta-key placeholder so missing sheet art is obvious in-game / rigs. */
@@ -582,7 +583,7 @@ function drawLock(): HTMLCanvasElement {
  * Sheet art may overwrite rockets / FX / blasts when present.
  */
 export function bakeAll(textures: Phaser.Textures.TextureManager): void {
-  add(textures, "shadow", drawShadow());
+  add(textures, "fx_shadow", drawShadow());
   for (let i = 0; i < 5; i++) {
     const key = i === 0 ? "fx_shell" : `fx_shell_${i}`;
     const shell = drawShellCasing(i);
@@ -596,15 +597,14 @@ export function bakeAll(textures: Phaser.Textures.TextureManager): void {
   add(textures, "fx_spark", drawSpark());
   add(textures, "fx_smoke", drawSmoke());
   add(textures, "fx_muzzle", drawMuzzle());
-  add(textures, "reticle", drawReticle());
-  add(textures, "reticle_sq", drawReticleSquare());
-  add(textures, "lock", drawLock());
-  add(textures, "track", drawTrack("tread"));
-  add(textures, "track_tread", drawTrack("tread"));
-  add(textures, "track_tire", drawTrack("tire"));
-  add(textures, "track_dual", drawTrack("dual"));
-  add(textures, "track_wide", drawTrack("wide"));
-  add(textures, "track_mono", drawTrack("mono"));
+  add(textures, "mark_reticle", drawReticle());
+  add(textures, "mark_reticle_sq", drawReticleSquare());
+  add(textures, "mark_lock", drawLock());
+  add(textures, "fx_track_tread", drawTrack("tread"));
+  add(textures, "fx_track_tire", drawTrack("tire"));
+  add(textures, "fx_track_dual", drawTrack("dual"));
+  add(textures, "fx_track_wide", drawTrack("wide"));
+  add(textures, "fx_track_mono", drawTrack("mono"));
   add(textures, "fx_flame", drawFlame());
   for (let i = 0; i < 4; i++) {
     const blast = drawBlast(i);
@@ -654,7 +654,7 @@ function collectArtKeys(): string[] {
     "fx_flame",
     "fx_blast_0",
     "fx_debris_metal",
-    "hulk_crater",
+    "fx_hulk_crater",
   ]) {
     keys.add(k);
   }

@@ -248,11 +248,11 @@ export class BalanceRig {
       .setScrollFactor(0)
       .setDepth(DEPTH + 4)
       .setVisible(false);
-    nameGameTexture(scene, this.listTxt, "ui_balance_list");
-    nameGameTexture(scene, this.statsHeadTxt, "ui_balance_stats_head");
-    nameGameTexture(scene, this.statsHotTxt, "ui_balance_stats_hot");
-    nameGameTexture(scene, this.statsTxt, "ui_balance_stats");
-    nameGameTexture(scene, this.hintTxt, "ui_balance_hint");
+    nameGameTexture(scene, this.listTxt, "rig_balance_list");
+    nameGameTexture(scene, this.statsHeadTxt, "rig_balance_stats_head");
+    nameGameTexture(scene, this.statsHotTxt, "rig_balance_stats_hot");
+    nameGameTexture(scene, this.statsTxt, "rig_balance_stats");
+    nameGameTexture(scene, this.hintTxt, "rig_balance_hint");
     this.root.add([
       this.dim,
       this.board,
@@ -356,7 +356,7 @@ export class BalanceRig {
     if (!this.open) return;
     const filter = this.filterLabel();
     this.hintTxt.setText(
-      `BALANCE RIG   \` close   ↑ ↓ select   G ${this.cat.toUpperCase()}   F ${filter}   X/Y axes   L log ${this.logScale ? "ON" : "off"}   O labels ${this.showLabels ? "ON" : "OFF"}`
+      `BALANCE RIG   ↑ ↓ select   G ${this.cat.toUpperCase()}   F ${filter}   X/Y axes   L log ${this.logScale ? "ON" : "off"}   O labels ${this.showLabels ? "ON" : "OFF"}`
     );
   }
 
@@ -631,7 +631,7 @@ export class BalanceRig {
         add: false,
       });
       t.setScrollFactor(0).setDepth(DEPTH + 5).setVisible(false);
-      nameGameTexture(this.scene, t, `ui_balance_label_${this.labelPool.length}`);
+      nameGameTexture(this.scene, t, `rig_balance_label_${this.labelPool.length}`);
       this.root.add(t);
       // addedtoscene ignore-all can still tag container children — allow uiCam through.
       t.cameraFilter &= ~this.uiCam.id;

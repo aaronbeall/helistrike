@@ -23,6 +23,11 @@ export interface SpritePoint {
   scale?: number;
   /** Optional stable id when several points share a role. */
   id?: string;
+  /**
+   * Rotor spin when viewed from above: `1` = CW (Phaser+), `-1` = CCW.
+   * Omit to use layout defaults (Western main = CCW).
+   */
+  spin?: 1 | -1;
 }
 
 export interface SpriteSpec {
@@ -105,8 +110,8 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
       // ESSS stub-wing gun tips (outer pylon fronts).
       ...pts("muzzle", [uv(0.195, 0.405), uv(0.805, 0.405)], "wing"),
       // Crew-served door guns (L / R cabin).
-      { role: "gun", x: 0.30, y: 0.58, id: "door_l" },
-      { role: "gun", x: 0.70, y: 0.58, id: "door_r" },
+      { role: "gun", x: 0.281, y: 0.264, id: "door_l" },
+      { role: "gun", x: 0.706, y: 0.261, id: "door_r" },
       // Stub-wing stores (inner → outer feel; L / R).
       ...pts("hardpoint", [uv(0.155, 0.455), uv(0.845, 0.455)]),
     ],
@@ -155,8 +160,8 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
   craft_cyberhawk: {
     origin: uv(0.502, 0.538),
     points: [
-      { role: "rotor", x: 0.502, y: 0.538 },
-      { role: "rotor", x: 0.497, y: 0.9, scale: 0.34, id: "tail" },
+      { role: "rotor", x: 0.502, y: 0.538, spin: -1 },
+      { role: "rotor", x: 0.497, y: 0.9, scale: 0.34, id: "tail", spin: 1 },
       { role: "gun", x: 0.5, y: 0.17 },
       ...pts("hardpoint", [uv(0.18, 0.48), uv(0.82, 0.48)]),
       ...pts("exhaust", [uv(0.372, 0.646), uv(0.63, 0.647)]),

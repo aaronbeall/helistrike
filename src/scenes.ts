@@ -48,7 +48,7 @@ import {
   pointInFootprint,
 } from "./footprint";
 import { lookupSpriteMuzzles, lookupSpriteOrigin } from "./spriteOrigin";
-import { allCrafts, craftAgility, craftAimsWithTurret, craftCameraScale, craftComposite, craftCompositePartScale, craftCrewHudTag, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftGunSocketSlots, craftHardpointMounts, craftLoadoutLabel, craftLoadoutParts, craftOf, craftOrigin, craftPreviewExhaustScale, craftPreviewExhaustTint, craftPreviewFitScale, craftRotorMounts, craftSocketBarrelCount, craftSocketPoints, craftSocketStartingAmmo, rotorDrawSpan, selectCraft, type CraftComposite } from "./craft";
+import { allCrafts, craftAgility, craftAimsWithTurret, craftCameraScale, craftComposite, craftCompositePartScale, craftCrewHudTag, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftGunSocketSlots, craftHardpointMounts, craftLoadoutLabel, craftLoadoutParts, craftOf, craftOrigin, craftPreviewExhaustScale, craftPreviewExhaustTint, craftPreviewFitScale, craftRotorMounts, craftSocketBarrelCount, craftSocketPoints, craftSocketStartingAmmo, rotorDrawSpan, rotorMountsOf, rotorSpinSign, selectCraft, type CraftComposite } from "./craft";
 import { allMissions, missionOf, selectMission } from "./mission";
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
 import { rigsAnyOpen, installRigHotkeys } from "./rigs";
@@ -57,7 +57,7 @@ import { setThermalPipeline, type ThermalPalette } from "./thermal";
 import { createTerrain25D, type Terrain25D } from "./terrain25d";
 import { LOAD_TIPS } from "./tips";
 import { fbm } from "./noise";
-import { preloadArt, prepareArt, extractBiomeTiles, bakeHeliHudWireTexture, bakeHurtVignetteTexture, heliHudWireUv, shadowAlpha, shadowKey, spriteUvPos, FX_VARIANTS, nameGameTexture, nameGeneratedTextures, spritePivot, type HeliHudWireBake } from "./sprites";
+import { preloadArt, prepareArt, extractBiomeTiles, bakeHeliHudWireTexture, bakeHurtVignetteTexture, heliHudWireUv, shadowAlpha, shadowKey, spriteUvPos, FX_VARIANTS, registerArt, nameGameTexture, spritePivot, type HeliHudWireBake } from "./sprites";
 import {
   generateWorld,
   generateWorldAsync,
@@ -397,7 +397,7 @@ function ensureMissionPreviews(textures: Phaser.Textures.TextureManager): void {
   const missions = allMissions();
   for (let m = 0; m < missions.length; m++) {
     const mission = missions[m]!;
-    const key = `mission_preview_${mission.kind}`;
+    const key = `menu_mission_preview_${mission.kind}`;
     if (textures.exists(key)) continue;
     const canvas = document.createElement("canvas");
     canvas.width = width;
@@ -463,12 +463,12 @@ function createControlLegend(
     objects.push(g);
     objects.push(
       scene.add
-      .text(x, py, label, {
-        fontFamily: "Share Tech Mono, monospace",
-        fontSize: keyW > 36 ? "9px" : "11px",
-        color: "#f2d579",
-      })
-      .setOrigin(0.5)
+        .text(x, py, label, {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: keyW > 36 ? "9px" : "11px",
+          color: "#f2d579",
+        })
+        .setOrigin(0.5)
     );
   };
   const mouse = (x: number, py: number, leftLit: boolean, wheelLit = false) => {
@@ -483,12 +483,12 @@ function createControlLegend(
   const label = (i: number, value: string) => {
     objects.push(
       scene.add
-      .text(controlX(i), y + 25, value, {
-        fontFamily: "Share Tech Mono, monospace",
-        fontSize: "9px",
-        color: "#d8d0ba",
-      })
-      .setOrigin(0.5)
+        .text(controlX(i), y + 25, value, {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: "9px",
+          color: "#d8d0ba",
+        })
+        .setOrigin(0.5)
     );
   };
   const iconY = y - 6;
@@ -538,8 +538,7 @@ export class MenuScene extends Phaser.Scene {
       bg.setScale(Math.max(sx, sy));
       this.add
         .rectangle(w / 2, h / 2, w, h, 0x0c0a08, 0.58)
-        .setDepth(1)
-        .setName("menu_scrim");
+        .setDepth(1);
     }
     this.add
       .text(w / 2, 54, "HELISTRIKE", {
@@ -550,8 +549,7 @@ export class MenuScene extends Phaser.Scene {
         strokeThickness: 5,
       })
       .setOrigin(0.5)
-      .setDepth(2)
-      .setName("menu_title");
+      .setDepth(2);
     const crafts = allCrafts();
     const missions = allMissions();
     let craftIndex = Math.max(0, crafts.findIndex((c) => c.kind === craftOf().kind));
@@ -594,14 +592,15 @@ export class MenuScene extends Phaser.Scene {
       const artScale = craftPreviewFitScale(art.width, art.height, 104, 82);
       art.setScale(artScale);
       const composite = craftComposite(craft);
-      const rotors = composite.rotors.map((part, rotorI) => {
+      const rotors = composite.rotors.map((part) => {
         const rotor = this.add
           .image(x, 181, part.tex)
           .setOrigin(part.origin.x, part.origin.y)
           .setDepth(4);
+        const sign = part.spinSign ?? -1;
         this.tweens.add({
           targets: rotor,
-          rotation: (rotorI % 2 ? -1 : 1) * Math.PI * 2,
+          rotation: sign * Math.PI * 2,
           duration: 60000,
           repeat: -1,
           ease: "Linear",
@@ -663,7 +662,7 @@ export class MenuScene extends Phaser.Scene {
         .setDepth(2)
         .setInteractive({ useHandCursor: true });
       const art = this.add
-        .image(x, 450, `mission_preview_${mission.kind}`)
+        .image(x, 450, `menu_mission_preview_${mission.kind}`)
         .setDisplaySize(missionW - 8, missionH - 8)
         .setDepth(3);
       const artScaleX = art.scaleX;
@@ -987,9 +986,9 @@ export class MenuScene extends Phaser.Scene {
       row = 2;
       customParamIndex = i;
       customParams[i]!.adjust(dir);
-      const key = "mission_preview_custom";
+      const key = "menu_mission_preview_custom";
       const customIndex = missions.findIndex((mission) => mission.kind === "custom");
-      if (customIndex >= 0) missionCards[customIndex]!.art.setTexture("mission_preview_river_run");
+      if (customIndex >= 0) missionCards[customIndex]!.art.setTexture("menu_mission_preview_river_run");
       if (thisScene.textures.exists(key)) thisScene.textures.remove(key);
       ensureMissionPreviews(thisScene.textures);
       if (customIndex >= 0) missionCards[customIndex]!.art.setTexture(key);
@@ -1131,8 +1130,7 @@ export class MenuScene extends Phaser.Scene {
       })
       .setOrigin(0.5)
       .setDepth(2)
-      .setInteractive({ useHandCursor: true })
-      .setName("menu_start");
+      .setInteractive({ useHandCursor: true });
     go.on("pointerdown", () => this.scene.start("load"));
     this.input.keyboard?.once("keydown-ENTER", () => this.scene.start("load"));
     this.input.keyboard?.once("keydown-SPACE", () => this.scene.start("load"));
@@ -1160,7 +1158,6 @@ export class MenuScene extends Phaser.Scene {
       this.input.keyboard?.off("keydown-RIGHT", selectRight);
     });
     installRigHotkeys(this);
-    nameGeneratedTextures(this);
   }
 }
 
@@ -1178,6 +1175,7 @@ export class LoadScene extends Phaser.Scene {
     super("load");
   }
   create(): void {
+    // Craft preview reuses craft_* textures; chrome Text/Graphics get load_* names.
     const { width: w, height: h } = this.scale;
     this.cameras.main.setBackgroundColor("#1c1812");
     this.heliY = h * 0.34;
@@ -1201,7 +1199,9 @@ export class LoadScene extends Phaser.Scene {
     this.rotorParts = composite.rotors;
     this.rotors = this.rotorParts.map((part) => {
       const at = spriteUvPos(this.body, part.mount.x, part.mount.y);
-      const rotor = this.add.image(at.x, at.y, part.tex).setOrigin(part.origin.x, part.origin.y);
+      const rotor = this.add
+        .image(at.x, at.y, part.tex)
+        .setOrigin(part.origin.x, part.origin.y);
       rotor.setScale(craftCompositePartScale(part, rotor.width, zs));
       return rotor;
     });
@@ -1220,16 +1220,14 @@ export class LoadScene extends Phaser.Scene {
         fontSize: "18px",
         color: "#e8b84a",
       })
-      .setOrigin(0.5)
-      .setName("load_title");
+      .setOrigin(0.5);
     const sub = this.add
       .text(w / 2, h * 0.54, "procedural relief", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "13px",
         color: "#8a8470",
       })
-      .setOrigin(0.5)
-      .setName("load_stage");
+      .setOrigin(0.5);
     const barW = 320;
     const barH = 8;
     const barX = w / 2 - barW / 2;
@@ -1244,8 +1242,7 @@ export class LoadScene extends Phaser.Scene {
         align: "center",
         wordWrap: { width: Math.min(520, w - 48) },
       })
-      .setOrigin(0.5, 0)
-      .setName("load_tip");
+      .setOrigin(0.5, 0);
     drawControlLegend(this, w, h * 0.87);
     const drawBar = (t: number, label: string) => {
       const u = Phaser.Math.Clamp(t, 0, 1);
@@ -1266,7 +1263,6 @@ export class LoadScene extends Phaser.Scene {
       sub.setText(`${label.toUpperCase()}  ·  ${Math.round(u * 100)}%`);
     };
     drawBar(0.02, "relief");
-    nameGeneratedTextures(this);
     this.time.delayedCall(16, () => {
       const seed = (Date.now() ^ (Math.random() * 1e9)) >>> 0;
       const tiles = extractBiomeTiles(this.textures);
@@ -1295,13 +1291,14 @@ export class LoadScene extends Phaser.Scene {
     this.rotors.forEach((rotor, i) => {
       const part = this.rotorParts[i]!;
       const at = spriteUvPos(this.body, part.mount.x, part.mount.y);
+      const sign = part.spinSign ?? -1;
       rotor
         .setPosition(at.x, at.y)
-        .setRotation(i % 2 ? -this.rotorAng : this.rotorAng)
+        .setRotation(sign * this.rotorAng)
         .setAlpha(1 - disc * 0.38);
       this.rotorDiscs[i]
         ?.setPosition(at.x, at.y)
-        .setRotation((i % 2 ? -this.rotorAng : this.rotorAng) + Math.PI / 8)
+        .setRotation(sign * this.rotorAng + Math.PI / 8)
         .setAlpha(disc * 0.32);
     });
   }
@@ -1718,11 +1715,13 @@ export class MissionScene extends Phaser.Scene {
   create(): void {
     ensureEdgeLightPipeline(this.game);
     this.stampDecor();
-    if (this.textures.exists("terrain")) this.textures.remove("terrain");
-    this.textures.addCanvas("terrain", this.world.canvas);
-    if (this.textures.exists("heightmap")) this.textures.remove("heightmap");
+    if (this.textures.exists("map_terrain")) this.textures.remove("map_terrain");
+    this.textures.addCanvas("map_terrain", this.world.canvas);
+    registerArt("map_terrain", "generated");
+    if (this.textures.exists("map_height")) this.textures.remove("map_height");
     this.heightMapCanvas = paintHeightMap(this.world.height);
-    this.textures.addCanvas("heightmap", this.heightMapCanvas);
+    this.textures.addCanvas("map_height", this.heightMapCanvas);
+    registerArt("map_height", "generated");
     this.biomeTiles = extractBiomeTiles(this.textures);
     this.input.mouse?.disableContextMenu();
     ensureImpactGlow(this.textures);
@@ -1739,17 +1738,18 @@ export class MissionScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor("#2a2418");
     this.setupTestPostFx();
 
-    this.ground = this.add.image(WORLD / 2, WORLD / 2, "terrain");
+    this.ground = this.add.image(WORLD / 2, WORLD / 2, "map_terrain");
     this.ground.setDisplaySize(WORLD, WORLD).setDepth(Layer.TERRAIN);
     this.wreckLayer = this.add.renderTexture(0, 0, WRECK_TEX, WRECK_TEX);
     nameGameTexture(this, this.wreckLayer, "wreck_layer");
+    registerArt("wreck_layer", "generated");
     this.wreckLayer.setOrigin(0, 0).setPosition(0, 0);
     this.wreckLayer.setDisplaySize(WORLD, WORLD).setDepth(Layer.WRECK);
     (this.wreckLayer.texture as Phaser.Textures.DynamicTexture).setIsSpriteTexture(false);
     this.wreckLayer.clear();
     if (this.game.renderer instanceof Phaser.Renderer.WebGL.WebGLRenderer) {
       this.terrain25d = createTerrain25D(this, this.world, {
-        terrain: "terrain",
+        terrain: "map_terrain",
         decal: this.wreckLayer,
         depth: Layer.TERRAIN,
       });
@@ -1778,7 +1778,7 @@ export class MissionScene extends Phaser.Scene {
     setCamera25DFocus(this.heli.x, this.heli.y, this.heli.z);
     const craft = this.heli.spec;
     this.craftParts = craftComposite(craft);
-    this.shadow = this.add.image(0, 0, "shadow").setDepth(Layer.SHADOW);
+    this.shadow = this.add.image(0, 0, "fx_shadow").setDepth(Layer.SHADOW);
     this.guns = this.craftParts.guns.map((part) =>
       this.add
         .image(0, 0, part.tex)
@@ -1827,10 +1827,10 @@ export class MissionScene extends Phaser.Scene {
     this.muzzlePool = [this.muzzle, secondMuzzle];
     this.muzzleLives = [0, 0];
     this.body.setPosition(this.heli.x, this.heli.y);
-    this.reticle = this.add.image(0, 0, "reticle").setDepth(Layer.HUD).setScrollFactor(0);
+    this.reticle = this.add.image(0, 0, "mark_reticle").setDepth(Layer.HUD).setScrollFactor(0);
     this.reticleMark = this.add.graphics().setDepth(Layer.HUD).setScrollFactor(0);
     this.sight = this.add.graphics().setDepth(Layer.HUD).setScrollFactor(0);
-    this.lockSpr = this.add.image(0, 0, "lock").setDepth(Layer.FIELD).setVisible(false);
+    this.lockSpr = this.add.image(0, 0, "mark_lock").setDepth(Layer.FIELD).setVisible(false);
     this.lockGfx = this.add.graphics().setDepth(Layer.FIELD).setVisible(false);
     this.towWireGfx = this.add.graphics().setDepth(Layer.WORLD);
     this.teslaGfx = this.add.graphics().setDepth(Layer.WORLD).setBlendMode(Phaser.BlendModes.ADD);
@@ -2779,7 +2779,7 @@ export class MissionScene extends Phaser.Scene {
     this.playerHud = this.add.graphics().setScrollFactor(0).setDepth(Layer.HUD + 12);
     bakeHurtVignetteTexture(this);
     this.hurtVignette = this.add
-      .image(0, 0, "hurt_vignette")
+      .image(0, 0, "hud_hurt_vignette")
       .setOrigin(0, 0)
       .setScrollFactor(0)
       .setDepth(Layer.HUD + 4)
@@ -2788,19 +2788,19 @@ export class MissionScene extends Phaser.Scene {
       .setVisible(false);
     const wireBake = bakeHeliHudWireTexture(this);
     const panelWireW = 92;
-    if (wireBake && this.textures.exists("heli_hud_wire")) {
+    if (wireBake && this.textures.exists("hud_wire")) {
       this.heliHudWireBake = wireBake;
       this.heliHudWireScale = panelWireW / wireBake.w;
       const origin = wireBake.pivot;
       this.heliHudWireSh = this.add
-        .image(0, 0, "heli_hud_wire_sh")
+        .image(0, 0, "hud_wire_sh")
         .setOrigin(origin.x, origin.y)
         .setScale(this.heliHudWireScale)
         .setScrollFactor(0)
         .setDepth(Layer.HUD + 10)
         .setAlpha(0.72);
       this.heliHudWire = this.add
-        .image(0, 0, "heli_hud_wire")
+        .image(0, 0, "hud_wire")
         .setOrigin(origin.x, origin.y)
         .setScale(this.heliHudWireScale)
         .setScrollFactor(0)
@@ -2841,7 +2841,7 @@ export class MissionScene extends Phaser.Scene {
     this.mapGfx = this.add.graphics().setDepth(Layer.FIELD);
     this.mapHvLabels = [];
     this.debugGfx = this.add.graphics().setDepth(Layer.FIELD).setVisible(false);
-    this.blastGfx = this.add.graphics().setDepth(Layer.FIELD + 20).setName("blast_radius_debug");
+    this.blastGfx = this.add.graphics().setDepth(Layer.FIELD + 20);
     this.aiGfx = this.add.graphics().setDepth(Layer.FIELD + 8);
     const cx = 18 + 88;
     const cy = this.scale.height - 18 - 88;
@@ -2851,18 +2851,19 @@ export class MissionScene extends Phaser.Scene {
     this.miniBg = this.add.graphics().setScrollFactor(0).setDepth(Layer.HUD - 1);
     this.miniBg.fillStyle(0x12100c, 1);
     this.miniBg.fillCircle(cx, cy, 90);
-    this.miniTerrain = this.add.image(cx, cy, "terrain").setScrollFactor(0).setDepth(Layer.HUD);
+    this.miniTerrain = this.add.image(cx, cy, "map_terrain").setScrollFactor(0).setDepth(Layer.HUD);
     this.miniTerrain.setMask(this.miniMask.createGeometryMask());
-    if (this.textures.exists("wrecks")) this.textures.remove("wrecks");
-    this.wreckLayer.saveTexture("wrecks");
+    if (this.textures.exists("map_wrecks")) this.textures.remove("map_wrecks");
+    this.wreckLayer.saveTexture("map_wrecks");
+    registerArt("map_wrecks", "generated");
     this.flatWreckage = this.add
-      .image(0, WORLD, "wrecks")
+      .image(0, WORLD, "map_wrecks")
       .setOrigin(0, 1)
       .setFlipY(true)
       .setDisplaySize(WORLD, WORLD)
       .setDepth(Layer.WRECK)
       .setVisible(false);
-    this.miniWrecks = this.add.image(cx, cy, "wrecks").setScrollFactor(0).setDepth(Layer.HUD);
+    this.miniWrecks = this.add.image(cx, cy, "map_wrecks").setScrollFactor(0).setDepth(Layer.HUD);
     if (this.terrain25d) this.miniWrecks.setFlipY(true);
     this.miniWrecks.setMask(this.miniMask.createGeometryMask());
     this.miniMask.setVisible(false);
@@ -2881,20 +2882,6 @@ export class MissionScene extends Phaser.Scene {
     this.setupHelp();
     this.setupExitMenu();
     this.setupHudCam();
-    this.lockTxt.setName("hud_lock");
-    this.lockInbdTxt.setName("hud_fire");
-    this.lockHudTxt.setName("hud_lock_offscreen");
-    this.lockInbdHudTxt.setName("hud_fire_offscreen");
-    this.hud.setName("hud_status");
-    this.fpsHud.setName("hud_fps");
-    this.perfHud.setName("hud_perf");
-    this.hvHud.setName("hud_hv");
-    this.hvRows.forEach((t, i) => t.setName(`hv_row_${i}`));
-    this.wpnSlots.forEach((t, i) => t.setName(`wpn_slot_${i}`));
-    this.wpnHud.setName("hud_wpn");
-    this.mapLabel.setName("map_label");
-    this.hvArrowLabels.forEach((t, i) => t.setName(`hv_arrow_${i}`));
-    nameGeneratedTextures(this);
   }
 
   stampDecor(): void {
@@ -3214,11 +3201,11 @@ export class MissionScene extends Phaser.Scene {
     if (isWater(this.world, x, y)) return;
     // Skip often so the trail reads as broken / inconsistent.
     if (Math.random() < 0.38) return;
-    const key = this.textures.exists("track_mono")
-      ? "track_mono"
-      : this.textures.exists("track_tire")
-        ? "track_tire"
-        : "track";
+    const key = this.textures.exists("fx_track_mono")
+      ? "fx_track_mono"
+      : this.textures.exists("fx_track_tire")
+        ? "fx_track_tire"
+        : "fx_track_mono";
     if (!this.textures.exists(key)) return;
     const sc = scale * range(0.72, 1.18);
     const a = alpha * range(0.55, 1.15);
@@ -3653,7 +3640,7 @@ export class MissionScene extends Phaser.Scene {
     const cast = resolved.cast;
     const at = worldToScreen(resolved.x, resolved.y, resolved.z);
     const want = shadowKey(tex, cast);
-    const sk = this.textures.exists(want) ? want : "shadow";
+    const sk = this.textures.exists(want) ? want : "fx_shadow";
     if (sh.texture.key !== sk) sh.setTexture(sk);
     sh.setPosition(at.x, at.y)
       .setRotation(projectHeading(rot, resolved.x, resolved.y, resolved.z))
@@ -3791,7 +3778,7 @@ export class MissionScene extends Phaser.Scene {
             rotorAt.x + Math.cos(tiltRot) * rOffF - Math.sin(tiltRot) * rOffS,
             rotorAt.y + Math.sin(tiltRot) * rOffF + Math.cos(tiltRot) * rOffS
           )
-          .setRotation(i % 2 ? -h.rotor : h.rotor)
+          .setRotation((part.spinSign ?? -1) * h.rotor)
           .setScale(craftCompositePartScale(part, rotor.width, zs))
           .setAlpha(1)
           .setDepth(worldDepth(h.z, ZOff.rotor + i * 0.001, h.y));
@@ -4077,7 +4064,7 @@ export class MissionScene extends Phaser.Scene {
     const bombDrop = spec.launch.mode === "drop";
     const missile = wpn !== "cannon";
     this.reticle.setTexture(
-      !bombDrop && missile && this.textures.exists("reticle_sq") ? "reticle_sq" : "reticle"
+      !bombDrop && missile && this.textures.exists("mark_reticle_sq") ? "mark_reticle_sq" : "mark_reticle"
     );
     this.drawReticleTally(p.x, p.y, missile ? (this.ammo[h.weapon] ?? 0) : 0, spec.ammo);
     if (wpn === "lock-on-missile") {
@@ -5405,10 +5392,10 @@ export class MissionScene extends Phaser.Scene {
     alpha: number,
     duration: number
   ): void {
-    if (!this.textures.exists("impact_glow")) ensureImpactGlow(this.textures);
+    if (!this.textures.exists("fx_glow")) ensureImpactGlow(this.textures);
     const world = screenToWorldAtZ(x, y, z);
     const glow = this.add
-      .image(x, y, "impact_glow")
+      .image(x, y, "fx_glow")
       .setBlendMode(Phaser.BlendModes.ADD)
       .setTint(tint)
       .setDisplaySize(size, size)
@@ -5731,8 +5718,8 @@ export class MissionScene extends Phaser.Scene {
       if (s.life > 0) simParticles[w++] = s;
     }
     simParticles.length = w;
-    if (bloodDirty && this.textures.exists("terrain")) {
-      (this.textures.get("terrain") as Phaser.Textures.CanvasTexture).refresh();
+    if (bloodDirty && this.textures.exists("map_terrain")) {
+      (this.textures.get("map_terrain") as Phaser.Textures.CanvasTexture).refresh();
     }
     if (this.perfEnabled) {
       const t = performance.now();
@@ -6359,6 +6346,7 @@ export class MissionScene extends Phaser.Scene {
         } else {
           // TOW / command pointer: cruise at player AGL, then dive near the aim.
           // Target is mid-unit under reticle, else ground at mouse — same dive timing either way.
+          // Dive is not latched: moving the aim away recovers toward cruise.
           const tgt = this.reticleUnit() ?? this.hoverAerial();
           const aimX = tgt ? tgt.x : ptr.x;
           const aimY = tgt ? tgt.y : ptr.y;
@@ -6371,38 +6359,26 @@ export class MissionScene extends Phaser.Scene {
           const dist = Math.hypot(aimX - s.x, aimY - s.y);
           const diveRange = 300;
           const dive = Math.pow(1 - Phaser.Math.Clamp(dist / diveRange, 0, 1), 2.15);
-          // Latch dive so overshoot never pulls altitude back up to cruise.
-          if (!st.terminal && dive > 0.4) st.terminal = true;
+          const dropT = Phaser.Math.Clamp(dive * 1.45, 0, 1);
+          const wantZ = Phaser.Math.Linear(cruiseZ, impactZ, dropT);
 
-          if (st.terminal) {
-            // Same drop curve for unit or ground; only impactZ differs.
-            const dropT = Math.max(dive, 0.55);
-            const wantZ = Phaser.Math.Linear(
-              cruiseZ,
-              impactZ,
-              Phaser.Math.Clamp(dropT * 1.45, 0, 1)
-            );
-            const aimWant = Math.atan2(aimY - s.y, aimX - s.x);
-            const ada = Phaser.Math.Angle.Wrap(aimWant - s.angle);
+          const aimWant = Math.atan2(aimY - s.y, aimX - s.x);
+          const ada = Phaser.Math.Angle.Wrap(aimWant - s.angle);
+          if (dive > 0.2) {
             const turn = (beh.steering?.turnRate ?? rate) * (1.4 + dive * 2.6) * dt;
             s.angle += Phaser.Math.Clamp(ada, -turn, turn);
-            s.vx = Math.cos(s.angle) * spd;
-            s.vy = Math.sin(s.angle) * spd;
-            s.vz = (wantZ - s.z) * (3.4 + dive * 6.2);
-            const prox = Math.hypot(aimX - s.x, aimY - s.y, impactZ - s.z);
-            if (prox < 18 || (!tgt && s.z <= impactZ + 3 && dist < 36)) {
-              st.detonate = true;
-            }
           } else {
-            const aimWant = Math.atan2(aimY - s.y, aimX - s.x);
-            const ada = Phaser.Math.Angle.Wrap(aimWant - s.angle);
             const clamped = s.angle + Phaser.Math.Clamp(ada, -maxA, maxA);
             const dAim = Phaser.Math.Angle.Wrap(clamped - s.angle);
             s.angle += Phaser.Math.Clamp(dAim, -rate * dt, rate * dt);
-            s.vx = Math.cos(s.angle) * spd;
-            s.vy = Math.sin(s.angle) * spd;
-            s.vz = (cruiseZ - s.z) * 1.4;
-            s.life = Math.max(s.life, 0.6);
+          }
+          s.vx = Math.cos(s.angle) * spd;
+          s.vy = Math.sin(s.angle) * spd;
+          s.vz = (wantZ - s.z) * (1.4 + dive * 8.2);
+          s.life = Math.max(s.life, 0.6);
+          const prox = Math.hypot(aimX - s.x, aimY - s.y, impactZ - s.z);
+          if (prox < 18 || (!tgt && s.z <= impactZ + 3 && dist < 36)) {
+            st.detonate = true;
           }
         }
         return;
@@ -7019,7 +6995,7 @@ export class MissionScene extends Phaser.Scene {
       const textureRadius = 64;
       const startRadius = targetRadius * blastScale;
       const endRadius = targetRadius * 4 * blastScale;
-      const ring = this.add.image(blastX, blastY, "blast_ring_soft_v9", 0)
+      const ring = this.add.image(blastX, blastY, "fx_blast_ring", 0)
         .setTint(0xffffff)
         .setScale(startRadius / textureRadius)
         .setAlpha(0.4)
@@ -7393,6 +7369,7 @@ export class MissionScene extends Phaser.Scene {
           });
         }
         if (throwRotors) {
+          const rotorMounts = rotorMountsOf(textureOf(u.kind));
           sp.rotors.forEach((r, ri) => {
             const rk = this.textures.exists(r.hulk ?? "") ? r.hulk! : r.tex;
             const at = this.mountAt(u, resolveSkin(this.textures, textureOf(u.kind), u.camo), r.mount);
@@ -7404,18 +7381,19 @@ export class MissionScene extends Phaser.Scene {
               0.7
             );
             const heliRotor = r.tex.includes("rotor") && r.tex !== "enemy_drone_rotor";
+            const rotorAng = rotorSpinSign(rotorMounts, ri) * u.rotor;
             if (heliRotor) {
               this.throwRotorHulk({
                 key: rk,
                 x: at.x,
                 y: at.y,
                 z: u.z + 18,
-                rotorAng: ri % 2 ? -u.rotor : u.rotor,
+                rotorAng,
                 scale,
                 flamePts,
               });
             } else {
-              throwOff(rk, ri % 2 ? -u.rotor : u.rotor, at.x, at.y, scale, {
+              throwOff(rk, rotorAng, at.x, at.y, scale, {
                 flamePts,
               });
             }
@@ -7454,7 +7432,7 @@ export class MissionScene extends Phaser.Scene {
         const hp = spritePivot(hulkKey);
         const hs = this.wreckDrawScale(u.x, u.y, u.z, 1, isGroundVehicle(u.kind), u.angle);
         this.stampWreck(
-          this.textures.exists(hulkKey) ? hulkKey : "hulk_crater",
+          this.textures.exists(hulkKey) ? hulkKey : "fx_hulk_crater",
           u.x,
           u.y,
           u.angle + Math.PI / 2,
@@ -7857,7 +7835,13 @@ export class MissionScene extends Phaser.Scene {
         2 + ((Math.random() * 3) | 0),
         0.7
       );
-      const rotorAng = ri % 2 ? -opts.rotor : opts.rotor;
+      const spinMounts =
+        player && craft
+          ? craftRotorMounts(craft)
+          : opts.kind
+            ? rotorMountsOf(textureOf(opts.kind))
+            : [{ x: 0.5, y: 0.5 }];
+      const rotorAng = rotorSpinSign(spinMounts, ri) * opts.rotor;
       // Drones: all rotors always fly off — never pin to the falling hull.
       const pin = opts.kind !== "drone" && Math.random() < 0.4;
       if (pin) {
@@ -9393,10 +9377,10 @@ export class MissionScene extends Phaser.Scene {
       const first = printGap - u.track;
       for (let dist = first; dist <= step; dist += printGap) {
         const t = step > 0 ? Phaser.Math.Clamp(dist / step, 0, 1) : 1;
-        const key = `track_${d.track}`;
+        const key = `fx_track_${d.track}`;
         const back = specOf(u.kind).radius * 0.72;
         this.stampWreck(
-          this.textures.exists(key) ? key : "track",
+          this.textures.exists(key) ? key : "fx_track_mono",
           Phaser.Math.Linear(trackX0, u.x, t) - Math.cos(u.angle) * back,
           Phaser.Math.Linear(trackY0, u.y, t) - Math.sin(u.angle) * back,
           u.angle + Math.PI / 2,
@@ -9795,7 +9779,7 @@ export class MissionScene extends Phaser.Scene {
     let liveN = 0;
     for (const u of this.units) if (!u.dead) liveN++;
     while (this.unitG.getLength() < liveN * SLOTS) {
-      this.unitG.add(this.add.image(0, 0, "shadow"));
+      this.unitG.add(this.add.image(0, 0, "fx_shadow"));
       this.unitG.add(this.add.image(0, 0, "enemy_tank"));
       for (let p = 0; p < 6; p++) this.unitG.add(this.add.image(0, 0, "enemy_heli_rotor"));
       const mz = this.add.image(0, 0, "fx_muzzle");
@@ -9938,7 +9922,9 @@ export class MissionScene extends Phaser.Scene {
         const spinKey = `${r.tex}_spin`;
         const rotorKey =
           r.tex !== "enemy_drone_rotor" && this.textures.exists(spinKey) ? spinKey : r.tex;
-        place(part, rotorKey, r.origin, r.mount, ri % 2 ? -u.rotor : u.rotor, ZOff.rotor, r.scale ?? 1);
+        const mounts = rotorMountsOf(textureOf(u.kind));
+        const sign = rotorSpinSign(mounts, ri);
+        place(part, rotorKey, r.origin, r.mount, sign * u.rotor, ZOff.rotor, r.scale ?? 1);
         if (r.tex.includes("rotor")) {
           const px = this.liveRotorDrawPx(r.tex, r.scale ?? 1);
           part.setScale((px / Math.max(part.width, 1)) * zs);
@@ -10118,7 +10104,7 @@ export class MissionScene extends Phaser.Scene {
 
   syncShotSprites(): void {
     while (this.shotG.getLength() < this.shots.length * 2) {
-      this.shotG.add(this.add.image(0, 0, "shadow"));
+      this.shotG.add(this.add.image(0, 0, "fx_shadow"));
       this.shotG.add(this.add.image(0, 0, "shot_rocket"));
     }
     const kids = this.shotG.getChildren() as Phaser.GameObjects.Image[];
@@ -10178,7 +10164,7 @@ export class MissionScene extends Phaser.Scene {
     let visN = 0;
     for (const f of this.debris) if (!f.trailOnly) visN++;
     while (this.debrisG.getLength() < visN * 2) {
-      this.debrisG.add(this.add.image(0, 0, "shadow"));
+      this.debrisG.add(this.add.image(0, 0, "fx_shadow"));
       this.debrisG.add(this.add.image(0, 0, "fx_debris_metal"));
     }
     const kids = this.debrisG.getChildren() as Phaser.GameObjects.Image[];
@@ -11331,7 +11317,6 @@ export class MissionScene extends Phaser.Scene {
     }
     const live = this.units.filter((u) => !u.dead);
     while (this.aiLabels.length < live.length) {
-      const key = `ai_label_${this.aiLabels.length}`;
       const t = this.add
         .text(0, 0, "", {
           fontFamily: "Share Tech Mono, monospace",
@@ -11340,9 +11325,7 @@ export class MissionScene extends Phaser.Scene {
         })
         .setOrigin(0.5, 1)
         .setDepth(Layer.FIELD + 9)
-        .setStroke("#12100c", 3)
-        .setName(key);
-      nameGameTexture(this, t, key);
+        .setStroke("#12100c", 3);
       this.aiLabels.push(t);
     }
     for (const t of this.aiLabels) t.setVisible(false);
@@ -11369,7 +11352,6 @@ export class MissionScene extends Phaser.Scene {
 
     // Crew-served / automatic player guns.
     while (this.autoGunLabels.length < this.autoGunDbg.length) {
-      const key = `auto_gun_label_${this.autoGunLabels.length}`;
       const t = this.add
         .text(0, 0, "", {
           fontFamily: "Share Tech Mono, monospace",
@@ -11378,9 +11360,7 @@ export class MissionScene extends Phaser.Scene {
         })
         .setOrigin(0.5, 1)
         .setDepth(Layer.FIELD + 9)
-        .setStroke("#12100c", 3)
-        .setName(key);
-      nameGameTexture(this, t, key);
+        .setStroke("#12100c", 3);
       this.autoGunLabels.push(t);
     }
     for (const t of this.autoGunLabels) t.setVisible(false);
@@ -11438,6 +11418,7 @@ export class MissionScene extends Phaser.Scene {
   }
 
   setupExitMenu(): void {
+    // Screen chrome only — no craft art. Text canvases get exit_* names.
     const { width: w, height: h } = this.scale;
     const panel = this.add
       .rectangle(w / 2, h / 2, 360, 210, 0x0b0a08, 0.96)
@@ -11501,13 +11482,16 @@ export class MissionScene extends Phaser.Scene {
   }
 
   setupHelp(): void {
+    // Craft preview reuses shared craft_*/fx_* textures; chrome is code UI (not catalog art).
     const w = this.scale.width;
     const h = this.scale.height;
     const panelW = Math.min(960, w - 40);
     const panelH = Math.min(620, h - 30);
     const halfW = panelW / 2;
     const halfH = panelH / 2;
-    const shade = this.add.rectangle(0, 0, w, h, 0x080705, 0.78).setInteractive();
+    const shade = this.add
+      .rectangle(0, 0, w, h, 0x080705, 0.78)
+      .setInteractive();
     const panel = this.add
       .rectangle(0, 0, panelW, panelH, 0x12100c, 0.98)
       .setStrokeStyle(2, 0xe8b84a, 0.9);
@@ -11528,13 +11512,17 @@ export class MissionScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
     const helpCraft = craftOf();
-    this.helpCraftBody = this.add.image(craftX, -halfH + 160, helpCraft.body).setOrigin(0.5);
+    this.helpCraftBody = this.add
+      .image(craftX, -halfH + 160, helpCraft.body)
+      .setOrigin(0.5);
     this.helpCraftRotorParts = craftComposite(helpCraft).rotors;
-    this.helpCraftRotors = this.helpCraftRotorParts.map((part, rotorI) => {
-      const rotor = this.add.image(craftX, -halfH + 160, part.tex).setOrigin(part.origin.x, part.origin.y);
+    this.helpCraftRotors = this.helpCraftRotorParts.map((part) => {
+      const rotor = this.add
+        .image(craftX, -halfH + 160, part.tex)
+        .setOrigin(part.origin.x, part.origin.y);
       this.tweens.add({
         targets: rotor,
-        rotation: (rotorI % 2 ? -1 : 1) * Math.PI * 2,
+        rotation: (part.spinSign ?? -1) * Math.PI * 2,
         duration: 60000,
         repeat: -1,
         ease: "Linear",
@@ -11780,7 +11768,7 @@ export class MissionScene extends Phaser.Scene {
     this.debugHit = this.showHeightMap;
     this.debugGfx.setVisible(this.debugHit);
     if (!this.debugHit) this.debugGfx.clear();
-    const key = this.showHeightMap ? "heightmap" : "terrain";
+    const key = this.showHeightMap ? "map_height" : "map_terrain";
     this.ground.setTexture(key).setDisplaySize(WORLD, WORLD);
     this.ground.setVisible(!this.terrainMesh);
     this.miniTerrain.setTexture(key);
@@ -12016,15 +12004,14 @@ export class MissionScene extends Phaser.Scene {
       fontFamily: "Share Tech Mono, monospace",
       fontSize: "13px",
       color: "#e8b84a",
-    }).setName("debug_title");
+    });
     this.debugRows = DEBUG_MENU_ITEMS.map((item, i) => {
       const t = this.add
         .text(12, 38 + i * rowH, "", {
           fontFamily: "Share Tech Mono, monospace",
           fontSize: "13px",
           color: "#f0e6c8",
-        })
-        .setName(`debug_row_${i}`);
+        });
       if ("action" in item) {
         t.setInteractive({ useHandCursor: true });
         t.on("pointerdown", () => {
@@ -12041,8 +12028,7 @@ export class MissionScene extends Phaser.Scene {
         fontSize: "12px",
         color: "#e8b84a",
       })
-      .setVisible(false)
-      .setName("debug_spawn_hint");
+      .setVisible(false);
     const camLabels = ["PITCH", "EYE", "ZOOM0", "PRESET"];
     this.debugCamRows = camLabels.map((_label, i) => {
       const t = this.add
@@ -12052,8 +12038,7 @@ export class MissionScene extends Phaser.Scene {
           color: "#f0e6c8",
         })
         .setInteractive({ useHandCursor: true })
-        .setVisible(false)
-        .setName(`debug_cam_${i}`);
+        .setVisible(false);
       t.on("pointerdown", () => {
         if (!this.debugCamOpen) return;
         this.debugCamIdx = i;
@@ -12062,7 +12047,7 @@ export class MissionScene extends Phaser.Scene {
       return t;
     });
     const kinds = allKinds();
-    this.debugSpawnRows = kinds.map((kind, i) => {
+    this.debugSpawnRows = kinds.map((_kind, i) => {
       const t = this.add
         .text(12, 34 + i * 18, "", {
           fontFamily: "Share Tech Mono, monospace",
@@ -12070,8 +12055,7 @@ export class MissionScene extends Phaser.Scene {
           color: "#f0e6c8",
         })
         .setInteractive({ useHandCursor: true })
-        .setVisible(false)
-        .setName(`debug_spawn_${kind}`);
+        .setVisible(false);
       t.on("pointerdown", () => {
         if (!this.debugSpawnOpen) return;
         this.debugSpawnIdx = i;
@@ -12436,7 +12420,7 @@ export class MissionScene extends Phaser.Scene {
       fontFamily: "Share Tech Mono, monospace",
       fontSize: "13px",
       color: "#e8b84a",
-    }).setName("edit_title");
+    });
     this.editChips = [];
     this.editChipFrames = [];
     HEIGHT_BRUSHES.forEach((b, i) => {
@@ -12455,7 +12439,7 @@ export class MissionScene extends Phaser.Scene {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "10px",
         color: "#8a8470",
-      }).setOrigin(0.5, 0).setName(`edit_brush_${b.id}`);
+      }).setOrigin(0.5, 0);
       this.editChips.push(img);
       this.editChipFrames.push(frame);
       this.editRoot.add([frame, img, lab]);
@@ -12465,15 +12449,14 @@ export class MissionScene extends Phaser.Scene {
       fontSize: "11px",
       color: "#c8c0a8",
       lineSpacing: 3,
-    }).setName("edit_readout");
+    });
     this.editInkBtn = this.add
       .text(16, 176, "", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "12px",
         color: "#e8b84a",
       })
-      .setInteractive({ useHandCursor: true })
-      .setName("edit_ink");
+      .setInteractive({ useHandCursor: true });
     this.editInkBtn.on("pointerover", () => {
       this.editUiBlock = true;
     });
@@ -12495,7 +12478,6 @@ export class MissionScene extends Phaser.Scene {
     this.editRoot.bringToTop(this.editInkBtn);
     this.editRoot.setVisible(false);
     this.syncReliefHud();
-    nameGeneratedTextures(this);
   }
 
   toggleEditInvert(): void {
@@ -12611,8 +12593,8 @@ export class MissionScene extends Phaser.Scene {
       this.stampDecorRect(g, x0, y0, x1, y1);
     });
     paintHeightMapRect(this.heightMapCanvas, this.world.height, d.x0, d.y0, d.x1, d.y1);
-    (this.textures.get("terrain") as Phaser.Textures.CanvasTexture).refresh();
-    (this.textures.get("heightmap") as Phaser.Textures.CanvasTexture).refresh();
+    (this.textures.get("map_terrain") as Phaser.Textures.CanvasTexture).refresh();
+    (this.textures.get("map_height") as Phaser.Textures.CanvasTexture).refresh();
     this.terrain25d?.updateHeightRegion(d.x0, d.y0, d.x1, d.y1);
   }
 
@@ -12689,11 +12671,9 @@ export class MissionScene extends Phaser.Scene {
     const h = this.scale.height;
     // Field tracking overlays share main's view transform but skip thermal/post-FX.
     this.fieldHudCam = this.cameras.add(0, 0, w, h);
-    this.fieldHudCam.setName("fieldHud");
     this.fieldHudCam.transparent = true;
     this.syncFieldHudCam();
     this.hudCam = this.cameras.add(0, 0, w, h);
-    this.hudCam.setName("hud");
     this.hudCam.transparent = true;
     this.hudCam.setScroll(0, 0);
     this.hudCam.setZoom(1);
@@ -13212,7 +13192,6 @@ export class MissionScene extends Phaser.Scene {
 
   syncMapHvLabels(u: (px: number) => number): void {
     while (this.mapHvLabels.length < this.world.hv.length) {
-      const key = `map_hv_${this.mapHvLabels.length}`;
       const t = this.add
         .text(0, 0, "", {
           fontFamily: "Share Tech Mono, monospace",
@@ -13222,9 +13201,7 @@ export class MissionScene extends Phaser.Scene {
         })
         .setOrigin(0, 0.5)
         .setDepth(Layer.HUD + 3)
-        .setStroke("#12100c", 4)
-        .setName(key);
-      nameGameTexture(this, t, key);
+        .setStroke("#12100c", 4);
       this.mapHvLabels.push(t);
     }
     const fs = Math.max(11, u(13));
@@ -13535,9 +13512,7 @@ export class MissionScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setScrollFactor(0)
         .setDepth(Layer.HUD + 50)
-        .setName("hud_end")
     );
-    nameGeneratedTextures(this);
   }
 }
 
@@ -13681,7 +13656,7 @@ function steerDir(
 }
 
 function ensureBlastRingGradient(textures: Phaser.Textures.TextureManager): void {
-  if (textures.exists("blast_ring_soft_v9")) return;
+  if (textures.exists("fx_blast_ring")) return;
   const size = 128;
   const canvas = document.createElement("canvas");
   canvas.width = size * BLAST_RING_FRAMES;
@@ -13740,11 +13715,12 @@ function ensureBlastRingGradient(textures: Phaser.Textures.TextureManager): void
     }
     g.putImageData(pixels, frame * size, 0);
   }
-  textures.addSpriteSheet("blast_ring_soft_v9", canvas as unknown as HTMLImageElement, {
+  textures.addSpriteSheet("fx_blast_ring", canvas as unknown as HTMLImageElement, {
     frameWidth: size,
     frameHeight: size,
     endFrame: BLAST_RING_FRAMES - 1,
   });
+  registerArt("fx_blast_ring", "generated");
 }
 
 function ensureExhaustGlow(textures: Phaser.Textures.TextureManager): void {
@@ -13766,10 +13742,11 @@ function ensureExhaustGlow(textures: Phaser.Textures.TextureManager): void {
   g.fillRect(0, 0, w, w);
   g.restore();
   textures.addCanvas("fx_exhaust_glow", c);
+  registerArt("fx_exhaust_glow", "generated");
 }
 
 function ensureImpactGlow(textures: Phaser.Textures.TextureManager): void {
-  if (textures.exists("impact_glow")) return;
+  if (textures.exists("fx_glow")) return;
   const s = 96;
   const c = document.createElement("canvas");
   c.width = s;
@@ -13782,7 +13759,8 @@ function ensureImpactGlow(textures: Phaser.Textures.TextureManager): void {
   grd.addColorStop(1, "rgba(255,255,255,0)");
   g.fillStyle = grd;
   g.fillRect(0, 0, s, s);
-  textures.addCanvas("impact_glow", c);
+  textures.addCanvas("fx_glow", c);
+  registerArt("fx_glow", "generated");
 }
 
 function projectAlong(x: number, y: number, ang: number, tx: number, ty: number): number {

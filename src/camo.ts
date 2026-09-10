@@ -1,5 +1,6 @@
 import type Phaser from "phaser";
 import type { Biome } from "./world";
+import { registerArt, type ArtSource } from "./sprites";
 
 export type CamoKind = "woodland" | "desert" | "urban" | "snow" | "digital";
 
@@ -215,9 +216,10 @@ function blendCamo(src: HTMLCanvasElement, camo: HTMLCanvasElement, ox: number, 
   return out;
 }
 
-function put(textures: Phaser.Textures.TextureManager, key: string, c: HTMLCanvasElement): void {
+function put(textures: Phaser.Textures.TextureManager, key: string, c: HTMLCanvasElement, source: ArtSource): void {
   if (textures.exists(key)) textures.remove(key);
   textures.addCanvas(key, c);
+  registerArt(key, source);
 }
 
 function bakeBaseKinds(
@@ -235,14 +237,14 @@ function bakeBaseKinds(
       if (!camo) continue;
       const ox = h % camo.width;
       const oy = (h >>> 8) % camo.height;
-      put(textures, skinnedKey(base, kind), blendCamo(src, camo, ox, oy));
+      put(textures, skinnedKey(base, kind), blendCamo(src, camo, ox, oy), "image");
     }
   }
 }
 
 export function bakeCamo(textures: Phaser.Textures.TextureManager): void {
-  for (const kind of CAMO_KINDS) put(textures, camoPatternKey(kind), drawCamo(kind));
-  put(textures, camoPatternKey("digital"), drawDigitalCamo());
+  for (const kind of CAMO_KINDS) put(textures, camoPatternKey(kind), drawCamo(kind), "generated");
+  put(textures, camoPatternKey("digital"), drawDigitalCamo(), "generated");
   bakeBaseKinds(textures, CAMO_BASES, CAMO_KINDS);
   bakeBaseKinds(textures, DIGITAL_CAMO_BASES, ["digital"]);
 }

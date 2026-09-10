@@ -15,7 +15,7 @@ export type Terrain25DTexture =
   | Phaser.GameObjects.RenderTexture;
 
 export interface Terrain25DOptions {
-  /** Base terrain CanvasTexture (normally the key "terrain"). */
+  /** Base terrain CanvasTexture (normally the key "map_terrain"). */
   terrain: Terrain25DTexture;
   /** Optional transparent world-sized Dynamic/RenderTexture decal layer. */
   decal?: Terrain25DTexture | null;
