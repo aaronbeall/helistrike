@@ -9821,7 +9821,11 @@ export class MissionScene extends Phaser.Scene {
 
     const spec = this.loadout[h.weapon]!;
     const g = spec.guidance;
-    if (!guidanceUsesLock(g)) return;
+    if (!guidanceUsesLock(g)) {
+      h.hellfireLock = null;
+      h.hellfireSeek = null;
+      return;
+    }
 
     const lockTime = g.lockTime;
     const lockRadius = g.lockRadius;
@@ -9957,10 +9961,14 @@ export class MissionScene extends Phaser.Scene {
 
     const wpnGuidance = this.loadout[h.weapon]!.guidance;
     const lockGuided = guidanceUsesLock(wpnGuidance);
-    const lockTime = lockGuided ? wpnGuidance.lockTime : HELLFIRE_LOCK_T;
+    if (!lockGuided) {
+      g.setVisible(false);
+      return;
+    }
+    const lockTime = wpnGuidance.lockTime;
     const inbound = this.inboundHellfireTargets();
-    const locked = lockGuided && h.hellfireLock ? this.unitById(h.hellfireLock.id) : undefined;
-    const seeking = lockGuided && h.hellfireSeek ? this.unitById(h.hellfireSeek.id) : undefined;
+    const locked = h.hellfireLock ? this.unitById(h.hellfireLock.id) : undefined;
+    const seeking = h.hellfireSeek ? this.unitById(h.hellfireSeek.id) : undefined;
     if (!locked && !seeking && inbound.length === 0) {
       g.setVisible(false);
       return;
@@ -10004,7 +10012,7 @@ export class MissionScene extends Phaser.Scene {
       const blink = Math.floor(this.time.now / 70) % 2 === 0;
       const alpha = blink ? 1 : 0.12;
       if (vis.on) {
-        const box = this.drawLockBox(locked, 1, 2.15, alpha);
+        const box = this.drawLockDiamond(locked, 1, 2.15, alpha, 0xff3a22);
         lockDepth = Math.max(lockDepth, box.depth);
         this.lockTxt
           .setVisible(true)
