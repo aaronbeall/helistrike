@@ -12317,7 +12317,7 @@ export class MissionScene extends Phaser.Scene {
     const wpn = this.loadout[this.heli.weapon]!.kind;
     const look =
       wpn === "lock-on-missile"
-        ? { pull: 0.86, max: 360, rate: 5.2 }
+        ? { pull: 0.58, max: 220, rate: 5.6 }
         : wpn === "rocket"
           ? { pull: 0.42, max: 160, rate: 7.4 }
           : wpn === "guided-missile"
@@ -12338,7 +12338,8 @@ export class MissionScene extends Phaser.Scene {
       const s = this.shots[i]!;
       if (s.from !== "player") continue;
       if (s.kind === "rocket" && s.beh?.guidance.mode === "pointer" && s.beh.guidance.groundHugging) continue;
-      if (s.kind === "guided-missile" || s.kind === "lock-on-missile") {
+      // Wire/command missiles only — Hellfire (lock-on) stays on crosshair look-ahead.
+      if (s.kind === "guided-missile") {
         tow = s;
         break;
       }
