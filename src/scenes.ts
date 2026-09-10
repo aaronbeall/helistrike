@@ -1320,6 +1320,8 @@ export class MissionScene extends Phaser.Scene {
   blastBurn!: Phaser.GameObjects.Particles.ParticleEmitter;
   blastFire!: Phaser.GameObjects.Particles.ParticleEmitter;
   shortBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
+  /** Long, fast, high-drag streaks for HE / death bursts. */
+  streakBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
   muzzleBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
   splashBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
   explosionPuff!: Phaser.GameObjects.Particles.ParticleEmitter;
@@ -1929,6 +1931,64 @@ export class MissionScene extends Phaser.Scene {
         rotate: {
           onEmit: burstRotation,
           onUpdate: (p) => Phaser.Math.RadToDeg(Math.atan2(p.velocityY, p.velocityX)),
+        },
+      })
+    );
+    const streakStretchOf = (p: BurstParticle): number => {
+      const spd = Math.hypot(p.velocityX || p.burstVx || 0, p.velocityY || p.burstVy || 0);
+      return Math.min(5.5, 1.4 + spd * 0.0028);
+    };
+    this.streakBurst = this.poolFx("short", () =>
+      this.add.particles(0, 0, "fx_spark", {
+        // Long enough to travel before brake + fade finish them.
+        lifespan: { onEmit: (p) => seedBurst(p, 320, 520) },
+        speedX: { onEmit: burstVelocityX },
+        speedY: { onEmit: burstVelocityY },
+        scaleX: {
+          onEmit: (p) => {
+            const q = p as BurstParticle;
+            q.launchScale = this.burstLaunch.scale * range(1.35, 2.1);
+            q.launchStretch = streakStretchOf(q);
+            return q.launchScale * q.launchStretch * range(0.7, 1.05);
+          },
+          onUpdate: (p, _k, t) => {
+            const q = p as BurstParticle;
+            // Hold length early, then taper as they slow.
+            const fade = Math.pow(1 - t, 1.15);
+            return (q.launchScale ?? 1) * streakStretchOf(q) * fade;
+          },
+        },
+        scaleY: {
+          onEmit: (p) => {
+            const q = p as BurstParticle;
+            const stretch = q.launchStretch ?? streakStretchOf(q);
+            return (q.launchScale ?? this.burstLaunch.scale) * (0.28 / Math.max(0.7, Math.sqrt(stretch)));
+          },
+          onUpdate: (p, _k, t) => {
+            const q = p as BurstParticle;
+            const stretch = streakStretchOf(q);
+            return (q.launchScale ?? 1) * (0.28 / Math.max(0.7, Math.sqrt(stretch))) * Math.pow(1 - t, 1.1);
+          },
+        },
+        alpha: {
+          start: 1,
+          end: 0,
+          ease: "Quad.easeIn",
+        },
+        blendMode: "ADD",
+        tint: [0xffffff, 0xfff4c0, 0xffd060],
+        // Same idea as shortBurst gravityY — soft screen-down drift, not a re-aimed cone.
+        gravityY: 160,
+        // Milder brake so they actually coast outward before dying.
+        accelerationX: { onUpdate: (p) => -p.velocityX * 3.2 },
+        accelerationY: { onUpdate: (p) => -p.velocityY * 3.2 },
+        radial: false,
+        emitting: false,
+        frame: fxFrames,
+        rotate: {
+          // Hold launch heading so gravity drifts them without tipping the streak.
+          onEmit: burstRotation,
+          onUpdate: (p) => Phaser.Math.RadToDeg((p as BurstParticle).burstHeading ?? Math.atan2(p.velocityY, p.velocityX)),
         },
       })
     );
@@ -6459,6 +6519,19 @@ export class MissionScene extends Phaser.Scene {
       1,
       280
     );
+    // A handful of long, fast streaks that brake and vanish quickly.
+    const streakN = Math.max(soft ? 2 : 4, Math.round((soft ? 4.5 : 10) * Phaser.Math.Linear(0.55, 1.15, size01)));
+    this.emitVisualBurst(x, y, z + 8, {
+      n: streakN,
+      spdMin: (soft ? 820 : 1280) * spdBoost,
+      spdMax: (soft ? 1500 : 2600) * spdBoost,
+      bx: dx,
+      by: dy,
+      bz: dz,
+      tight: soft ? 0.22 : Phaser.Math.Linear(0.38, 0.58, t),
+      scaleMul: Phaser.Math.Linear(1.35, 2.2, size01) * (soft ? 0.75 : 1),
+      expBias: expK,
+    }, this.streakBurst);
     this.spawnBlastTrails(x, y, z, dx, dy, dz, soft, size01, p);
     if (targetRadius > 0) {
       const textureRadius = 64;
