@@ -66,6 +66,8 @@ export type WeaponGuidance =
       terminalOnSecondClick?: boolean;
       /** Break soft lock when pointer is farther than this from the locked unit. */
       breakLockRadius?: number;
+      /** Hold this AGL while under player control (before terminal dive). */
+      cruiseAgl?: number;
     }
   | { mode: "gps"; steerRate: number; pointOnClick: true }
   | { mode: "auto"; acquireRadius: number; retarget: boolean };
@@ -241,19 +243,23 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     steering: { turnRate: 7.4, maxG: 12 }, fits: FIT_HARDPOINT, notes: ["laser lock; fire-and-forget after launch"],
   },
   tv_missile: {
-    id: "tv_missile", name: "SPIKE", fullName: "SPIKE MISSILE", designation: "SPIKE NLOS COMMAND MISSILE", ammo: 6, fireCd: 1.15, speed: 265,
-    dmg: 205, blast: 172, life: 8.5, kind: "guided-missile", look: ordLook("guided"), scale: 0.95, trailScale: 0.52,
+    id: "tv_missile", name: "SPIKE", fullName: "SPIKE MISSILE", designation: "SPIKE NLOS COMMAND MISSILE", ammo: 6, fireCd: 1.15, speed: 340,
+    dmg: 205, blast: 172, life: 30, kind: "guided-missile", look: ordLook("guided"), scale: 0.95, trailScale: 0.52,
     guidance: {
       mode: "command_nlos",
       lockTime: 0.45,
       lockRadius: 175,
       wire: false,
       breakLockRadius: 210,
+      terminalOnSecondClick: true,
     },
-    launch: motor(55, 280, 3.2), payload: HE, control: CLICK,
+    launch: motor(55, 280, 3.2), payload: HE, control: { mode: "first_second_click" },
     steering: { turnRate: 2.4, terminalTurnRate: 6.5, loft: 0.22 },
     sensorView: { mode: "thermal", source: "seeker", palette: "white_hot" },
-    fits: FIT_HARDPOINT, notes: ["steers to reticle; soft-locks nearby targets and breaks if reticle wanders", "seeker POV + linger after impact"],
+    fits: FIT_HARDPOINT, notes: [
+      "cruises under seeker POV; soft-locks near reticle",
+      "second click commits to lock or aim point — dash thrust, camera follows then lingers on impact",
+    ],
   },
   minigun: {
     id: "minigun", name: "MINIGUN", fullName: "MINIGUN", designation: "M134 / GAU-17/A 7.62MM MINIGUN",
@@ -269,17 +275,26 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     fits: FIT_GUN, notes: ["chin-turret three-barrel gatling"],
   },
   tow_missile: {
-    id: "tow_missile", name: "TOW", fullName: "TOW MISSILE", designation: "BGM-71E TOW 2A MISSILE", ammo: 6, fireCd: 1.1, speed: 400,
+    id: "tow_missile", name: "TOW", fullName: "TOW MISSILE", designation: "BGM-71E TOW 2A MISSILE", ammo: 6, fireCd: 1.1, speed: 340,
     dmg: 176, blast: 160, life: 5.2, kind: "guided-missile", look: ordLook("guided"), scale: 1, trailScale: 0.52,
     guidance: { mode: "pointer", steerRate: 2.2, maxAngle: 0.75 }, launch: motor(76, 420, 2.4), payload: HE,
     control: HOLD, steering: { turnRate: 2.2, maxG: 5.5 }, fits: FIT_HARDPOINT, notes: ["continuous command guidance"],
   },
   sidewinder_missile: {
     id: "sidewinder_missile", name: "SIDEWINDER", fullName: "SIDEWINDER MISSILE", designation: "AIM-9X SIDEWINDER", ammo: 12, fireCd: 0.28, speed: 540,
-    dmg: 132, blast: 108, life: 3.6, kind: "lock-on-missile", look: ordLook("aa"), scale: 0.68, trailScale: 0.55,
-    guidance: heat(0.22, 165, 1.55), launch: MUZZLE, payload: HE, control: { mode: "lock_then_click" },
-    steering: { turnRate: 14.5, maxG: 32 }, fits: FIT_HARDPOINT,
-    notes: ["WVR heat seeker — short range, high off-boresight, very agile"],
+    dmg: 132, blast: 108, life: 3.6, kind: "lock-on-missile", look: ordLook("aa"), scale: 0.68, trailScale: 0.72,
+    guidance: {
+      mode: "heat",
+      lockTime: 0.22,
+      lockRadius: 165,
+      categories: ["air", "vehicle"],
+      minHealth: 1,
+      maxOffBoresight: 1.55,
+      fireAndForget: true,
+    },
+    launch: MUZZLE, payload: HE, control: { mode: "lock_then_click" },
+    steering: { turnRate: 14.5, maxG: 32, loft: 0.12 }, fits: FIT_HARDPOINT,
+    notes: ["WVR heat seeker — mech/air only; rail/hardpoint muzzle launch with instant thrust"],
   },
   machine_gun: {
     id: "machine_gun", name: "MACHINE GUN", fullName: "MACHINE GUN", designation: "M240D 7.62MM MACHINE GUN", ammo: 3200, fireCd: 0.066, speed: 875,
@@ -645,7 +660,8 @@ export function heatClassScore(c: HeatClass): number {
 
 /** Guidance category a heat class reports to `WeaponGuidance.categories`. */
 export function heatClassCategory(c: HeatClass): "air" | "ground" | "vehicle" {
-  return c === "air" ? "air" : c === "vehicle" ? "vehicle" : "ground";
+  // Buildings count as vehicle-class heat (mech); troops alone use "ground".
+  return c === "air" ? "air" : c === "troop" ? "ground" : "vehicle";
 }
 
 /** Snapshot the immutable flight profile of a player weapon at trigger time. */
