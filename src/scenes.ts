@@ -1428,12 +1428,18 @@ export class MissionScene extends Phaser.Scene {
   };
   muzzle!: Phaser.GameObjects.Image;
   muzzlePool: Phaser.GameObjects.Image[] = [];
+  /** Soft ADD glow discs paired 1:1 with `muzzlePool` (tip-attached). */
+  muzzleGlowPool: Phaser.GameObjects.Image[] = [];
   /** Per-pool life + attach so flashes stay glued to the barrel while alive. */
   muzzleFlashes: {
     life: number;
+    /** Initial life — glow alpha fades over this. */
+    life0: number;
     ang: number;
     /** Pre–z-scale size; multiplied by current tip screen scale each frame. */
     scaleMul: number;
+    /** Pre–z-scale glow diameter. */
+    glowMul: number;
     rotJitter: number;
     muzzleUv?: { x: number; y: number };
     gunI?: number;
@@ -1860,9 +1866,17 @@ export class MissionScene extends Phaser.Scene {
       .setBlendMode(Phaser.BlendModes.ADD)
       .setTint(0xfff6d0);
     this.muzzlePool = [this.muzzle, secondMuzzle];
+    ensureImpactGlow(this.textures);
+    this.muzzleGlowPool = [0, 1].map(() =>
+      this.add
+        .image(0, 0, "fx_glow")
+        .setVisible(false)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setTint(0xfff2c8)
+    );
     this.muzzleFlashes = [
-      { life: 0, ang: 0, scaleMul: 1, rotJitter: 0 },
-      { life: 0, ang: 0, scaleMul: 1, rotJitter: 0 },
+      { life: 0, life0: 0.1, ang: 0, scaleMul: 1, glowMul: 56, rotJitter: 0 },
+      { life: 0, life0: 0.1, ang: 0, scaleMul: 1, glowMul: 56, rotJitter: 0 },
     ];
     this.body.setPosition(this.heli.x, this.heli.y);
     this.reticle = this.add.image(0, 0, "mark_reticle").setDepth(Layer.HUD).setScrollFactor(0);
@@ -3681,6 +3695,7 @@ export class MissionScene extends Phaser.Scene {
       this.gun.setVisible(false);
       this.shadow.setVisible(false);
       for (const muzzle of this.muzzlePool) muzzle.setVisible(false);
+      for (const glow of this.muzzleGlowPool) glow.setVisible(false);
       for (const flame of this.exhaustFlames) flame.setVisible(false);
       return;
     }
@@ -5387,8 +5402,11 @@ export class MissionScene extends Phaser.Scene {
     if (index < 0) index = this.muzzleCursor++ % this.muzzlePool.length;
     const flash = this.muzzleFlashes[index]!;
     flash.life = opt.life;
+    flash.life0 = opt.life;
     flash.ang = opt.ang;
     flash.scaleMul = opt.scaleMul;
+    // Soft bloom larger than the flash sprite so it reads as light, not a speck.
+    flash.glowMul = Math.max(48, opt.scaleMul * 72);
     flash.rotJitter = range(-0.1, 0.1);
     flash.muzzleUv = opt.muzzleUv;
     flash.gunI = opt.gunI;
@@ -5397,7 +5415,6 @@ export class MissionScene extends Phaser.Scene {
     const muzzle = this.muzzlePool[index] ?? this.muzzle;
     muzzle.setFrame((Math.random() * FX_VARIANTS) | 0);
     this.syncMuzzleFlash(index);
-    this.spawnMuzzleLight(muzzle.x, muzzle.y, this.heli.z, 26 * muzzle.scaleX);
   }
 
   /** World tip for a live muzzle flash slot. */
@@ -5425,9 +5442,11 @@ export class MissionScene extends Phaser.Scene {
   syncMuzzleFlash(index: number): void {
     const flash = this.muzzleFlashes[index];
     const muzzle = this.muzzlePool[index];
+    const glow = this.muzzleGlowPool[index];
     if (!flash || !muzzle || flash.life <= 0) return;
     const tip = this.muzzleFlashTip(flash);
     const at = worldToScreen(tip.x, tip.y, tip.z);
+    const depth = worldDepth(this.heli.z, ZOff.muzzle + 0.15, this.heli.y);
     muzzle
       .setVisible(true)
       .setOrigin(0.14, 0.5)
@@ -5437,7 +5456,19 @@ export class MissionScene extends Phaser.Scene {
       .setBlendMode(Phaser.BlendModes.ADD)
       .setTint(0xfff6d0)
       .setAlpha(1)
-      .setDepth(worldDepth(this.heli.z, ZOff.muzzle + 0.15, this.heli.y));
+      .setDepth(depth);
+    if (glow) {
+      const gSize = flash.glowMul * at.scale;
+      const gLife = flash.life0 > 1e-4 ? flash.life / flash.life0 : 0;
+      glow
+        .setVisible(true)
+        .setPosition(at.x, at.y)
+        .setDisplaySize(gSize, gSize)
+        .setAlpha(0.75 * gLife)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setTint(0xfff2c8)
+        .setDepth(depth + 0.05);
+    }
   }
 
   tickPlayerMuzzles(dt: number): void {
@@ -5447,15 +5478,16 @@ export class MissionScene extends Phaser.Scene {
       flash.life -= dt;
       if (flash.life <= 0) {
         this.muzzlePool[i]?.setVisible(false);
+        this.muzzleGlowPool[i]?.setVisible(false);
         continue;
       }
       this.syncMuzzleFlash(i);
     }
   }
 
-  /** Soft additive light bloom under a muzzle flash. */
+  /** Soft additive light bloom (enemy / one-shot); player uses tip-attached glow pool. */
   spawnMuzzleLight(x: number, y: number, z: number, size: number): void {
-    this.spawnImpactFlash(x, y, z, 0xfff2c8, Math.max(14, size), 0.5, 70);
+    this.spawnImpactFlash(x, y, z, 0xfff2c8, Math.max(36, size * 1.35), 0.75, 120);
   }
 
   /** Spent casing size from projectile damage (call sites already gate to cannons). */
