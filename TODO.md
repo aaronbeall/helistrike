@@ -39,6 +39,7 @@
   * [ ] Airstrike (use map)
   * [ ] EMP (temporarily disables mechs)
   * [ ] Predator strike (switch to high up view)
+  * [ ] Torpedo
   * [ ] (Hidden) Rave Cannon
   * [ ] (Alien) Plasma helix (like chain gun, shoots spiralling energy projectiles)
   * [ ] (Alien) Photon missile (like hellfire, but energy weapon)
@@ -117,6 +118,7 @@
 * [ ] Eject, infiltrate, hijack
 * [ ] Hulk break-apart effect (dynamic splitting of hulk graphics into individual parts)
 * [ ] Predictive firing (enemy units and craft gunners, fire at predicted location, accuracy of prediction falls off with range and speed)
+* [ ] Lens flare
 
 ## Fix
 
@@ -134,5 +136,5 @@
 * [ ] Boat spawns should happen only with enough space
 * [ ] Chroma key bleed
 * [ ] Camera change shouldn't change reticle location
-* [ ] Spash down debris/hulks in water should either disappear or become blue and sink to bottom, and not draw craters
+* [ ] Spash down debris/hulks/shells in water should either disappear or become blue and sink to bottom, and not draw craters
 * [ ] Switching from thermal to normal reveals pink graphics

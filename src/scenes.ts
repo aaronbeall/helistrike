@@ -57,7 +57,7 @@ import { setThermalPipeline, type ThermalPalette } from "./thermal";
 import { createTerrain25D, type Terrain25D } from "./terrain25d";
 import { LOAD_TIPS } from "./tips";
 import { fbm } from "./noise";
-import { preloadArt, prepareArt, extractBiomeTiles, bakeHeliHudWireTexture, heliHudWireUv, shadowAlpha, shadowKey, spriteUvPos, FX_VARIANTS, registerArt, nameGameTexture, spritePivot, type HeliHudWireBake } from "./sprites";
+import { preloadArt, prepareArt, extractBiomeTiles, bakeHeliHudWireTexture, heliHudWireUv, shadowAlpha, shadowKey, spriteUvPos, FX_SHEET_SIZE, FX_VARIANTS, registerArt, nameGameTexture, spritePivot, type HeliHudWireBake } from "./sprites";
 import {
   generateWorld,
   generateWorldAsync,
@@ -102,6 +102,10 @@ type FxClass = "short" | "fire" | "smoke" | "dust";
 const GUN_STATION_TURN_RATE = 3.6;
 /** Auto fire once the barrel is within this angle of the track (radians). */
 const AUTO_GUN_ALIGN_TOL = 0.14;
+/** Score penalty per radian off the barrel's preferred (mount-outward) heading. */
+const AUTO_GUN_HEADING_WEIGHT = 900;
+/** Shift each barrel's acquire circle along prefer heading by this fraction of range. */
+const AUTO_GUN_RANGE_BIAS = 0.3;
 type FxPolicy = {
   frameCap: number;
   activeCap: number;
@@ -177,10 +181,20 @@ const HELLFIRE_Z_MAX = SHOT_Z_REF * 1.21;
 /** Apache M230 cadence is the full-density reference for per-shot muzzle/impact particles. */
 const PROJECTILE_FX_BASE_INTERVAL = 0.07;
 const ENEMY_PROJECTILE_FX_MUL = 0.72;
+/** M230 chain gun — muzzle FX size reference (`spec.scale` / `blast`). */
+const MUZZLE_FX_REF_SCALE = 0.58;
+const MUZZLE_FX_REF_BLAST = 18;
 
 function projectileFxScale(from: Shot["from"], effectiveInterval = PROJECTILE_FX_BASE_INTERVAL): number {
   const cadence = Phaser.Math.Clamp(effectiveInterval / PROJECTILE_FX_BASE_INTERVAL, 0.18, 1);
   return cadence * (from === "enemy" ? ENEMY_PROJECTILE_FX_MUL : 1);
+}
+
+/** Player gun muzzle FX vs M230 — LMGs smaller, heavies a bit larger. */
+function playerMuzzleFxMul(spec: PlayerWpnSpec): number {
+  const byScale = Math.pow(spec.scale / MUZZLE_FX_REF_SCALE, 0.7);
+  const byBlast = Math.pow(Math.max(0.5, spec.blast) / MUZZLE_FX_REF_BLAST, 0.25);
+  return Phaser.Math.Clamp(byScale * byBlast, 0.4, 1.35);
 }
 
 function thermalSignalTint(heat: number): number {
@@ -402,7 +416,7 @@ function ensureMissionPreviews(textures: Phaser.Textures.TextureManager): void {
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
-    const g = canvas.getContext("2d")!;
+    const g = canvas.getContext("2d", { willReadFrequently: true })!;
     const img = g.createImageData(width, height);
     const p = mission.profile;
     const seed = 8101 + m * 977;
@@ -1350,7 +1364,6 @@ export class MissionScene extends Phaser.Scene {
   thermalHotspotG!: Phaser.GameObjects.Group;
   thermalWreckMarks: ThermalWreckMark[] = [];
   smoke!: Phaser.GameObjects.Particles.ParticleEmitter;
-  tracer!: Phaser.GameObjects.Particles.ParticleEmitter;
   flame!: Phaser.GameObjects.Particles.ParticleEmitter;
   playerFlame!: Phaser.GameObjects.Particles.ParticleEmitter;
   hurtSmoke!: Phaser.GameObjects.Particles.ParticleEmitter;
@@ -1408,7 +1421,9 @@ export class MissionScene extends Phaser.Scene {
   /** Scratch used only by synchronous onEmit callbacks; particles retain update state themselves. */
   burstLaunch = {
     x: 0, y: 0, z: 0, bx: 1, by: 0, bz: 0, tight: 0.5,
-    spdMin: 40, spdMax: 120, scale: 1, expBias: 0, gravity: 0,
+    spdMin: 40, spdMax: 120, scale: 1, stretchMul: 1, expBias: 0, gravity: 0,
+    /** Half-angle (rad) for forward cone sampling; when set, speed scales with aim alignment. */
+    coneHalf: 0,
   };
   muzzle!: Phaser.GameObjects.Image;
   muzzlePool: Phaser.GameObjects.Image[] = [];
@@ -1605,6 +1620,9 @@ export class MissionScene extends Phaser.Scene {
     targetId: number | null;
     /** Acquire / engage radius used by this station (world units). */
     range: number;
+    /** Acquire circle center (per-barrel, heading-biased). */
+    originX: number;
+    originY: number;
     state: string;
   }[] = [];
   autoGunLabels: Phaser.GameObjects.Text[] = [];
@@ -1907,47 +1925,6 @@ export class MissionScene extends Phaser.Scene {
     });
     this.smoke.setDepth(Layer.WORLD);
     this.registerFx("smoke", this.smoke);
-    this.tracer = this.add.particles(0, 0, "fx_spark", {
-      lifespan: 220,
-      speed: { min: 40, max: 140 },
-      scaleX: {
-        onEmit: (p) => {
-          (p as BurstParticle).launchScale = 1;
-          (p as BurstParticle).launchStretch = range(1.8, 2.8);
-          return (p as BurstParticle).launchStretch!;
-        },
-        onUpdate: (p, _k, t) => {
-          const spd = Math.hypot(p.velocityX, p.velocityY);
-          const stretch = Math.max(
-            (p as BurstParticle).launchStretch ?? 2,
-            Math.min(3.4, 1 + spd * 0.0055)
-          );
-          return stretch * (1 - t);
-        },
-      },
-      scaleY: {
-        onEmit: () => 0.38,
-        onUpdate: (p, _k, t) => {
-          const spd = Math.hypot(p.velocityX, p.velocityY);
-          const stretch = Math.max(
-            (p as BurstParticle).launchStretch ?? 2,
-            Math.min(3.4, 1 + spd * 0.0055)
-          );
-          return (0.38 / Math.max(0.55, Math.sqrt(stretch))) * (1 - t);
-        },
-      },
-      alpha: { start: 1, end: 0 },
-      blendMode: "ADD",
-      tint: [0xfff8d0, 0xffee88, 0xffaa40],
-      emitting: false,
-      frame: fxFrames,
-      rotate: {
-        onEmit: (p) => Phaser.Math.RadToDeg(Math.atan2(p?.velocityY ?? 0, p?.velocityX ?? 1)),
-        onUpdate: (p) => Phaser.Math.RadToDeg(Math.atan2(p.velocityY, p.velocityX)),
-      },
-    });
-    this.tracer.setDepth(Layer.WORLD);
-    this.registerFx("short", this.tracer);
     const seedBurst = (p: Phaser.GameObjects.Particles.Particle | undefined, min: number, max: number): number => {
       this.sampleBurstScreenVelocity(p as BurstParticle | undefined);
       return range(min, max);
@@ -1960,7 +1937,9 @@ export class MissionScene extends Phaser.Scene {
       Phaser.Math.RadToDeg((p as BurstParticle | undefined)?.burstHeading ?? 0);
     const burstStretchOf = (p: BurstParticle): number => {
       const spd = Math.hypot(p.velocityX || p.burstVx || 0, p.velocityY || p.burstVy || 0);
-      return Math.min(3.8, 1 + spd * 0.0052);
+      const raw = Math.min(3.8, 1 + spd * 0.0052);
+      const mul = this.burstLaunch.stretchMul;
+      return 1 + (raw - 1) * mul;
     };
     this.shortBurst = this.poolFx("short", () =>
       this.add.particles(0, 0, "fx_spark", {
@@ -2072,7 +2051,13 @@ export class MissionScene extends Phaser.Scene {
             const q = p as BurstParticle;
             q.launchScale = this.burstLaunch.scale * range(0.72, 1.18);
             q.launchStretch = burstStretchOf(q);
-            return q.launchScale * q.launchStretch * range(1.35, 1.85);
+            const sx = q.launchScale * q.launchStretch * range(1.7, 2.4);
+            // Center-origin streaks: nudge forward by half length so the tail sits on the muzzle.
+            const halfLen = FX_SHEET_SIZE.flame * sx * 0.5;
+            const heading = q.burstHeading ?? Math.atan2(q.burstVy ?? 0, q.burstVx ?? 1);
+            q.x += Math.cos(heading) * halfLen;
+            q.y += Math.sin(heading) * halfLen;
+            return sx;
           },
           onUpdate: (p, _k, t) => {
             const q = p as BurstParticle;
@@ -2894,7 +2879,7 @@ export class MissionScene extends Phaser.Scene {
   }
 
   stampDecor(): void {
-    const g = this.world.canvas.getContext("2d")!;
+    const g = this.world.canvas.getContext("2d", { willReadFrequently: true })!;
     g.imageSmoothingEnabled = true;
     for (const d of this.world.decor) {
       const tex = doodadTex(d.kind);
@@ -3171,7 +3156,7 @@ export class MissionScene extends Phaser.Scene {
       bloodStampScratch.width = tw;
       bloodStampScratch.height = th;
     }
-    const sg = bloodStampScratch.getContext("2d")!;
+    const sg = bloodStampScratch.getContext("2d", { willReadFrequently: true })!;
     sg.clearRect(0, 0, tw, th);
     sg.globalCompositeOperation = "source-over";
     sg.drawImage(srcImg, fr.cutX, fr.cutY, tw, th, 0, 0, tw, th);
@@ -3185,7 +3170,7 @@ export class MissionScene extends Phaser.Scene {
 
     const dw = (tw * sx) / SCALE;
     const dh = (th * sy) / SCALE;
-    const g = this.world.canvas.getContext("2d")!;
+    const g = this.world.canvas.getContext("2d", { willReadFrequently: true })!;
     g.save();
     g.globalCompositeOperation = "multiply";
     g.globalAlpha = Phaser.Math.Clamp(0.35 + fade * 0.65, 0.2, 0.85);
@@ -4219,11 +4204,12 @@ export class MissionScene extends Phaser.Scene {
       for (let i = 0; i < segs; i++) {
         const t0 = i / segs;
         const t1 = (i + 1) / segs;
+        // Fade in toward the tip (near-zero at the muzzle) — same curve for red & green.
         const t = t1 * t1;
         if (missile) {
-          g.lineStyle(3.2, glow, 0.12 + t * 0.28);
+          g.lineStyle(2.4, glow, t * 0.32);
           g.lineBetween(x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1);
-          g.lineStyle(1.6, line, 0.28 + t * 0.62);
+          g.lineStyle(1.15, line, t * 0.55);
           g.lineBetween(x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1);
         } else {
           g.lineStyle(1, line, t * 0.42);
@@ -4759,23 +4745,26 @@ export class MissionScene extends Phaser.Scene {
         beam.lineStyle(1.5 * tipScale, 0xffffff, 0.95).lineBetween(tipScreenX, tipScreenY, beamEnd.x, beamEnd.y);
         this.tweens.add({ targets: beam, alpha: 0, duration: 110, onComplete: () => beam.destroy() });
       } else if (!spec.silent) {
+        const muzzleMul = playerMuzzleFxMul(spec);
+        const sparkMul = Phaser.Math.Linear(0.55, 1, Phaser.Math.Clamp((muzzleMul - 0.4) / 0.6, 0, 1));
         this.emitVisualBurst(tip.x, tip.y, h.z, {
-          n: scaledProjectileFxCount(6, shotFxScale),
-          spdMin: 220,
-          spdMax: 520,
+          n: scaledProjectileFxCount(8, shotFxScale * Math.sqrt(sparkMul)),
+          spdMin: 6 + 6 * sparkMul,
+          spdMax: 110 + 90 * sparkMul,
           bx: Math.cos(ang),
           by: Math.sin(ang),
           bz: (tz - z0) / Math.max(40, dist),
           tight: 0.9,
-          scaleMul: 0.3,
+          scaleMul: 0.2 * sparkMul,
+          stretchMul: 1.4 + 0.9 * sparkMul,
+          // 260° full cone; density + speed both favor the aim axis.
+          coneHalf: (260 * Math.PI) / 360,
         }, this.muzzleBurst);
-        this.tracer.setDepth(worldDepth(z0, ZOff.muzzle, tip.y));
-        this.emitBudgeted("short", this.tracer, tipScreenX, tipScreenY, scaledProjectileFxCount(5, shotFxScale));
         this.showMuzzle(
           tipScreenX,
           tipScreenY,
           projectHeading(ang, tip.x, tip.y, h.z),
-          0.78 * tipScale,
+          0.52 * tipScale * muzzleMul,
           0.1
         );
         const craft = h.spec;
@@ -4954,6 +4943,8 @@ export class MissionScene extends Phaser.Scene {
       // Player owns this station while selected — manual hold-fire in handleFire.
       if (h.weapon === slot) {
         for (let b = 0; b < barrels.length; b++) {
+          const prefer = this.autoGunPreferHeading(slot, b);
+          const origin = this.autoGunAcquireOrigin(slot, b, prefer, acquire);
           this.autoGunDbg.push({
             slot,
             barrel: b,
@@ -4961,6 +4952,8 @@ export class MissionScene extends Phaser.Scene {
             want: barrels[b] ?? h.gunAngle,
             targetId: null,
             range: acquire,
+            originX: origin.x,
+            originY: origin.y,
             state: `${crewTag}${barrels.length > 1 ? ` ${b + 1}` : ""} MANUAL`,
           });
         }
@@ -4968,6 +4961,8 @@ export class MissionScene extends Phaser.Scene {
       }
       if (!this.hasAmmo(slot)) {
         for (let b = 0; b < barrels.length; b++) {
+          const prefer = this.autoGunPreferHeading(slot, b);
+          const origin = this.autoGunAcquireOrigin(slot, b, prefer, acquire);
           this.autoGunDbg.push({
             slot,
             barrel: b,
@@ -4975,6 +4970,8 @@ export class MissionScene extends Phaser.Scene {
             want: null,
             targetId: null,
             range: acquire,
+            originX: origin.x,
+            originY: origin.y,
             state: `${crewTag}${barrels.length > 1 ? ` ${b + 1}` : ""} EMPTY`,
           });
         }
@@ -4982,13 +4979,19 @@ export class MissionScene extends Phaser.Scene {
       }
       for (let b = 0; b < barrels.length; b++) {
         // Full circle when no traverse — don't inherit the nose-front default arc.
+        const prefer = this.autoGunPreferHeading(slot, b);
+        const origin = this.autoGunAcquireOrigin(slot, b, prefer, acquire);
+        const mount = this.autoGunMountWorld(slot, b);
         const tgt = this.pickAutoTarget(
+          origin.x,
+          origin.y,
           h.x,
           h.y,
           h.angle,
           acquire,
           socket.traverse,
-          !socket.traverse
+          !socket.traverse,
+          prefer
         );
         if (!tgt) {
           this.autoGunDbg.push({
@@ -4998,11 +5001,13 @@ export class MissionScene extends Phaser.Scene {
             want: null,
             targetId: null,
             range: acquire,
+            originX: origin.x,
+            originY: origin.y,
             state: `${crewTag}${barrels.length > 1 ? ` ${b + 1}` : ""} IDLE`,
           });
           continue;
         }
-        const want = Math.atan2(tgt.y - h.y, tgt.x - h.x);
+        const want = Math.atan2(tgt.y - mount.y, tgt.x - mount.x);
         if (socket.traverse && !aimInStationArc(want, h.angle, socket.traverse)) {
           this.autoGunDbg.push({
             slot,
@@ -5011,6 +5016,8 @@ export class MissionScene extends Phaser.Scene {
             want: null,
             targetId: null,
             range: acquire,
+            originX: origin.x,
+            originY: origin.y,
             state: `${crewTag}${barrels.length > 1 ? ` ${b + 1}` : ""} ARC`,
           });
           continue;
@@ -5033,6 +5040,8 @@ export class MissionScene extends Phaser.Scene {
           want,
           targetId: tgt.id,
           range: acquire,
+          originX: origin.x,
+          originY: origin.y,
           state,
         });
         if (!aligned) continue;
@@ -5063,6 +5072,59 @@ export class MissionScene extends Phaser.Scene {
     if (spec.guidance.mode === "auto") return spec.guidance.acquireRadius;
     if (spec.launch.mode === "beam") return spec.launch.range;
     return 340;
+  }
+
+  /** World position of an automatic barrel's gun mount (falls back to craft origin). */
+  autoGunMountWorld(slot: number, barrel: number): { x: number; y: number } {
+    const h = this.heli;
+    const craft = h.spec;
+    const socket = craft.sockets[slot];
+    let mount: { x: number; y: number } | undefined;
+    if (socket && (socket.class === "turret" || socket.class === "cabin")) {
+      const mounts = craftGunMounts(craft);
+      const gi = this.gunVisualIndexForSlot(slot, barrel);
+      mount = mounts[gi] ?? mounts[0];
+    }
+    if (!mount && socket) {
+      const pts = craftSocketPoints(craft, socket);
+      mount = pts[barrel] ?? pts[0];
+    }
+    if (!mount) return { x: h.x, y: h.y };
+    return this.craftBodyMountWorldPos(mount);
+  }
+
+  /**
+   * Preferred engage bearing for an auto barrel: craft center → gun mount in world space.
+   * Side door mounts face outward so left/right gunners split targets instead of sharing nose bias.
+   */
+  autoGunPreferHeading(slot: number, barrel: number): number {
+    const h = this.heli;
+    const socket = h.spec.sockets[slot];
+    const at = this.autoGunMountWorld(slot, barrel);
+    const dx = at.x - h.x;
+    const dy = at.y - h.y;
+    if (dx * dx + dy * dy < 4) {
+      if (socket?.traverse) {
+        return Phaser.Math.Angle.Wrap(h.angle + (socket.traverse.center * Math.PI) / 180);
+      }
+      return h.angle;
+    }
+    return Math.atan2(dy, dx);
+  }
+
+  /** Per-barrel acquire center: mount position shifted along preferred heading. */
+  autoGunAcquireOrigin(
+    slot: number,
+    barrel: number,
+    prefer: number,
+    range: number
+  ): { x: number; y: number } {
+    const mount = this.autoGunMountWorld(slot, barrel);
+    const bias = range * AUTO_GUN_RANGE_BIAS;
+    return {
+      x: mount.x + Math.cos(prefer) * bias,
+      y: mount.y + Math.sin(prefer) * bias,
+    };
   }
 
   /** Active Specter drone under remote pilot, if any. */
@@ -5172,30 +5234,38 @@ export class MissionScene extends Phaser.Scene {
     this.showMuzzle(from.x, from.y, projectHeading(h.gunAngle, tip.x, tip.y, h.z), 0.55 * from.scale, 0.08);
   }
 
-  /** Prefer threats by class, angle, and proximity for automatic stations. */
+  /**
+   * Prefer threats by class, gun-placement heading, and proximity for automatic stations.
+   * Range / proximity use `fromX/Y` (per-barrel heading-biased origin). Traverse arcs use
+   * craft→target vs `heading`. `preferHeading` scores angular preference from the acquire origin.
+   */
   pickAutoTarget(
-    x: number,
-    y: number,
+    fromX: number,
+    fromY: number,
+    craftX: number,
+    craftY: number,
     heading: number,
     maxR: number,
     traverse?: { center: number; arc: number; side?: "left" | "right" | "both" },
-    unrestricted = false
+    unrestricted = false,
+    preferHeading = heading
   ): Unit | undefined {
     let best: Unit | undefined;
     let bestScore = -1e9;
     for (const u of this.units) {
       if (u.dead) continue;
-      const d = Math.hypot(u.x - x, u.y - y);
+      const d = Math.hypot(u.x - fromX, u.y - fromY);
       if (d > maxR || d < 35) continue;
-      const aim = Math.atan2(u.y - y, u.x - x);
+      const aimCraft = Math.atan2(u.y - craftY, u.x - craftX);
       if (traverse) {
-        if (!aimInStationArc(aim, heading, traverse)) continue;
-      } else if (!unrestricted && Math.abs(Phaser.Math.Angle.Wrap(aim - heading)) > Math.PI * 0.7) {
+        if (!aimInStationArc(aimCraft, heading, traverse)) continue;
+      } else if (!unrestricted && Math.abs(Phaser.Math.Angle.Wrap(aimCraft - heading)) > Math.PI * 0.7) {
         continue;
       }
-      const off = Math.abs(Phaser.Math.Angle.Wrap(aim - heading));
+      const aim = Math.atan2(u.y - fromY, u.x - fromX);
+      const off = Math.abs(Phaser.Math.Angle.Wrap(aim - preferHeading));
       const cls = heatClassScore(heatClassOf(u));
-      const score = cls * 1e5 + u.max * 8 - off * 120 - d * 0.35;
+      const score = cls * 1e5 + u.max * 8 - off * AUTO_GUN_HEADING_WEIGHT - d * 0.35;
       if (score > bestScore) {
         bestScore = score;
         best = u;
@@ -5235,7 +5305,7 @@ export class MissionScene extends Phaser.Scene {
     maxR: number,
     traverse?: { center: number; arc: number; side?: "left" | "right" | "both" }
   ): Unit | undefined {
-    return this.pickAutoTarget(x, y, heading, maxR, traverse);
+    return this.pickAutoTarget(x, y, x, y, heading, maxR, traverse);
   }
 
   missileMuzzle(x: number, y: number, z: number, ang: number, fxScale = 1): void {
@@ -5243,13 +5313,15 @@ export class MissionScene extends Phaser.Scene {
     const sa = Math.sin(ang);
     this.emitVisualBurst(x, y, z, {
       n: scaledProjectileFxCount(12, fxScale),
-      spdMin: 200,
-      spdMax: 520,
+      spdMin: 35,
+      spdMax: 420,
       bx: ca,
       by: sa,
       bz: 0.2,
       tight: 0.84,
       scaleMul: 0.3,
+      stretchMul: 2.8,
+      coneHalf: (260 * Math.PI) / 360,
     }, this.muzzleBurst);
     const at = worldToScreen(x, y, z);
     this.showMuzzle(at.x, at.y, projectHeading(ang, x, y, z), 0.62 * at.scale, 0.12);
@@ -5545,15 +5617,39 @@ export class MissionScene extends Phaser.Scene {
 
   sampleBurstScreenVelocity(p?: BurstParticle): { x: number; y: number } {
     const opt = this.burstLaunch;
-    const d = opt.expBias > 0
-      ? expBiasDir(opt.bx, opt.by, opt.bz, opt.expBias)
-      : biasedDir(opt.bx, opt.by, opt.bz, opt.tight, false);
-    const align = (d as { align?: number }).align ?? 1;
-    const speedBias = opt.expBias > 0 ? Math.exp(opt.expBias * 0.55 * align) / Math.exp(opt.expBias * 0.55) : 1;
-    const speed = range(opt.spdMin, opt.spdMax) * speedBias;
-    const vx = d.x * speed;
-    const vy = d.y * speed;
-    const vz = d.z * speed;
+    let dx: number;
+    let dy: number;
+    let dz: number;
+    let speed: number;
+    if (opt.coneHalf > 0) {
+      const d = coneDir(opt.bx, opt.by, opt.bz, opt.coneHalf, 6.5);
+      // Speed falloff is steeper than density: wide/back sparks barely crawl, heading sparks bolt.
+      const cosMin = Math.cos(opt.coneHalf);
+      const kSpeed = 11;
+      const t = (Math.exp(kSpeed * d.align) - Math.exp(kSpeed * cosMin))
+        / Math.max(1e-4, Math.exp(kSpeed) - Math.exp(kSpeed * cosMin));
+      const band = Math.max(0, opt.spdMax - opt.spdMin) * 0.06;
+      speed = Phaser.Math.Linear(opt.spdMin, opt.spdMax, Phaser.Math.Clamp(t, 0, 1))
+        + range(-band, band);
+      dx = d.x;
+      dy = d.y;
+      dz = d.z;
+    } else {
+      const d = opt.expBias > 0
+        ? expBiasDir(opt.bx, opt.by, opt.bz, opt.expBias)
+        : biasedDir(opt.bx, opt.by, opt.bz, opt.tight, false);
+      const align = (d as { align?: number }).align ?? 1;
+      const speedBias = opt.expBias > 0
+        ? Math.exp(opt.expBias * 0.55 * align) / Math.exp(opt.expBias * 0.55)
+        : 1;
+      speed = range(opt.spdMin, opt.spdMax) * speedBias;
+      dx = d.x;
+      dy = d.y;
+      dz = d.z;
+    }
+    const vx = dx * speed;
+    const vy = dy * speed;
+    const vz = dz * speed;
     const screenX = screenVelX(vx, vy, vz, opt.x, opt.y, opt.z);
     const screenY = screenVelY(vy, vz, opt.z, opt.y);
     if (p) {
@@ -5577,8 +5673,13 @@ export class MissionScene extends Phaser.Scene {
       bz: number;
       tight: number;
       scaleMul?: number;
+      stretchMul?: number;
       expBias?: number;
       gravity?: number;
+      /** Half-angle (rad). When set, samples a forward-biased cone; speed rises toward the aim axis. */
+      coneHalf?: number;
+      /** Painter offset via worldDepth (gun < muzzle < body). Defaults to fire banding. */
+      depthOff?: number;
     },
     emitter: Phaser.GameObjects.Particles.ParticleEmitter,
     kind: FxClass = "short"
@@ -5586,10 +5687,17 @@ export class MissionScene extends Phaser.Scene {
     Object.assign(this.burstLaunch, {
       x, y, z, bx: opt.bx, by: opt.by, bz: opt.bz, tight: opt.tight,
       spdMin: opt.spdMin, spdMax: opt.spdMax, scale: opt.scaleMul ?? 1,
+      stretchMul: opt.stretchMul ?? 1,
       expBias: opt.expBias ?? 0, gravity: opt.gravity ?? 0,
+      coneHalf: opt.coneHalf ?? 0,
     });
     const at = worldToScreen(x, y, z);
-    this.emitBudgeted(kind, this.fxAt(z, y, emitter, ZOff.fire + 0.4), at.x, at.y, opt.n, kind === "fire");
+    // Muzzle cones must share hull painter space (between gun and body), not fire FX bands.
+    const em =
+      emitter === this.muzzleBurst || opt.depthOff != null
+        ? this.fxAtWorld(z, y, emitter, opt.depthOff ?? ZOff.muzzle)
+        : this.fxAt(z, y, emitter, ZOff.fire + 0.4);
+    this.emitBudgeted(kind, em, at.x, at.y, opt.n, kind === "fire");
   }
 
   /** Retained manually simulated dirt/blood because it interacts with and stamps terrain. */
@@ -5980,8 +6088,16 @@ export class MissionScene extends Phaser.Scene {
         helixDy = py * off;
         // Glowing energy particle trail.
         if ((st.age * 20 | 0) !== ((st.age - dt) * 20 | 0)) {
-          const at = worldToScreen(s.x + helixDx, s.y + helixDy, s.z);
-          this.emitBudgeted("short", this.tracer, at.x, at.y, 1);
+          this.emitVisualBurst(s.x + helixDx, s.y + helixDy, s.z, {
+            n: 1,
+            spdMin: 40,
+            spdMax: 140,
+            bx: Math.cos(s.angle),
+            by: Math.sin(s.angle),
+            bz: 0.15,
+            tight: 0.35,
+            scaleMul: 0.55,
+          }, this.shortBurst);
         }
       }
 
@@ -7563,7 +7679,7 @@ export class MissionScene extends Phaser.Scene {
       const canvas = document.createElement("canvas");
       canvas.width = width;
       canvas.height = height;
-      const ctx = canvas.getContext("2d")!;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
       ctx.drawImage(src, 0, 0);
       const rgba = ctx.getImageData(0, 0, width, height).data;
       const alpha = new Uint8ClampedArray(width * height);
@@ -8639,6 +8755,19 @@ export class MissionScene extends Phaser.Scene {
     const slot = this.fxSlot(proto, z, y);
     const em = slot.emitter;
     const d = this.fxBandDepth(slot.band, off);
+    if (em.depth !== d) em.setDepth(d);
+    return em;
+  }
+
+  /** Same slot pooling as fxAt, but depth matches hull sprites (worldDepth), not FX bands. */
+  fxAtWorld(
+    z: number,
+    y: number,
+    proto: Phaser.GameObjects.Particles.ParticleEmitter,
+    off: number
+  ): Phaser.GameObjects.Particles.ParticleEmitter {
+    const em = this.fxSlot(proto, z, y).emitter;
+    const d = worldDepth(z, off, y);
     if (em.depth !== d) em.setDepth(d);
     return em;
   }
@@ -11396,12 +11525,10 @@ export class MissionScene extends Phaser.Scene {
       }
       const tipScr = worldToScreen(tip.x, tip.y, h.z);
       const range = dbg.range;
-      // Acquire ring centered where pickAutoTarget measures (craft origin).
-      if (dbg.barrel === 0) {
-        const originScr = worldToScreen(h.x, h.y, h.z);
-        this.aiGfx.lineStyle(1.1, 0x7ad0ff, 0.28);
-        this.aiGfx.strokeCircle(originScr.x, originScr.y, range * originScr.scale);
-      }
+      // Per-barrel acquire ring (mount + heading bias).
+      const originScr = worldToScreen(dbg.originX, dbg.originY, h.z);
+      this.aiGfx.lineStyle(1.1, 0x7ad0ff, 0.28);
+      this.aiGfx.strokeCircle(originScr.x, originScr.y, range * originScr.scale);
       const aimEnd = worldToScreen(
         tip.x + Math.cos(dbg.aim) * range,
         tip.y + Math.sin(dbg.aim) * range,
@@ -12690,7 +12817,7 @@ export class MissionScene extends Phaser.Scene {
     for (const policy of Object.values(this.fxPolicies)) {
       for (const em of policy.emitters) em.timeScale = s;
     }
-    for (const em of [this.smoke, this.tracer, this.blastFire, this.heliDust]) {
+    for (const em of [this.smoke, this.blastFire, this.heliDust]) {
       if (em) em.timeScale = s;
     }
   }
@@ -13601,11 +13728,61 @@ function biasedDir(
   const ry = Math.sin(phi) * Math.sin(theta);
   const rz = Math.cos(phi);
   const t = Phaser.Math.Clamp(tight, 0, 1);
-  let x = sx * t + rx * (1 - t);
-  let y = sy * t + ry * (1 - t);
-  let z = sz * t + rz * (1 - t);
+  const x = sx * t + rx * (1 - t);
+  const y = sy * t + ry * (1 - t);
+  const z = sz * t + rz * (1 - t);
   const n = Math.hypot(x, y, z) || 1;
   return { x: x / n, y: y / n, z: z / n };
+}
+
+/**
+ * Sample a unit direction inside a cone of half-angle `half` about (bx,by,bz).
+ * Density pdf ∝ exp(k · align) truncated to the cone; `edge` is that CDF value
+ * (0 = rim, 1 = forward) so callers can share the same falloff for speed.
+ */
+function coneDir(
+  bx: number,
+  by: number,
+  bz: number,
+  half: number,
+  k = 4
+): { x: number; y: number; z: number; align: number; edge: number } {
+  const len = Math.hypot(bx, by, bz) || 1;
+  const sx = bx / len;
+  const sy = by / len;
+  const sz = bz / len;
+  const cosMin = Math.cos(Phaser.Math.Clamp(half, 1e-3, Math.PI));
+  const kk = Math.max(1e-4, k);
+  const edge = Math.random();
+  const align = Math.log(
+    Math.exp(kk * cosMin) + edge * (Math.exp(kk) - Math.exp(kk * cosMin))
+  ) / kk;
+  const sinT = Math.sqrt(Math.max(0, 1 - align * align));
+  const azi = Math.random() * Math.PI * 2;
+  let ax = 0;
+  let ay = 1;
+  let az = 0;
+  if (Math.abs(sy) > 0.9) {
+    ax = 1;
+    ay = 0;
+  }
+  let px = ay * sz - az * sy;
+  let py = az * sx - ax * sz;
+  let pz = ax * sy - ay * sx;
+  const pn = Math.hypot(px, py, pz) || 1;
+  px /= pn;
+  py /= pn;
+  pz /= pn;
+  const qx = sy * pz - sz * py;
+  const qy = sz * px - sx * pz;
+  const qz = sx * py - sy * px;
+  const ca = Math.cos(azi);
+  const sa = Math.sin(azi);
+  const x = sx * align + (px * ca + qx * sa) * sinT;
+  const y = sy * align + (py * ca + qy * sa) * sinT;
+  const z = sz * align + (pz * ca + qz * sa) * sinT;
+  const n = Math.hypot(x, y, z) || 1;
+  return { x: x / n, y: y / n, z: z / n, align, edge };
 }
 
 /** Sample a unit direction with pdf ∝ exp(k · cosθ) about (bx,by,bz). align = cosθ ∈ [-1,1]. */
@@ -13700,7 +13877,7 @@ function ensureBlastRingGradient(textures: Phaser.Textures.TextureManager): void
   const canvas = document.createElement("canvas");
   canvas.width = size * BLAST_RING_FRAMES;
   canvas.height = size;
-  const g = canvas.getContext("2d")!;
+  const g = canvas.getContext("2d", { willReadFrequently: true })!;
   for (let frame = 0; frame < BLAST_RING_FRAMES; frame++) {
     const t = frame / (BLAST_RING_FRAMES - 1);
     const holeEase = 1 - Math.pow(1 - t, 3.5);
@@ -13769,7 +13946,7 @@ function ensureExhaustGlow(textures: Phaser.Textures.TextureManager): void {
   const c = document.createElement("canvas");
   c.width = w;
   c.height = h;
-  const g = c.getContext("2d")!;
+  const g = c.getContext("2d", { willReadFrequently: true })!;
   const grad = g.createRadialGradient(w * 0.5, h * 0.5, 0, w * 0.5, h * 0.5, w * 0.5);
   grad.addColorStop(0, "rgba(255,255,255,1)");
   grad.addColorStop(0.2, "rgba(255,255,255,0.92)");
@@ -13790,7 +13967,7 @@ function ensureImpactGlow(textures: Phaser.Textures.TextureManager): void {
   const c = document.createElement("canvas");
   c.width = s;
   c.height = s;
-  const g = c.getContext("2d")!;
+  const g = c.getContext("2d", { willReadFrequently: true })!;
   const grd = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
   grd.addColorStop(0, "rgba(255,255,255,1)");
   grd.addColorStop(0.2, "rgba(255,255,255,0.72)");

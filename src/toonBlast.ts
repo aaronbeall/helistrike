@@ -602,12 +602,12 @@ export function renderToonBlastFrame(
     scratch.width = size;
     scratch.height = size;
   }
-  const gScratch = gTmp ?? scratch.getContext("2d")!;
+  const gScratch = gTmp ?? scratch.getContext("2d", { willReadFrequently: true })!;
 
   const c = document.createElement("canvas");
   c.width = size;
   c.height = size;
-  const g = c.getContext("2d")!;
+  const g = c.getContext("2d", { willReadFrequently: true })!;
   g.imageSmoothingEnabled = true;
   const cx = size * 0.5;
   const cy = size * 0.5;
@@ -652,7 +652,7 @@ function bakeOneVariant(
   const sheet = document.createElement("canvas");
   sheet.width = size * frames;
   sheet.height = size;
-  const g = sheet.getContext("2d")!;
+  const g = sheet.getContext("2d", { willReadFrequently: true })!;
 
   for (let i = 0; i < frames; i++) {
     const t = i / (frames - 1);
@@ -675,7 +675,7 @@ export function bakeToonBlast(textures: Phaser.Textures.TextureManager): void {
   const tmp = document.createElement("canvas");
   tmp.width = size;
   tmp.height = size;
-  const gTmp = tmp.getContext("2d")!;
+  const gTmp = tmp.getContext("2d", { willReadFrequently: true })!;
 
   for (let v = 0; v < TOON_BLAST_VARIANTS; v++) {
     const seed = VARIANT_SEEDS[v] ?? (0xb1a57e + v * 0x9e3779b9);

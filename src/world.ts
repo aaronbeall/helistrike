@@ -232,7 +232,7 @@ export function imageDataToCanvas(img: ImageData): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = img.width;
   c.height = img.height;
-  c.getContext("2d")!.putImageData(img, 0, 0);
+  c.getContext("2d", { willReadFrequently: true })!.putImageData(img, 0, 0);
   return c;
 }
 
@@ -1247,7 +1247,7 @@ function lightTerrainPixel(
 }
 
 export function applyTerrainLight(canvas: HTMLCanvasElement, height: Float32Array): void {
-  const g = canvas.getContext("2d")!;
+  const g = canvas.getContext("2d", { willReadFrequently: true })!;
   const img = g.getImageData(0, 0, TEX, TEX);
   const d = img.data;
   for (let y = 1; y < TEX - 1; y++) {
@@ -1353,7 +1353,7 @@ export function paintHeightMap(height: Float32Array): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = TEX;
   c.height = TEX;
-  const g = c.getContext("2d")!;
+  const g = c.getContext("2d", { willReadFrequently: true })!;
   const img = g.createImageData(TEX, TEX);
   const d = img.data;
   for (let y = 0; y < TEX; y++) {
@@ -1379,7 +1379,7 @@ export function paintHeightMapRect(
   x1: number,
   y1: number
 ): void {
-  const g = canvas.getContext("2d")!;
+  const g = canvas.getContext("2d", { willReadFrequently: true })!;
   const w = x1 - x0 + 1;
   const h = y1 - y0 + 1;
   const img = g.createImageData(w, h);
@@ -1510,7 +1510,7 @@ export function rebuildWorldPatch(
       d[o + 3] = 255;
     }
   }
-  const g = world.canvas.getContext("2d")!;
+  const g = world.canvas.getContext("2d", { willReadFrequently: true })!;
   g.putImageData(img, x0, y0);
   restamp?.(g, x0, y0, x1, y1);
   const lit = g.getImageData(x0, y0, w, h);

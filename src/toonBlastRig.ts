@@ -130,7 +130,7 @@ export class ToonBlastRig {
   private dirtyLayout = true;
   private clusters = makeToonClusters(mulberry32(this.seed));
   private tmp = document.createElement("canvas");
-  private gTmp = this.tmp.getContext("2d")!;
+  private gTmp = this.tmp.getContext("2d", { willReadFrequently: true })!;
   private previewKey = "rig_toon_live";
 
   root: Phaser.GameObjects.Container;

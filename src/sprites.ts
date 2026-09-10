@@ -269,7 +269,7 @@ export function extractHeliHudWireframe(tex: Phaser.Textures.Texture, step = 2):
   const canvas = document.createElement("canvas");
   canvas.width = w;
   canvas.height = h;
-  const ctx = canvas.getContext("2d")!;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
   ctx.drawImage(src as CanvasImageSource, 0, 0);
   const data = ctx.getImageData(0, 0, w, h).data;
   const at = (x: number, y: number) => {
@@ -331,7 +331,7 @@ function bakeHudWireShadowCanvas(
   const canvas = document.createElement("canvas");
   canvas.width = cw;
   canvas.height = ch;
-  const ctx = canvas.getContext("2d")!;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
   const offX = 2;
   const offY = 3;
   ctx.fillStyle = "#ffffff";
@@ -365,7 +365,7 @@ function bakeHudWireCanvas(
   const canvas = document.createElement("canvas");
   canvas.width = cw;
   canvas.height = ch;
-  const ctx = canvas.getContext("2d")!;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
   ctx.fillStyle = "#ffffff";
   stampHudWireDots(ctx, points, srcW, srcH, cropX, cropY, 1.4);
   return canvas;
@@ -576,7 +576,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     const hc = document.createElement("canvas");
     hc.width = enemy.width;
     hc.height = enemy.height;
-    hc.getContext("2d")!.drawImage(enemy, 0, 0);
+    hc.getContext("2d", { willReadFrequently: true })!.drawImage(enemy, 0, 0);
     put(textures, "enemy_heli_hulk", darkenWreck(hc));
   }
   const rotors = splitRotorSheet(keyPixels(src(textures, "src_enemy_rotors"), "magenta"));
@@ -735,7 +735,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     const dh = (droneRotor as HTMLCanvasElement).height || (droneRotor as HTMLImageElement).height;
     dc.width = dw;
     dc.height = dh;
-    dc.getContext("2d")!.drawImage(droneRotor, 0, 0);
+    dc.getContext("2d", { willReadFrequently: true })!.drawImage(droneRotor, 0, 0);
     put(textures, "enemy_drone_rotor_hulk", darkenWreck(fit(dc, 14)));
   }
 
@@ -861,7 +861,7 @@ export function extractBiomeTiles(textures: Phaser.Textures.TextureManager): (Im
     const c = document.createElement("canvas");
     c.width = size;
     c.height = size;
-    const g = c.getContext("2d")!;
+    const g = c.getContext("2d", { willReadFrequently: true })!;
     g.drawImage(img, 0, 0, size, size);
     byName[name] = g.getImageData(0, 0, size, size);
   }
@@ -976,7 +976,7 @@ function putFxSpriteSheet(
   const sheet = document.createElement("canvas");
   sheet.width = size * n;
   sheet.height = size;
-  const g = sheet.getContext("2d")!;
+  const g = sheet.getContext("2d", { willReadFrequently: true })!;
   cells.forEach((c, i) => {
     g.drawImage(c, i * size + (size - c.width) / 2, (size - c.height) / 2);
   });
@@ -1023,7 +1023,7 @@ function putFxSheet(
 }
 
 function fxKnockBlack(src: HTMLCanvasElement): HTMLCanvasElement {
-  const g = src.getContext("2d")!;
+  const g = src.getContext("2d", { willReadFrequently: true })!;
   const pix = g.getImageData(0, 0, src.width, src.height);
   const d = pix.data;
   for (let i = 0; i < d.length; i += 4) {
@@ -1041,7 +1041,7 @@ function fxKnockBlack(src: HTMLCanvasElement): HTMLCanvasElement {
 
 /** Neutralize generated warm flame color so Phaser tint can produce energy exhaust hues. */
 function whitenFx(src: HTMLCanvasElement): HTMLCanvasElement {
-  const g = src.getContext("2d")!;
+  const g = src.getContext("2d", { willReadFrequently: true })!;
   const pix = g.getImageData(0, 0, src.width, src.height);
   const d = pix.data;
   for (let i = 0; i < d.length; i += 4) {
@@ -1058,7 +1058,7 @@ function copyToCanvas(img: CanvasImageSource, w: number, h: number): HTMLCanvasE
   const c = document.createElement("canvas");
   c.width = w;
   c.height = h;
-  const g = c.getContext("2d")!;
+  const g = c.getContext("2d", { willReadFrequently: true })!;
   g.drawImage(img, 0, 0, w, h);
   return c;
 }
@@ -1069,7 +1069,7 @@ function keyImage(img: HTMLImageElement, mode: "magenta" | "studio" | "edge"): H
 
 function keyDoodad(img: HTMLImageElement): HTMLCanvasElement {
   const c = keyPixels(img, "magenta");
-  const g = c.getContext("2d")!;
+  const g = c.getContext("2d", { willReadFrequently: true })!;
   const pix = g.getImageData(0, 0, c.width, c.height);
   const d = pix.data;
   const w = c.width;
@@ -1128,7 +1128,7 @@ function keyDoodad(img: HTMLImageElement): HTMLCanvasElement {
 
 /** Keep the circular dish only — drop any pedestal/yoke hanging below. */
 function clipRadarDish(c: HTMLCanvasElement): HTMLCanvasElement {
-  const g = c.getContext("2d")!;
+  const g = c.getContext("2d", { willReadFrequently: true })!;
   const pix = g.getImageData(0, 0, c.width, c.height);
   const d = pix.data;
   const w = c.width;
@@ -1154,7 +1154,7 @@ function clipRadarDish(c: HTMLCanvasElement): HTMLCanvasElement {
   const out = document.createElement("canvas");
   out.width = size;
   out.height = size;
-  const og = out.getContext("2d")!;
+  const og = out.getContext("2d", { willReadFrequently: true })!;
   og.beginPath();
   og.arc(size / 2, size / 2, r, 0, Math.PI * 2);
   og.clip();
@@ -1164,7 +1164,7 @@ function clipRadarDish(c: HTMLCanvasElement): HTMLCanvasElement {
 
 function keyPixels(img: HTMLImageElement, mode: "magenta" | "studio" | "edge"): HTMLCanvasElement {
   const c = copyToCanvas(img, img.width, img.height);
-  const g = c.getContext("2d")!;
+  const g = c.getContext("2d", { willReadFrequently: true })!;
   const pix = g.getImageData(0, 0, c.width, c.height);
   const d = pix.data;
   const w = c.width;
@@ -1266,7 +1266,7 @@ export function bakeThermalHeatFromAlpha(src: HTMLCanvasElement): HTMLCanvasElem
   const out = document.createElement("canvas");
   out.width = src.width;
   out.height = src.height;
-  const g = out.getContext("2d")!;
+  const g = out.getContext("2d", { willReadFrequently: true })!;
   g.drawImage(src, 0, 0);
   const pix = g.getImageData(0, 0, out.width, out.height);
   const d = pix.data;
@@ -1306,7 +1306,7 @@ export function bakeThermalHeatFromDarkness(src: HTMLCanvasElement): HTMLCanvasE
   const out = document.createElement("canvas");
   out.width = src.width;
   out.height = src.height;
-  const g = out.getContext("2d")!;
+  const g = out.getContext("2d", { willReadFrequently: true })!;
   g.drawImage(src, 0, 0);
   const pix = g.getImageData(0, 0, out.width, out.height);
   const d = pix.data;
@@ -1341,7 +1341,7 @@ export function bakeThermalHeatFromDarkness(src: HTMLCanvasElement): HTMLCanvasE
 }
 
 function matteMagenta(src: HTMLCanvasElement): HTMLCanvasElement {
-  const g = src.getContext("2d")!;
+  const g = src.getContext("2d", { willReadFrequently: true })!;
   const pix = g.getImageData(0, 0, src.width, src.height);
   const d = pix.data;
   const n = d.length / 4;
@@ -1389,7 +1389,7 @@ function matteMagenta(src: HTMLCanvasElement): HTMLCanvasElement {
 }
 
 function trim(src: HTMLCanvasElement, pad = 4): HTMLCanvasElement {
-  const g = src.getContext("2d")!;
+  const g = src.getContext("2d", { willReadFrequently: true })!;
   const pix = g.getImageData(0, 0, src.width, src.height);
   const d = pix.data;
   let x0 = src.width;
@@ -1415,7 +1415,7 @@ function trim(src: HTMLCanvasElement, pad = 4): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = w;
   c.height = h;
-  c.getContext("2d")!.drawImage(src, x0, y0, w, h, 0, 0, w, h);
+  c.getContext("2d", { willReadFrequently: true })!.drawImage(src, x0, y0, w, h, 0, 0, w, h);
   return c;
 }
 
@@ -1424,7 +1424,7 @@ function fit(src: HTMLCanvasElement, max: number): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = Math.max(1, Math.round(src.width * s));
   c.height = Math.max(1, Math.round(src.height * s));
-  const g = c.getContext("2d")!;
+  const g = c.getContext("2d", { willReadFrequently: true })!;
   g.imageSmoothingEnabled = true;
   g.imageSmoothingQuality = "high";
   g.drawImage(src, 0, 0, c.width, c.height);
@@ -1436,7 +1436,7 @@ function rotateCw90(src: HTMLCanvasElement): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = src.height;
   c.height = src.width;
-  const g = c.getContext("2d")!;
+  const g = c.getContext("2d", { willReadFrequently: true })!;
   g.translate(c.width, 0);
   g.rotate(Math.PI / 2);
   g.drawImage(src, 0, 0);
@@ -1451,7 +1451,7 @@ function grayShiftTexture(textures: Phaser.Textures.TextureManager, key: string)
 
 /** Shift warm desert tan toward cool naval gunmetal (battleship hull + mounts). */
 function toNavalGray(src: HTMLCanvasElement): HTMLCanvasElement {
-  const g = src.getContext("2d")!;
+  const g = src.getContext("2d", { willReadFrequently: true })!;
   const pix = g.getImageData(0, 0, src.width, src.height);
   const d = pix.data;
   for (let i = 0; i < d.length; i += 4) {
@@ -1473,7 +1473,7 @@ function toNavalGray(src: HTMLCanvasElement): HTMLCanvasElement {
 }
 
 function darkenWreck(src: HTMLCanvasElement, mul = 0.55): HTMLCanvasElement {
-  const g = src.getContext("2d")!;
+  const g = src.getContext("2d", { willReadFrequently: true })!;
   const pix = g.getImageData(0, 0, src.width, src.height);
   const d = pix.data;
   for (let i = 0; i < d.length; i += 4) {
@@ -1489,7 +1489,7 @@ function darkenWreck(src: HTMLCanvasElement, mul = 0.55): HTMLCanvasElement {
 /** Pre-bake a dark submerged blue cast of a boat hulk. */
 function submergeBlue(src: HTMLCanvasElement): HTMLCanvasElement {
   const c = copyCanvas(src);
-  const g = c.getContext("2d")!;
+  const g = c.getContext("2d", { willReadFrequently: true })!;
   const pix = g.getImageData(0, 0, c.width, c.height);
   const d = pix.data;
   for (let i = 0; i < d.length; i += 4) {
@@ -1507,7 +1507,7 @@ function submergeBlue(src: HTMLCanvasElement): HTMLCanvasElement {
 
 /** Remove soft gray drop-shadow fringes baked into sprite art (keeps solid blade/metal pixels). */
 function stripBakedDropShadow(src: HTMLCanvasElement): HTMLCanvasElement {
-  const g = src.getContext("2d")!;
+  const g = src.getContext("2d", { willReadFrequently: true })!;
   const pix = g.getImageData(0, 0, src.width, src.height);
   const d = pix.data;
   for (let i = 0; i < d.length; i += 4) {
@@ -1540,7 +1540,7 @@ function sliceGrid(src: HTMLCanvasElement, cols: number, rows: number): HTMLCanv
       const c = document.createElement("canvas");
       c.width = Math.max(1, w);
       c.height = Math.max(1, h);
-      c.getContext("2d")!.drawImage(src, x0, y0, c.width, c.height, 0, 0, c.width, c.height);
+      c.getContext("2d", { willReadFrequently: true })!.drawImage(src, x0, y0, c.width, c.height, 0, 0, c.width, c.height);
       out.push(trim(c));
     }
   }
@@ -1550,7 +1550,7 @@ function sliceGrid(src: HTMLCanvasElement, cols: number, rows: number): HTMLCanv
 function gutterCuts(src: HTMLCanvasElement, cells: number, axis: "x" | "y"): number[] {
   const size = axis === "x" ? src.width : src.height;
   const other = axis === "x" ? src.height : src.width;
-  const g = src.getContext("2d")!;
+  const g = src.getContext("2d", { willReadFrequently: true })!;
   const pix = g.getImageData(0, 0, src.width, src.height).data;
   const empty = new Uint8Array(size);
   for (let i = 0; i < size; i++) {
@@ -1607,7 +1607,7 @@ function gutterCuts(src: HTMLCanvasElement, cells: number, axis: "x" | "y"): num
 }
 
 function splitRotorSheet(src: HTMLCanvasElement): HTMLCanvasElement[] {
-  const g = src.getContext("2d")!;
+  const g = src.getContext("2d", { willReadFrequently: true })!;
   const pix = g.getImageData(0, 0, src.width, src.height);
   const d = pix.data;
   const w = src.width;
@@ -1655,7 +1655,7 @@ function splitRotorSheet(src: HTMLCanvasElement): HTMLCanvasElement[] {
     const c = document.createElement("canvas");
     c.width = Math.max(1, x1 - x0);
     c.height = h;
-    c.getContext("2d")!.drawImage(src, x0, 0, c.width, c.height, 0, 0, c.width, c.height);
+    c.getContext("2d", { willReadFrequently: true })!.drawImage(src, x0, 0, c.width, c.height, 0, 0, c.width, c.height);
     return trim(c, 14);
   };
   return [cut(0, split), cut(split, w)];
@@ -1664,7 +1664,7 @@ function splitRotorSheet(src: HTMLCanvasElement): HTMLCanvasElement[] {
 function insetHub(src: HTMLCanvasElement): { x: number; y: number } {
   const w = src.width;
   const h = src.height;
-  const a = src.getContext("2d")!.getImageData(0, 0, w, h).data;
+  const a = src.getContext("2d", { willReadFrequently: true })!.getImageData(0, 0, w, h).data;
   const dist = new Float64Array(w * h);
   const inf = 1e9;
   let opaqueX = 0;
@@ -1729,7 +1729,7 @@ function insetHub(src: HTMLCanvasElement): { x: number; y: number } {
  */
 function squareCenter(src: HTMLCanvasElement): HTMLCanvasElement {
   const hub = insetHub(src);
-  const g = src.getContext("2d")!;
+  const g = src.getContext("2d", { willReadFrequently: true })!;
   const pix = g.getImageData(0, 0, src.width, src.height);
   const d = pix.data;
   let reach = 1;
@@ -1745,7 +1745,7 @@ function squareCenter(src: HTMLCanvasElement): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = size;
   c.height = size;
-  c.getContext("2d")!.drawImage(src, half - hub.x, half - hub.y);
+  c.getContext("2d", { willReadFrequently: true })!.drawImage(src, half - hub.x, half - hub.y);
   return c;
 }
 
@@ -1757,7 +1757,7 @@ function copyCanvas(src: HTMLCanvasElement): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = src.width;
   c.height = src.height;
-  c.getContext("2d")!.drawImage(src, 0, 0);
+  c.getContext("2d", { willReadFrequently: true })!.drawImage(src, 0, 0);
   return c;
 }
 
@@ -1776,7 +1776,7 @@ function radialStampBlur(
   const out = document.createElement("canvas");
   out.width = src.width;
   out.height = src.height;
-  const g = out.getContext("2d")!;
+  const g = out.getContext("2d", { willReadFrequently: true })!;
   const cx = out.width * origin.x;
   const cy = out.height * origin.y;
   const halfArc = ((totalDeg * Math.PI) / 180) * 0.5;
@@ -1801,7 +1801,7 @@ function radialStampBlur(
 }
 
 function rowStats(src: HTMLCanvasElement): { count: number; minx: number; maxx: number }[] {
-  const g = src.getContext("2d")!;
+  const g = src.getContext("2d", { willReadFrequently: true })!;
   const pix = g.getImageData(0, 0, src.width, src.height);
   const d = pix.data;
   const rows: { count: number; minx: number; maxx: number }[] = [];
@@ -1850,7 +1850,7 @@ export function bakeShadows(textures: Phaser.Textures.TextureManager, key: strin
     const c = document.createElement("canvas");
     c.width = w + pad * 2;
     c.height = h + pad * 2;
-    const g = c.getContext("2d")!;
+    const g = c.getContext("2d", { willReadFrequently: true })!;
     g.filter = `blur(${blur}px)`;
     g.drawImage(img, pad, pad, w, h);
     g.filter = "none";

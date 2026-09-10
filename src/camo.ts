@@ -77,7 +77,7 @@ function drawDigitalCamo(size = 128): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = size;
   c.height = size;
-  const g = c.getContext("2d")!;
+  const g = c.getContext("2d", { willReadFrequently: true })!;
   const [br, bg, bb] = hexRgb(DIGITAL.colors[0]!);
   g.fillStyle = `rgb(${br},${bg},${bb})`;
   g.fillRect(0, 0, size, size);
@@ -116,7 +116,7 @@ function drawCamo(kind: CamoKind, size = 128): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = size;
   c.height = size;
-  const g = c.getContext("2d")!;
+  const g = c.getContext("2d", { willReadFrequently: true })!;
   const [br, bg, bb] = hexRgb(colors[0]!);
   g.fillStyle = `rgb(${br},${bg},${bb})`;
   g.fillRect(0, 0, size, size);
@@ -168,7 +168,7 @@ function srcCanvas(textures: Phaser.Textures.TextureManager, key: string): HTMLC
   const c = document.createElement("canvas");
   c.width = w;
   c.height = h;
-  const g = c.getContext("2d")!;
+  const g = c.getContext("2d", { willReadFrequently: true })!;
   g.drawImage(img, 0, 0);
   return c;
 }
@@ -179,8 +179,8 @@ function blendCamo(src: HTMLCanvasElement, camo: HTMLCanvasElement, ox: number, 
   const out = document.createElement("canvas");
   out.width = w;
   out.height = h;
-  const sg = src.getContext("2d")!;
-  const cg = camo.getContext("2d")!;
+  const sg = src.getContext("2d", { willReadFrequently: true })!;
+  const cg = camo.getContext("2d", { willReadFrequently: true })!;
   const sp = sg.getImageData(0, 0, w, h).data;
   const cp = cg.getImageData(0, 0, camo.width, camo.height).data;
   const dest = sg.createImageData(w, h);
@@ -212,7 +212,7 @@ function blendCamo(src: HTMLCanvasElement, camo: HTMLCanvasElement, ox: number, 
       d[i + 2] = Math.max(0, Math.min(255, cp[ci + 2]! * lum));
     }
   }
-  out.getContext("2d")!.putImageData(dest, 0, 0);
+  out.getContext("2d", { willReadFrequently: true })!.putImageData(dest, 0, 0);
   return out;
 }
 

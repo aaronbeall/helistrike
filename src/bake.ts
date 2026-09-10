@@ -19,7 +19,7 @@ function canvas(w: number, h: number): HTMLCanvasElement {
 }
 
 function ctxOf(c: HTMLCanvasElement): Ctx {
-  const g = c.getContext("2d");
+  const g = c.getContext("2d", { willReadFrequently: true });
   if (!g) throw new Error("2d");
   g.imageSmoothingEnabled = true;
   return g;

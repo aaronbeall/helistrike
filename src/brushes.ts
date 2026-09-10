@@ -32,7 +32,7 @@ function maskToCanvas(mask: Float32Array, n: number): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = n;
   c.height = n;
-  const g = c.getContext("2d")!;
+  const g = c.getContext("2d", { willReadFrequently: true })!;
   const img = g.createImageData(n, n);
   const d = img.data;
   for (let i = 0; i < n * n; i++) {
