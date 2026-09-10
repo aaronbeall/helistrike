@@ -551,33 +551,6 @@ function drawReticleSquare(): HTMLCanvasElement {
   return c;
 }
 
-function drawLock(): HTMLCanvasElement {
-  const c = canvas(72, 72);
-  const g = ctxOf(c);
-  g.strokeStyle = "#ff3a22";
-  g.lineWidth = 3.2;
-  g.lineCap = "square";
-  const s = 16;
-  g.beginPath();
-  g.moveTo(s, 8);
-  g.lineTo(8, 8);
-  g.lineTo(8, s);
-  g.moveTo(64 - s, 8);
-  g.lineTo(64, 8);
-  g.lineTo(64, s);
-  g.moveTo(s, 64);
-  g.lineTo(8, 64);
-  g.lineTo(8, 64 - s);
-  g.moveTo(64 - s, 64);
-  g.lineTo(64, 64);
-  g.lineTo(64, 64 - s);
-  g.stroke();
-  g.strokeStyle = "#ffd0c0";
-  g.lineWidth = 1.4;
-  g.strokeRect(18, 18, 36, 36);
-  return c;
-}
-
 /**
  * Intentional procedural chrome (no PNG sheet). Runs before prepareArt.
  * Sheet art may overwrite rockets / FX / blasts when present.
@@ -599,7 +572,6 @@ export function bakeAll(textures: Phaser.Textures.TextureManager): void {
   add(textures, "fx_muzzle", drawMuzzle());
   add(textures, "mark_reticle", drawReticle());
   add(textures, "mark_reticle_sq", drawReticleSquare());
-  add(textures, "mark_lock", drawLock());
   add(textures, "fx_track_tread", drawTrack("tread"));
   add(textures, "fx_track_tire", drawTrack("tire"));
   add(textures, "fx_track_dual", drawTrack("dual"));

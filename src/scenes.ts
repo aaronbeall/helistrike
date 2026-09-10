@@ -1335,7 +1335,6 @@ export class MissionScene extends Phaser.Scene {
   reticle!: Phaser.GameObjects.Image;
   reticleMark!: Phaser.GameObjects.Graphics;
   sight!: Phaser.GameObjects.Graphics;
-  lockSpr!: Phaser.GameObjects.Image;
   lockGfx!: Phaser.GameObjects.Graphics;
   towWireGfx!: Phaser.GameObjects.Graphics;
   teslaGfx!: Phaser.GameObjects.Graphics;
@@ -1830,7 +1829,6 @@ export class MissionScene extends Phaser.Scene {
     this.reticle = this.add.image(0, 0, "mark_reticle").setDepth(Layer.HUD).setScrollFactor(0);
     this.reticleMark = this.add.graphics().setDepth(Layer.HUD).setScrollFactor(0);
     this.sight = this.add.graphics().setDepth(Layer.HUD).setScrollFactor(0);
-    this.lockSpr = this.add.image(0, 0, "mark_lock").setDepth(Layer.FIELD).setVisible(false);
     this.lockGfx = this.add.graphics().setDepth(Layer.FIELD).setVisible(false);
     this.towWireGfx = this.add.graphics().setDepth(Layer.WORLD);
     this.teslaGfx = this.add.graphics().setDepth(Layer.WORLD).setBlendMode(Phaser.BlendModes.ADD);
@@ -10491,7 +10489,6 @@ export class MissionScene extends Phaser.Scene {
     const h = this.heli;
     const g = this.lockGfx;
     g.clear();
-    this.lockSpr.setVisible(false);
     this.lockArrowGfx.clear();
     this.lockHudTxt.setVisible(false);
     this.lockInbdHudTxt.setVisible(false);
@@ -12712,7 +12709,7 @@ export class MissionScene extends Phaser.Scene {
     this.bindHud(this.sight);
     this.bindHud(this.mapLabel);
     // World-anchored tracking HUD: lock boxes, unit HP — not thermalized.
-    for (const go of [this.lockSpr, this.lockGfx, this.lockTxt, this.lockInbdTxt, this.hpGfx]) {
+    for (const go of [this.lockGfx, this.lockTxt, this.lockInbdTxt, this.hpGfx]) {
       this.bindFieldHud(go);
     }
     const markHudTree = (obj: Phaser.GameObjects.GameObject) => {
@@ -13127,7 +13124,6 @@ export class MissionScene extends Phaser.Scene {
       this.reticleMark.clear();
       this.sight.setVisible(false);
       this.sight.clear();
-      this.lockSpr.setVisible(false);
       this.lockGfx.setVisible(false);
       this.lockGfx.clear();
       this.lockTxt.setVisible(false);
