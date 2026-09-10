@@ -82,7 +82,7 @@ What shows in the sprite rig (`registerArt` + filters in `sprites.ts`):
 | Gameplay sprites from loaded PNGs / sheet bakes | UI Text, menus, buttons, rig chrome (leave as UUID) |
 | Standalone generated art (`fx_shadow`, marks, tracers, …) | Menu-only chrome (`menu_splash`, mission preview thumbs) |
 | Art variants: `{rotor}_spin`, `{base}__{camo}` | Authoring intermediates (`src_*`, relief `brush_*`) |
-| Player HUD *graphics* (`hud_wire`, `hud_hurt_vignette`, …) | Utility maps: `{base}_sh0..3`, `_heat`, `_sink`, `hud_wire_sh` |
+| Player HUD *graphics* (`hud_wire`, `hud_hurt_static` / `hud_hurt_pulse`, …) | Utility maps: `{base}_sh0..3`, `_heat`, `_sink`, `hud_wire_sh` |
 
 **Rule of thumb for new derived textures:** if it’s another *appearance of the subject*, register it and keep it; if it’s a runtime *effect/mode buffer*, bake it for gameplay but treat it as utility (suffixes above / `isUtilityDerived`).
 

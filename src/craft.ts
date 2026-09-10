@@ -246,7 +246,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
       { id: "wing_guns", class: "fixed", controller: "pilot", weapon: "gatling", points: "muzzle", traverse: { center: 0, arc: 12 }, muzzleFire: "simultaneous" },
       { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket", points: "hardpoint" },
       { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "hellfire_missile", points: "hardpoint" },
-      { id: "cabin_doors", class: "cabin", controller: "automatic", weapon: "light_machine_gun", points: "gun", crew: "door" },
+      { id: "cabin_doors", class: "cabin", controller: "automatic", weapon: "door_machine_gun", points: "gun", crew: "door" },
     ],
   },
   chinook: {

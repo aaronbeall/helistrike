@@ -154,6 +154,11 @@ export interface PlayerWpnSpec {
   trailScale?: number;
   /** Projectile draw scale. */
   scale: number;
+  /**
+   * Aim scatter amplitude (radians, full random span). Applied as
+   * `(Math.random() - 0.5) * jitter` on muzzle shots. Default ~0.08 (silent ~0.025).
+   */
+  jitter?: number;
   silent?: boolean;
   beam?: boolean;
   guidance: WeaponGuidance;
@@ -480,6 +485,14 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     id: "light_machine_gun", name: "LIGHT MG", fullName: "LIGHT MACHINE GUN", designation: "5.56MM LIGHTWEIGHT MACHINE GUN", ammo: 2200, fireCd: 0.046, speed: 890,
     dmg: 4.2, blast: 6, life: 0.075, kind: "cannon", look: cannonLook("light_machine_gun"), mount: MOUNT_MACHINE, tracer: { w: 44, h: 8, core: [255, 230, 170], mid: [210, 150, 50], rim: [150, 85, 28], glow: 0.35 }, scale: 0.48,
     guidance: NONE, launch: MUZZLE, payload: KINETIC, control: HOLD, fits: FIT_GUN, notes: ["ultralight drone rotary gun"],
+  },
+  /** Crew door guns — weaker + looser than a pilot primary so they only supplement fire. */
+  door_machine_gun: {
+    id: "door_machine_gun", name: "DOOR LMG", fullName: "DOOR MACHINE GUN", designation: "7.62MM CREW-SERVED DOOR MACHINE GUN", ammo: 2800, fireCd: 0.07, speed: 620,
+    dmg: 1.35, blast: 2.5, life: 0.06, kind: "cannon", look: cannonLook("door_machine_gun"), mount: MOUNT_MACHINE, tracer: { w: 40, h: 7, core: [255, 228, 165], mid: [200, 145, 48], rim: [140, 80, 26], glow: 0.28 }, scale: 0.42,
+    jitter: 0.26,
+    guidance: NONE, launch: MUZZLE, payload: KINETIC, control: { mode: "automatic" }, fits: FIT_GUN,
+    notes: ["crew-served door gun; soft damage and loose spray over pilot weapons"],
   },
   tesla_beam: {
     id: "tesla_beam", name: "TESLA COIL", fullName: "TESLA BEAM", designation: "TESLA COIL", ammo: 900, fireCd: 0.05, speed: 1,

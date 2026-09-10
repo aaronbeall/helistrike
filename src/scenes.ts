@@ -57,7 +57,7 @@ import { setThermalPipeline, type ThermalPalette } from "./thermal";
 import { createTerrain25D, type Terrain25D } from "./terrain25d";
 import { LOAD_TIPS } from "./tips";
 import { fbm } from "./noise";
-import { preloadArt, prepareArt, extractBiomeTiles, bakeHeliHudWireTexture, bakeHurtVignetteTexture, heliHudWireUv, shadowAlpha, shadowKey, spriteUvPos, FX_VARIANTS, registerArt, nameGameTexture, spritePivot, type HeliHudWireBake } from "./sprites";
+import { preloadArt, prepareArt, extractBiomeTiles, bakeHeliHudWireTexture, heliHudWireUv, shadowAlpha, shadowKey, spriteUvPos, FX_VARIANTS, registerArt, nameGameTexture, spritePivot, type HeliHudWireBake } from "./sprites";
 import {
   generateWorld,
   generateWorldAsync,
@@ -131,7 +131,7 @@ type ThermalWreckMark = {
   hold: number;
   /** Cooldown duration after the hold window. */
   fadeDur: number;
-  /** Elapsed thermal-visible time; only advances while thermal mode is on. */
+  /** Elapsed lifetime (hold + fade); advances even when thermal view is off. */
   age: number;
   kind: ThermalWreckKind;
 };
@@ -1461,7 +1461,10 @@ export class MissionScene extends Phaser.Scene {
   heliHudWireSh!: Phaser.GameObjects.Image;
   heliHudWireScale = 1;
   heliHudWireBake: HeliHudWireBake = { w: 1, h: 1, pivot: { x: 0.5, y: 0.5 }, srcW: 1, srcH: 1, cropX: 0, cropY: 0 };
+  /** Soft OOF blood edges (under). */
   hurtVignette!: Phaser.GameObjects.Image;
+  /** Static window cracks (over). */
+  hurtVignettePulse!: Phaser.GameObjects.Image;
   mapLabel!: Phaser.GameObjects.Text;
   mapHvLabels: Phaser.GameObjects.Text[] = [];
   hvArrowLabels: Phaser.GameObjects.Text[] = [];
@@ -1600,6 +1603,8 @@ export class MissionScene extends Phaser.Scene {
     aim: number;
     want: number | null;
     targetId: number | null;
+    /** Acquire / engage radius used by this station (world units). */
+    range: number;
     state: string;
   }[] = [];
   autoGunLabels: Phaser.GameObjects.Text[] = [];
@@ -2775,13 +2780,19 @@ export class MissionScene extends Phaser.Scene {
     this.wpnHud = this.add.text(0, 0, "").setVisible(false);
     this.hpGfx = this.add.graphics().setDepth(Layer.FIELD);
     this.playerHud = this.add.graphics().setScrollFactor(0).setDepth(Layer.HUD + 12);
-    bakeHurtVignetteTexture(this);
     this.hurtVignette = this.add
-      .image(0, 0, "hud_hurt_vignette")
+      .image(0, 0, "hud_hurt_pulse")
       .setOrigin(0, 0)
       .setScrollFactor(0)
       .setDepth(Layer.HUD + 4)
-      .setTint(0xff1a1a)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setAlpha(0)
+      .setVisible(false);
+    this.hurtVignettePulse = this.add
+      .image(0, 0, "hud_hurt_static")
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setDepth(Layer.HUD + 5)
       .setAlpha(0)
       .setVisible(false);
     const wireBake = bakeHeliHudWireTexture(this);
@@ -3046,7 +3057,9 @@ export class MissionScene extends Phaser.Scene {
     let write = 0;
     for (const mark of this.thermalWreckMarks) {
       if (!mark.image.scene) continue;
-      if (this.thermalOn) mark.age += dt;
+      // Cool off in real time even when not viewing thermal, so toggling T
+      // doesn't dump a backlog of still-hot stamps.
+      mark.age += dt;
       const fade = this.thermalWreckFade(mark);
       if (fade <= 0) {
         mark.image.destroy();
@@ -4676,7 +4689,8 @@ export class MissionScene extends Phaser.Scene {
       ? h.angle
       : (h.stationAim[slot]?.[barrelIndex] ?? h.stationAim[slot]?.[0] ?? h.gunAngle);
     for (const muzzleUv of muzzleUvs) {
-      const spread = spec.beam ? 0 : (Math.random() - 0.5) * (spec.silent ? 0.025 : 0.08);
+      const spreadAmp = spec.jitter ?? (spec.silent ? 0.025 : 0.08);
+      const spread = spec.beam ? 0 : (Math.random() - 0.5) * spreadAmp;
       const ang = stationAng + spread + yawOff + ((st.helixSide ?? 0) * 0.012);
       const tip = muzzleUv ? this.craftBodyMountWorldPos(muzzleUv) : this.gunTip(mountedGunI);
       const tipScr = worldToScreen(tip.x, tip.y, h.z);
@@ -4936,6 +4950,7 @@ export class MissionScene extends Phaser.Scene {
       const barrels = h.stationAim[slot] ?? (h.stationAim[slot] = [h.angle]);
       const cds = this.stationFireCd[slot] ?? (this.stationFireCd[slot] = [0]);
       const crewTag = craftCrewHudTag(socket) ?? "CREW";
+      const acquire = this.autoStationRange(spec);
       // Player owns this station while selected — manual hold-fire in handleFire.
       if (h.weapon === slot) {
         for (let b = 0; b < barrels.length; b++) {
@@ -4945,6 +4960,7 @@ export class MissionScene extends Phaser.Scene {
             aim: barrels[b] ?? h.gunAngle,
             want: barrels[b] ?? h.gunAngle,
             targetId: null,
+            range: acquire,
             state: `${crewTag}${barrels.length > 1 ? ` ${b + 1}` : ""} MANUAL`,
           });
         }
@@ -4958,13 +4974,12 @@ export class MissionScene extends Phaser.Scene {
             aim: barrels[b] ?? h.angle,
             want: null,
             targetId: null,
+            range: acquire,
             state: `${crewTag}${barrels.length > 1 ? ` ${b + 1}` : ""} EMPTY`,
           });
         }
         continue;
       }
-      const acquire =
-        spec.guidance.mode === "auto" ? spec.guidance.acquireRadius : 340;
       for (let b = 0; b < barrels.length; b++) {
         // Full circle when no traverse — don't inherit the nose-front default arc.
         const tgt = this.pickAutoTarget(
@@ -4982,6 +4997,7 @@ export class MissionScene extends Phaser.Scene {
             aim: barrels[b] ?? h.angle,
             want: null,
             targetId: null,
+            range: acquire,
             state: `${crewTag}${barrels.length > 1 ? ` ${b + 1}` : ""} IDLE`,
           });
           continue;
@@ -4994,6 +5010,7 @@ export class MissionScene extends Phaser.Scene {
             aim: barrels[b] ?? h.angle,
             want: null,
             targetId: null,
+            range: acquire,
             state: `${crewTag}${barrels.length > 1 ? ` ${b + 1}` : ""} ARC`,
           });
           continue;
@@ -5015,6 +5032,7 @@ export class MissionScene extends Phaser.Scene {
           aim,
           want,
           targetId: tgt.id,
+          range: acquire,
           state,
         });
         if (!aligned) continue;
@@ -5038,6 +5056,13 @@ export class MissionScene extends Phaser.Scene {
         }
       }
     }
+  }
+
+  /** Max engage radius for an automatic station (world units). */
+  autoStationRange(spec: PlayerWpnSpec): number {
+    if (spec.guidance.mode === "auto") return spec.guidance.acquireRadius;
+    if (spec.launch.mode === "beam") return spec.launch.range;
+    return 340;
   }
 
   /** Active Specter drone under remote pilot, if any. */
@@ -11370,16 +11395,23 @@ export class MissionScene extends Phaser.Scene {
         tip = { x: h.x, y: h.y };
       }
       const tipScr = worldToScreen(tip.x, tip.y, h.z);
-      const aimLen = 90;
+      const range = dbg.range;
+      // Acquire ring centered where pickAutoTarget measures (craft origin).
+      if (dbg.barrel === 0) {
+        const originScr = worldToScreen(h.x, h.y, h.z);
+        this.aiGfx.lineStyle(1.1, 0x7ad0ff, 0.28);
+        this.aiGfx.strokeCircle(originScr.x, originScr.y, range * originScr.scale);
+      }
       const aimEnd = worldToScreen(
-        tip.x + Math.cos(dbg.aim) * aimLen,
-        tip.y + Math.sin(dbg.aim) * aimLen,
+        tip.x + Math.cos(dbg.aim) * range,
+        tip.y + Math.sin(dbg.aim) * range,
         h.z
       );
       this.aiGfx.lineStyle(1.6, 0x7ad0ff, 0.9);
       this.aiGfx.lineBetween(tipScr.x, tipScr.y, aimEnd.x, aimEnd.y);
       this.aiGfx.fillStyle(0x7ad0ff, 0.95);
       this.aiGfx.fillCircle(tipScr.x, tipScr.y, 2.8);
+      this.aiGfx.fillCircle(aimEnd.x, aimEnd.y, 2.2);
       if (dbg.targetId != null) {
         const tgt = this.units.find((u) => !u.dead && u.id === dbg.targetId);
         if (tgt) {
@@ -11391,8 +11423,8 @@ export class MissionScene extends Phaser.Scene {
         }
       } else if (dbg.want != null) {
         const wantEnd = worldToScreen(
-          tip.x + Math.cos(dbg.want) * aimLen,
-          tip.y + Math.sin(dbg.want) * aimLen,
+          tip.x + Math.cos(dbg.want) * range,
+          tip.y + Math.sin(dbg.want) * range,
           h.z
         );
         this.aiGfx.lineStyle(1, 0xa8ff7a, 0.45);
@@ -11402,7 +11434,7 @@ export class MissionScene extends Phaser.Scene {
       label
         .setVisible(true)
         .setPosition(tipScr.x, tipScr.y - 14)
-        .setText(dbg.state);
+        .setText(`${dbg.state}  ${range | 0}m`);
     });
   }
 
@@ -12703,7 +12735,9 @@ export class MissionScene extends Phaser.Scene {
     ];
     for (const go of chrome) this.adoptHud(go);
     this.bindHud(this.hurtVignette);
+    this.bindHud(this.hurtVignettePulse);
     this.hurtVignette.setPosition(0, 0);
+    this.hurtVignettePulse.setPosition(0, 0);
     this.bindHud(this.reticle);
     this.bindHud(this.reticleMark);
     this.bindHud(this.sight);
@@ -13107,6 +13141,7 @@ export class MissionScene extends Phaser.Scene {
     this.heliHudWireSh.setVisible(on);
     this.heliHudWire.setVisible(on);
     this.hurtVignette.setVisible(on);
+    this.hurtVignettePulse.setVisible(on);
     this.miniGfx.setVisible(on);
     this.miniBg.setVisible(on);
     this.miniTerrain.setVisible(on);
@@ -13133,6 +13168,7 @@ export class MissionScene extends Phaser.Scene {
       this.lockArrowGfx.clear();
       this.playerHud.clear();
       this.hurtVignette.setVisible(false).setAlpha(0);
+      this.hurtVignettePulse.setVisible(false).setAlpha(0);
       this.miniGfx.clear();
     }
   }
@@ -13337,21 +13373,28 @@ export class MissionScene extends Phaser.Scene {
   }
 
   drawHurtVignette(hp: number): void {
-    const img = this.hurtVignette;
+    const blood = this.hurtVignette;
+    const cracks = this.hurtVignettePulse;
     if (this.heli.phase === "dead" || hp >= 0.32) {
-      img.setVisible(false).setAlpha(0);
+      blood.setVisible(false).setAlpha(0);
+      cracks.setVisible(false).setAlpha(0);
       return;
     }
     const w = this.scale.width;
     const h = this.scale.height;
-    const pulse = 0.5 + 0.5 * Math.sin(this.time.now * 0.005);
-    const k = Phaser.Math.Clamp((0.32 - hp) / 0.32, 0, 1) * pulse;
-    img
+    const hurt = Phaser.Math.Clamp((0.32 - hp) / 0.32, 0, 1);
+    // Gentle breath — never fully offs the blood pulse layer.
+    const beat = 0.82 + 0.18 * Math.sin(this.time.now * 0.0042);
+    blood
       .setVisible(true)
       .setPosition(0, 0)
       .setDisplaySize(w, h)
-      .setTint(0xff1a1a)
-      .setAlpha(0.22 + k * 0.72);
+      .setAlpha((0.42 + hurt * 0.45) * beat);
+    cracks
+      .setVisible(true)
+      .setPosition(0, 0)
+      .setDisplaySize(w, h)
+      .setAlpha(0.55 + hurt * 0.4);
   }
 
   emitDamageFx(): void {

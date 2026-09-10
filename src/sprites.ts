@@ -186,6 +186,8 @@ export const FX_BLAST_CELLS = 4;
 
 export function preloadArt(scene: Phaser.Scene): void {
   scene.load.image("menu_splash", "menu-splash.png");
+  scene.load.image("hud_hurt_static", "sprites/hud/hurt_static.png");
+  scene.load.image("hud_hurt_pulse", "sprites/hud/hurt_pulse.png");
   scene.load.image("src_enemy_heli", SRC.enemyHeli);
   scene.load.image("src_enemy_heli_hulk", SRC.enemyHeliHulk);
   scene.load.image("src_enemy_tank_parts", SRC.enemyTankParts);
@@ -257,43 +259,6 @@ export function heliHudWireUv(bake: HeliHudWireBake, u: number, v: number): { u:
     u: (u * bake.srcW - bake.cropX) / bake.w,
     v: (v * bake.srcH - bake.cropY) / bake.h,
   };
-}
-
-/** Soft red screen-edge vignette, baked once and stretched to the viewport. */
-export function bakeHurtVignetteTexture(scene: Phaser.Scene, outKey = "hud_hurt_vignette"): void {
-  const tw = 320;
-  const th = 180;
-  const canvas = document.createElement("canvas");
-  canvas.width = tw;
-  canvas.height = th;
-  const ctx = canvas.getContext("2d")!;
-  const img = ctx.createImageData(tw, th);
-  const d = img.data;
-  const fall = Math.min(tw, th) * 0.48;
-  for (let y = 0; y < th; y++) {
-    for (let x = 0; x < tw; x++) {
-      const dx = Math.min(x, tw - 1 - x);
-      const dy = Math.min(y, th - 1 - y);
-      const dist = Math.min(dx, dy);
-      let edge = 1 - dist / fall;
-      if (edge < 0) edge = 0;
-      else {
-        edge = edge * edge * (3 - 2 * edge);
-        edge = Math.pow(edge, 1.35);
-      }
-      const a = Math.min(255, Math.round((0.12 + edge * 0.88) * 255));
-      if (a < 2) continue;
-      const i = (y * tw + x) * 4;
-      d[i] = 255;
-      d[i + 1] = 255;
-      d[i + 2] = 255;
-      d[i + 3] = a;
-    }
-  }
-  ctx.putImageData(img, 0, 0);
-  if (scene.textures.exists(outKey)) scene.textures.remove(outKey);
-  scene.textures.addCanvas(outKey, canvas);
-  registerArt(outKey, "generated");
 }
 
 /** Sobel edge points from a sprite alpha channel, in normalized UV space. */
@@ -596,6 +561,8 @@ export function spriteUvPos(
 }
 
 export function prepareArt(textures: Phaser.Textures.TextureManager): void {
+  if (textures.exists("hud_hurt_static")) registerArt("hud_hurt_static", "image");
+  if (textures.exists("hud_hurt_pulse")) registerArt("hud_hurt_pulse", "image");
   const enemy = fit(keyImage(src(textures, "src_enemy_heli"), "magenta"), 104);
   put(textures, "enemy_heli", enemy);
   if (textures.exists("src_enemy_heli_hulk")) {
