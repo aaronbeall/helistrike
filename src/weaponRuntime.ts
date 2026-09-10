@@ -37,6 +37,22 @@ export function aimInStationArc(
   return true;
 }
 
+/** Snap an aim bearing into a station traverse (cabin side guns, limited arcs). */
+export function clampAimToStationArc(
+  aimWorld: number,
+  craftHeading: number,
+  traverse: { center: number; arc: number; side?: "left" | "right" | "both" }
+): number {
+  let rel = Phaser.Math.Angle.Wrap(aimWorld - craftHeading);
+  if (traverse.side === "left" && rel < 0) rel = 0;
+  if (traverse.side === "right" && rel > 0) rel = 0;
+  const center = (traverse.center * Math.PI) / 180;
+  const half = ((traverse.arc * Math.PI) / 180) * 0.5;
+  const err = Phaser.Math.Angle.Wrap(rel - center);
+  const clamped = center + Phaser.Math.Clamp(err, -half, half);
+  return Phaser.Math.Angle.Wrap(craftHeading + clamped);
+}
+
 /** Closest distance from point P to segment AB. */
 export function distPointToSegment(
   px: number,

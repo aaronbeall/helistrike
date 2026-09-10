@@ -401,6 +401,42 @@ export function bakePlayerCannonLooks(textures: Phaser.Textures.TextureManager):
   }
 }
 
+/** Enemy bullet tracers — replace legacy mini-rocket / AAM placeholder looks. */
+export function bakeEnemyCannonLooks(textures: Phaser.Textures.TextureManager): void {
+  const presets: { key: string; opts: Parameters<typeof drawTracerShape>[0] }[] = [
+    {
+      key: "shot_cannon_enemy_mg",
+      opts: {
+        w: 42, h: 6,
+        core: [255, 236, 180], mid: [255, 170, 55], rim: [200, 90, 25],
+        glow: 0.4,
+      },
+    },
+    {
+      key: "shot_cannon_enemy_aa",
+      opts: {
+        // Long thin streak — AA used to read as AAM placeholders; keep that feel as a tracer.
+        w: 110, h: 6,
+        core: [255, 252, 230], mid: [255, 210, 80], rim: [255, 130, 35],
+        blunt: 0, glow: 0.72,
+      },
+    },
+    {
+      key: "shot_cannon_enemy_he",
+      opts: {
+        w: 52, h: 10,
+        core: [255, 245, 210], mid: [255, 160, 50], rim: [180, 70, 20],
+        blunt: 0.7, glow: 0.35,
+      },
+    },
+  ];
+  for (const p of presets) {
+    if (textures.exists(p.key)) textures.remove(p.key);
+    add(textures, p.key, drawTracerShape(p.opts));
+    bakeShadows(textures, p.key);
+  }
+}
+
 function drawRocket(): HTMLCanvasElement {
   const c = canvas(18, 8);
   const g = ctxOf(c);
@@ -632,6 +668,7 @@ function collectArtKeys(): string[] {
  */
 export function bakeRosterArt(textures: Phaser.Textures.TextureManager): void {
   bakePlayerCannonLooks(textures);
+  bakeEnemyCannonLooks(textures);
   for (const key of collectArtKeys()) {
     if (textures.exists(key)) continue;
     const size = /battleship|fob|bunker|radar/.test(key) ? 128 : 64;

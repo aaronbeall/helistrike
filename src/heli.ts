@@ -199,27 +199,28 @@ export class Heli {
 
     let desired = Math.atan2(aimY - this.y, aimX - this.x);
     if (this.spec.flightModel === "plane") {
-      const turnMargin = Math.max(420, this.spec.minSpeed * 1.2);
-      const nearEdge =
-        this.x < turnMargin ||
-        this.x > WORLD - turnMargin ||
-        this.y < turnMargin ||
-        this.y > WORLD - turnMargin;
-      const toCx = WORLD * 0.5 - this.x;
-      const toCy = WORLD * 0.5 - this.y;
-      const toCenterLen = Math.max(1, Math.hypot(toCx, toCy));
-      const inX = toCx / toCenterLen;
-      const inY = toCy / toCenterLen;
-      const headingIn = Math.cos(this.angle) * inX + Math.sin(this.angle) * inY;
-      const velocityIn = this.vx * inX + this.vy * inY;
-      if (nearEdge && (headingIn < 0.25 || velocityIn < 0)) this.edgeTurn = true;
+      const margin = 40;
+      const outside =
+        this.x <= margin ||
+        this.x >= WORLD - margin ||
+        this.y <= margin ||
+        this.y >= WORLD - margin;
+      if (outside) this.edgeTurn = true;
+      const inlandPad = 220;
       const safelyInland =
-        this.x > turnMargin + 180 &&
-        this.x < WORLD - turnMargin - 180 &&
-        this.y > turnMargin + 180 &&
-        this.y < WORLD - turnMargin - 180;
-      if (this.edgeTurn && safelyInland && headingIn > 0.7) this.edgeTurn = false;
-      if (this.edgeTurn) desired = Math.atan2(toCy, toCx);
+        this.x > margin + inlandPad &&
+        this.x < WORLD - margin - inlandPad &&
+        this.y > margin + inlandPad &&
+        this.y < WORLD - margin - inlandPad;
+      const midX = (WORLD * 0.5 + aimX) * 0.5;
+      const midY = (WORLD * 0.5 + aimY) * 0.5;
+      const toMx = midX - this.x;
+      const toMy = midY - this.y;
+      const toMLen = Math.max(1, Math.hypot(toMx, toMy));
+      const headingIn =
+        (Math.cos(this.angle) * toMx + Math.sin(this.angle) * toMy) / toMLen;
+      if (this.edgeTurn && safelyInland && headingIn > 0.55) this.edgeTurn = false;
+      if (this.edgeTurn) desired = Math.atan2(toMy, toMx);
     }
     if (controllable) {
       const err = Phaser.Math.Angle.Wrap(desired - this.angle);
