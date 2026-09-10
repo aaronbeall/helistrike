@@ -38,6 +38,7 @@ import {
 import {
   lookupSpriteOrigin,
   lookupSpritePoints,
+  rigMuzzleMarkRadius,
 } from "./spriteOrigin";
 import { footprintOf, strokeFootprint } from "./footprint";
 import { nameGameTexture, spritePivot } from "./sprites";
@@ -1142,10 +1143,11 @@ export class RosterRig {
     for (const p of points) {
       if (p.role !== "muzzle") continue;
       const w = toWorld(p.x, p.y);
+      const r = rigMuzzleMarkRadius(texKey);
       g.fillStyle(0xff7a2a, 0.95);
-      g.fillCircle(w.x, w.y, 5);
+      g.fillCircle(w.x, w.y, r);
       g.lineStyle(1.25, 0xffe8c0, 0.95);
-      g.strokeCircle(w.x, w.y, 5);
+      g.strokeCircle(w.x, w.y, r);
     }
 
     return li;

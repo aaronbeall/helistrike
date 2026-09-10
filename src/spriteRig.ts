@@ -10,6 +10,7 @@ import {
 import {
   lookupSpriteOrigin,
   lookupSpritePoints,
+  rigMuzzleMarkRadius,
   spriteSpecOf,
   type SpritePointRole,
 } from "./spriteOrigin";
@@ -632,10 +633,11 @@ export class SpriteRig {
     for (const p of marks.muzzles) {
       const x = toX(p.x);
       const y = toY(p.y);
+      const r = rigMuzzleMarkRadius(key);
       g.fillStyle(0xff7a2a, 0.95);
-      g.fillCircle(x, y, 5);
+      g.fillCircle(x, y, r);
       g.lineStyle(1.25, 0xffe8c0, 0.95);
-      g.strokeCircle(x, y, 5);
+      g.strokeCircle(x, y, r);
     }
     // Origin mark only when authored in SPRITE_SPECS (not the 0.5/0.5 default).
     const authored = lookupSpriteOrigin(key);

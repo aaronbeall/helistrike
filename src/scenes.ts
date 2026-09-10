@@ -34,6 +34,7 @@ import {
   heatClassOf,
   heatSeekScore,
   smokeBlocksLos,
+  type StationTraverse,
 } from "./weaponRuntime";
 import { Layer, ZOff, Z_GRAVITY, worldDepth } from "./depth";
 import { range } from "./rng";
@@ -1427,7 +1428,19 @@ export class MissionScene extends Phaser.Scene {
   };
   muzzle!: Phaser.GameObjects.Image;
   muzzlePool: Phaser.GameObjects.Image[] = [];
-  muzzleLives: number[] = [];
+  /** Per-pool life + attach so flashes stay glued to the barrel while alive. */
+  muzzleFlashes: {
+    life: number;
+    ang: number;
+    /** Pre–z-scale size; multiplied by current tip screen scale each frame. */
+    scaleMul: number;
+    rotJitter: number;
+    muzzleUv?: { x: number; y: number };
+    gunI?: number;
+    /** Craft-local tip when no UV/gun (e.g. missile pylon). */
+    localX?: number;
+    localY?: number;
+  }[] = [];
   muzzleCursor = 0;
   playerGunSide = 0;
   dmgFlameScale = 1;
@@ -1847,7 +1860,10 @@ export class MissionScene extends Phaser.Scene {
       .setBlendMode(Phaser.BlendModes.ADD)
       .setTint(0xfff6d0);
     this.muzzlePool = [this.muzzle, secondMuzzle];
-    this.muzzleLives = [0, 0];
+    this.muzzleFlashes = [
+      { life: 0, ang: 0, scaleMul: 1, rotJitter: 0 },
+      { life: 0, ang: 0, scaleMul: 1, rotJitter: 0 },
+    ];
     this.body.setPosition(this.heli.x, this.heli.y);
     this.reticle = this.add.image(0, 0, "mark_reticle").setDepth(Layer.HUD).setScrollFactor(0);
     this.reticleMark = this.add.graphics().setDepth(Layer.HUD).setScrollFactor(0);
@@ -3713,19 +3729,17 @@ export class MissionScene extends Phaser.Scene {
         if (socket.class !== "turret" && socket.class !== "cabin") continue;
         // Unselected automatic stations track in tickAutomaticStations.
         if (socket.controller === "automatic" && h.weapon !== slot) continue;
-        const clamped =
-          socket.traverse
-            ? clampAimToStationArc(want, h.angle, socket.traverse)
-            : want;
         const barrels = h.stationAim[slot] ?? (h.stationAim[slot] = [h.angle]);
         for (let b = 0; b < barrels.length; b++) {
+          const trav = this.stationTraverseForBarrel(slot, b);
+          const clamped = trav ? clampAimToStationArc(want, h.angle, trav) : want;
           barrels[b] = Phaser.Math.Angle.RotateTo(
             barrels[b] ?? h.angle,
             clamped,
             GUN_STATION_TURN_RATE * dt
           );
-          if (socket.traverse) {
-            barrels[b] = clampAimToStationArc(barrels[b]!, h.angle, socket.traverse);
+          if (trav) {
+            barrels[b] = clampAimToStationArc(barrels[b]!, h.angle, trav);
           }
         }
       }
@@ -4455,15 +4469,13 @@ export class MissionScene extends Phaser.Scene {
       socket.class === "fixed" || socket.class === "hardpoint" || socket.class === "bay";
     if (socket.traverse && !hullAim) {
       // Cabin/turret guns are clamped into traverse while aiming; always legal to fire.
+      // Fixed muzzles have no aim arc — they fire along the hull.
       const barrels = h.stationAim[slot] ?? (h.stationAim[slot] = [h.gunAngle]);
       for (let b = 0; b < barrels.length; b++) {
-        barrels[b] = clampAimToStationArc(barrels[b] ?? h.gunAngle, h.angle, socket.traverse);
+        const trav = this.stationTraverseForBarrel(slot, b)!;
+        barrels[b] = clampAimToStationArc(barrels[b] ?? h.gunAngle, h.angle, trav);
       }
       h.gunAngle = barrels[0]!;
-    } else if (socket.traverse && hullAim && !aimInStationArc(h.angle, h.angle, socket.traverse)) {
-      // Fixed arcs are relative to nose; nose-relative center/arc of 0 always passes.
-      this.pointerWasDown = down;
-      return;
     }
 
     h.fireCd = spec.fireCd;
@@ -4755,18 +4767,18 @@ export class MissionScene extends Phaser.Scene {
           by: Math.sin(ang),
           bz: (tz - z0) / Math.max(40, dist),
           tight: 0.9,
-          scaleMul: 0.2 * sparkMul,
-          stretchMul: 1.4 + 0.9 * sparkMul,
+          scaleMul: 0.32 * sparkMul,
+          stretchMul: 1.55 + 1.05 * sparkMul,
           // 260° full cone; density + speed both favor the aim axis.
           coneHalf: (260 * Math.PI) / 360,
         }, this.muzzleBurst);
-        this.showMuzzle(
-          tipScreenX,
-          tipScreenY,
-          projectHeading(ang, tip.x, tip.y, h.z),
-          0.52 * tipScale * muzzleMul,
-          0.1
-        );
+        this.showMuzzle({
+          life: 0.1,
+          ang,
+          scaleMul: 0.78 * muzzleMul * range(0.9, 1.12),
+          muzzleUv: muzzleUv ?? undefined,
+          gunI: muzzleUv ? undefined : mountedGunI,
+        });
         const craft = h.spec;
         const mountedGun = this.guns[mountedGunI] ?? this.gun;
         const mountedGunUv = craftGunMounts(craft)[mountedGunI] ?? craftGunMount(craft);
@@ -4982,6 +4994,7 @@ export class MissionScene extends Phaser.Scene {
         const prefer = this.autoGunPreferHeading(slot, b);
         const origin = this.autoGunAcquireOrigin(slot, b, prefer, acquire);
         const mount = this.autoGunMountWorld(slot, b);
+        const trav = this.stationTraverseForBarrel(slot, b);
         const tgt = this.pickAutoTarget(
           origin.x,
           origin.y,
@@ -4989,8 +5002,8 @@ export class MissionScene extends Phaser.Scene {
           h.y,
           h.angle,
           acquire,
-          socket.traverse,
-          !socket.traverse,
+          trav,
+          !trav,
           prefer
         );
         if (!tgt) {
@@ -5008,7 +5021,7 @@ export class MissionScene extends Phaser.Scene {
           continue;
         }
         const want = Math.atan2(tgt.y - mount.y, tgt.x - mount.x);
-        if (socket.traverse && !aimInStationArc(want, h.angle, socket.traverse)) {
+        if (trav && !aimInStationArc(want, h.angle, trav)) {
           this.autoGunDbg.push({
             slot,
             barrel: b,
@@ -5024,7 +5037,7 @@ export class MissionScene extends Phaser.Scene {
         }
         let aim = barrels[b] ?? h.angle;
         aim = Phaser.Math.Angle.RotateTo(aim, want, GUN_STATION_TURN_RATE * dt);
-        if (socket.traverse) aim = clampAimToStationArc(aim, h.angle, socket.traverse);
+        if (trav) aim = clampAimToStationArc(aim, h.angle, trav);
         barrels[b] = aim;
         const err = Math.abs(Phaser.Math.Angle.Wrap(want - aim));
         const aligned = err <= AUTO_GUN_ALIGN_TOL;
@@ -5104,12 +5117,26 @@ export class MissionScene extends Phaser.Scene {
     const dx = at.x - h.x;
     const dy = at.y - h.y;
     if (dx * dx + dy * dy < 4) {
-      if (socket?.traverse) {
-        return Phaser.Math.Angle.Wrap(h.angle + (socket.traverse.center * Math.PI) / 180);
-      }
-      return h.angle;
+      // Mount on craft origin — optional authored center, else nose.
+      const fallback = ((socket?.traverse?.center ?? 0) * Math.PI) / 180;
+      return Phaser.Math.Angle.Wrap(h.angle + fallback);
     }
     return Math.atan2(dy, dx);
+  }
+
+  /**
+   * Socket traverse with arc center filled from craft→mount heading (degrees off craft nose).
+   * Authored `center` is only used when the mount sits on the craft origin.
+   */
+  stationTraverseForBarrel(slot: number, barrel: number): StationTraverse | undefined {
+    const socket = this.heli.spec.sockets[slot];
+    if (!socket?.traverse) return undefined;
+    const prefer = this.autoGunPreferHeading(slot, barrel);
+    const centerDeg =
+      (Phaser.Math.RadToDeg(Phaser.Math.Angle.Wrap(prefer - this.heli.angle)) + 360) % 360;
+    // Normalize to [-180, 180] for Wrap-friendly clamp math.
+    const center = centerDeg > 180 ? centerDeg - 360 : centerDeg;
+    return { ...socket.traverse, center };
   }
 
   /** Per-barrel acquire center: mount position shifted along preferred heading. */
@@ -5231,7 +5258,13 @@ export class MissionScene extends Phaser.Scene {
     g.fillCircle(to.x, to.y, 5 + Math.sin(t * 40) * 1.5);
     g.fillStyle(0x40d8ff, 0.4);
     g.fillCircle(to.x, to.y, 12);
-    this.showMuzzle(from.x, from.y, projectHeading(h.gunAngle, tip.x, tip.y, h.z), 0.55 * from.scale, 0.08);
+    this.showMuzzle({
+      life: 0.08,
+      ang: h.gunAngle,
+      scaleMul: 0.82 * (0.9 + Math.random() * 0.22),
+      muzzleUv: authored[0],
+      gunI: authored[0] ? undefined : 0,
+    });
   }
 
   /**
@@ -5246,7 +5279,7 @@ export class MissionScene extends Phaser.Scene {
     craftY: number,
     heading: number,
     maxR: number,
-    traverse?: { center: number; arc: number; side?: "left" | "right" | "both" },
+    traverse?: StationTraverse,
     unrestricted = false,
     preferHeading = heading
   ): Unit | undefined {
@@ -5303,7 +5336,7 @@ export class MissionScene extends Phaser.Scene {
     y: number,
     heading: number,
     maxR: number,
-    traverse?: { center: number; arc: number; side?: "left" | "right" | "both" }
+    traverse?: StationTraverse
   ): Unit | undefined {
     return this.pickAutoTarget(x, y, x, y, heading, maxR, traverse);
   }
@@ -5323,36 +5356,100 @@ export class MissionScene extends Phaser.Scene {
       stretchMul: 2.8,
       coneHalf: (260 * Math.PI) / 360,
     }, this.muzzleBurst);
-    const at = worldToScreen(x, y, z);
-    this.showMuzzle(at.x, at.y, projectHeading(ang, x, y, z), 0.62 * at.scale, 0.12);
+    const h = this.heli;
+    const dx = x - h.x;
+    const dy = y - h.y;
+    const c = Math.cos(h.angle);
+    const s = Math.sin(h.angle);
+    this.showMuzzle({
+      life: 0.12,
+      ang,
+      scaleMul: 0.92 * range(0.9, 1.12),
+      localX: dx * c + dy * s,
+      localY: -dx * s + dy * c,
+    });
   }
 
-  showMuzzle(x: number, y: number, drawAng: number, scale: number, life: number): void {
-    const sc = scale * range(0.9, 1.12);
-    const rot = drawAng + range(-0.1, 0.1);
-    let index = this.muzzleLives.findIndex((remaining) => remaining <= 0);
+  /**
+   * Player muzzle flash glued to the firing tip for its short life.
+   * Screen-stamping alone lags behind when the craft/camera moves.
+   */
+  showMuzzle(opt: {
+    life: number;
+    ang: number;
+    scaleMul: number;
+    muzzleUv?: { x: number; y: number };
+    gunI?: number;
+    localX?: number;
+    localY?: number;
+  }): void {
+    let index = this.muzzleFlashes.findIndex((f) => f.life <= 0);
     if (index < 0) index = this.muzzleCursor++ % this.muzzlePool.length;
+    const flash = this.muzzleFlashes[index]!;
+    flash.life = opt.life;
+    flash.ang = opt.ang;
+    flash.scaleMul = opt.scaleMul;
+    flash.rotJitter = range(-0.1, 0.1);
+    flash.muzzleUv = opt.muzzleUv;
+    flash.gunI = opt.gunI;
+    flash.localX = opt.localX;
+    flash.localY = opt.localY;
     const muzzle = this.muzzlePool[index] ?? this.muzzle;
+    muzzle.setFrame((Math.random() * FX_VARIANTS) | 0);
+    this.syncMuzzleFlash(index);
+    this.spawnMuzzleLight(muzzle.x, muzzle.y, this.heli.z, 26 * muzzle.scaleX);
+  }
+
+  /** World tip for a live muzzle flash slot. */
+  muzzleFlashTip(flash: (typeof this.muzzleFlashes)[number]): { x: number; y: number; z: number } {
+    const h = this.heli;
+    if (flash.muzzleUv) {
+      const at = this.craftBodyMountWorldPos(flash.muzzleUv);
+      return { x: at.x, y: at.y, z: h.z };
+    }
+    if (flash.gunI != null) {
+      const at = this.gunTip(flash.gunI);
+      return { x: at.x, y: at.y, z: h.z };
+    }
+    const lx = flash.localX ?? 0;
+    const ly = flash.localY ?? 0;
+    const c = Math.cos(h.angle);
+    const s = Math.sin(h.angle);
+    return {
+      x: h.x + lx * c - ly * s,
+      y: h.y + lx * s + ly * c,
+      z: h.z,
+    };
+  }
+
+  syncMuzzleFlash(index: number): void {
+    const flash = this.muzzleFlashes[index];
+    const muzzle = this.muzzlePool[index];
+    if (!flash || !muzzle || flash.life <= 0) return;
+    const tip = this.muzzleFlashTip(flash);
+    const at = worldToScreen(tip.x, tip.y, tip.z);
     muzzle
       .setVisible(true)
-      .setFrame((Math.random() * FX_VARIANTS) | 0)
       .setOrigin(0.14, 0.5)
-      .setPosition(x, y)
-      .setRotation(rot)
-      .setScale(sc)
+      .setPosition(at.x, at.y)
+      .setRotation(projectHeading(flash.ang, tip.x, tip.y, tip.z) + flash.rotJitter)
+      .setScale(flash.scaleMul * at.scale)
       .setBlendMode(Phaser.BlendModes.ADD)
       .setTint(0xfff6d0)
       .setAlpha(1)
-      .setDepth(worldDepth(this.heli.z, ZOff.muzzle, this.heli.y));
-    this.muzzleLives[index] = life;
-    this.spawnMuzzleLight(x, y, this.heli.z, 26 * sc);
+      .setDepth(worldDepth(this.heli.z, ZOff.muzzle + 0.15, this.heli.y));
   }
 
   tickPlayerMuzzles(dt: number): void {
-    for (let i = 0; i < this.muzzleLives.length; i++) {
-      if (this.muzzleLives[i]! <= 0) continue;
-      this.muzzleLives[i] -= dt;
-      if (this.muzzleLives[i]! <= 0) this.muzzlePool[i]?.setVisible(false);
+    for (let i = 0; i < this.muzzleFlashes.length; i++) {
+      const flash = this.muzzleFlashes[i]!;
+      if (flash.life <= 0) continue;
+      flash.life -= dt;
+      if (flash.life <= 0) {
+        this.muzzlePool[i]?.setVisible(false);
+        continue;
+      }
+      this.syncMuzzleFlash(i);
     }
   }
 

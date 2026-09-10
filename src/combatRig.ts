@@ -11,7 +11,7 @@ import {
 import { allCrafts } from "./craft";
 import { ENEMY_WPNS, usesOfWeapon } from "./roster";
 import { RIG_INFO, RIG_VALUE, dumpRig, makeRigText, setStatsAndInfo } from "./rigUi";
-import { lookupSpriteMuzzles, lookupSpriteOrigin } from "./spriteOrigin";
+import { lookupSpriteMuzzles, lookupSpriteOrigin, rigMuzzleMarkRadius } from "./spriteOrigin";
 import {
   TOON_BLAST_FRAMES,
   TOON_BLAST_KEY,
@@ -428,10 +428,11 @@ export class CombatRig {
     for (const p of lookupSpriteMuzzles(tex)) {
       const x = toX(p.x);
       const y = toY(p.y);
+      const r = rigMuzzleMarkRadius(tex);
       g.fillStyle(MUZZLE_COLOR, 0.95);
-      g.fillCircle(x, y, 5);
+      g.fillCircle(x, y, r);
       g.lineStyle(1.25, 0xffe8c0, 0.95);
-      g.strokeCircle(x, y, 5);
+      g.strokeCircle(x, y, r);
     }
     g.lineStyle(1.5, ORIGIN_COLOR, 0.95);
     g.strokeCircle(ox, oy, 4);

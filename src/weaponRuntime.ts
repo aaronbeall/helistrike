@@ -19,6 +19,13 @@ export function heatCategoryOk(
   return categories.includes(heatClassCategory(heatClassOf(u)));
 }
 
+export type StationTraverse = {
+  arc: number;
+  /** Degrees off craft heading; omitted → 0. Runtime usually fills this from craft→mount. */
+  center?: number;
+  side?: "left" | "right" | "both";
+};
+
 /**
  * Aim angle within socket traverse arc (relative to craft heading).
  * Cabin side left/right further restricts to that hemisphere.
@@ -26,10 +33,10 @@ export function heatCategoryOk(
 export function aimInStationArc(
   aimWorld: number,
   craftHeading: number,
-  traverse: { center: number; arc: number; side?: "left" | "right" | "both" }
+  traverse: StationTraverse
 ): boolean {
   const rel = Phaser.Math.Angle.Wrap(aimWorld - craftHeading);
-  const center = (traverse.center * Math.PI) / 180;
+  const center = ((traverse.center ?? 0) * Math.PI) / 180;
   const half = ((traverse.arc * Math.PI) / 180) * 0.5;
   if (Math.abs(Phaser.Math.Angle.Wrap(rel - center)) > half) return false;
   if (traverse.side === "left") return rel > 0 || Math.abs(rel) < 1e-3;
@@ -41,12 +48,12 @@ export function aimInStationArc(
 export function clampAimToStationArc(
   aimWorld: number,
   craftHeading: number,
-  traverse: { center: number; arc: number; side?: "left" | "right" | "both" }
+  traverse: StationTraverse
 ): number {
   let rel = Phaser.Math.Angle.Wrap(aimWorld - craftHeading);
   if (traverse.side === "left" && rel < 0) rel = 0;
   if (traverse.side === "right" && rel > 0) rel = 0;
-  const center = (traverse.center * Math.PI) / 180;
+  const center = ((traverse.center ?? 0) * Math.PI) / 180;
   const half = ((traverse.arc * Math.PI) / 180) * 0.5;
   const err = Phaser.Math.Angle.Wrap(rel - center);
   const clamped = center + Phaser.Math.Clamp(err, -half, half);

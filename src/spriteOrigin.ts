@@ -443,6 +443,24 @@ export function lookupSpriteMuzzles(key: string): Uv[] {
   return lookupSpritePoints(key, "muzzle");
 }
 
+/**
+ * Gun/turret overlay textures (muzzle authored on the gun art).
+ * Hull/troop bodies with baked muzzles return false.
+ */
+export function isGunOverlayTexture(key: string): boolean {
+  const k = key.endsWith("_spin") ? key.slice(0, -"_spin".length) : key;
+  if (k.startsWith("gun_")) return true;
+  if (/_gun(_|$)/.test(k)) return true;
+  // Turret overlays without "_gun" in the key
+  if (k === "building_tower_aa" || k === "building_tower_sam") return true;
+  return false;
+}
+
+/** Rig overlay circle radius — gun-tip marks slightly smaller than on-body muzzles. */
+export function rigMuzzleMarkRadius(key: string): number {
+  return isGunOverlayTexture(key) ? 3.25 : 5;
+}
+
 /** Mount UVs for a role (default: all non-muzzle points). */
 export function lookupSpriteMounts(key: string, role?: SpritePointRole): Uv[] {
   const list = role
