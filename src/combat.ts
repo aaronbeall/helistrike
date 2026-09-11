@@ -244,7 +244,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   hellfire_missile: {
     id: "hellfire_missile", name: "HELLFIRE", fullName: "HELLFIRE MISSILE", designation: "AGM-114R HELLFIRE II", ammo: 8, fireCd: 0.55, speed: 380,
     dmg: 185, blast: 175, life: 4.9, kind: "lock-on-missile", look: ordLook("laserGuided"), scale: 1, trailScale: 0.55,
-    guidance: laser(0.5, 160), launch: motor(125, 580, 2.1), payload: HE, control: { mode: "lock_then_click" },
+    guidance: laser(0.5, 160), launch: motor(250, 500, 2.1), payload: HE, control: { mode: "lock_then_click" },
     steering: { turnRate: 7.4, maxG: 12 }, fits: FIT_HARDPOINT, notes: ["laser lock; fire-and-forget after launch"],
   },
   tv_missile: {
@@ -258,7 +258,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
       breakLockRadius: 90,
       terminalOnSecondClick: true,
     },
-    launch: motor(55, 280, 3.2), payload: HE, control: { mode: "first_second_click" },
+    launch: motor(250, 420, 2.4), payload: HE, control: { mode: "first_second_click" },
     steering: { turnRate: 2.4, terminalTurnRate: 6.5, loft: 0.22 },
     sensorView: { mode: "thermal", source: "seeker", palette: "white_hot" },
     fits: FIT_HARDPOINT, notes: [
@@ -282,7 +282,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   tow_missile: {
     id: "tow_missile", name: "TOW", fullName: "TOW MISSILE", designation: "BGM-71E TOW 2A MISSILE", ammo: 6, fireCd: 1.1, speed: 340,
     dmg: 176, blast: 160, life: 5.2, kind: "guided-missile", look: ordLook("guided"), scale: 1, trailScale: 0.52,
-    guidance: { mode: "pointer", steerRate: 2.2, maxAngle: 0.75, wire: true }, launch: motor(76, 420, 2.4), payload: HE,
+    guidance: { mode: "pointer", steerRate: 2.2, maxAngle: 0.75, wire: true }, launch: motor(250, 420, 2.4), payload: HE,
     control: HOLD, steering: { turnRate: 2.2, maxG: 5.5 }, fits: FIT_HARDPOINT, notes: ["continuous command guidance"],
   },
   sidewinder_missile: {
@@ -348,14 +348,14 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     id: "smoke_bomb", name: "SMOKE", fullName: "SMOKE BOMB", designation: "LASER-GUIDED SMOKE BOMB", ammo: 8, fireCd: 1.15, speed: 370,
     dmg: 24, blast: 195, life: 6, kind: "guided-missile", look: ordLook("canister"), scale: 0.88, trailScale: 0.52,
     guidance: { mode: "command_nlos", lockTime: 0.4, lockRadius: 210, wire: false, terminalOnSecondClick: true },
-    launch: motor(75, 390, 2.2), payload: { mode: "smoke", duration: 12, radius: 190, blocksLos: true },
+    launch: motor(250, 400, 2.2), payload: { mode: "smoke", duration: 12, radius: 190, blocksLos: true },
     control: { mode: "first_second_click" }, steering: { turnRate: 3, terminalTurnRate: 6.5, loft: 0.32 },
     fits: FIT_HARDPOINT, notes: ["NLOS delivery creates persistent LOS-blocking smoke"],
   },
   stinger_missile: {
     id: "stinger_missile", name: "STINGER", fullName: "STINGER MISSILE", designation: "FIM-92 STINGER STEALTH POD", ammo: 10, fireCd: 0.5, speed: 475,
     dmg: 112, blast: 92, life: 4.7, kind: "lock-on-missile", look: ordLook("missile"), scale: 0.6, trailScale: 0.55,
-    guidance: heat(0.38, 185, 1.05), launch: motor(95, 600, 1.8), payload: HE, control: { mode: "lock_then_click" },
+    guidance: heat(0.38, 185, 1.05), launch: motor(220, 550, 1.8), payload: HE, control: { mode: "lock_then_click" },
     steering: { turnRate: 9.4, maxG: 20 }, fits: FIT_HARDPOINT, notes: ["low-signature heat seeker"],
   },
   railgun: {
@@ -369,7 +369,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     id: "swarm_missile", name: "STARSTREAK", fullName: "STARSTREAK MISSILE", designation: "STARSTREAK HVM BEAM-RIDING DARTS", ammo: 18, fireCd: 0.48, speed: 820,
     dmg: 118, blast: 76, life: 3.8, kind: "guided-missile", look: ordLook("missile"), scale: 0.58, trailScale: 0.55,
     guidance: { mode: "pointer", steerRate: 14, maxAngle: 1.1 },
-    launch: motor(160, 1100, 1.05), payload: { mode: "kinetic", penetration: 0.9 },
+    launch: MUZZLE, payload: { mode: "kinetic", penetration: 0.9 },
     control: HOLD, steering: { turnRate: 14, maxG: 32 },
     salvo: { count: 3, interval: 0.065, spread: 0.04 }, fits: FIT_HARDPOINT,
     notes: ["laser beam-riding — hold fire and keep reticle on target; not fire-and-forget"],
@@ -377,7 +377,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   attack_drone: {
     id: "attack_drone", name: "SPECTER", fullName: "SPECTER DRONE", designation: "SPECTER REMOTE ATTACK DRONE", ammo: 3, fireCd: 3, speed: 320,
     dmg: 82, blast: 96, life: 22, kind: "guided-missile", look: ordLook("guided"), scale: 0.55, trailScale: 0.35,
-    guidance: { mode: "auto", acquireRadius: 300, retarget: true }, launch: motor(55, 180, 4.5),
+    guidance: { mode: "auto", acquireRadius: 300, retarget: true }, launch: motor(150, 200, 4.5),
     payload: { mode: "drone", duration: 18, persistent: true, autonomous: true }, control: CLICK,
     steering: { turnRate: 6.5, maxG: 12 },
     sensorView: { mode: "thermal", source: "remote", palette: "white_hot" },
@@ -412,7 +412,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   warp_bomb: {
     id: "warp_bomb", name: "WARP BOMB", fullName: "WARP BOMB", designation: "WB-1 WARP MISSILE", ammo: 4, fireCd: 1.4, speed: 2800,
     dmg: 340, blast: 290, life: 5.5, kind: "guided-missile", look: ordLook("guided"), scale: 1.05, trailScale: 0.52,
-    guidance: { mode: "gps", steerRate: 4.2, pointOnClick: true }, launch: motor(220, 2400, 2.8),
+    guidance: { mode: "gps", steerRate: 4.2, pointOnClick: true }, launch: MUZZLE,
     payload: { mode: "warp", timeScale: 0.1 },
     control: { mode: "designate_then_release" }, steering: { turnRate: 4.2, loft: 0.12 },
     sensorView: { mode: "thermal", source: "remote", palette: "full_spectrum" },
@@ -427,7 +427,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   long_range_missile: {
     id: "long_range_missile", name: "AMRAAM", fullName: "AMRAAM MISSILE", designation: "AIM-120D AMRAAM", ammo: 16, fireCd: 0.7, speed: 680,
     dmg: 178, blast: 148, life: 9.5, kind: "lock-on-missile", look: ordLook("long"), scale: 0.95, trailScale: 0.62,
-    guidance: laser(0.85, 520), launch: motor(90, 780, 4.2), payload: HE, control: { mode: "lock_then_click" },
+    guidance: laser(0.85, 520), launch: MUZZLE, payload: HE, control: { mode: "lock_then_click" },
     steering: { turnRate: 3.8, maxG: 8, loft: 0.65 }, fits: ["bay", "hardpoint"] as SocketClass[],
     notes: ["BVR radar/laser — long lock, lofted cruise, less agile"],
   },
@@ -459,7 +459,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   gps_missile: {
     id: "gps_missile", name: "GRIFFIN", fullName: "GRIFFIN MISSILE", designation: "AGM-176 GRIFFIN", ammo: 12, fireCd: 0.7, speed: 410,
     dmg: 168, blast: 152, life: 5, kind: "lock-on-missile", look: ordLook("guided"), scale: 0.84, trailScale: 0.52,
-    guidance: { mode: "gps", steerRate: 5.8, pointOnClick: true }, launch: motor(88, 450, 2.2), payload: HE,
+    guidance: { mode: "gps", steerRate: 5.8, pointOnClick: true }, launch: motor(220, 450, 2.2), payload: HE,
     control: { mode: "designate_then_release" }, steering: { turnRate: 5.8, maxG: 11 },
     fits: FIT_HARDPOINT, notes: ["powered GPS missile steers to clicked point"],
   },
@@ -506,7 +506,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   mini_hellfire_missile: {
     id: "mini_hellfire_missile", name: "MINI-HELLFIRE", fullName: "MINI-HELLFIRE MISSILE", designation: "MINI-HELLFIRE MISSILE", ammo: 14, fireCd: 0.38, speed: 420,
     dmg: 116, blast: 104, life: 4.4, kind: "lock-on-missile", look: ordLook("laserGuided"), scale: 0.62, trailScale: 0.55,
-    guidance: laser(0.32, 145), launch: motor(100, 610, 1.7), payload: HE, control: { mode: "lock_then_click" },
+    guidance: laser(0.32, 145), launch: motor(200, 520, 1.7), payload: HE, control: { mode: "lock_then_click" },
     steering: { turnRate: 8.9, maxG: 18 }, fits: FIT_HARDPOINT, notes: ["compact laser-guided fire-and-forget missile"],
   },
   mini_bomb: {
