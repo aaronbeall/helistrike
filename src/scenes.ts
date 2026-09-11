@@ -6667,16 +6667,19 @@ export class MissionScene extends Phaser.Scene {
           }
         } else {
           // TOW: one steerRate turn (above); dive only pitches altitude into the aim.
+          // Inner disk around the reticle = full dive (so a near miss still punches in).
           const tgt = this.reticleUnit() ?? this.hoverAerial();
           const gndHere = groundZ(this.world, s.x, s.y);
           const playerAgl = Math.max(28, this.heli.z - this.heli.gndSmooth);
           const cruiseZ = gndHere + playerAgl;
           const impactZ = tgt ? tgt.z + heightOf(tgt.kind) * 0.3 : gndAim;
+          const diveInner = 45;
           const diveRange = 280;
-          const closeness = 1 - Phaser.Math.Clamp(distPtr / diveRange, 0, 1);
+          const outside = Math.max(0, distPtr - diveInner);
+          const closeness = 1 - Phaser.Math.Clamp(outside / Math.max(1, diveRange - diveInner), 0, 1);
           const dive = Math.pow(closeness, 2.85);
           const tz = Phaser.Math.Linear(cruiseZ, impactZ, dive);
-          s.vz = (tz - s.z) * (1.4 + dive * 3.2);
+          s.vz = (tz - s.z) * (2.2 + dive * 9.5);
         }
         s.vx = Math.cos(s.angle) * spd;
         s.vy = Math.sin(s.angle) * spd;
