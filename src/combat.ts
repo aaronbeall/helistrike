@@ -253,9 +253,9 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     guidance: {
       mode: "command_nlos",
       lockTime: 0.45,
-      lockRadius: 175,
+      lockRadius: 60,
       wire: false,
-      breakLockRadius: 210,
+      breakLockRadius: 90,
       terminalOnSecondClick: true,
     },
     launch: motor(55, 280, 3.2), payload: HE, control: { mode: "first_second_click" },
