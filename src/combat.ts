@@ -262,7 +262,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     steering: { turnRate: 2.4, terminalTurnRate: 6.5, loft: 0.22 },
     sensorView: { mode: "thermal", source: "seeker", palette: "white_hot" },
     fits: FIT_HARDPOINT, notes: [
-      "cruises under seeker POV; soft-locks near reticle",
+      "cruises under seeker POV; soft-lock steers and dives on unit, broken lock returns to mouse",
       "second click commits to lock or aim point — dash thrust, camera follows then lingers on impact",
     ],
   },

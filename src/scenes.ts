@@ -186,6 +186,18 @@ const ENEMY_PROJECTILE_FX_MUL = 0.72;
 const MUZZLE_FX_REF_SCALE = 0.58;
 const MUZZLE_FX_REF_BLAST = 18;
 
+/** Survives MissionScene restart (R → load → mission). */
+let persistedFxOn = true;
+
+type StingerJob = {
+  title: string;
+  detail: string;
+  color: number;
+  duration: number;
+  target?: { x: number; y: number; z?: number };
+  done?: () => void;
+};
+
 function projectileFxScale(from: Shot["from"], effectiveInterval = PROJECTILE_FX_BASE_INTERVAL): number {
   const cadence = Phaser.Math.Clamp(effectiveInterval / PROJECTILE_FX_BASE_INTERVAL, 0.18, 1);
   return cadence * (from === "enemy" ? ENEMY_PROJECTILE_FX_MUL : 1);
@@ -1459,6 +1471,10 @@ export class MissionScene extends Phaser.Scene {
   playerCrashEndT = -1;
   /** Scene-owned simmer so BIRD DOWN isn't lost if the hull debris is culled. */
   playerCrashSimmerT = 0;
+  /** Last live heli pose — death cam rests at mid(this, hulk). */
+  playerDeathLiveX = 0;
+  playerDeathLiveY = 0;
+  playerDeathLiveZ = 0;
   /** Camera post-FX (toggle with F). */
   fxBloom?: Phaser.FX.Bloom;
   fxBarrel?: Phaser.FX.Barrel;
@@ -1526,7 +1542,13 @@ export class MissionScene extends Phaser.Scene {
   stingerT = 0;
   stingerDuration = 0;
   stingerDone?: () => void;
-  stingerTarget?: { x: number; y: number };
+  stingerTarget?: { x: number; y: number; z?: number };
+  /** Queued while another stinger is on screen. */
+  stingerQueue: StingerJob[] = [];
+  /** Live player crash hulk for camera follow. */
+  playerCrashDebris?: Debris;
+  /** End-screen prompt (BIRD DOWN / MISSION COMPLETE) — sim keeps running. */
+  endPromptRoot?: Phaser.GameObjects.Container;
   shake = 0;
   canFire = false;
   mapView = false;
@@ -1684,6 +1706,10 @@ export class MissionScene extends Phaser.Scene {
     this.stingerDuration = 0;
     this.stingerDone = undefined;
     this.stingerTarget = undefined;
+    this.stingerQueue = [];
+    this.playerCrashDebris = undefined;
+    this.endPromptRoot?.destroy(true);
+    this.endPromptRoot = undefined;
     this.shake = 0;
     this.canFire = false;
     this.mapView = false;
@@ -1701,7 +1727,7 @@ export class MissionScene extends Phaser.Scene {
     this.debugHit = false;
     this.debugBlast = false;
     this.blastRings = [];
-    this.fxOn = true;
+    this.fxOn = persistedFxOn;
     this.thermalOn = false;
     this.thermalManual = false;
     this.thermalPalette = "white_hot";
@@ -1732,6 +1758,10 @@ export class MissionScene extends Phaser.Scene {
     this.playerCrashLanded = false;
     this.playerCrashEndT = -1;
     this.playerCrashSimmerT = 0;
+    this.playerCrashDebris = undefined;
+    this.playerDeathLiveX = 0;
+    this.playerDeathLiveY = 0;
+    this.playerDeathLiveZ = 0;
     this.playerGunSide = 0;
     const selectedCraft = craftOf();
     this.loadout = playerLoadoutFromSockets(selectedCraft.sockets);
@@ -2620,6 +2650,10 @@ export class MissionScene extends Phaser.Scene {
     this.input.keyboard!.addKey("P").on("down", () => this.handlePerfKey());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.FORWARD_SLASH).on("down", () => this.toggleDebugMenu());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ESC).on("down", () => {
+      if (this.over) {
+        this.scene.start("menu");
+        return;
+      }
       if (this.helpOpen) this.toggleHelp(false);
       else if (this.debugCamOpen) this.closeDebugCam();
       else if (this.debugSpawnOpen) this.closeDebugSpawn();
@@ -3285,6 +3319,21 @@ export class MissionScene extends Phaser.Scene {
     for (const policy of Object.values(this.fxPolicies)) policy.emitted = 0;
     this.syncFpsHud();
     if (this.over) {
+      // End prompt is up, but the world keeps simmering (debris, units, fire).
+      const endDt = uiPause ? 0 : wallDt * this.timeScale;
+      this.setSimTimeScale(uiPause ? 0 : this.timeScale);
+      this.syncPlayView();
+      if (this.mapBlend < 0.001) this.syncLookCam(wallDt);
+      if (!mapPause) {
+        this.rebuildUnitIdMap();
+        this.updateUnits(endDt);
+        this.updateShots(endDt);
+        this.updateDebris(endDt);
+        this.updateSimParticles(endDt);
+        this.updateSmokeVolumes(endDt);
+        this.emitHeliCrashDmgFlames();
+        this.hideAimChrome();
+      }
       this.drawMinimap();
       this.drawPlayerHud();
       this.towWireGfx.clear();
@@ -3431,7 +3480,7 @@ export class MissionScene extends Phaser.Scene {
     this.tickTestPostFx(wallDt);
 
     let hvAlive = false;
-    let completedTarget: { x: number; y: number } | undefined;
+    let completedTarget: { x: number; y: number; z?: number } | undefined;
     for (const h of this.world.hv) {
       let objectiveAlive = false;
       for (const u of this.units) {
@@ -3443,11 +3492,12 @@ export class MissionScene extends Phaser.Scene {
       }
       if (!objectiveAlive && !this.completedHv.has(h.id)) {
         this.completedHv.add(h.id);
-        completedTarget = { x: h.x, y: h.y };
+        const gz = groundZ(this.world, h.x, h.y);
+        completedTarget = { x: h.x, y: h.y, z: gz + 36 };
         if (this.heli.phase !== "dead" && this.completedHv.size < this.world.hv.length) {
           this.showStinger(
             "OBJECTIVE COMPLETE",
-            `${h.name} neutralized`,
+            `${h.name} · KILL`,
             0xe8b84a,
             4.2,
             completedTarget
@@ -3697,6 +3747,7 @@ export class MissionScene extends Phaser.Scene {
       for (const muzzle of this.muzzlePool) muzzle.setVisible(false);
       for (const glow of this.muzzleGlowPool) glow.setVisible(false);
       for (const flame of this.exhaustFlames) flame.setVisible(false);
+      this.hideAimChrome();
       return;
     }
     const craft = h.spec;
@@ -6558,31 +6609,36 @@ export class MissionScene extends Phaser.Scene {
           s.vy = d.y * termSpd;
           s.vz = d.z * termSpd;
         } else {
-          const want = Math.atan2(ptr.y - s.y, ptr.x - s.x);
+          // Soft lock: steer + dive at the unit; broken lock → mouse cruise. Click = terminal dash.
+          const locked = s.targetId != null ? this.unitById(s.targetId) : undefined;
+          const soft = !!(locked && !locked.dead);
+          const aimX = soft ? locked!.x : ptr.x;
+          const aimY = soft ? locked!.y : ptr.y;
+          const want = Math.atan2(aimY - s.y, aimX - s.x);
           const da = Phaser.Math.Angle.Wrap(want - s.angle);
           const rate = (beh.steering?.turnRate ?? 3.4) * 0.7;
-          s.angle += Phaser.Math.Clamp(da, -rate * dt, rate * dt);
-          s.vx = Math.cos(s.angle) * spd;
-          s.vy = Math.sin(s.angle) * spd;
-          // Match the player's current AGL (not a fixed weapon cruise height).
+          const gndHere = groundZ(this.world, s.x, s.y);
           const playerAgl = Math.max(28, this.heli.z - this.heli.gndSmooth);
-          let wantAgl = playerAgl;
-          // Soft-locked: climb a bit and clear terrain toward the target before terminal dive.
-          if (s.targetId != null) {
-            wantAgl += 52;
-            const u = this.unitById(s.targetId);
-            if (u && !u.dead) {
-              const gHere = groundZ(this.world, s.x, s.y);
-              for (const t of [0.25, 0.5, 0.75]) {
-                const gx = Phaser.Math.Linear(s.x, u.x, t);
-                const gy = Phaser.Math.Linear(s.y, u.y, t);
-                const clear = groundZ(this.world, gx, gy) + 38 - gHere;
-                if (clear > wantAgl) wantAgl = clear;
-              }
-            }
+          const cruiseZ = gndHere + playerAgl;
+          if (soft) {
+            const impactZ = locked!.z + heightOf(locked!.kind) * 0.45;
+            const dist = Math.hypot(aimX - s.x, aimY - s.y);
+            const diveRange = 340;
+            const dive = Math.pow(1 - Phaser.Math.Clamp(dist / diveRange, 0, 1), 2.05);
+            const dropT = Phaser.Math.Clamp(dive * 1.5, 0, 1);
+            const wantZ = Phaser.Math.Linear(cruiseZ + 36, impactZ, dropT);
+            const turn = rate * (1.15 + dive * 2.4) * dt;
+            s.angle += Phaser.Math.Clamp(da, -turn, turn);
+            s.vx = Math.cos(s.angle) * spd;
+            s.vy = Math.sin(s.angle) * spd;
+            s.vz = (wantZ - s.z) * (1.45 + dive * 7.5);
+            s.life = Math.max(s.life, 0.6);
+          } else {
+            s.angle += Phaser.Math.Clamp(da, -rate * dt, rate * dt);
+            s.vx = Math.cos(s.angle) * spd;
+            s.vy = Math.sin(s.angle) * spd;
+            s.vz = (cruiseZ - s.z) * 1.55;
           }
-          const wantZ = groundZ(this.world, s.x, s.y) + wantAgl;
-          s.vz = (wantZ - s.z) * 1.55;
         }
         return;
       }
@@ -8036,6 +8092,7 @@ export class MissionScene extends Phaser.Scene {
       simmer: 0,
     };
     this.admitDebris(hull);
+    if (player) this.playerCrashDebris = hull;
 
     const rotors = player
       ? craft!.rotor
@@ -8210,14 +8267,18 @@ export class MissionScene extends Phaser.Scene {
   beginPlayerCrash(): void {
     if (this.playerCrashStarted) return;
     this.playerCrashStarted = true;
+    this.hideAimChrome();
+    const h = this.heli;
+    this.playerDeathLiveX = h.x;
+    this.playerDeathLiveY = h.y;
+    this.playerDeathLiveZ = h.z;
+    // No cam target — death mid-point is the resting focus immediately.
     this.showStinger(
       "AIRCRAFT DOWN",
-      `${this.heli.spec.name} lost · impact site marked`,
+      `${h.spec.name} lost · impact site marked`,
       0xff6a3a,
-      4.6,
-      { x: this.heli.x, y: this.heli.y }
+      4.6
     );
-    const h = this.heli;
     this.body.setVisible(false);
     for (const rotor of this.rotors) rotor.setVisible(false);
     for (const gun of this.guns) gun.setVisible(false);
@@ -12216,6 +12277,7 @@ export class MissionScene extends Phaser.Scene {
 
   toggleTestFx(): void {
     this.fxOn = !this.fxOn;
+    persistedFxOn = this.fxOn;
     if (!this.fxOn) this.fxBarrelPulse = 0;
     this.applyTestFxActive();
     this.syncTestFxHud();
@@ -13078,6 +13140,13 @@ export class MissionScene extends Phaser.Scene {
     go.cameraFilter = this.cameras.main.id | this.fieldHudCam.id;
   }
 
+  /** Bind a container and every child — late-spawned HUD must not keep bindWorld filters. */
+  markHudTree(obj: Phaser.GameObjects.GameObject): void {
+    this.bindHud(obj);
+    const list = (obj as Phaser.GameObjects.Container).list;
+    if (list) for (const ch of list) this.markHudTree(ch);
+  }
+
   /**
    * World-projected field tracking HUD (locks, HP bars).
    * Drawn by fieldHudCam (same scroll/zoom as main, no thermal pipeline).
@@ -13155,9 +13224,12 @@ export class MissionScene extends Phaser.Scene {
   }
 
   syncProjectionPose(): void {
-    const focusX = this.heli.x + this.lookCamX;
-    const focusY = this.heli.y + this.lookCamY;
-    setCamera25DFocus(focusX, focusY, this.heli.z);
+    const anchor = this.playerCamAnchor();
+    const focusX = anchor.x + this.lookCamX;
+    const focusY = anchor.y + this.lookCamY;
+    const focusZ =
+      this.stingerT > 0 && this.stingerTarget?.z != null ? this.stingerTarget.z : anchor.z;
+    setCamera25DFocus(focusX, focusY, focusZ);
     // Camera-space coordinates from getWorldPoint are stale after recentering,
     // even within the same game-loop frame.
     this.ptrFrame = -1;
@@ -13268,18 +13340,41 @@ export class MissionScene extends Phaser.Scene {
 
   syncLookCam(dt: number): void {
     this.applyThermalMode();
-    if (this.stingerT > 0 && this.stingerTarget) {
+    // Death cam owns look immediately — don't let HV/mission stingers steal it.
+    if (this.heli.phase !== "dead" && this.stingerT > 0 && this.stingerTarget) {
       const elapsed = this.stingerDuration - this.stingerT;
       const ease = (t: number) => {
         const u = Phaser.Math.Clamp(t, 0, 1);
         return u * u * (3 - 2 * u);
       };
-      const focusIn = ease(elapsed / 0.9);
-      const focusOut = ease(this.stingerT / 1.15);
+      // Hold on the objective for most of the stinger; ease out near the end.
+      const focusIn = ease(elapsed / 0.55);
+      const focusOut = ease(this.stingerT / 0.85);
       const focus = Math.min(focusIn, focusOut);
-      const ox = (this.stingerTarget.x - this.heli.x) * focus;
-      const oy = (this.stingerTarget.y - this.heli.y) * focus;
-      const k = 1 - Math.exp(-4.2 * dt);
+      const anchor = this.playerCamAnchor();
+      const ox = (this.stingerTarget.x - anchor.x) * focus;
+      const oy = (this.stingerTarget.y - anchor.y) * focus;
+      const k = 1 - Math.exp(-5.5 * dt);
+      this.lookCamX = Phaser.Math.Linear(this.lookCamX, ox, k);
+      this.lookCamY = Phaser.Math.Linear(this.lookCamY, oy, k);
+      this.syncProjectionPose();
+      return;
+    }
+    if (this.heli.phase === "dead") {
+      // Resting focus = mid(last live, hulk); mouse pulls away from that center.
+      const anchor = this.playerCamAnchor();
+      const p = this.pointerScreen();
+      const pointerAtFocus = screenToWorldAtZ(p.x, p.y, anchor.z);
+      const pull = 0.32;
+      const max = 160;
+      let ox = (pointerAtFocus.x - anchor.x) * pull;
+      let oy = (pointerAtFocus.y - anchor.y) * pull;
+      const len = Math.hypot(ox, oy);
+      if (len > max) {
+        ox *= max / len;
+        oy *= max / len;
+      }
+      const k = 1 - Math.exp(-8.5 * dt);
       this.lookCamX = Phaser.Math.Linear(this.lookCamX, ox, k);
       this.lookCamY = Phaser.Math.Linear(this.lookCamY, oy, k);
       this.syncProjectionPose();
@@ -13631,13 +13726,33 @@ export class MissionScene extends Phaser.Scene {
   drawHurtVignette(hp: number): void {
     const blood = this.hurtVignette;
     const cracks = this.hurtVignettePulse;
-    if (this.heli.phase === "dead" || hp >= 0.32) {
+    const w = this.scale.width;
+    const h = this.scale.height;
+    if (this.heli.phase === "dead") {
+      // Keep cockpit damage visible after death, desaturated.
+      blood
+        .setVisible(true)
+        .setPosition(0, 0)
+        .setDisplaySize(w, h)
+        .setTint(0x8a8a8a)
+        .setAlpha(0.58)
+        .setBlendMode(Phaser.BlendModes.MULTIPLY);
+      cracks
+        .setVisible(true)
+        .setPosition(0, 0)
+        .setDisplaySize(w, h)
+        .setTint(0x6e6e6e)
+        .setAlpha(0.62)
+        .setBlendMode(Phaser.BlendModes.NORMAL);
+      return;
+    }
+    blood.clearTint().setBlendMode(Phaser.BlendModes.ADD);
+    cracks.clearTint().setBlendMode(Phaser.BlendModes.NORMAL);
+    if (hp >= 0.32) {
       blood.setVisible(false).setAlpha(0);
       cracks.setVisible(false).setAlpha(0);
       return;
     }
-    const w = this.scale.width;
-    const h = this.scale.height;
     const hurt = Phaser.Math.Clamp((0.32 - hp) / 0.32, 0, 1);
     // Gentle breath — never fully offs the blood pulse layer.
     const beat = 0.82 + 0.18 * Math.sin(this.time.now * 0.0042);
@@ -13733,24 +13848,32 @@ export class MissionScene extends Phaser.Scene {
     detail: string,
     color: number,
     duration: number,
-    target?: { x: number; y: number },
+    target?: { x: number; y: number; z?: number },
     done?: () => void
   ): void {
+    if (this.stingerT > 0) {
+      this.stingerQueue.push({ title, detail, color, duration, target, done });
+      return;
+    }
+    this.presentStinger({ title, detail, color, duration, target, done });
+  }
+
+  presentStinger(job: StingerJob): void {
     this.stingerRoot?.destroy(true);
     const { width, height } = this.scale;
     const bg = this.add.rectangle(width / 2, height / 2, width, 92, 0x090908, 0.82);
-    const edgeTop = this.add.rectangle(width / 2, height / 2 - 46, width, 2, color, 0.9);
-    const edgeBottom = this.add.rectangle(width / 2, height / 2 + 46, width, 2, color, 0.9);
+    const edgeTop = this.add.rectangle(width / 2, height / 2 - 46, width, 2, job.color, 0.9);
+    const edgeBottom = this.add.rectangle(width / 2, height / 2 + 46, width, 2, job.color, 0.9);
     const text = this.add
-      .text(width / 2, height / 2 - 8, title, {
+      .text(width / 2, height / 2 - 8, job.title, {
         fontFamily: "Black Ops One, Impact, sans-serif",
         fontSize: "38px",
-        color: `#${color.toString(16).padStart(6, "0")}`,
+        color: `#${job.color.toString(16).padStart(6, "0")}`,
         align: "center",
       })
       .setOrigin(0.5);
     const sub = this.add
-      .text(width / 2, height / 2 + 26, detail, {
+      .text(width / 2, height / 2 + 26, job.detail, {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "14px",
         color: "#e8e0cc",
@@ -13761,13 +13884,14 @@ export class MissionScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(Layer.HUD + 80)
       .setAlpha(0);
-    this.bindHud(root);
+    // Children were bindWorld'd on add — retarget the whole tree to hudCam.
+    this.markHudTree(root);
     this.stingerRoot = root;
     this.stingerText = text;
-    this.stingerT = duration;
-    this.stingerDuration = duration;
-    this.stingerTarget = target;
-    this.stingerDone = done;
+    this.stingerT = job.duration;
+    this.stingerDuration = job.duration;
+    this.stingerTarget = job.target;
+    this.stingerDone = job.done;
   }
 
   tickStinger(wallDt: number): void {
@@ -13788,6 +13912,8 @@ export class MissionScene extends Phaser.Scene {
       const done = this.stingerDone;
       this.stingerDone = undefined;
       done?.();
+      const next = this.stingerQueue.shift();
+      if (next) this.presentStinger(next);
     }
   }
 
@@ -13795,19 +13921,57 @@ export class MissionScene extends Phaser.Scene {
     if (this.over) return;
     this.over = true;
     this.win = win;
+    this.hideAimChrome();
+    this.endPromptRoot?.destroy(true);
     const msg = win ? "MISSION COMPLETE" : "BIRD DOWN";
-    this.bindHud(
-      this.add
-        .text(this.scale.width / 2, this.scale.height / 2, `${msg}\nR  RESTART`, {
-          fontFamily: "Black Ops One, Impact, sans-serif",
-          fontSize: "42px",
-          color: win ? "#e8b84a" : "#ff6a3a",
-          align: "center",
-        })
-        .setOrigin(0.5)
-        .setScrollFactor(0)
-        .setDepth(Layer.HUD + 50)
-    );
+    const color = win ? "#e8b84a" : "#ff6a3a";
+    const { width, height } = this.scale;
+    const title = this.add
+      .text(width / 2, height / 2 - 18, msg, {
+        fontFamily: "Black Ops One, Impact, sans-serif",
+        fontSize: "42px",
+        color,
+        align: "center",
+      })
+      .setOrigin(0.5);
+    const sub = this.add
+      .text(width / 2, height / 2 + 28, "R  RESTART      ESC  MENU", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "16px",
+        color: "#e8e0cc",
+        align: "center",
+      })
+      .setOrigin(0.5);
+    this.endPromptRoot = this.add
+      .container(0, 0, [title, sub])
+      .setScrollFactor(0)
+      .setDepth(Layer.HUD + 50);
+    this.markHudTree(this.endPromptRoot);
+  }
+
+  /** Hide reticle + laser when the bird is dead / mission over. */
+  hideAimChrome(): void {
+    this.reticle?.setVisible(false);
+    this.reticleMark?.setVisible(false);
+    this.reticleMark?.clear();
+    this.sight?.setVisible(false);
+    this.sight?.clear();
+  }
+
+  /** Camera follow point: mid(last live, hulk) when dead, else heli. */
+  playerCamAnchor(): { x: number; y: number; z: number } {
+    if (this.heli.phase === "dead") {
+      const hulk = this.playerCrashDebris;
+      const cx = hulk?.x ?? this.heli.x;
+      const cy = hulk?.y ?? this.heli.y;
+      const cz = hulk?.z ?? this.heli.z;
+      return {
+        x: (this.playerDeathLiveX + cx) * 0.5,
+        y: (this.playerDeathLiveY + cy) * 0.5,
+        z: (this.playerDeathLiveZ + cz) * 0.5,
+      };
+    }
+    return { x: this.heli.x, y: this.heli.y, z: this.heli.z };
   }
 }
 
