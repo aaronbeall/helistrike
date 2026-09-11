@@ -4887,9 +4887,8 @@ export class MissionScene extends Phaser.Scene {
     const inherit = launch.inheritMomentum;
     const g = spec.guidance;
     const continuousPointer = g.mode === "pointer";
-    const wantsWire =
-      continuousPointer &&
-      (g.wire === true || !("wire" in g && g.wire === false));
+    // Default ON for pointer missiles; set guidance.wire: false to opt out (SPIKE NLOS).
+    const wantsWire = continuousPointer && g.wire !== false;
     const lockId =
       autoTarget?.id ??
       (g.mode === "laser" || g.mode === "heat" || g.mode === "command_nlos"
@@ -5748,10 +5747,12 @@ export class MissionScene extends Phaser.Scene {
     const fz = spd > 1e-3 ? s.vz / spd : 0;
     const projectedX = screenVelX(fx, fy, fz, s.x, s.y, s.z);
     const projectedY = screenVelY(fy, fz, s.z, s.y);
-    const projectedUnit = Math.max(1e-6, Math.hypot(projectedX, projectedY));
+    const projectedUnit = Math.hypot(projectedX, projectedY);
+    // Edge-on / tiny projection → stay at center (avoids huge world offsets that kill the wire).
+    if (projectedUnit < 1e-3) return { x: s.x, y: s.y, z: s.z };
     const screenDistance =
       (SHOT_ORIGIN.x - SHOT_TAIL.x) * img.width * sc * at.scale * along;
-    const d = screenDistance / projectedUnit;
+    const d = Math.min(screenDistance / projectedUnit, 64);
     return {
       x: s.x - fx * d,
       y: s.y - fy * d,
@@ -6664,47 +6665,22 @@ export class MissionScene extends Phaser.Scene {
             s.z = gnd;
             if (s.vz < 0) s.vz = 0;
           }
-          s.vx = Math.cos(s.angle) * spd;
-          s.vy = Math.sin(s.angle) * spd;
-          s.life = Math.max(s.life, 0.6);
         } else {
-          // TOW / command pointer: cruise at player AGL, then dive near the aim.
-          // Target is mid-unit under reticle, else ground at mouse — same dive timing either way.
-          // Dive is not latched: moving the aim away recovers toward cruise.
+          // TOW: one steerRate turn (above); dive only pitches altitude into the aim.
           const tgt = this.reticleUnit() ?? this.hoverAerial();
-          const aimX = tgt ? tgt.x : ptr.x;
-          const aimY = tgt ? tgt.y : ptr.y;
-          const impactZ = tgt
-            ? tgt.z + heightOf(tgt.kind) * 0.5
-            : groundZ(this.world, aimX, aimY);
           const gndHere = groundZ(this.world, s.x, s.y);
           const playerAgl = Math.max(28, this.heli.z - this.heli.gndSmooth);
           const cruiseZ = gndHere + playerAgl;
-          const dist = Math.hypot(aimX - s.x, aimY - s.y);
-          const diveRange = 300;
-          const dive = Math.pow(1 - Phaser.Math.Clamp(dist / diveRange, 0, 1), 2.15);
-          const dropT = Phaser.Math.Clamp(dive * 1.45, 0, 1);
-          const wantZ = Phaser.Math.Linear(cruiseZ, impactZ, dropT);
-
-          const aimWant = Math.atan2(aimY - s.y, aimX - s.x);
-          const ada = Phaser.Math.Angle.Wrap(aimWant - s.angle);
-          if (dive > 0.2) {
-            const turn = (beh.steering?.turnRate ?? rate) * (1.4 + dive * 2.6) * dt;
-            s.angle += Phaser.Math.Clamp(ada, -turn, turn);
-          } else {
-            const clamped = s.angle + Phaser.Math.Clamp(ada, -maxA, maxA);
-            const dAim = Phaser.Math.Angle.Wrap(clamped - s.angle);
-            s.angle += Phaser.Math.Clamp(dAim, -rate * dt, rate * dt);
-          }
-          s.vx = Math.cos(s.angle) * spd;
-          s.vy = Math.sin(s.angle) * spd;
-          s.vz = (wantZ - s.z) * (1.4 + dive * 8.2);
-          s.life = Math.max(s.life, 0.6);
-          const prox = Math.hypot(aimX - s.x, aimY - s.y, impactZ - s.z);
-          if (prox < 18 || (!tgt && s.z <= impactZ + 3 && dist < 36)) {
-            st.detonate = true;
-          }
+          const impactZ = tgt ? tgt.z + heightOf(tgt.kind) * 0.3 : gndAim;
+          const diveRange = 280;
+          const closeness = 1 - Phaser.Math.Clamp(distPtr / diveRange, 0, 1);
+          const dive = Math.pow(closeness, 2.85);
+          const tz = Phaser.Math.Linear(cruiseZ, impactZ, dive);
+          s.vz = (tz - s.z) * (1.4 + dive * 3.2);
         }
+        s.vx = Math.cos(s.angle) * spd;
+        s.vy = Math.sin(s.angle) * spd;
+        s.life = Math.max(s.life, 0.6);
         return;
       }
 
@@ -6968,9 +6944,10 @@ export class MissionScene extends Phaser.Scene {
     g.setDepth(wireDepth);
   }
 
+  /** Sagging command wire: trail points relax toward wing→missile chord (87ea78e). */
   simulateTowWire(s: Shot, dt: number): void {
     const player = this.towWing(s.wireSide ?? 1);
-    const missile = this.shotTailWorldPos(s);
+    const missile = { x: s.x, y: s.y, z: s.z };
     if (!s.wire) s.wire = [];
     const trail = s.wire;
     if (trail.length === 0) {
@@ -6994,11 +6971,6 @@ export class MissionScene extends Phaser.Scene {
       p.y += (ty - p.y) * a;
       p.z += (tz - p.z) * a;
     }
-    // Pin tip to exhaust (sag lerp rate is 0 at t=1).
-    const tip = trail[trail.length - 1]!;
-    tip.x = missile.x;
-    tip.y = missile.y;
-    tip.z = missile.z;
     s.wireTrim = (s.wireTrim ?? 0) + dt;
     const trimEvery = 0.08;
     while ((s.wireTrim ?? 0) >= trimEvery && trail.length > 2) {
@@ -13064,6 +13036,9 @@ export class MissionScene extends Phaser.Scene {
     for (const go of [this.lockGfx, this.lockTxt, this.lockInbdTxt, this.hpGfx]) {
       this.bindFieldHud(go);
     }
+    // TOW wire must stay on the main cam (world depth). Never field HUD.
+    this.hudSet.delete(this.towWireGfx);
+    this.towWireGfx.cameraFilter = this.hudCam.id | this.fieldHudCam.id;
     const markHudTree = (obj: Phaser.GameObjects.GameObject) => {
       this.bindHud(obj);
       const list = (obj as Phaser.GameObjects.Container).list;

@@ -280,9 +280,9 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     fits: FIT_GUN, notes: ["chin-turret three-barrel gatling"],
   },
   tow_missile: {
-    id: "tow_missile", name: "TOW", fullName: "TOW MISSILE", designation: "BGM-71E TOW 2A MISSILE", ammo: 6, fireCd: 1.1, speed: 340,
+    id: "tow_missile", name: "TOW", fullName: "TOW MISSILE", designation: "BGM-71E TOW 2A MISSILE", ammo: 6, fireCd: 1.1, speed: 400,
     dmg: 176, blast: 160, life: 5.2, kind: "guided-missile", look: ordLook("guided"), scale: 1, trailScale: 0.52,
-    guidance: { mode: "pointer", steerRate: 2.2, maxAngle: 0.75 }, launch: motor(76, 420, 2.4), payload: HE,
+    guidance: { mode: "pointer", steerRate: 2.2, maxAngle: 0.75, wire: true }, launch: motor(76, 420, 2.4), payload: HE,
     control: HOLD, steering: { turnRate: 2.2, maxG: 5.5 }, fits: FIT_HARDPOINT, notes: ["continuous command guidance"],
   },
   sidewinder_missile: {
