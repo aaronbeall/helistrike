@@ -33,7 +33,7 @@ Move from `scenes.ts`:
 - `shotTrailScale` / `troopMissileTrail` / `shotLookOf`
 - `shellGirth` / `shellEjectSide`
 - `GUN_STATION_TURN_RATE` / `AUTO_GUN_ALIGN_TOL`
-- optional: `SHOT_Z_REF` / `SHOT_Z_MAX` / `HELLFIRE_Z_MAX`
+- optional: `SHOT_Z_REF` / `SHOT_Z_MAX` / `LOCK_ON_Z_MAX`
 
 ### Batch 2 — New small modules
 

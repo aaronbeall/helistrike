@@ -20,15 +20,15 @@ export function heatCategoryOk(
 }
 
 export type StationTraverse = {
+  /** Cone width in degrees. */
   arc: number;
-  /** Degrees off craft heading; omitted → 0. Runtime usually fills this from craft→mount. */
-  center?: number;
-  side?: "left" | "right" | "both";
+  /** Cone center in degrees off craft nose (from socket/mount heading). */
+  center: number;
 };
 
 /**
  * Aim angle within socket traverse arc (relative to craft heading).
- * Cabin side left/right further restricts to that hemisphere.
+ * Cone is ±arc/2 around `traverse.center`.
  */
 export function aimInStationArc(
   aimWorld: number,
@@ -36,24 +36,19 @@ export function aimInStationArc(
   traverse: StationTraverse
 ): boolean {
   const rel = Phaser.Math.Angle.Wrap(aimWorld - craftHeading);
-  const center = ((traverse.center ?? 0) * Math.PI) / 180;
+  const center = (traverse.center * Math.PI) / 180;
   const half = ((traverse.arc * Math.PI) / 180) * 0.5;
-  if (Math.abs(Phaser.Math.Angle.Wrap(rel - center)) > half) return false;
-  if (traverse.side === "left") return rel > 0 || Math.abs(rel) < 1e-3;
-  if (traverse.side === "right") return rel < 0 || Math.abs(rel) < 1e-3;
-  return true;
+  return Math.abs(Phaser.Math.Angle.Wrap(rel - center)) <= half;
 }
 
-/** Snap an aim bearing into a station traverse (cabin side guns, limited arcs). */
+/** Snap an aim bearing into a station traverse cone. */
 export function clampAimToStationArc(
   aimWorld: number,
   craftHeading: number,
   traverse: StationTraverse
 ): number {
-  let rel = Phaser.Math.Angle.Wrap(aimWorld - craftHeading);
-  if (traverse.side === "left" && rel < 0) rel = 0;
-  if (traverse.side === "right" && rel > 0) rel = 0;
-  const center = ((traverse.center ?? 0) * Math.PI) / 180;
+  const rel = Phaser.Math.Angle.Wrap(aimWorld - craftHeading);
+  const center = (traverse.center * Math.PI) / 180;
   const half = ((traverse.arc * Math.PI) / 180) * 0.5;
   const err = Phaser.Math.Angle.Wrap(rel - center);
   const clamped = center + Phaser.Math.Clamp(err, -half, half);

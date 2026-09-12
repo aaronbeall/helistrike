@@ -1,13 +1,13 @@
 import Phaser from "phaser";
 import { BalanceRig } from "./balanceRig";
 import { CombatRig } from "./combatRig";
-import { ToonBlastRig } from "./toonBlastRig";
+import { ArtGenRig } from "./artGenRig";
 import { RosterRig } from "./rosterRig";
 import { SpriteRig } from "./spriteRig";
 import { spritePivot } from "./sprites";
 
 /**
- * Overlay scene for sprite / roster / combat / toon-blast / balance rigs.
+ * Overlay scene for sprite / roster / combat / art-gen / balance rigs.
  * Launched lazily (first ` or installRigHotkeys warm-up).
  *
  * All rig hotkeys live here (not on menu/mission) so they survive scene
@@ -17,7 +17,11 @@ export class RigsScene extends Phaser.Scene {
   spriteRig!: SpriteRig;
   rosterRig!: RosterRig;
   combatRig!: CombatRig;
-  toonBlastRig!: ToonBlastRig;
+  artGenRig!: ArtGenRig;
+  /** @deprecated Alias of artGenRig. */
+  get toonBlastRig(): ArtGenRig {
+    return this.artGenRig;
+  }
   balanceRig!: BalanceRig;
   /** True after create() finishes constructing tools. */
   ready = false;
@@ -35,7 +39,7 @@ export class RigsScene extends Phaser.Scene {
     this.spriteRig = new SpriteRig(this, (key) => spritePivot(key));
     this.rosterRig = new RosterRig(this);
     this.combatRig = new CombatRig(this);
-    this.toonBlastRig = new ToonBlastRig(this);
+    this.artGenRig = new ArtGenRig(this);
     this.balanceRig = new BalanceRig(this);
     this.ready = true;
 
@@ -102,7 +106,7 @@ export class RigsScene extends Phaser.Scene {
     if (this.spriteRig.open) this.spriteRig.nudgeZoom(dir);
     else if (this.rosterRig.open) this.rosterRig.nudgeZoom(dir);
     else if (this.combatRig.open) this.combatRig.nudgeZoom(dir);
-    else if (this.toonBlastRig.open) this.toonBlastRig.nudgeZoom(dir);
+    else if (this.artGenRig.open) this.artGenRig.nudgeZoom(dir);
   }
 
   /** Queue sprite open when ` arrives before create() finishes. */
@@ -116,7 +120,7 @@ export class RigsScene extends Phaser.Scene {
     if (this.spriteRig.open) this.spriteRig.update();
     if (this.rosterRig.open) this.rosterRig.update();
     if (this.combatRig.open) this.combatRig.update(dt);
-    if (this.toonBlastRig.open) this.toonBlastRig.update(dt);
+    if (this.artGenRig.open) this.artGenRig.update(dt);
     if (this.balanceRig.open) this.balanceRig.update();
   }
 
@@ -126,12 +130,12 @@ export class RigsScene extends Phaser.Scene {
       this.spriteRig.open ||
       this.rosterRig.open ||
       this.combatRig.open ||
-      this.toonBlastRig.open ||
+      this.artGenRig.open ||
       this.balanceRig.open
     );
   }
 
-  /** ` cycles closed → sprite → roster → combat → toon blast → balance → closed. */
+  /** ` cycles closed → sprite → roster → combat → art gen → balance → closed. */
   cycle(): void {
     if (!this.ready) {
       this.pendingOpen = true;
@@ -152,13 +156,13 @@ export class RigsScene extends Phaser.Scene {
         return;
       }
       if (this.combatRig.open) {
-        this.toonBlastRig.toggle();
+        this.artGenRig.toggle();
         this.combatRig.toggle();
         return;
       }
-      if (this.toonBlastRig.open) {
+      if (this.artGenRig.open) {
         this.balanceRig.toggle();
-        this.toonBlastRig.toggle();
+        this.artGenRig.toggle();
         return;
       }
       if (this.balanceRig.open) {
@@ -183,14 +187,14 @@ export class RigsScene extends Phaser.Scene {
     | SpriteRig
     | RosterRig
     | CombatRig
-    | ToonBlastRig
+    | ArtGenRig
     | BalanceRig
     | undefined {
     if (!this.ready) return undefined;
     if (this.spriteRig.open) return this.spriteRig;
     if (this.rosterRig.open) return this.rosterRig;
     if (this.combatRig.open) return this.combatRig;
-    if (this.toonBlastRig.open) return this.toonBlastRig;
+    if (this.artGenRig.open) return this.artGenRig;
     if (this.balanceRig.open) return this.balanceRig;
     return undefined;
   }

@@ -80,7 +80,7 @@ export interface WeaponSpec {
   speed: number;
   dmg: number;
   blast: number;
-  /** Flight behavior: ballistic cannon, rocket, seeking hellfire, TOW. */
+  /** Flight behavior: ballistic cannon, rocket, lock-on missile, TOW. */
   kind: ShotKind;
   /** Projectile texture key. */
   look: ShotLook;

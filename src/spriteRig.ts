@@ -14,7 +14,15 @@ import {
   spriteSpecOf,
   type SpritePointRole,
 } from "./spriteOrigin";
-import { makeRigText, setStackedTexts, RIG_VALUE, RIG_INFO, RIG_LIVE, dumpRig } from "./rigUi";
+import {
+  makeRigText,
+  setStackedTexts,
+  RIG_VALUE,
+  RIG_INFO,
+  RIG_LIVE,
+  dumpRig,
+  drawRigUvAxes,
+} from "./rigUi";
 import { artSourceOf, isCatalogArt, isUuidTexture, nameGameTexture } from "./sprites";
 
 const DEPTH = 9200;
@@ -604,13 +612,10 @@ export class SpriteRig {
       g.lineBetween(left, hy, right, hy);
     }
 
+    drawRigUvAxes(g, spr);
+
     if (!this.showMarks) return;
 
-    const midX = toX(0.5);
-    const midY = toY(0.5);
-    g.lineStyle(1, 0xe8e0c8, 0.28);
-    g.lineBetween(midX, top, midX, bot);
-    g.lineBetween(left, midY, right, midY);
     const marks = rigMarks(key);
     for (let i = 0; i < this.mountLabels.length; i++) {
       const lab = this.mountLabels[i];
@@ -622,12 +627,12 @@ export class SpriteRig {
       const x = toX(p.x);
       const y = toY(p.y);
       g.fillStyle(p.color, 0.95);
-      g.fillRect(x - 4, y - 4, 8, 8);
+      g.fillRect(x - 2.5, y - 2.5, 5, 5);
       g.lineStyle(1, 0x101010, 0.9);
-      g.strokeRect(x - 4, y - 4, 8, 8);
+      g.strokeRect(x - 2.5, y - 2.5, 5, 5);
       lab.setText(p.label);
       lab.setColor(hexColor(p.color));
-      lab.setPosition(x + 7, y - 8);
+      lab.setPosition(x + 5, y - 6);
       lab.setVisible(true);
     }
     for (const p of marks.muzzles) {
@@ -636,7 +641,7 @@ export class SpriteRig {
       const r = rigMuzzleMarkRadius(key);
       g.fillStyle(0xff7a2a, 0.95);
       g.fillCircle(x, y, r);
-      g.lineStyle(1.25, 0xffe8c0, 0.95);
+      g.lineStyle(1, 0xffe8c0, 0.95);
       g.strokeCircle(x, y, r);
     }
     // Origin mark only when authored in SPRITE_SPECS (not the 0.5/0.5 default).
@@ -644,10 +649,10 @@ export class SpriteRig {
     if (authored) {
       const ox = toX(authored.x);
       const oy = toY(authored.y);
-      g.lineStyle(1.5, 0xe8b84a, 0.95);
-      g.lineBetween(ox - 18, oy, ox + 18, oy);
-      g.lineBetween(ox, oy - 18, ox, oy + 18);
-      g.strokeCircle(ox, oy, 6);
+      g.lineStyle(1.25, 0xe8b84a, 0.95);
+      g.lineBetween(ox - 7, oy, ox + 7, oy);
+      g.lineBetween(ox, oy - 7, ox, oy + 7);
+      g.strokeCircle(ox, oy, 3);
     }
     if (this.pinned) {
       const px = toX(this.pinned.uvx);

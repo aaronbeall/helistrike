@@ -30,13 +30,21 @@ export type CraftKind =
   | "warthog";
 
 /** Physical install class — also the weapon compatibility key (`fits`). */
-export type SocketClass = "fixed" | "turret" | "cabin" | "hardpoint" | "bay";
+export type SocketClass = "fixed" | "turret" | "hardpoint";
 
 /** Body UV role used to emit / attach from this socket. */
 export type SocketPointRole = "gun" | "muzzle" | "hardpoint";
 
-/** Aesthetic crew-served role for automatic cabin/turret stations (HUD / hangar). */
+/** Aesthetic crew-served role for automatic turret stations (HUD / hangar). */
 export type CrewRole = "door" | "ramp" | "belly";
+
+/** Body gun UV this socket owns, with optional per-mount rest aim. */
+export interface SocketMount {
+  /** `SPRITE_SPECS[body].points` id with `role: "gun"`. */
+  id: string;
+  /** Preferred aim degrees off craft nose for this mount (overrides socket `heading`). */
+  heading?: number;
+}
 
 export interface CraftSocket {
   /** Stable physical install id (hangar / save) — location, not weapon. */
@@ -48,19 +56,38 @@ export interface CraftSocket {
   weapon: string;
   /**
    * Body point role for emit/attach. Defaults from `class`:
-   * turret/cabin→gun, fixed→muzzle, hardpoint/bay→hardpoint.
+   * turret→gun, fixed→muzzle, hardpoint→hardpoint.
    */
   points?: SocketPointRole;
   /**
-   * Aim cone for turret/cabin guns only (not fixed muzzles). Arc width in degrees;
-   * center is craft→mount heading at runtime (optional `center` only if mount ≈ origin).
-   * `side` further restricts to a craft-relative hemisphere.
+   * Body gun points this socket owns. Omit on a lone turret → every gun UV.
+   * Required when multiple turret sockets share the hull. List order = barrel order.
    */
-  traverse?: { arc: number; center?: number; side?: "left" | "right" | "both" };
+  mounts?: SocketMount[];
+  /**
+   * Shared rest / preferred aim in degrees off craft nose (0 = forward).
+   * Used when `mounts[i].heading` is omitted — handy for a single-gun socket
+   * without stuffing heading into `mounts: [{ id, heading }]`.
+   */
+  heading?: number;
+  /** Fire cone width in degrees, centered on that barrel’s heading (or 0). Omit = unrestricted. */
+  traverse?: number;
   /** Authored multi-muzzle policy belongs to this installation, not the weapon identity. */
   muzzleFire?: "single" | "alternate" | "simultaneous";
   /** Crew-served station flavor (door / ramp / belly gunners) — not a technical "auto" tag. */
   crew?: CrewRole;
+}
+
+/** Per-craft gravity-bomb launcher (momentum inherit + capped corrective boost). */
+export interface CraftBombDrop {
+  /** Fraction of craft horizontal velocity inherited (0–1). */
+  momentum: number;
+  /** Max horizontal boost the launcher can add (world units / sec). */
+  maxBoost: number;
+  /** Base upward release impulse (world units / sec). */
+  loft: number;
+  /** Optional higher loft when more range is needed (uses the vertical arc). */
+  loftMax?: number;
 }
 
 export interface CraftSpec {
@@ -115,6 +142,11 @@ export interface CraftSpec {
   /** Future pickup/place capability; no cargo gameplay exists yet. */
   liftClass?: "medium" | "heavy";
   /**
+   * Gravity-bomb release tuning. Momentum is inherited, then a capped
+   * boost steers the impact toward the aim. Omit → shared defaults.
+   */
+  bombDrop?: CraftBombDrop;
+  /**
    * Weapon installs: geometry + policy + default weapon.
    * Hangar loadouts assign any catalog weapon whose `fits` includes `socket.class`.
    */
@@ -145,7 +177,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 520, strafeThrust: 340, maxSpeed: 340, minSpeed: 0, yawRate: 2.55, yawAccel: 11, drag: 1.65,
     verticalThrust: 340, cruiseThrust: 36, cruiseAgl: 46, maxAgl: 118,
     sockets: [
-      { id: "chin_turret", class: "turret", controller: "pilot", weapon: "chain_gun", points: "gun", traverse: { arc: 240 } },
+      { id: "chin_turret", class: "turret", controller: "pilot", weapon: "chain_gun", points: "gun", traverse: 240 },
       { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket", points: "hardpoint" },
       { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "hellfire_missile", points: "hardpoint" },
       { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "tv_missile", points: "hardpoint" },
@@ -174,7 +206,6 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
       { id: "wing_gun_l", class: "fixed", controller: "pilot", weapon: "minigun", points: "muzzle", muzzleFire: "simultaneous" },
       { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket", points: "hardpoint" },
       { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "hellfire_missile", points: "hardpoint" },
-      { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "tow_missile", points: "hardpoint" },
     ],
   },
   cobra: {
@@ -196,7 +227,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 600, strafeThrust: 410, maxSpeed: 375, minSpeed: 0, yawRate: 3.25, yawAccel: 16.5, drag: 1.45,
     verticalThrust: 410, cruiseThrust: 42, cruiseAgl: 46, maxAgl: 118,
     sockets: [
-      { id: "chin_turret", class: "turret", controller: "pilot", weapon: "gatling", points: "gun", traverse: { arc: 280 } },
+      { id: "chin_turret", class: "turret", controller: "pilot", weapon: "gatling", points: "gun", traverse: 280 },
       { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket", points: "hardpoint" },
       { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "sidewinder_missile", points: "hardpoint" },
       { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "tow_missile", points: "hardpoint" },
@@ -221,7 +252,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 610, strafeThrust: 430, maxSpeed: 390, minSpeed: 0, yawRate: 3.3, yawAccel: 17, drag: 1.4,
     verticalThrust: 420, cruiseThrust: 43, cruiseAgl: 48, maxAgl: 122,
     sockets: [
-      { id: "chin_turret", class: "turret", controller: "pilot", weapon: "gatling", points: "gun", traverse: { arc: 280 } },
+      { id: "chin_turret", class: "turret", controller: "pilot", weapon: "gatling", points: "gun", traverse: 280 },
       { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket", points: "hardpoint" },
       { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "sidewinder_missile", points: "hardpoint" },
       { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "tow_missile", points: "hardpoint" },
@@ -250,7 +281,20 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
       { id: "wing_guns", class: "fixed", controller: "pilot", weapon: "gatling", points: "muzzle", muzzleFire: "simultaneous" },
       { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket", points: "hardpoint" },
       { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "hellfire_missile", points: "hardpoint" },
-      { id: "cabin_doors", class: "cabin", controller: "automatic", weapon: "door_machine_gun", points: "gun", traverse: { arc: 270 }, crew: "door" },
+      // Door guns: explicit mount ↔ heading.
+      {
+        id: "cabin_doors",
+        class: "turret",
+        controller: "automatic",
+        weapon: "machine_gun",
+        points: "gun",
+        mounts: [
+          { id: "door_l", heading: -75 },
+          { id: "door_r", heading: 75 },
+        ],
+        traverse: 270,
+        crew: "door",
+      },
     ],
   },
   chinook: {
@@ -269,14 +313,43 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     rotorHulk: "craft_chinook_rotor_hulk",
     rotorScale: 1.55,
     rotOff: Math.PI / 2,
-    forwardThrust: 520, strafeThrust: 280, maxSpeed: 310, minSpeed: 0, yawRate: 1.75, yawAccel: 8, drag: 1.65,
+    forwardThrust: 520, strafeThrust: 280, maxSpeed: 310, minSpeed: 0, yawRate: 0.72, yawAccel: 3.4, drag: 1.65,
     verticalThrust: 340, cruiseThrust: 34, cruiseAgl: 48, maxAgl: 125,
     liftClass: "heavy",
+    bombDrop: { momentum: 1, maxBoost: 100, loft: 130, loftMax: 220 },
     sockets: [
-      { id: "cabin_forward", class: "cabin", controller: "automatic", weapon: "machine_gun", points: "gun", traverse: { arc: 240 } },
-      { id: "bomb_bay_1", class: "bay", controller: "pilot", weapon: "heavy_bomb", points: "hardpoint" },
-      { id: "bomb_bay_2", class: "bay", controller: "pilot", weapon: "cluster_bomb", points: "hardpoint" },
-      { id: "cabin_ramp_auto", class: "cabin", controller: "automatic", weapon: "auto_machine_gun", points: "gun", traverse: { arc: 270 }, crew: "ramp" },
+      // Forward cabin guns: outboard with forward lean.
+      {
+        id: "cabin_fwd_l",
+        class: "turret",
+        controller: "automatic",
+        weapon: "machine_gun",
+        points: "gun",
+        mounts: [{ id: "fwd_l", heading: -50 }],
+        traverse: 240,
+      },
+      {
+        id: "cabin_fwd_r",
+        class: "turret",
+        controller: "automatic",
+        weapon: "machine_gun",
+        points: "gun",
+        mounts: [{ id: "fwd_r", heading: 50 }],
+        traverse: 240,
+      },
+      { id: "bomb_bay_1", class: "hardpoint", controller: "pilot", weapon: "heavy_bomb", points: "hardpoint" },
+      { id: "bomb_bay_2", class: "hardpoint", controller: "pilot", weapon: "cluster_bomb", points: "hardpoint" },
+      // Ramp gun faces aft.
+      {
+        id: "cabin_ramp",
+        class: "turret",
+        controller: "automatic",
+        weapon: "heavy_machine_gun",
+        points: "gun",
+        mounts: [{ id: "ramp", heading: 180 }],
+        traverse: 270,
+        crew: "ramp",
+      },
     ],
   },
   osprey: {
@@ -299,10 +372,28 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     verticalThrust: 380, cruiseThrust: 40, cruiseAgl: 70, maxAgl: 170,
     liftClass: "heavy",
     sockets: [
-      { id: "cabin_ramp", class: "cabin", controller: "automatic", weapon: "minigun", points: "gun", traverse: { arc: 270 }, crew: "ramp" },
+      {
+        id: "belly_turret",
+        class: "turret",
+        controller: "automatic",
+        weapon: "minigun",
+        points: "gun",
+        mounts: [{ id: "belly" }],
+        traverse: 300,
+        crew: "belly",
+      },
       { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "guided_rockets", points: "hardpoint" },
       { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "hellfire_missile", points: "hardpoint" },
-      { id: "belly_turret_auto", class: "turret", controller: "automatic", weapon: "auto_machine_gun", points: "gun", traverse: { arc: 300 }, crew: "belly" },
+      {
+        id: "cabin_ramp",
+        class: "turret",
+        controller: "automatic",
+        weapon: "heavy_machine_gun",
+        points: "gun",
+        mounts: [{ id: "ramp", heading: 180 }],
+        traverse: 270,
+        crew: "ramp",
+      },
     ],
   },
   stealthhawk: {
@@ -324,7 +415,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 475, strafeThrust: 310, maxSpeed: 305, minSpeed: 0, yawRate: 2.45, yawAccel: 10.5, drag: 1.65,
     verticalThrust: 340, cruiseThrust: 36, cruiseAgl: 46, maxAgl: 118,
     sockets: [
-      { id: "chin_turret", class: "turret", controller: "pilot", weapon: "concealed_cannon", points: "gun", traverse: { arc: 220 } },
+      { id: "chin_turret", class: "turret", controller: "pilot", weapon: "concealed_cannon", points: "gun", traverse: 220 },
       { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "guided_rockets", points: "hardpoint" },
       { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "smoke_bomb", points: "hardpoint" },
       { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "stinger_missile", points: "hardpoint" },
@@ -351,10 +442,26 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 740, strafeThrust: 500, maxSpeed: 500, minSpeed: 0, yawRate: 3.35, yawAccel: 16, drag: 1.2,
     verticalThrust: 480, cruiseThrust: 48, cruiseAgl: 46, maxAgl: 118,
     sockets: [
-      { id: "chin_turret", class: "turret", controller: "pilot", weapon: "railgun", points: "gun", traverse: { arc: 150 } },
+      {
+        id: "chin_turret",
+        class: "turret",
+        controller: "pilot",
+        weapon: "railgun",
+        points: "gun",
+        mounts: [{ id: "chin" }],
+        traverse: 150,
+      },
       { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "swarm_missile", points: "hardpoint" },
-      { id: "bomb_bay", class: "bay", controller: "pilot", weapon: "attack_drone", points: "hardpoint" },
-      { id: "chin_aux", class: "turret", controller: "pilot", weapon: "emp", points: "gun", traverse: { arc: 120 } },
+      { id: "bomb_bay", class: "hardpoint", controller: "pilot", weapon: "attack_drone", points: "hardpoint" },
+      {
+        id: "chin_aux",
+        class: "turret",
+        controller: "pilot",
+        weapon: "emp",
+        points: "gun",
+        mounts: [{ id: "chin" }],
+        traverse: 120,
+      },
     ],
   },
   quad_drone: {
@@ -379,10 +486,10 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 760, strafeThrust: 700, maxSpeed: 440, minSpeed: 0, yawRate: 4.35, yawAccel: 23.5, drag: 1.05,
     verticalThrust: 650, cruiseThrust: 60, cruiseAgl: 38, maxAgl: 105,
     sockets: [
-      { id: "belly_gun", class: "fixed", controller: "pilot", weapon: "light_machine_gun", points: "muzzle" },
+      { id: "belly_gun", class: "fixed", controller: "pilot", weapon: "machine_gun", points: "muzzle" },
       { id: "belly_coil", class: "fixed", controller: "pilot", weapon: "tesla_beam", points: "muzzle" },
       { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "mini_hellfire_missile", points: "hardpoint" },
-      { id: "bomb_bay", class: "bay", controller: "pilot", weapon: "mini_bomb", points: "hardpoint" },
+      { id: "bomb_bay", class: "hardpoint", controller: "pilot", weapon: "mini_bomb", points: "hardpoint" },
     ],
   },
   lightning_ii: {
@@ -403,9 +510,9 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     verticalThrust: 380, cruiseThrust: 40, cruiseAgl: 210, maxAgl: 420,
     sockets: [
       { id: "nose_gun", class: "fixed", controller: "pilot", weapon: "medium_gatling_cannon", points: "muzzle" },
-      { id: "internal_bay_1", class: "bay", controller: "pilot", weapon: "long_range_missile", points: "hardpoint" },
+      { id: "internal_bay_1", class: "hardpoint", controller: "pilot", weapon: "long_range_missile", points: "hardpoint" },
       { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "sidewinder_missile", points: "hardpoint" },
-      { id: "internal_bay_2", class: "bay", controller: "pilot", weapon: "gps_bomb", points: "hardpoint" },
+      { id: "internal_bay_2", class: "hardpoint", controller: "pilot", weapon: "gps_bomb", points: "hardpoint" },
     ],
   },
   gunship: {
@@ -427,9 +534,36 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 500, strafeThrust: 0, maxSpeed: 300, minSpeed: 190, yawRate: 0.7, yawAccel: 2, drag: 1.5,
     verticalThrust: 90, cruiseThrust: 14, cruiseAgl: 320, maxAgl: 520,
     sockets: [
-      { id: "cabin_gun_1", class: "cabin", controller: "automatic", weapon: "heavy_artillery", points: "gun", traverse: { arc: 250, side: "left" } },
-      { id: "cabin_gun_2", class: "cabin", controller: "automatic", weapon: "medium_cannon", points: "gun", traverse: { arc: 250, side: "left" } },
-      { id: "cabin_gun_3", class: "cabin", controller: "automatic", weapon: "light_cannon", points: "gun", traverse: { arc: 250, side: "left" } },
+      {
+        id: "cabin_gun_1",
+        class: "turret",
+        controller: "automatic",
+        weapon: "heavy_artillery",
+        points: "gun",
+        mounts: [{ id: "side" }],
+        heading: 90,
+        traverse: 160,
+      },
+      {
+        id: "cabin_gun_2",
+        class: "turret",
+        controller: "automatic",
+        weapon: "medium_cannon",
+        points: "gun",
+        mounts: [{ id: "side" }],
+        heading: 90,
+        traverse: 160,
+      },
+      {
+        id: "cabin_gun_3",
+        class: "turret",
+        controller: "automatic",
+        weapon: "light_cannon",
+        points: "gun",
+        mounts: [{ id: "side" }],
+        heading: 90,
+        traverse: 160,
+      },
       { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "gps_missile", points: "hardpoint" },
     ],
   },
@@ -451,8 +585,8 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     sockets: [
       { id: "nose_gun", class: "fixed", controller: "pilot", weapon: "heavy_cannon", points: "muzzle" },
       { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "heavy_guided_missile", points: "hardpoint" },
-      { id: "bomb_bay_1", class: "bay", controller: "pilot", weapon: "bomb", points: "hardpoint" },
-      { id: "bomb_bay_2", class: "bay", controller: "pilot", weapon: "gps_bomb", points: "hardpoint" },
+      { id: "bomb_bay_1", class: "hardpoint", controller: "pilot", weapon: "bomb", points: "hardpoint" },
+      { id: "bomb_bay_2", class: "hardpoint", controller: "pilot", weapon: "gps_bomb", points: "hardpoint" },
     ],
   },
   prometheus: {
@@ -473,10 +607,10 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     verticalThrust: 700, cruiseThrust: 65, cruiseAgl: 90, maxAgl: 240,
     liftClass: "heavy",
     sockets: [
-      { id: "belly_turret", class: "turret", controller: "pilot", weapon: "plasma_cannon", points: "gun", traverse: { arc: 260 } },
+      { id: "belly_turret", class: "turret", controller: "pilot", weapon: "plasma_cannon", points: "gun", traverse: 260 },
       { id: "nose_rail_1", class: "fixed", controller: "pilot", weapon: "laser_rocket", points: "muzzle" },
       { id: "nose_rail_2", class: "fixed", controller: "pilot", weapon: "photon_missile", points: "muzzle" },
-      { id: "bomb_bay", class: "bay", controller: "pilot", weapon: "warp_bomb", points: "hardpoint" },
+      { id: "bomb_bay", class: "hardpoint", controller: "pilot", weapon: "warp_bomb", points: "hardpoint" },
     ],
   },
 };
@@ -497,6 +631,25 @@ export function craftKind(): CraftKind {
 /** Active craft, or a named one. */
 export function craftOf(kind: CraftKind = selected): CraftSpec {
   return CRAFTS[kind];
+}
+
+const DEFAULT_BOMB_DROP: CraftBombDrop = {
+  momentum: 1,
+  maxBoost: 100,
+  loft: 125,
+  loftMax: 210,
+};
+
+/** Gravity-bomb release tune for a craft (Chinook has authored values). */
+export function craftBombDrop(c: CraftSpec = craftOf()): CraftBombDrop {
+  const d = c.bombDrop;
+  if (!d) return { ...DEFAULT_BOMB_DROP };
+  return {
+    momentum: d.momentum,
+    maxBoost: d.maxBoost,
+    loft: d.loft,
+    loftMax: d.loftMax ?? d.loft * 1.7,
+  };
 }
 
 export function allCrafts(): CraftSpec[] {
@@ -570,6 +723,11 @@ export type CraftCompositePart = {
   drawSpan?: number;
   /** +1 CW / −1 CCW from above (Phaser rotation sign). */
   spinSign?: 1 | -1;
+  /**
+   * Gun rest pose for nose-up composite previews (Phaser rotation).
+   * Barrel-up art at 0; door/side mounts get craft→mount outward yaw.
+   */
+  heading?: number;
 };
 
 export type CraftComposite = {
@@ -666,24 +824,24 @@ export function craftRotorMounts(c: CraftSpec = craftOf()): {
 
 /**
  * Visible gun overlay texture for a craft.
- * Prefers PlayerWpnSpec.mount for the first turret/cabin socket that has mount art.
+ * Prefers PlayerWpnSpec.mount for the first turret socket that has mount art.
  */
 export function craftGunTexture(c: CraftSpec = craftOf()): string | undefined {
   if (c.gunVisible === false) return undefined;
   const sock = c.sockets.find(
-    (s) => (s.class === "turret" || s.class === "cabin") && !!weaponMountTex(s.weapon)
+    (s) => (s.class === "turret") && !!weaponMountTex(s.weapon)
   );
   return sock ? weaponMountTex(sock.weapon) : undefined;
 }
 
 /** Socket indices that own a visible gun overlay (matches `craftComposite(...).guns` order).
- * Multi-barrel cabin/turret sockets repeat their slot index once per barrel. */
+ * Multi-barrel turret sockets repeat their slot index once per barrel. */
 export function craftGunSocketSlots(c: CraftSpec = craftOf()): number[] {
   if (c.gunVisible === false) return [];
   const out: number[] = [];
   for (let i = 0; i < c.sockets.length; i++) {
     const s = c.sockets[i]!;
-    if ((s.class === "turret" || s.class === "cabin") && weaponMountTex(s.weapon)) {
+    if ((s.class === "turret") && weaponMountTex(s.weapon)) {
       const n = craftSocketBarrelCount(c, i);
       for (let b = 0; b < n; b++) out.push(i);
     }
@@ -693,28 +851,102 @@ export function craftGunSocketSlots(c: CraftSpec = craftOf()): number[] {
 
 /**
  * How many independently aimed barrels a socket owns.
- * A lone multi-mount cabin/turret socket (e.g. Black Hawk door pair) owns every gun UV;
- * when several gun sockets share the hull, each owns one mount in order.
+ * Lone turret socket → every gun UV. Multiple turret sockets → explicit `mounts` ids only.
+ * Non-gun sockets → 1 (fire/ammo bookkeeping). Turret with mount art but no resolved
+ * points (missing `mounts` on a shared hull) → 0.
  */
 export function craftSocketBarrelCount(c: CraftSpec, socketIndex: number): number {
   const socket = c.sockets[socketIndex];
   if (!socket) return 1;
-  if (socket.class === "turret" || socket.class === "cabin") {
-    if (!weaponMountTex(socket.weapon)) return 1;
-    const gunSockIdxs: number[] = [];
-    for (let i = 0; i < c.sockets.length; i++) {
-      const s = c.sockets[i]!;
-      if ((s.class === "turret" || s.class === "cabin") && weaponMountTex(s.weapon)) {
-        gunSockIdxs.push(i);
-      }
-    }
-    const mounts = craftGunMounts(c);
-    if (gunSockIdxs.length === 1 && gunSockIdxs[0] === socketIndex) {
-      return Math.max(1, mounts.length);
-    }
-    return 1;
+  if (socket.class !== "turret" || !weaponMountTex(socket.weapon)) return 1;
+  return craftSocketGunPoints(c, socketIndex).length;
+}
+
+/** Turret socket indices that have mount art (visible gun overlays). */
+function turretGunSocketIdxs(c: CraftSpec): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < c.sockets.length; i++) {
+    const s = c.sockets[i]!;
+    if (s.class === "turret" && weaponMountTex(s.weapon)) out.push(i);
   }
-  return 1;
+  return out;
+}
+
+/**
+ * Resolved body gun UVs for a socket (overlay / fire order).
+ * - `mounts` listed → those point ids in list order (even on a lone turret).
+ * - Else exactly one turret gun socket → all `role: "gun"` points.
+ * - Else (shared hull, no mounts) → none.
+ */
+export function craftSocketGunPoints(
+  c: CraftSpec,
+  socketIndex: number
+): { x: number; y: number; id?: string }[] {
+  const socket = c.sockets[socketIndex];
+  if (!socket || socket.class !== "turret" || !weaponMountTex(socket.weapon)) return [];
+  const raw = lookupSpritePoints(c.body, "gun");
+  if (!raw.length) return [];
+  const byId = new Map<string, { x: number; y: number; id?: string }>();
+  for (const p of raw) {
+    if (p.id) byId.set(p.id, { x: p.x, y: p.y, id: p.id });
+  }
+  if (socket.mounts?.length) {
+    const out: { x: number; y: number; id?: string }[] = [];
+    for (const m of socket.mounts) {
+      const p = byId.get(m.id);
+      if (p) out.push(p);
+    }
+    return out;
+  }
+  const gunSocks = turretGunSocketIdxs(c);
+  if (gunSocks.length === 1 && gunSocks[0] === socketIndex) {
+    return raw.map((p) => ({ x: p.x, y: p.y, id: p.id }));
+  }
+  return [];
+}
+
+/** Every authored player gun mount, in firing / overlay order (socket groups). */
+export function craftGunMounts(c: CraftSpec = craftOf()): { x: number; y: number }[] {
+  const ordered: { x: number; y: number }[] = [];
+  for (let i = 0; i < c.sockets.length; i++) {
+    for (const p of craftSocketGunPoints(c, i)) {
+      ordered.push({ x: p.x, y: p.y });
+    }
+  }
+  if (ordered.length) return ordered;
+  return mountsOf(c.body, "gun");
+}
+
+/**
+ * Preferred aim degrees off craft nose for a barrel:
+ * `mounts[barrel].heading` → socket `heading` → 0.
+ */
+export function craftGunPreferDegrees(c: CraftSpec, slot: number, barrel = 0): number {
+  const socket = c.sockets[slot];
+  if (!socket) return 0;
+  return socket.mounts?.[barrel]?.heading ?? socket.heading ?? 0;
+}
+
+/** Preferred aim offset in radians (overlay / station init). */
+export function craftGunPreferOffset(c: CraftSpec, slot: number, barrel = 0): number {
+  return (craftGunPreferDegrees(c, slot, barrel) * Math.PI) / 180;
+}
+
+/** Body gun UV for a socket barrel (same order as `craftComposite(...).guns`). */
+export function craftGunMountForBarrel(
+  c: CraftSpec,
+  slot: number,
+  barrel = 0
+): { x: number; y: number } {
+  const mounts = craftGunMounts(c);
+  const slots = craftGunSocketSlots(c);
+  let seen = 0;
+  for (let i = 0; i < slots.length; i++) {
+    if (slots[i] !== slot) continue;
+    if (seen === barrel) return mounts[i] ?? mounts[0] ?? craftOrigin(c);
+    seen++;
+  }
+  return mounts[0] ?? craftOrigin(c);
 }
 
 /** Authoritative visual parts and mounts for composing a craft in any view. */
@@ -722,6 +954,7 @@ export function craftComposite(c: CraftSpec = craftOf()): CraftComposite {
   const rotorTex = craftRotorTex(c);
   const gunMounts = craftGunMounts(c);
   const gunSlots = craftGunSocketSlots(c);
+  const barrelOf = new Map<number, number>();
   return {
     body: { tex: c.body, origin: craftOrigin(c) },
     guns:
@@ -730,12 +963,17 @@ export function craftComposite(c: CraftSpec = craftOf()): CraftComposite {
         : gunSlots.map((slot, i) => {
             const sock = c.sockets[slot]!;
             const tex = weaponMountTex(sock.weapon)!;
+            const barrel = barrelOf.get(slot) ?? 0;
+            barrelOf.set(slot, barrel + 1);
+            // Barrel-up gun art: Phaser rot = prefer offset (nose → 0).
+            const heading = craftGunPreferOffset(c, slot, barrel);
             return {
               kind: "gun" as const,
               tex,
               origin: lookupSpriteOrigin(tex) ?? craftGunOrigin(c),
               mount: gunMounts[i] ?? gunMounts[0] ?? craftOrigin(c),
               layer: "below" as const,
+              heading,
             };
           }),
     rotors: rotorTex
@@ -805,11 +1043,6 @@ export function craftGunMount(c: CraftSpec = craftOf()): { x: number; y: number 
   return craftGunMounts(c)[0] ?? craftOrigin(c);
 }
 
-/** Every authored player gun mount, in firing order. */
-export function craftGunMounts(c: CraftSpec = craftOf()): { x: number; y: number }[] {
-  return mountsOf(c.body, "gun");
-}
-
 /** Fixed gun muzzle UVs authored directly on the craft body. */
 export function craftFixedMuzzles(c: CraftSpec = craftOf()): { x: number; y: number }[] {
   return mountsOf(c.body, "muzzle");
@@ -824,7 +1057,7 @@ export function craftGunOrigin(c: CraftSpec = craftOf()): { x: number; y: number
 /** Default body UV role for a socket class. */
 export function socketPointRole(socket: CraftSocket): SocketPointRole {
   if (socket.points) return socket.points;
-  if (socket.class === "turret" || socket.class === "cabin") return "gun";
+  if (socket.class === "turret") return "gun";
   if (socket.class === "fixed") return "muzzle";
   return "hardpoint";
 }
@@ -853,9 +1086,9 @@ export function craftHardpointMounts(c: CraftSpec = craftOf()): { x: number; y: 
   return mountsOf(c.body, "hardpoint");
 }
 
-/** True when the craft aims a chin/cabin gun independently of the hull. */
+/** True when the craft aims a turret gun independently of the hull. */
 export function craftAimsWithTurret(c: CraftSpec = craftOf()): boolean {
-  return c.sockets.some((s) => s.class === "turret" || s.class === "cabin");
+  return c.sockets.some((s) => s.class === "turret");
 }
 
 /** Default weapon ids in HUD / fire order. */
@@ -865,7 +1098,7 @@ export function craftSocketWeapons(c: CraftSpec = craftOf()): string[] {
 
 /**
  * How many barrels / installs a socket represents for loadout UI.
- * Dual wing guns (multi-muzzle fixed) and multi-mount cabin/turret pairs count.
+ * Dual wing guns (multi-muzzle fixed) and multi-mount turret pairs count.
  */
 export function craftSocketMultiplicity(c: CraftSpec, socketIndex: number): number {
   const socket = c.sockets[socketIndex];
@@ -879,7 +1112,7 @@ export function craftSocketMultiplicity(c: CraftSpec, socketIndex: number): numb
       return pts.length;
     }
   }
-  if (socket.class === "turret" || socket.class === "cabin") {
+  if (socket.class === "turret") {
     return craftSocketBarrelCount(c, socketIndex);
   }
   return 1;

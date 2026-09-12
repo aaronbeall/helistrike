@@ -692,16 +692,21 @@ export function toonBlastAnimKey(variant = 0): string {
   return `${toonBlastKey(variant)}_anim`;
 }
 
-/** Register one-shot anims for baked variant sheets (idempotent). */
+/** Register one-shot anims for baked variant sheets (idempotent unless `force`). */
 export function ensureToonBlastAnims(
   anims: Phaser.Animations.AnimationManager,
-  textures: Phaser.Textures.TextureManager
+  textures: Phaser.Textures.TextureManager,
+  force = false
 ): void {
   const frames = Math.max(2, Math.round(toonBlastParams.frames) || TOON_BLAST_FRAMES);
   const rate = Math.max(12, Math.round(frames / 1.15));
   const register = (tex: string, animKey: string) => {
     if (!textures.exists(tex)) return;
-    if (anims.exists(animKey)) anims.remove(animKey);
+    if (anims.exists(animKey)) {
+      // Recreating while sprites play this key orphans them mid-frame (never complete).
+      if (!force) return;
+      anims.remove(animKey);
+    }
     anims.create({
       key: animKey,
       frames: anims.generateFrameNumbers(tex, { start: 0, end: frames - 1 }),

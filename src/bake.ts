@@ -5,9 +5,9 @@
 import type Phaser from "phaser";
 import { PLAYER_WPNS, type PlayerWpnSpec } from "./combat";
 import { allCraftKinds, craftGunTexture, craftOf } from "./craft";
-import { bakeToonBlast } from "./toonBlast";
+import { bakeAllArtGens } from "./artGen";
 import { allKinds, gunsOf, specOf, type UnitKind } from "./roster";
-import { bakeShadows, bakeThermalHeatFromAlpha, bakeThermalHeatFromDarkness, registerArt } from "./sprites";
+import { bakeShadows, bakeThermalHeatFromDarkness, registerArt } from "./sprites";
 
 type Ctx = CanvasRenderingContext2D;
 
@@ -87,55 +87,6 @@ function drawShadow(): HTMLCanvasElement {
   return c;
 }
 
-function drawTrack(kind: "tread" | "tire" | "dual" | "wide" | "mono" = "tread"): HTMLCanvasElement {
-  const c = canvas(32, 22);
-  const g = ctxOf(c);
-  const dirt = (a: number) => `rgba(32,26,16,${a})`;
-  if (kind === "tread") {
-    g.fillStyle = dirt(0.5);
-    for (let y = 2; y < 20; y += 4) {
-      g.fillRect(2, y, 10, 2.2);
-      g.fillRect(20, y, 10, 2.2);
-    }
-    return c;
-  }
-  if (kind === "tire") {
-    g.fillStyle = dirt(0.42);
-    g.fillRect(5, 3, 3.2, 16);
-    g.fillRect(24, 3, 3.2, 16);
-    g.fillStyle = dirt(0.22);
-    for (let y = 4; y < 18; y += 5) {
-      g.fillRect(5, y, 3.2, 1.1);
-      g.fillRect(24, y, 3.2, 1.1);
-    }
-    return c;
-  }
-  if (kind === "mono") {
-    g.fillStyle = dirt(0.48);
-    g.fillRect(14, 2, 4.2, 18);
-    g.fillStyle = dirt(0.24);
-    for (let y = 4; y < 19; y += 5) g.fillRect(14, y, 4.2, 1.15);
-    return c;
-  }
-  if (kind === "dual") {
-    g.fillStyle = dirt(0.44);
-    g.fillRect(2, 3, 3, 16);
-    g.fillRect(6.5, 3, 3, 16);
-    g.fillRect(22.5, 3, 3, 16);
-    g.fillRect(27, 3, 3, 16);
-    return c;
-  }
-  g.fillStyle = dirt(0.46);
-  g.fillRect(3, 2, 8, 18);
-  g.fillRect(21, 2, 8, 18);
-  g.fillStyle = dirt(0.2);
-  for (let y = 4; y < 19; y += 6) {
-    g.fillRect(3, y, 8, 1.2);
-    g.fillRect(21, y, 8, 1.2);
-  }
-  return c;
-}
-
 function drawFlame(): HTMLCanvasElement {
   const c = canvas(22, 22);
   const g = ctxOf(c);
@@ -155,19 +106,21 @@ function drawFlame(): HTMLCanvasElement {
   return c;
 }
 
-function drawBlast(variant: number): HTMLCanvasElement {
-  const c = canvas(80, 80);
+/** Procedural scorch stub — prepareArt overwrites with src_blasts. */
+function drawBlastStamp(variant: number, size = 80): HTMLCanvasElement {
+  const c = canvas(size, size);
   const g = ctxOf(c);
-  g.translate(40, 40);
+  const half = size * 0.5;
+  g.translate(half, half);
   g.rotate(variant * 0.9);
-  const outer = g.createRadialGradient(0, 0, 6, 0, 0, 38);
+  const outer = g.createRadialGradient(0, 0, size * 0.075, 0, 0, size * 0.475);
   outer.addColorStop(0, "rgba(22,16,10,0.72)");
   outer.addColorStop(0.35, "rgba(48,32,18,0.5)");
   outer.addColorStop(0.7, "rgba(90,62,32,0.22)");
   outer.addColorStop(1, "rgba(60,44,24,0)");
   g.fillStyle = outer;
   g.beginPath();
-  g.ellipse(2, -1, 36 - variant * 2, 30 + variant, 0.2 * variant, 0, Math.PI * 2);
+  g.ellipse(2, -1, size * 0.45 - variant * 2, size * 0.375 + variant, 0.2 * variant, 0, Math.PI * 2);
   g.fill();
   g.fillStyle = "rgba(10,8,6,0.7)";
   g.beginPath();
@@ -195,54 +148,6 @@ function drawBlast(variant: number): HTMLCanvasElement {
   g.lineWidth = 1.2;
   g.beginPath();
   g.ellipse(0, 0, 18 + variant * 2, 14, 0.3, 0.2, Math.PI * 1.6);
-  g.stroke();
-  return c;
-}
-
-function drawShellCasing(variant: number): HTMLCanvasElement {
-  const w = 14;
-  const h = 6;
-  const c = canvas(w, h);
-  const g = ctxOf(c);
-  const cy = h / 2;
-  const palettes = [
-    { brass: [208, 162, 86], dark: [110, 78, 36], rim: [242, 214, 140] }, // bright
-    { brass: [196, 148, 72], dark: [92, 64, 28], rim: [232, 198, 120] },
-    { brass: [168, 124, 58], dark: [78, 54, 24], rim: [210, 172, 98] },
-    { brass: [138, 98, 48], dark: [62, 42, 20], rim: [178, 138, 78] }, // dark
-    { brass: [112, 78, 38], dark: [48, 32, 16], rim: [148, 110, 62] }, // darker
-  ];
-  const pal = palettes[variant % palettes.length]!;
-  const { brass, dark, rim } = pal;
-  const rgb = (ch: number[], a = 1) => `rgba(${ch[0]},${ch[1]},${ch[2]},${a})`;
-
-  // Body
-  g.fillStyle = rgb(brass);
-  roundRect(g, 1.5, 1.1, 10.5, h - 2.2, 1.2);
-  g.fill();
-  // Highlight strip (dimmer on darker variants)
-  const hiA = variant >= 3 ? 0.28 : variant >= 2 ? 0.4 : 0.55;
-  g.fillStyle = rgb(rim, hiA);
-  roundRect(g, 2.2, 1.4, 8.5, 1.2, 0.6);
-  g.fill();
-  // Primer / base rim (left)
-  g.fillStyle = rgb(dark);
-  g.beginPath();
-  g.ellipse(2.2, cy, 1.35, h * 0.38, 0, 0, Math.PI * 2);
-  g.fill();
-  g.fillStyle = rgb(rim, variant >= 3 ? 0.4 : 0.7);
-  g.beginPath();
-  g.ellipse(2.2, cy, 0.55, h * 0.18, 0, 0, Math.PI * 2);
-  g.fill();
-  // Mouth (right)
-  g.fillStyle = rgb(dark, 0.85);
-  g.beginPath();
-  g.ellipse(12.2, cy, 0.95, h * 0.32, 0, 0, Math.PI * 2);
-  g.fill();
-  g.strokeStyle = rgb(brass, 0.9);
-  g.lineWidth = 0.6;
-  g.beginPath();
-  g.ellipse(12.2, cy, 0.95, h * 0.32, 0, 0, Math.PI * 2);
   g.stroke();
   return c;
 }
@@ -557,13 +462,6 @@ function drawReticleSquare(): HTMLCanvasElement {
  */
 export function bakeAll(textures: Phaser.Textures.TextureManager): void {
   add(textures, "fx_shadow", drawShadow());
-  for (let i = 0; i < 5; i++) {
-    const key = i === 0 ? "fx_shell" : `fx_shell_${i}`;
-    const shell = drawShellCasing(i);
-    add(textures, key, shell);
-    // Opaque brass → heat alpha so settle marks can fade smoothly in thermal.
-    add(textures, `${key}_heat`, bakeThermalHeatFromAlpha(shell));
-  }
   // Fallback if shots/ PNG fails to load — prepareArt overwrites from library.
   add(textures, "shot_rocket", drawRocket());
   add(textures, "fx_debris_metal", drawDebris("#6a7064"));
@@ -572,18 +470,15 @@ export function bakeAll(textures: Phaser.Textures.TextureManager): void {
   add(textures, "fx_muzzle", drawMuzzle());
   add(textures, "mark_reticle", drawReticle());
   add(textures, "mark_reticle_sq", drawReticleSquare());
-  add(textures, "fx_track_tread", drawTrack("tread"));
-  add(textures, "fx_track_tire", drawTrack("tire"));
-  add(textures, "fx_track_dual", drawTrack("dual"));
-  add(textures, "fx_track_wide", drawTrack("wide"));
-  add(textures, "fx_track_mono", drawTrack("mono"));
   add(textures, "fx_flame", drawFlame());
+  // Scorch stamps: procedural stub only — prepareArt replaces with src_blasts.
   for (let i = 0; i < 4; i++) {
-    const blast = drawBlast(i);
+    const blast = drawBlastStamp(i);
     add(textures, `fx_blast_${i}`, blast);
     add(textures, `fx_blast_${i}_heat`, bakeThermalHeatFromDarkness(blast));
   }
-  bakeToonBlast(textures);
+  // Tunable procedural gens (toon blast, tracks, shells).
+  bakeAllArtGens(textures);
 }
 
 function collectArtKeys(): string[] {

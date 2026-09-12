@@ -4,12 +4,15 @@ import {
   craftComposite,
   craftCompositePartScale,
   craftExhaustMounts,
+  craftGunMountForBarrel,
   craftGunMounts,
   craftGunOrigin,
+  craftGunPreferDegrees,
   craftKind,
   craftOf,
   craftOrigin,
   craftHardpointMounts,
+  craftSocketBarrelCount,
   selectCraft,
   type CraftKind,
   type CraftSpec,
@@ -50,6 +53,7 @@ import {
   formatRotOff,
   makeRigText,
   setStackedTexts,
+  drawRigUvAxes,
 } from "./rigUi";
 
 const DEPTH = 9250;
@@ -485,7 +489,7 @@ export class RosterRig {
       tex: part.tex,
       origin: part.origin,
       mount: part.mount,
-      rot: 0,
+      rot: part.heading ?? 0,
       scale: 1,
       ...(part.drawSpan != null ? { drawSpan: part.drawSpan } : {}),
       layer: part.layer,
@@ -518,6 +522,7 @@ export class RosterRig {
         showShots: false,
         wpns: [],
         zoom: s,
+        craft,
       });
       return;
     }
@@ -556,6 +561,7 @@ export class RosterRig {
       cy,
       s,
       hullTex: tex,
+      craft,
     });
   }
 
@@ -733,6 +739,7 @@ export class RosterRig {
     wpns: WeaponSpec[];
     /** Override roster zoom (1× = native texture pixels). */
     zoom?: number;
+    craft?: CraftSpec;
   }): void {
     const s = opts.zoom ?? this.zoom;
     const pad = 10;
@@ -859,6 +866,7 @@ export class RosterRig {
       cy: hullCy,
       s,
       hullTex: opts.hullTex,
+      craft: opts.craft,
     });
   }
 
@@ -1023,6 +1031,7 @@ export class RosterRig {
     cy: number;
     s: number;
     hullTex: string;
+    craft?: CraftSpec;
   }): void {
     const g = this.overlay;
     g.clear();
@@ -1043,6 +1052,9 @@ export class RosterRig {
       g.lineStyle(1, 0xffffff, 0.9);
       g.strokeCircle(px, py, 4);
     }
+
+    drawRigUvAxes(g, this.hull);
+    for (const part of this.parts) drawRigUvAxes(g, part);
 
     if (!this.showMarks) return;
 
@@ -1071,6 +1083,8 @@ export class RosterRig {
     g.lineStyle(1.2, 0x6dbb4a, 0.55);
     g.lineBetween(cx, cy, cx, cy - opts.height * s);
 
+    if (opts.craft) this.drawCraftSocketTraverseArcs(opts.craft, opts.pivot, s);
+
     let labelI = 0;
     const drawTex = (im: Phaser.GameObjects.Image, texKey: string) => {
       if (!im.visible || !this.scene.textures.exists(texKey)) return;
@@ -1083,6 +1097,75 @@ export class RosterRig {
       drawTex(part, markTexKey(part.texture.key));
     }
     for (; labelI < this.mountLabels.length; labelI++) this.mountLabels[labelI]!.setVisible(false);
+  }
+
+  /**
+   * Socket traverse wedges on the craft hull (heading + arc from CraftSocket).
+   * Nose-up art: craft forward is −π/2; socket heading is degrees off that nose.
+   */
+  private drawCraftSocketTraverseArcs(
+    craft: CraftSpec,
+    pivot: { x: number; y: number },
+    s: number
+  ): void {
+    const hull = this.hull;
+    if (!hull.visible) return;
+    const g = this.overlay;
+    const toWorld = (u: number, v: number) => {
+      const lx = (u - pivot.x) * hull.displayWidth;
+      const ly = (v - pivot.y) * hull.displayHeight;
+      const ca = Math.cos(hull.rotation);
+      const sa = Math.sin(hull.rotation);
+      return {
+        x: hull.x + lx * ca - ly * sa,
+        y: hull.y + lx * sa + ly * ca,
+      };
+    };
+    const len = Math.max(36, craft.radius * s * 1.35);
+    const nose = -Math.PI / 2;
+
+    for (let slot = 0; slot < craft.sockets.length; slot++) {
+      const socket = craft.sockets[slot]!;
+      if (!socket.traverse) continue;
+      if (socket.class !== "turret") continue;
+      const n = craftSocketBarrelCount(craft, slot);
+      for (let b = 0; b < n; b++) {
+        const mount = craftGunMountForBarrel(craft, slot, b);
+        const at = toWorld(mount.x, mount.y);
+        const headDeg = craftGunPreferDegrees(craft, slot, b);
+        const center = nose + (headDeg * Math.PI) / 180;
+        const half = ((socket.traverse * Math.PI) / 180) * 0.5;
+        let a0 = center - half;
+        let a1 = center + half;
+        if (a1 - a0 < 0.05) {
+          a0 = center - half;
+          a1 = center + half;
+        }
+        const steps = Math.max(10, Math.ceil((socket.traverse / 360) * 36));
+        g.fillStyle(0xffc857, 0.12);
+        g.lineStyle(1.35, 0xffc857, 0.8);
+        g.beginPath();
+        g.moveTo(at.x, at.y);
+        for (let i = 0; i <= steps; i++) {
+          const a = a0 + ((a1 - a0) * i) / steps;
+          g.lineTo(at.x + Math.cos(a) * len, at.y + Math.sin(a) * len);
+        }
+        g.closePath();
+        g.fillPath();
+        g.strokePath();
+        g.lineStyle(1.6, 0xffc857, 0.9);
+        g.lineBetween(at.x, at.y, at.x + Math.cos(a0) * len, at.y + Math.sin(a0) * len);
+        g.lineBetween(at.x, at.y, at.x + Math.cos(a1) * len, at.y + Math.sin(a1) * len);
+        // Rest heading ray.
+        g.lineStyle(1.7, 0x7ad0ff, 0.95);
+        g.lineBetween(
+          at.x,
+          at.y,
+          at.x + Math.cos(center) * len * 0.92,
+          at.y + Math.sin(center) * len * 0.92
+        );
+      }
+    }
   }
 
   /** Overlay SPRITE_SPECS points for a placed image. Returns next mount-label index. */
@@ -1107,10 +1190,10 @@ export class RosterRig {
 
     const catalogOrigin = lookupSpriteOrigin(texKey) ?? pivot;
     const ox = toWorld(catalogOrigin.x, catalogOrigin.y);
-    g.lineStyle(1.5, ORIGIN_COLOR, 0.95);
-    g.lineBetween(ox.x - 14, ox.y, ox.x + 14, ox.y);
-    g.lineBetween(ox.x, ox.y - 14, ox.x, ox.y + 14);
-    g.strokeCircle(ox.x, ox.y, 5);
+    g.lineStyle(1.25, ORIGIN_COLOR, 0.95);
+    g.lineBetween(ox.x - 7, ox.y, ox.x + 7, ox.y);
+    g.lineBetween(ox.x, ox.y - 7, ox.x, ox.y + 7);
+    g.strokeCircle(ox.x, ox.y, 3);
 
     const points = lookupSpritePoints(texKey);
     const mounts = points
@@ -1128,14 +1211,14 @@ export class RosterRig {
       const p = toWorld(m.x, m.y);
       const color = pointColor(m.role);
       g.fillStyle(color, 0.95);
-      g.fillRect(p.x - 4, p.y - 4, 8, 8);
+      g.fillRect(p.x - 2.5, p.y - 2.5, 5, 5);
       g.lineStyle(1, 0x101010, 0.9);
-      g.strokeRect(p.x - 4, p.y - 4, 8, 8);
+      g.strokeRect(p.x - 2.5, p.y - 2.5, 5, 5);
       const lab = this.mountLabels[li++];
       if (lab) {
         lab.setText(m.label);
         lab.setColor(hexColor(color));
-        lab.setPosition(p.x + 7, p.y - 8);
+        lab.setPosition(p.x + 5, p.y - 6);
         lab.setVisible(true);
       }
     }
@@ -1146,7 +1229,7 @@ export class RosterRig {
       const r = rigMuzzleMarkRadius(texKey);
       g.fillStyle(0xff7a2a, 0.95);
       g.fillCircle(w.x, w.y, r);
-      g.lineStyle(1.25, 0xffe8c0, 0.95);
+      g.lineStyle(1, 0xffe8c0, 0.95);
       g.strokeCircle(w.x, w.y, r);
     }
 

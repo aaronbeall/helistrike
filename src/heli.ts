@@ -1,5 +1,10 @@
 import Phaser from "phaser";
-import { craftOf, craftSocketBarrelCount, type CraftKind } from "./craft";
+import {
+  craftGunPreferOffset,
+  craftOf,
+  craftSocketBarrelCount,
+  type CraftKind,
+} from "./craft";
 import { groundZ, WORLD, type WorldData } from "./world";
 
 export interface Stick {
@@ -64,8 +69,10 @@ export class Heli {
   weapon = 0;
   fireCd = 0;
   immune = false;
-  hellfireLock: { id: number } | null = null;
-  hellfireSeek: { id: number; t: number } | null = null;
+  /** Hard lock for lock_on weapons (unit id). */
+  lockTarget: { id: number } | null = null;
+  /** Soft acquire while dwelling for lock_on (unit id + elapsed). */
+  lockAcquire: { id: number; t: number } | null = null;
   /** Persistent solid-pixel damage locations on the craft body. */
   dmgSites: { u: number; v: number; scale: number }[] = [];
   gndSmooth: number;
@@ -88,13 +95,22 @@ export class Heli {
     );
   }
 
-  /** Align all station aims (and gunAngle) to the current hull heading. */
+  /** Align station aims to rest headings (nose / craft→mount outward) and sync gunAngle. */
   syncStationAimToHull(): void {
+    const c = this.spec;
     for (let i = 0; i < this.stationAim.length; i++) {
       const barrels = this.stationAim[i]!;
-      for (let b = 0; b < barrels.length; b++) barrels[b] = this.angle;
+      const socket = c.sockets[i];
+      const usePrefer =
+        !!socket && socket.class === "turret";
+      for (let b = 0; b < barrels.length; b++) {
+        barrels[b] = usePrefer
+          ? Phaser.Math.Angle.Wrap(this.angle + craftGunPreferOffset(c, i, b))
+          : this.angle;
+      }
     }
-    this.gunAngle = this.angle;
+    const first = this.stationAim.find((a) => a.length > 0)?.[0];
+    this.gunAngle = first ?? this.angle;
   }
 
   get spec() {

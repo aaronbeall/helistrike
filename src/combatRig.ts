@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import {
-  HELLFIRE_LOCK_T,
-  HELLFIRE_SEEK_DELAY,
+  LOCK_ON_LOCK_T,
+  LOCK_ON_SEEK_DELAY,
   MISSILE_IGNITE,
   PLAYER_WPNS,
   SHOT_ORIGIN,
@@ -10,7 +10,14 @@ import {
 } from "./combat";
 import { allCrafts } from "./craft";
 import { ENEMY_WPNS, usesOfWeapon } from "./roster";
-import { RIG_INFO, RIG_VALUE, dumpRig, makeRigText, setStatsAndInfo } from "./rigUi";
+import {
+  RIG_INFO,
+  RIG_VALUE,
+  dumpRig,
+  drawRigUvAxes,
+  makeRigText,
+  setStatsAndInfo,
+} from "./rigUi";
 import { lookupSpriteMuzzles, lookupSpriteOrigin, rigMuzzleMarkRadius } from "./spriteOrigin";
 import {
   TOON_BLAST_FRAMES,
@@ -389,6 +396,7 @@ export class CombatRig {
       const cx = x + panel.boxW * 0.5;
       panel.spr.setPosition(cx, cy);
       this.drawCheckerPanel(cx - panel.boxW * 0.5, cy - panel.boxH * 0.5, panel.boxW, panel.boxH, pad);
+      drawRigUvAxes(this.overlay, panel.spr);
       x += panel.boxW + panelGap;
     }
 
@@ -431,11 +439,11 @@ export class CombatRig {
       const r = rigMuzzleMarkRadius(tex);
       g.fillStyle(MUZZLE_COLOR, 0.95);
       g.fillCircle(x, y, r);
-      g.lineStyle(1.25, 0xffe8c0, 0.95);
+      g.lineStyle(1, 0xffe8c0, 0.95);
       g.strokeCircle(x, y, r);
     }
-    g.lineStyle(1.5, ORIGIN_COLOR, 0.95);
-    g.strokeCircle(ox, oy, 4);
+    g.lineStyle(1.25, ORIGIN_COLOR, 0.95);
+    g.strokeCircle(ox, oy, 3);
     g.lineBetween(ox - 7, oy, ox + 7, oy);
     g.lineBetween(ox, oy - 7, ox, oy + 7);
   }
@@ -531,6 +539,16 @@ function craftsUsingWeapon(wpnId: string): string[] {
     .map((c) => c.name);
 }
 
+/** First craft socket traverse for this weapon (info blurb only — arcs live on roster). */
+function traverseForWeapon(wpnId: string): number | undefined {
+  for (const c of allCrafts()) {
+    for (const s of c.sockets) {
+      if (s.weapon === wpnId && s.traverse != null) return s.traverse;
+    }
+  }
+  return undefined;
+}
+
 function formatPlayer(w: PlayerWpnSpec): { stats: string[]; info: string[] } {
   const crafts = craftsUsingWeapon(w.id);
   const info = [
@@ -541,11 +559,15 @@ function formatPlayer(w: PlayerWpnSpec): { stats: string[]; info: string[] } {
   if (w.mount) {
     info.push(`mount UVs: spriteOrigin.ts SPRITE_SPECS[${w.mount}] (edit in sprite rig)`);
   }
+  const trav = traverseForWeapon(w.id);
+  if (trav != null) {
+    info.push(`traverse: ${trav}° (from craft socket)`);
+  }
   if (w.kind === "lock-on-missile" || w.kind === "guided-missile") {
     info.push(
       `MISSILE_IGNITE ${MISSILE_IGNITE}`,
-      `HELLFIRE_LOCK_T ${HELLFIRE_LOCK_T}`,
-      `HELLFIRE_SEEK_DELAY ${HELLFIRE_SEEK_DELAY}`
+      `LOCK_ON_LOCK_T ${LOCK_ON_LOCK_T}`,
+      `LOCK_ON_SEEK_DELAY ${LOCK_ON_SEEK_DELAY}`
     );
   }
   return {
@@ -616,7 +638,7 @@ function fxEntries(): CombatEntry[] {
         bake: "cel fire→smoke→dust cluster + cool",
       }),
       info: [
-        "source: toonBlast.ts / bakeToonBlast",
+        "source: artGen.ts / toonBlast.ts",
         v === 0 ? `alias: ${TOON_BLAST_KEY}` : "unique jitter seed",
       ],
     });

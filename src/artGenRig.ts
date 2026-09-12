@@ -7,8 +7,7 @@ import {
   resetArtGen,
   type ArtGenDef,
 } from "./artGen";
-import "./artGens";
-import { RIG_INFO, RIG_VALUE, makeRigText } from "./rigUi";
+import { RIG_INFO, RIG_VALUE, drawRigUvAxes, makeRigText } from "./rigUi";
 import { nameGameTexture } from "./sprites";
 
 const DEPTH = 9450;
@@ -46,6 +45,7 @@ export class ArtGenRig {
   root: Phaser.GameObjects.Container;
   private dim!: Phaser.GameObjects.Rectangle;
   private board!: Phaser.GameObjects.Graphics;
+  private overlay!: Phaser.GameObjects.Graphics;
   private preview!: Phaser.GameObjects.Image;
   private listTxt!: Phaser.GameObjects.Text;
   private hintTxt!: Phaser.GameObjects.Text;
@@ -94,6 +94,7 @@ export class ArtGenRig {
       .setScrollFactor(0)
       .setDepth(DEPTH + 2)
       .setVisible(false);
+    this.overlay = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH + 3).setVisible(false);
     this.listTxt = makeRigText(scene, DEPTH + 4, { fontSize: "13px", lineSpacing: 3, color: RIG_VALUE });
     this.listTxt.setPosition(LIST_X, LIST_Y);
     this.infoTxt = makeRigText(scene, DEPTH + 4, {
@@ -121,6 +122,7 @@ export class ArtGenRig {
       this.dim,
       this.board,
       this.preview,
+      this.overlay,
       this.listTxt,
       this.infoTxt,
       this.descTxt,
@@ -181,7 +183,7 @@ export class ArtGenRig {
         if (!this.open) return;
         const def = this.gen();
         def.bake({ textures: scene.textures, anims: scene.anims });
-        def.ensureAnims?.(scene.anims, scene.textures);
+        def.ensureAnims?.(scene.anims, scene.textures, true);
       });
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.D).on("down", () => {
         if (!this.open) return;
@@ -218,6 +220,7 @@ export class ArtGenRig {
     this.dim.setVisible(this.open);
     this.board.setVisible(this.open);
     this.preview.setVisible(this.open);
+    this.overlay.setVisible(this.open);
     this.listTxt.setVisible(this.open);
     this.infoTxt.setVisible(this.open);
     this.descTxt.setVisible(this.open);
@@ -412,6 +415,8 @@ export class ArtGenRig {
     this.board.fillRect(bx - 10, by - 10, bw + 20, bh + 20);
     this.board.lineStyle(1, 0xe8b84a, 0.55);
     this.board.strokeRect(bx - 10, by - 10, bw + 20, bh + 20);
+    this.overlay.clear();
+    drawRigUvAxes(this.overlay, this.preview);
   }
 }
 

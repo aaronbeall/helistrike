@@ -1,6 +1,7 @@
 import { fbm } from "./noise";
 import { Rng } from "./rng";
 import { pickTroop, type UnitKind } from "./roster";
+import { drawBridgeStamp, drawRoadStamp } from "./artGen";
 
 export const WORLD = 5600;
 export const TEX = 1800;
@@ -52,9 +53,21 @@ export interface Decor {
   rot: number;
 }
 
+export interface RoadNode {
+  x: number;
+  y: number;
+  /** True when this node sits on water / river (bridge span). */
+  water: boolean;
+}
+
 export interface Road {
-  points: { x: number; y: number }[];
+  /** Ordered world-space path (objectives + intermediate waypoints). */
+  nodes: RoadNode[];
   width: number;
+  fromHv: string;
+  toHv: string;
+  /** Narrower spur linking a trunk road to a secondary building. */
+  spur?: boolean;
 }
 
 export interface WorldData {
@@ -218,8 +231,9 @@ export function generateWorld(
   onProgress?.(0.96, "force laydown");
   const { spawnX, spawnY } = findSpawn(height, biome, rng);
   const { hv, spawns } = placeForces(height, biome, rng, spawnX, spawnY, profile);
-  const roads = makeRoads(spawnX, spawnY, hv, rng);
-  paintRoads(terrain, biome, roads);
+  const roads = makeRoads(hv, spawns, height, biome, rng);
+  applyRoadBridgeHeights(height, roads);
+  // Road sprites stamp on the main-thread canvas (worker has no document canvas).
   const decor = placeDecor(biome, rng);
   const trees = decor.filter((d) => d.kind === "tree" || d.kind === "pine" || d.kind === "palm").map((d) => ({ x: d.x, y: d.y }));
   const rocks = decor.filter((d) => d.kind === "rock" || d.kind === "boulder" || d.kind === "snowrock").map((d) => ({ x: d.x, y: d.y }));
@@ -238,7 +252,9 @@ export function imageDataToCanvas(img: ImageData): HTMLCanvasElement {
 
 export function worldFromGen(g: WorldGen): WorldData {
   const { terrain, ...rest } = g;
-  return { ...rest, canvas: imageDataToCanvas(terrain) };
+  const canvas = imageDataToCanvas(terrain);
+  paintRoadsOntoCanvas(canvas, rest.roads);
+  return { ...rest, canvas };
 }
 
 export function generateWorldAsync(
@@ -249,20 +265,32 @@ export function generateWorldAsync(
 ): Promise<WorldData> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL("./world.worker.ts", import.meta.url), { type: "module" });
+    const fail = (err: unknown) => {
+      worker.terminate();
+      reject(err instanceof Error ? err : new Error(String(err)));
+    };
     worker.onmessage = (ev: MessageEvent<{ type: "progress"; t: number; label: string } | { type: "done"; world: WorldGen }>) => {
       const msg = ev.data;
       if (msg.type === "progress") {
         onProgress?.(msg.t, msg.label);
         return;
       }
-      worker.terminate();
-      resolve(worldFromGen(msg.world));
+      try {
+        worker.terminate();
+        // Canvas + road paint are DOM-only — must run on main after the worker returns.
+        onProgress?.(0.98, "roads");
+        resolve(worldFromGen(msg.world));
+      } catch (err) {
+        fail(err);
+      }
     };
-    worker.onerror = (err) => {
-      worker.terminate();
-      reject(err);
-    };
-    worker.postMessage({ seed, tiles, profile });
+    worker.onmessageerror = (ev) => fail(ev.data ?? "world worker messageerror");
+    worker.onerror = (err) => fail(err.message || err);
+    try {
+      worker.postMessage({ seed, tiles, profile });
+    } catch (err) {
+      fail(err);
+    }
   });
 }
 
@@ -1349,7 +1377,7 @@ function placeDecor(biome: Uint8Array, rng: Rng): Decor[] {
   return out;
 }
 
-export function paintHeightMap(height: Float32Array): HTMLCanvasElement {
+export function paintHeightMap(height: Float32Array, roads?: Road[]): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = TEX;
   c.height = TEX;
@@ -1368,6 +1396,7 @@ export function paintHeightMap(height: Float32Array): HTMLCanvasElement {
     }
   }
   g.putImageData(img, 0, 0);
+  if (roads?.length) paintRoadNodesDebug(g, roads);
   return c;
 }
 
@@ -1377,7 +1406,8 @@ export function paintHeightMapRect(
   x0: number,
   y0: number,
   x1: number,
-  y1: number
+  y1: number,
+  roads?: Road[]
 ): void {
   const g = canvas.getContext("2d", { willReadFrequently: true })!;
   const w = x1 - x0 + 1;
@@ -1395,6 +1425,29 @@ export function paintHeightMapRect(
     }
   }
   g.putImageData(img, x0, y0);
+  if (roads?.length) paintRoadNodesDebug(g, roads);
+}
+
+/** Raw road graph on the height debug map (amber land / cyan water). */
+function paintRoadNodesDebug(g: CanvasRenderingContext2D, roads: Road[]): void {
+  for (const road of roads) {
+    g.strokeStyle = road.spur ? "rgba(200, 160, 80, 0.4)" : "rgba(255, 170, 40, 0.55)";
+    g.lineWidth = road.spur ? 0.8 : 1;
+    g.beginPath();
+    for (let i = 0; i < road.nodes.length; i++) {
+      const n = road.nodes[i]!;
+      const x = n.x / SCALE;
+      const y = n.y / SCALE;
+      if (i === 0) g.moveTo(x, y);
+      else g.lineTo(x, y);
+    }
+    g.stroke();
+    for (const n of road.nodes) {
+      g.fillStyle = n.water ? "rgba(80, 220, 255, 0.95)" : road.spur ? "rgba(220, 180, 60, 0.75)" : "rgba(255, 140, 20, 0.9)";
+      const s = road.spur ? 1.6 : 2.4;
+      g.fillRect(n.x / SCALE - s * 0.5, n.y / SCALE - s * 0.5, s, s);
+    }
+  }
 }
 
 export type HeightStamp = {
@@ -1544,93 +1597,402 @@ function findSpawn(
   return { spawnX: WORLD * 0.22, spawnY: WORLD * 0.22 };
 }
 
+/** Raise water crossings just above the waterline for bridge decks. */
+const ROAD_BRIDGE_H = H_WATER + 0.018;
+/** Min spacing between stored road nodes (texels). */
+const ROAD_NODE_STEP = 4.5;
+/** Secondary buildings farther than this from a trunk are skipped. */
+const ROAD_SPUR_MAX = 420;
+/** Spur only to permanent satellite hard-sites near the network (not tents). */
+const ROAD_SPUR_KINDS = new Set<UnitKind>(["lookout", "tower"]);
+
+/**
+ * MST between HV objectives, then spur roads to secondary building installs.
+ * Paths use river-style momentum (stiffer, contour-biased) for smoothness.
+ */
 function makeRoads(
-  spawnX: number,
-  spawnY: number,
   hv: HvSpec[],
+  spawns: Spawn[],
+  height: Float32Array,
+  biome: Uint8Array,
   rng: Rng
 ): Road[] {
   const roads: Road[] = [];
-  let from = { x: spawnX, y: spawnY };
-  const remaining = hv.slice();
-  while (remaining.length) {
-    let nearest = 0;
-    let nearestD = Infinity;
-    for (let i = 0; i < remaining.length; i++) {
-      const d = Math.hypot(remaining[i]!.x - from.x, remaining[i]!.y - from.y);
-      if (d < nearestD) {
-        nearestD = d;
-        nearest = i;
+  if (hv.length >= 2) {
+    const connected = new Set<number>([0]);
+    const remaining = new Set<number>();
+    for (let i = 1; i < hv.length; i++) remaining.add(i);
+
+    while (remaining.size) {
+      let bestFrom = -1;
+      let bestTo = -1;
+      let bestD = Infinity;
+      for (const fi of connected) {
+        const a = hv[fi]!;
+        for (const ti of remaining) {
+          const b = hv[ti]!;
+          const d = Math.hypot(b.x - a.x, b.y - a.y);
+          if (d < bestD) {
+            bestD = d;
+            bestFrom = fi;
+            bestTo = ti;
+          }
+        }
       }
+      if (bestFrom < 0 || bestTo < 0) break;
+      const from = hv[bestFrom]!;
+      const to = hv[bestTo]!;
+      const nodes = traceFlowRoad(from.x, from.y, to.x, to.y, height, biome, rng);
+      roads.push({
+        nodes,
+        width: rng.range(11, 15),
+        fromHv: from.id,
+        toHv: to.id,
+      });
+      connected.add(bestTo);
+      remaining.delete(bestTo);
     }
-    const to = remaining.splice(nearest, 1)[0]!;
-    const dx = to.x - from.x;
-    const dy = to.y - from.y;
-    const len = Math.hypot(dx, dy) || 1;
-    const bend = rng.range(-0.13, 0.13) * len;
-    roads.push({
-      width: rng.range(10, 16),
-      points: [
-        { ...from },
-        {
-          x: (from.x + to.x) * 0.5 - (dy / len) * bend,
-          y: (from.y + to.y) * 0.5 + (dx / len) * bend,
-        },
-        { x: to.x, y: to.y },
-      ],
+  }
+
+  // Spur roads to garrison lookouts / AA towers near the trunk (permanent sites).
+  let siteN = 0;
+  for (const s of spawns) {
+    if (s.hv || !ROAD_SPUR_KINDS.has(s.kind)) continue;
+    const hitch = nearestTrunkAttach(roads, hv, s.x, s.y);
+    if (!hitch || hitch.dist > ROAD_SPUR_MAX) continue;
+    if (hitch.dist < 28) continue;
+    const nodes = traceFlowRoad(hitch.x, hitch.y, s.x, s.y, height, biome, rng, {
+      stiff: 1.15,
+      meander: 0.55,
     });
-    from = { x: to.x, y: to.y };
+    roads.push({
+      nodes,
+      width: rng.range(6.5, 9.5),
+      fromHv: hitch.fromId,
+      toHv: `site-${siteN++}`,
+      spur: true,
+    });
   }
   return roads;
 }
 
-/** Rasterize roads into terrain color only; biome and height fields remain untouched. */
-function paintRoads(
-  terrain: ImageData,
-  biome: Uint8Array,
+function waterAtTex(biome: Uint8Array, tx: number, ty: number): boolean {
+  const x = clamp(Math.round(tx), 0, TEX - 1);
+  const y = clamp(Math.round(ty), 0, TEX - 1);
+  const b = biome[y * TEX + x]!;
+  return b === BIOME_ID.water || b === BIOME_ID.river;
+}
+
+function nearestTrunkAttach(
   roads: Road[],
-  originX = 0,
-  originY = 0
-): void {
-  const data = terrain.data;
-  const stamp = (tx: number, ty: number, radius: number) => {
-    const x0 = Math.max(originX, Math.floor(tx - radius));
-    const x1 = Math.min(originX + terrain.width - 1, Math.ceil(tx + radius));
-    const y0 = Math.max(originY, Math.floor(ty - radius));
-    const y1 = Math.min(originY + terrain.height - 1, Math.ceil(ty + radius));
-    for (let y = y0; y <= y1; y++) {
-      for (let x = x0; x <= x1; x++) {
-        const d = Math.hypot(x - tx, y - ty) / Math.max(radius, 0.001);
-        if (d > 1) continue;
-        const bi = y * TEX + x;
-        if (biome[bi] === BIOME_ID.water || biome[bi] === BIOME_ID.river) continue;
-        const a = (1 - d * d) * 0.42;
-        const i = ((y - originY) * terrain.width + x - originX) * 4;
-        data[i] = Math.round(lerp(data[i]!, 92, a));
-        data[i + 1] = Math.round(lerp(data[i + 1]!, 72, a));
-        data[i + 2] = Math.round(lerp(data[i + 2]!, 45, a));
+  hv: HvSpec[],
+  x: number,
+  y: number
+): { x: number; y: number; dist: number; fromId: string } | null {
+  let best: { x: number; y: number; dist: number; fromId: string } | null = null;
+  const consider = (px: number, py: number, fromId: string) => {
+    const d = Math.hypot(px - x, py - y);
+    if (!best || d < best.dist) best = { x: px, y: py, dist: d, fromId };
+  };
+  for (const h of hv) consider(h.x, h.y, h.id);
+  for (const road of roads) {
+    if (road.spur) continue;
+    // Stride nodes — trunk polylines are dense; full scan is needless.
+    const stride = Math.max(1, (road.nodes.length / 48) | 0);
+    for (let i = stride; i < road.nodes.length; i += stride) {
+      const a = road.nodes[i - stride]!;
+      const b = road.nodes[i]!;
+      const abx = b.x - a.x;
+      const aby = b.y - a.y;
+      const len2 = abx * abx + aby * aby || 1;
+      const t = clamp(((x - a.x) * abx + (y - a.y) * aby) / len2, 0, 1);
+      consider(a.x + abx * t, a.y + aby * t, road.fromHv);
+    }
+  }
+  return best;
+}
+
+type FlowRoadOpts = { stiff?: number; meander?: number };
+
+/**
+ * River-style momentum marble steered toward a goal, with stiff contour bias
+ * (prefer level travel) and light meander — smoother than coarse A* cells.
+ */
+function traceFlowRoad(
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  height: Float32Array,
+  biome: Uint8Array,
+  rng: Rng,
+  opts: FlowRoadOpts = {}
+): RoadNode[] {
+  const stiff = opts.stiff ?? 1;
+  const meanderMul = opts.meander ?? 1;
+  let fx = ax / SCALE;
+  let fy = ay / SCALE;
+  const gx = bx / SCALE;
+  const gy = by / SCALE;
+  let dx = gx - fx;
+  let dy = gy - fy;
+  let dist0 = Math.hypot(dx, dy) || 1;
+  let vx = (dx / dist0) * 0.55;
+  let vy = (dy / dist0) * 0.55;
+  const meanderSeed = rng.next() * 1000;
+
+  // Stiffer than rivers: stronger goal pull, higher drag, weaker wander.
+  const GOAL_G = 0.16 * stiff;
+  const CONTOUR = 0.48;
+  const PEAK_REPEL = 0.04;
+  const drag = 0.94;
+  const maxSpd = 1.05;
+  const meanderAmp = 0.022 * meanderMul;
+
+  const samples: { x: number; y: number }[] = [{ x: fx, y: fy }];
+  let still = 0;
+  let bestRem = dist0;
+  let noProgress = 0;
+  // Budget scales with distance but stays well below the old 16k×fbm freeze.
+  const maxSteps = Math.min(2800, Math.ceil(dist0 * 3.2) + 120);
+
+  for (let step = 0; step < maxSteps; step++) {
+    const toX = gx - fx;
+    const toY = gy - fy;
+    const rem = Math.hypot(toX, toY);
+    if (rem < 2.5) break;
+
+    if (rem < bestRem - 0.35) {
+      bestRem = rem;
+      noProgress = 0;
+    } else if (++noProgress > 90) {
+      // Stuck in a contour bowl — abandon flow and finish with a short chord.
+      break;
+    }
+
+    const ux = toX / rem;
+    const uy = toY / rem;
+    const near = rem < 40 ? 1.45 : 1;
+    // Escalate goal pull when stalled so we don't burn the step budget.
+    const stuckBoost = noProgress > 35 ? 1.8 : 1;
+    vx += ux * GOAL_G * near * stuckBoost;
+    vy += uy * GOAL_G * near * stuckBoost;
+
+    const { ax: sax, ay: say } = slopeAccel(height, fx, fy);
+    const slen = Math.hypot(sax, say);
+    const contourAmt = noProgress > 35 ? CONTOUR * 0.35 : CONTOUR;
+    if (slen > 1e-6) {
+      const nx = sax / slen;
+      const ny = say / slen;
+      const along = vx * nx + vy * ny;
+      vx -= nx * along * contourAmt;
+      vy -= ny * along * contourAmt;
+      const h = sampleH(height, fx, fy);
+      if (h > 0.64) {
+        vx -= nx * (h - 0.64) * PEAK_REPEL * 40;
+        vy -= ny * (h - 0.64) * PEAK_REPEL * 40;
       }
     }
-  };
-  for (const road of roads) {
-    const radius = (road.width / SCALE) * 0.5;
-    for (let p = 1; p < road.points.length; p++) {
-      const a = road.points[p - 1]!;
-      const b = road.points[p]!;
-      const ax = a.x / SCALE;
-      const ay = a.y / SCALE;
-      const bx = b.x / SCALE;
-      const by = b.y / SCALE;
-      const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay)));
-      for (let i = 0; i <= steps; i++) {
+
+    // Cheap meander (hash noise every few steps) — full fbm each tick froze load.
+    if ((step & 3) === 0) {
+      const n = fbm(fx * 0.038 + meanderSeed, fy * 0.038, meanderSeed, 2) - 0.5;
+      vx += -uy * n * meanderAmp;
+      vy += ux * n * meanderAmp;
+    }
+
+    vx *= drag;
+    vy *= drag;
+    let spd = Math.hypot(vx, vy);
+    if (spd > maxSpd) {
+      vx = (vx / spd) * maxSpd;
+      vy = (vy / spd) * maxSpd;
+      spd = maxSpd;
+    }
+    if (spd < 0.08) {
+      still++;
+      vx += ux * 0.28;
+      vy += uy * 0.28;
+      if (still > 10) {
+        vx += ux * 0.4;
+        vy += uy * 0.4;
+      }
+    } else still = 0;
+
+    fx += vx;
+    fy += vy;
+    fx = clamp(fx, 2, TEX - 3);
+    fy = clamp(fy, 2, TEX - 3);
+
+    const last = samples[samples.length - 1]!;
+    if (Math.hypot(fx - last.x, fy - last.y) >= 1.4) {
+      samples.push({ x: fx, y: fy });
+    }
+  }
+  // If flow bailed early, don't leave a single huge chord — paint/AI both hate that.
+  {
+    const last = samples[samples.length - 1]!;
+    const rem = Math.hypot(gx - last.x, gy - last.y);
+    if (rem > 1.4) {
+      const steps = Math.min(48, Math.ceil(rem / 6));
+      for (let i = 1; i <= steps; i++) {
         const t = i / steps;
-        stamp(lerp(ax, bx, t), lerp(ay, by, t), radius);
+        samples.push({ x: last.x + (gx - last.x) * t, y: last.y + (gy - last.y) * t });
+      }
+    } else {
+      samples.push({ x: gx, y: gy });
+    }
+  }
+
+  // Light neighbor smooth (stiffer than river jitter — just round corners).
+  for (let pass = 0; pass < 2; pass++) {
+    for (let i = 1; i < samples.length - 1; i++) {
+      const a = samples[i - 1]!;
+      const b = samples[i]!;
+      const c = samples[i + 1]!;
+      b.x = b.x * 0.55 + (a.x + c.x) * 0.225;
+      b.y = b.y * 0.55 + (a.y + c.y) * 0.225;
+    }
+  }
+
+  const nodes: RoadNode[] = [];
+  const pushNode = (tx: number, ty: number) => {
+    nodes.push({
+      x: tx * SCALE,
+      y: ty * SCALE,
+      water: waterAtTex(biome, tx, ty),
+    });
+  };
+  pushNode(ax / SCALE, ay / SCALE);
+  for (const s of samples) {
+    const last = nodes[nodes.length - 1]!;
+    if (Math.hypot(s.x * SCALE - last.x, s.y * SCALE - last.y) < ROAD_NODE_STEP * SCALE) continue;
+    pushNode(s.x, s.y);
+  }
+  const end = nodes[nodes.length - 1]!;
+  if (Math.hypot(end.x - bx, end.y - by) > 3) pushNode(bx / SCALE, by / SCALE);
+  else {
+    end.x = bx;
+    end.y = by;
+    end.water = waterAtTex(biome, bx / SCALE, by / SCALE);
+  }
+  return nodes;
+}
+
+/** Raise bridge decks slightly above water on the heightfield. */
+function applyRoadBridgeHeights(height: Float32Array, roads: Road[]): void {
+  const rad = 2.2;
+  for (const road of roads) {
+    for (let i = 0; i < road.nodes.length; i++) {
+      const n = road.nodes[i]!;
+      const next = road.nodes[i + 1];
+      const span = n.water || next?.water;
+      if (!span) continue;
+      const stamps = next
+        ? Math.max(1, Math.ceil(Math.hypot(next.x - n.x, next.y - n.y) / (SCALE * 2)))
+        : 1;
+      for (let s = 0; s <= stamps; s++) {
+        const t = stamps === 0 ? 0 : s / stamps;
+        const wx = next ? lerp(n.x, next.x, t) : n.x;
+        const wy = next ? lerp(n.y, next.y, t) : n.y;
+        const cx = wx / SCALE;
+        const cy = wy / SCALE;
+        const x0 = Math.max(0, Math.floor(cx - rad));
+        const x1 = Math.min(TEX - 1, Math.ceil(cx + rad));
+        const y0 = Math.max(0, Math.floor(cy - rad));
+        const y1 = Math.min(TEX - 1, Math.ceil(cy + rad));
+        for (let y = y0; y <= y1; y++) {
+          for (let x = x0; x <= x1; x++) {
+            if (Math.hypot(x - cx, y - cy) > rad) continue;
+            const i = y * TEX + x;
+            height[i] = Math.max(height[i]!, ROAD_BRIDGE_H);
+          }
+        }
       }
     }
   }
 }
 
-/** Repaint road color after a terrain-editor patch rebuild. */
+/** Warp road / bridge sprites along stored nodes onto the terrain color canvas. */
+export function paintRoadsOntoCanvas(
+  canvas: HTMLCanvasElement,
+  roads: Road[],
+  clip?: { x0: number; y0: number; x1: number; y1: number }
+): void {
+  const g = canvas.getContext("2d", { willReadFrequently: true })!;
+  g.imageSmoothingEnabled = true;
+  if (clip) {
+    g.save();
+    g.beginPath();
+    g.rect(clip.x0, clip.y0, clip.x1 - clip.x0 + 1, clip.y1 - clip.y0 + 1);
+    g.clip();
+  }
+  const roadSpr = drawRoadStamp();
+  const bridgeSpr = drawBridgeStamp();
+
+  // Trunk first, then spurs so junctions read cleanly.
+  const ordered = [...roads].sort((a, b) => Number(!!a.spur) - Number(!!b.spur));
+  for (const road of ordered) {
+    const halfW = road.width / SCALE;
+    let u = 0; // distance along polyline (texels) for continuous texture U
+    for (let p = 1; p < road.nodes.length; p++) {
+      const a = road.nodes[p - 1]!;
+      const b = road.nodes[p]!;
+      const ax = a.x / SCALE;
+      const ay = a.y / SCALE;
+      const bx = b.x / SCALE;
+      const by = b.y / SCALE;
+      const dx = bx - ax;
+      const dy = by - ay;
+      const len = Math.hypot(dx, dy) || 1e-6;
+      if (clip) {
+        const pad = halfW + 4;
+        const minX = Math.min(ax, bx) - pad;
+        const maxX = Math.max(ax, bx) + pad;
+        const minY = Math.min(ay, by) - pad;
+        const maxY = Math.max(ay, by) + pad;
+        if (maxX < clip.x0 || minX > clip.x1 || maxY < clip.y0 || minY > clip.y1) {
+          u += len;
+          continue;
+        }
+      }
+      const ang = Math.atan2(dy, dx);
+      const waterSeg = a.water || b.water;
+      const spr = waterSeg ? bridgeSpr : roadSpr;
+      const h = halfW * (waterSeg ? 1.15 : 1) * 2;
+      // World length that matches one stamp at this road width (preserve aspect).
+      const tile = Math.max(6, (spr.width / Math.max(1, spr.height)) * h);
+      const drawLen = len + (p < road.nodes.length - 1 ? 0.45 : 0);
+      g.save();
+      g.translate(ax, ay);
+      g.rotate(ang);
+      g.globalAlpha = waterSeg ? 0.92 : road.spur ? 0.72 : 0.8;
+      // Warp the stamp as a continuous ribbon along the polyline (no radial stamps).
+      // Near tile wrap, (u%tile)/tile can land at ~1 so room→0 and piece→1e-14 —
+      // that froze mission load on the main thread after "ready" (seed-dependent long chords).
+      let drawn = 0;
+      while (drawn < drawLen - 1e-3) {
+        const u0 = u + drawn;
+        let phase = u0 % tile;
+        if (phase < 0) phase += tile;
+        if (phase > tile - 1e-6) phase = 0;
+        const srcStart = (phase / tile) * spr.width;
+        const room = Math.max(1e-6, spr.width - srcStart);
+        const maxPiece = Math.max(1e-3, (room / spr.width) * tile);
+        const piece = Math.min(drawLen - drawn, maxPiece);
+        const srcW = Math.max(0.5, (piece / tile) * spr.width);
+        g.drawImage(spr, srcStart, 0, srcW, spr.height, drawn, -h * 0.5, piece, h);
+        drawn += piece;
+      }
+      g.restore();
+      u += len;
+    }
+  }
+  g.globalAlpha = 1;
+  if (clip) g.restore();
+}
+
+/** Repaint road sprites after a terrain-editor patch rebuild. */
 export function paintRoadsRect(
   world: WorldData,
   g: CanvasRenderingContext2D,
@@ -1639,14 +2001,13 @@ export function paintRoadsRect(
   x1: number,
   y1: number
 ): void {
+  void g;
   x0 = clamp(Math.floor(x0), 0, TEX - 1);
   y0 = clamp(Math.floor(y0), 0, TEX - 1);
   x1 = clamp(Math.ceil(x1), 0, TEX - 1);
   y1 = clamp(Math.ceil(y1), 0, TEX - 1);
   if (x1 < x0 || y1 < y0) return;
-  const img = g.getImageData(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
-  paintRoads(img, world.biome, world.roads, x0, y0);
-  g.putImageData(img, x0, y0);
+  paintRoadsOntoCanvas(world.canvas, world.roads, { x0, y0, x1, y1 });
 }
 
 function placeForces(

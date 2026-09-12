@@ -87,7 +87,8 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     points: [
       { role: "rotor", x: 0.5, y: 0.42 },
       ...pts("muzzle", [uv(0.24, 0.38), uv(0.76, 0.38)], "wing"),
-      ...pts("hardpoint", [uv(0.043, 0.386), uv(0.949, 0.384), uv(0.5, 0.42)]),
+      // Stub-wing pylons only (no center store — matches typical AH-6 racks).
+      ...pts("hardpoint", [uv(0.043, 0.386), uv(0.949, 0.384)]),
     ],
   },
   craft_quad_drone: {
@@ -120,9 +121,10 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     origin: uv(0.5, 0.5),
     points: [
       ...pts("rotor", [uv(0.5, 0.144), uv(0.481, 0.815)], "tandem"),
-      { role: "gun", x: 0.5, y: 0.14, id: "fwd" },
-      { role: "gun", x: 0.5, y: 0.84, id: "ramp" },
-      ...pts("hardpoint", [uv(0.24, 0.46), uv(0.76, 0.46), uv(0.5, 0.84)]),
+      { role: "gun", x: 0.303, y: 0.073, id: "fwd_l" },
+      { role: "gun", x: 0.685, y: 0.071, id: "fwd_r" },
+      { role: "gun", x: 0.481, y: 0.96, id: "ramp" },
+      ...pts("hardpoint", [uv(0.16, 0.487), uv(0.828, 0.483)]),
     ],
   },
   craft_cobra: {
@@ -145,7 +147,8 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     origin: uv(0.5, 0.5),
     points: [
       ...pts("rotor", [uv(0.06, 0.345), uv(0.937, 0.339)]),
-      ...pts("gun", [uv(0.499, 0.41), uv(0.498, 0.938)], "gun"),
+      { role: "gun", x: 0.499, y: 0.41, id: "belly" },
+      { role: "gun", x: 0.498, y: 0.938, id: "ramp" },
       ...pts("hardpoint", [uv(0.337, 0.48), uv(0.637, 0.48)]),
     ],
   },
@@ -162,7 +165,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     points: [
       { role: "rotor", x: 0.502, y: 0.538, spin: -1 },
       { role: "rotor", x: 0.497, y: 0.9, scale: 0.34, id: "tail", spin: 1 },
-      { role: "gun", x: 0.5, y: 0.17 },
+      { role: "gun", x: 0.5, y: 0.17, id: "chin" },
       ...pts("hardpoint", [uv(0.18, 0.48), uv(0.82, 0.48)]),
       ...pts("exhaust", [uv(0.372, 0.646), uv(0.63, 0.647)]),
     ],
@@ -173,7 +176,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
   craft_prometheus: {
     origin: uv(0.5, 0.5),
     points: [
-      { role: "gun", x: 0.5, y: 0.72 },
+      { role: "gun", x: 0.5, y: 0.24 },
       ...pts("hardpoint", [uv(0.153, 0.357), uv(0.836, 0.53)]),
       ...pts("exhaust", [uv(0.241, 0.777), uv(0.378, 0.863), uv(0.623, 0.866), uv(0.758, 0.781)]),
     ],
@@ -181,7 +184,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
   craft_gunship: {
     origin: uv(0.5, 0.5),
     points: [
-      { role: "gun", x: 0.28, y: 0.45 },
+      { role: "gun", x: 0.28, y: 0.45, id: "side" },
       ...pts("rotor", [uv(0.185, 0.284), uv(0.322, 0.284), uv(0.671, 0.286), uv(0.811, 0.286)], "prop"),
       ...pts("hardpoint", [uv(0.418, 0.219), uv(0.415, 0.312), uv(0.417, 0.564)]),
     ],
@@ -458,7 +461,7 @@ export function isGunOverlayTexture(key: string): boolean {
 
 /** Rig overlay circle radius — gun-tip marks slightly smaller than on-body muzzles. */
 export function rigMuzzleMarkRadius(key: string): number {
-  return isGunOverlayTexture(key) ? 3.25 : 5;
+  return isGunOverlayTexture(key) ? 2 : 3;
 }
 
 /** Mount UVs for a role (default: all non-muzzle points). */

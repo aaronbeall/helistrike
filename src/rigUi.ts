@@ -448,3 +448,34 @@ function chunkText(text: string, width: number): string[] {
   if (rest.length) out.push(rest);
   return out;
 }
+
+/**
+ * UV midlines (u=0.5 / v=0.5) over a preview image — same center guide as the sprite
+ * rig. Honors display size, origin, and rotation.
+ */
+export function drawRigUvAxes(
+  g: Phaser.GameObjects.Graphics,
+  spr: Phaser.GameObjects.Image,
+  opts?: { color?: number; alpha?: number }
+): void {
+  if (!spr.visible || spr.displayWidth < 2 || spr.displayHeight < 2) return;
+  const color = opts?.color ?? 0xe8e0c8;
+  const alpha = opts?.alpha ?? 0.28;
+  const toWorld = (u: number, v: number) => {
+    const lx = (u - spr.originX) * spr.displayWidth;
+    const ly = (v - spr.originY) * spr.displayHeight;
+    const ca = Math.cos(spr.rotation);
+    const sa = Math.sin(spr.rotation);
+    return {
+      x: spr.x + lx * ca - ly * sa,
+      y: spr.y + lx * sa + ly * ca,
+    };
+  };
+  const midT = toWorld(0.5, 0);
+  const midB = toWorld(0.5, 1);
+  const midL = toWorld(0, 0.5);
+  const midR = toWorld(1, 0.5);
+  g.lineStyle(1, color, alpha);
+  g.lineBetween(midT.x, midT.y, midB.x, midB.y);
+  g.lineBetween(midL.x, midL.y, midR.x, midR.y);
+}

@@ -109,6 +109,27 @@ export function pointInFootprint(px: number, py: number, fp: Footprint): boolean
   return Math.abs(along) <= fp.halfL && Math.abs(side) <= fp.halfW;
 }
 
+/**
+ * Uniform random point inside a footprint, inset by `inset` so a disk of that
+ * radius stays inside the body (clamped; collapses to center if inset eats all).
+ */
+export function randomInFootprint(fp: Footprint, inset = 0): { x: number; y: number } {
+  const pad = Math.max(0, inset);
+  if (fp.shape === "circle") {
+    const r = Math.max(0, fp.r - pad);
+    if (r < 1e-4) return { x: fp.x, y: fp.y };
+    const a = Math.random() * Math.PI * 2;
+    const d = Math.sqrt(Math.random()) * r;
+    return { x: fp.x + Math.cos(a) * d, y: fp.y + Math.sin(a) * d };
+  }
+  const halfL = Math.max(0, fp.halfL - pad);
+  const halfW = Math.max(0, fp.halfW - pad);
+  if (halfL < 1e-4 && halfW < 1e-4) return { x: fp.x, y: fp.y };
+  const along = (Math.random() * 2 - 1) * halfL;
+  const side = (Math.random() * 2 - 1) * halfW;
+  return localToWorld(along, side, fp.x, fp.y, fp.angle);
+}
+
 /** Distance from point to footprint surface (0 if inside). */
 export function distToFootprint(px: number, py: number, fp: Footprint): number {
   if (fp.shape === "circle") {
