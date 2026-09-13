@@ -314,7 +314,7 @@ const railAccel = (acceleration: number): WeaponLaunch => ({
 /** Canonical weapon identities; craft sockets supply installation policy + default loadout. */
 export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   chain_gun: {
-    id: "chain_gun", name: "CHAIN GUN", fullName: "CHAIN GUN", designation: "M230 30MM CHAIN GUN", ammo: 1200, fireCd: 0.096, speed: 580,
+    id: "chain_gun", name: "CHAIN GUN", fullName: "30MM CHAIN GUN", designation: "M230 30MM CHAIN GUN", ammo: 1200, fireCd: 0.096, speed: 580,
     dmg: 28, blast: 36, life: 0.22, kind: "cannon", look: cannonLook("chain_gun"), mount: MOUNT_GATLING,
     tracer: { w: 44, h: 8, core: [255, 248, 220], mid: [255, 140, 40], rim: [200, 55, 18], blunt: 0.42, glow: 0.62 }, scale: 0.56,
     guidance: NONE, launch: MUZZLE, payload: { mode: "kinetic", penetration: 0.92 }, control: HOLD,
@@ -388,7 +388,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     notes: ["WVR heat seeker — muzzle rail at craft heading, near-zero leave, ~1s to high cruise"],
   },
   machine_gun: {
-    id: "machine_gun", name: "MACHINE GUN", fullName: "MACHINE GUN", designation: "M240D 7.62MM MACHINE GUN", ammo: 3200, fireCd: 0.066, speed: 1040,
+    id: "machine_gun", name: "MACHINE GUN", fullName: "7.62MM MACHINE GUN", designation: "M240D 7.62MM MACHINE GUN", ammo: 3200, fireCd: 0.066, speed: 1040,
     dmg: 5.8, blast: 9, life: 0.075, kind: "cannon", look: cannonLook("machine_gun"), mount: MOUNT_MACHINE, tracer: TRACER_762, scale: 0.46,
     guidance: NONE, launch: MUZZLE, payload: KINETIC, control: HOLD,
     fits: FIT_GUN, notes: ["crew or pilot M240; door/ramp/cabin role comes from the socket"],
@@ -399,13 +399,13 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     guidance: NONE, launch: DROP, payload: HE, control: CLICK, gravity: GRAVITY, fits: FIT_HARDPOINT, notes: ["momentum-first drop; craft bombDrop tune caps corrective boost"],
   },
   cluster_bomb: {
-    id: "cluster_bomb", name: "CLUSTER BOMB", fullName: "ROCKEYE CLUSTER BOMB", designation: "CBU-100 ROCKEYE II CLUSTER BOMB", ammo: 5, fireCd: 1.35, speed: 185,
+    id: "cluster_bomb", name: "ROCKEYE", fullName: "ROCKEYE CLUSTER BOMB", designation: "CBU-100 ROCKEYE II CLUSTER BOMB", ammo: 5, fireCd: 1.35, speed: 185,
     dmg: 42, blast: 78, life: 6.8, kind: "guided-missile", look: ordLook("bomb"), scale: 1.2, trailScale: 0.52,
     guidance: NONE, launch: DROP, payload: { mode: "cluster", bomblets: 18, spread: 145, bombletDmg: 82, bombletBlast: 70 }, control: CLICK,
     gravity: GRAVITY, fits: FIT_HARDPOINT, notes: ["dispenser pop is light; damage is the bomblet pattern"],
   },
   guided_rockets: {
-    id: "guided_rockets", name: "DEFENSE MICROS", fullName: "MICRO ROCKET POD", designation: "FORWARD DEFENSE MICRO-MISSILE POD", ammo: 24, fireCd: 0.24, speed: 420,
+    id: "guided_rockets", name: "MICROS MISSILES", fullName: "DEFENSE MICRO-MISSILES", designation: "FORWARD DEFENSE MICRO-MISSILE POD", ammo: 80, fireCd: 0.24, speed: 420,
     dmg: 110, blast: 85, life: 4.1, kind: "rocket", look: ordLook("rocket"), scale: 0.5, trailScale: 0.32,
     guidance: {
       mode: "steer",
@@ -419,21 +419,21 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     fits: FIT_HARDPOINT, notes: ["slightly steers toward reticle; arcs into the ground; no camera chase"],
   },
   heavy_machine_gun: {
-    id: "heavy_machine_gun", name: "HEAVY MACHINE GUN", fullName: "HEAVY MACHINE GUN", designation: "M2HB .50 CAL MACHINE GUN", ammo: 900, fireCd: 0.105, speed: 860,
+    id: "heavy_machine_gun", name: "HEAVY MACHINE GUN", fullName: ".50 CAL MACHINE GUN", designation: "M2HB .50 CAL MACHINE GUN", ammo: 900, fireCd: 0.105, speed: 860,
     dmg: 20, blast: 22, life: 0.13, kind: "cannon", look: cannonLook("heavy_machine_gun"), mount: MOUNT_MACHINE,
     tracer: { w: 62, h: 9, core: [255, 235, 190], mid: [255, 145, 50], rim: [210, 75, 28], blunt: 0.22, glow: 0.52 }, scale: 0.68,
     guidance: NONE, launch: MUZZLE, payload: { mode: "kinetic", penetration: 0.70 }, control: HOLD,
     fits: FIT_GUN, notes: ["crew-served .50 — readable slugs you can walk onto a target"],
   },
   heavy_cal_pod: {
-    id: "heavy_cal_pod", name: "HEAVY CAL POD", fullName: "HEAVY CAL POD", designation: "GAU-19/A .50 CAL GATLING POD", ammo: 300, fireCd: 0.072, speed: 860,
+    id: "heavy_cal_pod", name: "HEAVY CAL POD", fullName: ".50 CAL GATLING POD", designation: "GAU-19/A .50 CAL GATLING POD", ammo: 300, fireCd: 0.072, speed: 860,
     dmg: 20, blast: 22, life: 0.13, kind: "cannon", look: cannonLook("heavy_cal_pod"),
     tracer: { w: 62, h: 9, core: [255, 235, 190], mid: [255, 145, 50], rim: [210, 75, 28], blunt: 0.22, glow: 0.52 }, scale: 0.68,
     guidance: NONE, launch: MUZZLE, payload: { mode: "kinetic", penetration: 0.70 }, control: HOLD,
     fits: ["hardpoint", "fixed"] as SocketClass[], notes: ["pylon .50 gatling — same slug as the HMG, short belt"],
   },
   concealed_cannon: {
-    id: "concealed_cannon", name: "LOW-RCS", fullName: "STEALTH CANNON", designation: "20MM LOW-RCS CANNON", ammo: 820, fireCd: 0.105, speed: 1080,
+    id: "concealed_cannon", name: "LOW-RCS", fullName: "LOW-RCS CANNON", designation: "20MM LOW-RCS CANNON", ammo: 820, fireCd: 0.105, speed: 1080,
     dmg: 13.5, blast: 15, life: 0.1, kind: "cannon", look: cannonLook("concealed_cannon"), mount: MOUNT_MACHINE, tracer: { w: 52, h: 8, core: [220, 230, 240], mid: [140, 160, 180], rim: [70, 90, 110], glow: 0.22 }, scale: 0.6, silent: true,
     guidance: NONE, launch: MUZZLE, payload: { mode: "kinetic", penetration: 0.5 }, control: HOLD,
     fits: FIT_GUN, notes: ["suppressed report and low muzzle flash"],
@@ -485,7 +485,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     fits: FIT_GUN, notes: ["radial pulse disables affected systems"],
   },
   plasma_cannon: {
-    id: "plasma_cannon", name: "PLASMA HELIX", fullName: "PLASMA CANNON", designation: "PLASMA HELIX CANNON", ammo: 1800, fireCd: 0.09, speed: 1050,
+    id: "plasma_cannon", name: "PLASMA HELIX", fullName: "PLASMA HELIX CANNON", designation: "PLASMA HELIX CANNON", ammo: 1800, fireCd: 0.09, speed: 1050,
     dmg: 12, blast: 22, life: 0.1, kind: "cannon", look: cannonLook("plasma_cannon"), mount: MOUNT_PLASMA,
     tracer: { w: 34, h: 22, core: [210, 255, 160], mid: [80, 255, 60], rim: [20, 160, 40], glow: 1.05, shape: "orb" }, scale: 0.7,
     guidance: NONE, launch: MUZZLE, payload: { mode: "plasma_helix", strands: 3 }, control: HOLD,

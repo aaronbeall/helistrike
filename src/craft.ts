@@ -80,6 +80,8 @@ export interface CraftSocket {
   muzzleFire?: "single" | "alternate" | "simultaneous";
   /** Crew-served station flavor (door / ramp / belly gunners) — not a technical "auto" tag. */
   crew?: CrewRole;
+  /** Extra capacity on this station, on top of craft `ammoScale`. */
+  ammoMul?: number;
   /**
    * Gravity-bomb release for this hardpoint. Socket wins over craft-level `bombDrop`.
    * Lower `momentum` = more aim-directed (Chinook); higher = carry craft velocity (Lightning).
@@ -402,7 +404,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
         traverse: 360,
         crew: "belly",
       },
-      { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "guided_rockets", points: "hardpoint" },
+      { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "guided_rockets", points: "hardpoint", ammoMul: 1.25 },
       { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "hellfire_missile", points: "hardpoint" },
       {
         id: "cabin_ramp",
@@ -733,7 +735,8 @@ export function craftSocketStartingAmmo(
 ): number {
   const base = craftStartingAmmo(baseAmmo, c);
   if (!Number.isFinite(base)) return base;
-  return Math.max(1, Math.round(base * craftSocketBarrelCount(c, socketIndex)));
+  const sockMul = c.sockets[socketIndex]?.ammoMul ?? 1;
+  return Math.max(1, Math.round(base * craftSocketBarrelCount(c, socketIndex) * sockMul));
 }
 
 /** Composite handling rating used by the craft selector and field manual. */
