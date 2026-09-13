@@ -58,7 +58,7 @@ import {
   type Footprint,
 } from "./footprint";
 import { lookupSpriteMuzzles, lookupSpriteOrigin } from "./spriteOrigin";
-import { allCrafts, craftAgility, craftAimsWithTurret, craftBombDrop, craftCameraScale, craftComposite, craftCompositePartScale, craftCrewHudTag, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftGunPreferDegrees, craftGunPreferOffset, craftGunSocketSlots, craftHardpointMounts, craftLoadoutLabel, craftLoadoutParts, craftOf, craftOrigin, craftPreviewExhaustScale, craftPreviewExhaustTint, craftPreviewFitScale, craftRotorMounts, craftSocketBarrelCount, craftSocketPoints, craftSocketStartingAmmo, rotorDrawSpan, rotorMountsOf, rotorSpinSign, selectCraft, type CraftComposite } from "./craft";
+import { allCrafts, craftAgility, craftAimsWithTurret, craftBombDrop, craftCameraScale, craftComposite, craftCompositePartScale, craftCrewHudTag, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftGunPreferDegrees, craftGunPreferOffset, craftGunSocketSlots, craftHardpointMounts, craftLoadoutLabel, craftLoadoutParts, craftOf, craftOrigin, craftPreviewExhaustScale, craftPreviewExhaustTint, craftPreviewFitScale, craftRotorMounts, craftSocketBarrelCount, craftSocketMultiplicity, craftSocketPoints, craftSocketStartingAmmo, rotorDrawSpan, rotorMountsOf, rotorSpinSign, selectCraft, type CraftComposite } from "./craft";
 import { allMissions, missionOf, selectMission } from "./mission";
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
 import { rigsAnyOpen, installRigHotkeys } from "./rigs";
@@ -1517,7 +1517,13 @@ export class MissionScene extends Phaser.Scene {
   hvRows: Phaser.GameObjects.Text[] = [];
   wpnHud!: Phaser.GameObjects.Text;
   wpnBar!: Phaser.GameObjects.Graphics;
-  wpnSlots!: Phaser.GameObjects.Text[];
+  /** Per-loadout-slot HUD chrome: key / name / ammo + optional crew status under the box. */
+  wpnHudSlots!: {
+    key: Phaser.GameObjects.Text;
+    name: Phaser.GameObjects.Text;
+    ammo: Phaser.GameObjects.Text;
+    status: Phaser.GameObjects.Text;
+  }[];
   hpGfx!: Phaser.GameObjects.Graphics;
   playerHud!: Phaser.GameObjects.Graphics;
   heliHudWire!: Phaser.GameObjects.Image;
@@ -2832,18 +2838,25 @@ export class MissionScene extends Phaser.Scene {
         .setDepth(Layer.HUD)
     );
     this.wpnBar = this.add.graphics().setScrollFactor(0).setDepth(Layer.HUD);
-    this.wpnSlots = this.loadout.map(() =>
-      this.add
-        .text(0, 0, "", {
-          fontFamily: "Share Tech Mono, monospace",
-          fontSize: "15px",
-          color: "#e8b84a",
-        })
-        .setOrigin(0.5, 0.5)
-        .setScrollFactor(0)
-        .setDepth(Layer.HUD + 1)
-        .setStroke("#12100c", 4)
-    );
+    this.wpnHudSlots = this.loadout.map(() => {
+      const mk = (size: string, color: string, originX: number, originY = 0.5) =>
+        this.add
+          .text(0, 0, "", {
+            fontFamily: "Share Tech Mono, monospace",
+            fontSize: size,
+            color,
+          })
+          .setOrigin(originX, originY)
+          .setScrollFactor(0)
+          .setDepth(Layer.HUD + 1)
+          .setStroke("#12100c", 3);
+      return {
+        key: mk("12px", "#a89868", 0, 0.5),
+        name: mk("13px", "#f0d56a", 0, 0.5),
+        ammo: mk("13px", "#e8d49a", 1, 0.5),
+        status: mk("10px", "#7ad0ff", 0.5, 0).setStroke("#12100c", 2),
+      };
+    });
     this.wpnHud = this.add.text(0, 0, "").setVisible(false);
     this.hpGfx = this.add.graphics().setDepth(Layer.FIELD);
     this.playerHud = this.add.graphics().setScrollFactor(0).setDepth(Layer.HUD + 12);
@@ -11585,63 +11598,191 @@ export class MissionScene extends Phaser.Scene {
     const h = this.heli;
     const g = this.wpnBar;
     g.clear();
-    const slotW = 176;
-    const slotH = 30;
-    const gap = 6;
+    const slotW = 168;
+    const slotH = 38;
+    const gap = 8;
     const n = this.loadout.length;
     const total = n * slotW + (n - 1) * gap;
     const x0 = this.scale.width / 2 - total / 2;
-    const y = this.scale.height - 16 - slotH;
+    // Leave room under slots for GUNNER / PLAYER status.
+    const y = this.scale.height - 28 - slotH;
+    const padX = 8;
+    const barH = 3;
+    const barY = y + slotH - 7;
+    const barPad = 6;
+
     for (let i = 0; i < n; i++) {
       const wp = this.loadout[i]!;
       const a = this.ammo[i]!;
+      const cap = craftSocketStartingAmmo(wp.ammo, h.spec, i);
       const empty = !this.infAmmo && Number.isFinite(a) && a <= 0;
+      const frac =
+        this.infAmmo || !Number.isFinite(a) || !Number.isFinite(cap) || cap <= 0
+          ? 1
+          : Phaser.Math.Clamp(a / cap, 0, 1);
+      const low = !empty && Number.isFinite(a) && frac > 0 && frac <= 0.25;
       const sel = i === h.weapon;
+      const socket = h.spec.sockets[i];
+      const auto = socket?.controller === "automatic";
+      const gunner = auto && !sel;
       const x = x0 + i * (slotW + gap);
+
+      // Slot chrome — gunner-manned autos get the blue crew treatment.
       if (sel) {
-        g.fillStyle(empty ? 0xff3a2a : 0xe8b84a, 1);
+        g.fillStyle(empty ? 0xff3a2a : low ? 0xe89a3a : 0xe8b84a, 1);
         g.fillRoundedRect(x, y, slotW, slotH, 3);
       } else if (empty) {
         g.fillStyle(0x3a1410, 0.92);
         g.fillRoundedRect(x, y, slotW, slotH, 3);
         g.lineStyle(1.5, 0xff3a2a, 0.95);
         g.strokeRoundedRect(x, y, slotW, slotH, 3);
+      } else if (gunner && low) {
+        g.fillStyle(0x142028, 0.82);
+        g.fillRoundedRect(x, y, slotW, slotH, 3);
+        g.lineStyle(1.5, 0xe89a3a, 0.9);
+        g.strokeRoundedRect(x, y, slotW, slotH, 3);
+      } else if (gunner) {
+        g.fillStyle(0x101820, 0.72);
+        g.fillRoundedRect(x, y, slotW, slotH, 3);
+        g.lineStyle(1.5, 0x4aa8e8, 0.9);
+        g.strokeRoundedRect(x, y, slotW, slotH, 3);
+      } else if (low) {
+        g.fillStyle(0x2a1a0c, 0.78);
+        g.fillRoundedRect(x, y, slotW, slotH, 3);
+        g.lineStyle(1.4, 0xe89a3a, 0.9);
+        g.strokeRoundedRect(x, y, slotW, slotH, 3);
       } else {
         g.fillStyle(0x12100c, 0.55);
         g.fillRoundedRect(x, y, slotW, slotH, 3);
       }
-      const ammoS = empty ? "X" : this.infAmmo || !Number.isFinite(a) ? "∞" : String(a | 0);
-      const t = this.wpnSlots[i]!;
-      const lp = this.hudLocal(x + slotW / 2, y + slotH / 2);
-      const socket = this.heli.spec.sockets[i];
-      const crew = socket ? craftCrewHudTag(socket) : undefined;
-      const crewTag = crew ? `${crew} ` : "";
-      t.setPosition(lp.x, lp.y).setText(`${i + 1}  ${crewTag}${wp.name}  ${ammoS}`);
+
+      // Ammo reserve bar
+      const barX = x + barPad;
+      const barW = slotW - barPad * 2;
+      g.fillStyle(sel ? 0x1c1812 : 0x000000, sel ? 0.28 : 0.4);
+      g.fillRect(barX, barY, barW, barH);
+      if (!empty) {
+        const fill = low
+          ? sel
+            ? 0x6a2a08
+            : 0xe89a3a
+          : sel
+            ? 0x1c1812
+            : gunner
+              ? 0x5eb4e8
+              : 0xc4a24a;
+        g.fillStyle(fill, sel ? 0.85 : 0.95);
+        g.fillRect(barX, barY, Math.max(2, barW * frac), barH);
+      }
+
+      const row = this.wpnHudSlots[i]!;
+      const midY = y + (slotH - barH - 4) / 2;
+      const keyLp = this.hudLocal(x + padX, midY);
+      const ammoLp = this.hudLocal(x + slotW - padX, midY);
+
+      const ammoS = empty
+        ? "—"
+        : this.infAmmo || !Number.isFinite(a)
+          ? "∞"
+          : String(a | 0);
+      const mult = craftSocketMultiplicity(h.spec, i);
+      const rawName = mult > 1 ? `${mult}× ${wp.name}` : wp.name;
+
+      // Colors by state
+      let keyCol = "#a89868";
+      let nameCol = "#f0d56a";
+      let ammoCol = "#e8d49a";
+      let stroke = "#12100c";
+      let strokeW = 3;
       if (sel) {
-        t.setColor("#1c1812").setStroke("#1c1812", 0).setFontSize("15px");
+        keyCol = nameCol = ammoCol = empty ? "#2a0808" : "#1c1812";
+        stroke = empty ? "#2a0808" : "#1c1812";
+        strokeW = 0;
       } else if (empty) {
-        t.setColor("#ff4a2a").setStroke("#1a0808", 3).setFontSize("15px");
-      } else if (crew) {
-        t.setColor("#7ad0ff").setStroke("#12100c", 4).setFontSize("15px");
+        keyCol = nameCol = ammoCol = "#ff4a2a";
+        stroke = "#1a0808";
+      } else if (gunner) {
+        keyCol = "#6aa8c8";
+        nameCol = "#7ad0ff";
+        ammoCol = low ? "#ff9a3a" : "#9ad8f0";
+      } else if (low) {
+        ammoCol = "#ff9a3a";
+        nameCol = "#f0c878";
+      }
+
+      row.key
+        .setVisible(true)
+        .setPosition(keyLp.x, keyLp.y)
+        .setText(String(i + 1))
+        .setColor(keyCol)
+        .setStroke(stroke, strokeW)
+        .setFontSize("12px")
+        .setAlpha(sel ? 0.7 : 0.85);
+
+      row.ammo
+        .setVisible(true)
+        .setPosition(ammoLp.x, ammoLp.y)
+        .setText(ammoS)
+        .setColor(ammoCol)
+        .setStroke(stroke, strokeW)
+        .setFontSize(low && !sel ? "13px" : "12px")
+        .setAlpha(1);
+
+      // Name sits between key and ammo; truncate so it never spills the box.
+      const nameMaxW = Math.max(
+        24,
+        slotW - padX * 2 - row.key.width - 10 - row.ammo.width - 8
+      );
+      const nameStr = this.fitHudLabel(row.name, rawName, nameMaxW);
+      const nameLp = this.hudLocal(x + padX + row.key.width + 6, midY);
+      row.name
+        .setVisible(true)
+        .setPosition(nameLp.x, nameLp.y)
+        .setText(nameStr)
+        .setColor(nameCol)
+        .setStroke(stroke, strokeW)
+        .setFontSize("13px")
+        .setAlpha(1);
+
+      if (auto) {
+        const player = sel;
+        const statusLp = this.hudLocal(x + slotW / 2, y + slotH + 3);
+        const label = player
+          ? "PILOT"
+          : `${craftCrewHudTag(socket!) ?? "CREW"} GUNNER`;
+        row.status
+          .setVisible(true)
+          .setPosition(statusLp.x, statusLp.y)
+          .setText(label)
+          .setColor(player ? "#e8b84a" : "#8ec8e8")
+          .setStroke("#12100c", 2)
+          .setAlpha(player ? 0.95 : 0.85)
+          .setFontSize("10px");
       } else {
-        t.setColor("#f0d56a").setStroke("#12100c", 4).setFontSize("15px");
-      }
-      if (crew && !sel && !empty) {
-        g.lineStyle(1.5, 0x4aa8e8, 0.9);
-        g.strokeRoundedRect(x, y, slotW, slotH, 3);
-      }
-      // Selected crew station: player has taken over — auto is off.
-      if (sel && socket?.controller === "automatic") {
-        const bx = x + slotW - 14;
-        const by = y + 8;
-        const r = 7;
-        g.lineStyle(2.2, 0x5ec8ff, 0.95);
-        g.strokeCircle(bx, by, r);
-        g.lineBetween(bx - r * 0.72, by + r * 0.72, bx + r * 0.72, by - r * 0.72);
-        g.fillStyle(0x5ec8ff, 0.2);
-        g.fillCircle(bx, by, r - 1.5);
+        row.status.setVisible(false).setText("");
       }
     }
+    // Hide unused rows if loadout shrank (shouldn't normally).
+    for (let i = n; i < this.wpnHudSlots.length; i++) {
+      const row = this.wpnHudSlots[i]!;
+      row.key.setVisible(false);
+      row.name.setVisible(false);
+      row.ammo.setVisible(false);
+      row.status.setVisible(false);
+    }
+  }
+
+  /** Truncate a HUD label so `text` width stays within `maxW` (ellipsis). */
+  fitHudLabel(text: Phaser.GameObjects.Text, label: string, maxW: number): string {
+    text.setText(label);
+    if (text.width <= maxW) return label;
+    let t = label;
+    while (t.length > 1) {
+      t = t.slice(0, -1);
+      text.setText(`${t}…`);
+      if (text.width <= maxW) return `${t}…`;
+    }
+    return "…";
   }
 
   hvLine(spec: HvSpec): { text: string; done: boolean } {
@@ -13413,7 +13554,7 @@ export class MissionScene extends Phaser.Scene {
       this.heliHudWireSh,
       this.heliHudWire,
       this.wpnBar,
-      ...this.wpnSlots,
+      ...this.wpnHudSlots.flatMap((s) => [s.key, s.name, s.ammo, s.status]),
       this.hvGfx,
       ...this.hvArrowLabels,
       this.lockArrowGfx,
@@ -13859,7 +14000,13 @@ export class MissionScene extends Phaser.Scene {
     for (const t of this.hvRows) t.setVisible(on);
     this.wpnHud.setVisible(on);
     this.wpnBar.setVisible(on);
-    for (const t of this.wpnSlots) t.setVisible(on);
+    for (const s of this.wpnHudSlots) {
+      s.key.setVisible(on);
+      s.name.setVisible(on);
+      s.ammo.setVisible(on);
+      // status visibility is owned by drawWeaponHud (auto stations only)
+      if (!on) s.status.setVisible(false);
+    }
     this.playerHud.setVisible(on);
     this.heliHudWireSh.setVisible(on);
     this.heliHudWire.setVisible(on);
