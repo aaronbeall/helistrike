@@ -450,32 +450,81 @@ function chunkText(text: string, width: number): string[] {
 }
 
 /**
- * UV midlines (u=0.5 / v=0.5) over a preview image — same center guide as the sprite
- * rig. Honors display size, origin, and rotation.
+ * UV → overlay coords on a preview image (honors display size, origin, rotation).
  */
-export function drawRigUvAxes(
+export function rigSpriteUvToWorld(
+  spr: Phaser.GameObjects.Image,
+  u: number,
+  v: number
+): { x: number; y: number } {
+  const lx = (u - spr.originX) * spr.displayWidth;
+  const ly = (v - spr.originY) * spr.displayHeight;
+  const ca = Math.cos(spr.rotation);
+  const sa = Math.sin(spr.rotation);
+  return {
+    x: spr.x + lx * ca - ly * sa,
+    y: spr.y + lx * sa + ly * ca,
+  };
+}
+
+/**
+ * Shared sprite-preview guides for all rigs:
+ * - cyan cursor axes through hover UV (full texture)
+ * - optional pivot mark: gold when authored in SPRITE_SPECS, solid white when default
+ *
+ * Texture midlines (u/v = 0.5) are intentionally omitted — center mark + cursor guides suffice.
+ */
+export function drawRigSpritePreviewGuides(
   g: Phaser.GameObjects.Graphics,
   spr: Phaser.GameObjects.Image,
-  opts?: { color?: number; alpha?: number }
+  opts?: {
+    hoverUv?: { x: number; y: number } | null;
+    /** Pivot UV. `authored: false` → solid white default-center crosshair. */
+    origin?: { x: number; y: number; authored: boolean } | null;
+    guideColor?: number;
+    guideAlpha?: number;
+  }
 ): void {
   if (!spr.visible || spr.displayWidth < 2 || spr.displayHeight < 2) return;
-  const color = opts?.color ?? 0xe8e0c8;
-  const alpha = opts?.alpha ?? 0.28;
-  const toWorld = (u: number, v: number) => {
-    const lx = (u - spr.originX) * spr.displayWidth;
-    const ly = (v - spr.originY) * spr.displayHeight;
-    const ca = Math.cos(spr.rotation);
-    const sa = Math.sin(spr.rotation);
-    return {
-      x: spr.x + lx * ca - ly * sa,
-      y: spr.y + lx * sa + ly * ca,
-    };
-  };
-  const midT = toWorld(0.5, 0);
-  const midB = toWorld(0.5, 1);
-  const midL = toWorld(0, 0.5);
-  const midR = toWorld(1, 0.5);
-  g.lineStyle(1, color, alpha);
-  g.lineBetween(midT.x, midT.y, midB.x, midB.y);
-  g.lineBetween(midL.x, midL.y, midR.x, midR.y);
+
+  if (opts?.hoverUv) {
+    const { x: hu, y: hv } = opts.hoverUv;
+    const t = rigSpriteUvToWorld(spr, hu, 0);
+    const b = rigSpriteUvToWorld(spr, hu, 1);
+    const l = rigSpriteUvToWorld(spr, 0, hv);
+    const r = rigSpriteUvToWorld(spr, 1, hv);
+    g.lineStyle(1, opts.guideColor ?? 0x7ad0ff, opts.guideAlpha ?? 0.85);
+    g.lineBetween(t.x, t.y, b.x, b.y);
+    g.lineBetween(l.x, l.y, r.x, r.y);
+  }
+
+  if (opts?.origin) {
+    const p = rigSpriteUvToWorld(spr, opts.origin.x, opts.origin.y);
+    if (opts.origin.authored) {
+      g.lineStyle(1.25, 0xe8b84a, 0.95);
+      g.lineBetween(p.x - 7, p.y, p.x + 7, p.y);
+      g.lineBetween(p.x, p.y - 7, p.x, p.y + 7);
+      g.strokeCircle(p.x, p.y, 3);
+    } else {
+      g.lineStyle(2, 0xffffff, 1);
+      g.lineBetween(p.x - 5, p.y, p.x + 5, p.y);
+      g.lineBetween(p.x, p.y - 5, p.x, p.y + 5);
+    }
+  }
+}
+
+/**
+ * Keep the OS cursor visible while any rig overlay is open.
+ * Closing a rig no longer forces `none` if another rig is still open.
+ */
+export function syncRigSystemCursor(from: Phaser.Scene, prefer?: string): void {
+  const r = from.scene.get("rigs") as
+    | { ready?: boolean; anyOpen?: () => boolean; input: Phaser.Input.InputPlugin }
+    | null;
+  if (r?.ready && typeof r.anyOpen === "function") {
+    if (r.anyOpen()) r.input.setDefaultCursor(prefer ?? "default");
+    else r.input.setDefaultCursor("none");
+    return;
+  }
+  from.input.setDefaultCursor(prefer ?? "default");
 }

@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { PLAYER_WPNS, type PlayerWpnSpec } from "./combat";
-import { RIG_INFO, RIG_VALUE, makeRigText, row, setStackedTexts } from "./rigUi";
+import { RIG_INFO, RIG_VALUE, makeRigText, row, setStackedTexts, syncRigSystemCursor } from "./rigUi";
 import { allCrafts } from "./craft";
 import {
   ENEMY_WPNS,
@@ -332,7 +332,7 @@ export class BalanceRig {
     this.statsHotTxt.setVisible(this.open);
     this.statsTxt.setVisible(this.open);
     this.hintTxt.setVisible(this.open);
-    this.scene.input.setDefaultCursor(this.open ? "default" : "none");
+    syncRigSystemCursor(this.scene);
     this.uiCam.setVisible(this.open);
     if (this.open) this.refresh();
     else {

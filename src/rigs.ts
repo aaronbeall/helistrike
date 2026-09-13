@@ -4,6 +4,7 @@ import { CombatRig } from "./combatRig";
 import { ArtGenRig } from "./artGenRig";
 import { RosterRig } from "./rosterRig";
 import { SpriteRig } from "./spriteRig";
+import { syncRigSystemCursor } from "./rigUi";
 import { spritePivot } from "./sprites";
 
 /**
@@ -101,6 +102,11 @@ export class RigsScene extends Phaser.Scene {
     });
   }
 
+  /** Keep the OS cursor visible while any rig is open; restore hidden only when all close. */
+  syncSystemCursor(prefer?: string): void {
+    syncRigSystemCursor(this, prefer);
+  }
+
   private bumpZoom(dir: number): void {
     if (!this.anyOpen()) return;
     if (this.spriteRig.open) this.spriteRig.nudgeZoom(dir);
@@ -174,6 +180,7 @@ export class RigsScene extends Phaser.Scene {
       console.error("[rigs] cycle failed", e);
     } finally {
       this.cycling = false;
+      this.syncSystemCursor();
     }
   }
 

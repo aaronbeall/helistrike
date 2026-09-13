@@ -14,9 +14,10 @@ import {
   RIG_INFO,
   RIG_VALUE,
   dumpRig,
-  drawRigUvAxes,
+  drawRigSpritePreviewGuides,
   makeRigText,
   setStatsAndInfo,
+  syncRigSystemCursor,
 } from "./rigUi";
 import { lookupSpriteMuzzles, lookupSpriteOrigin, rigMuzzleMarkRadius } from "./spriteOrigin";
 import {
@@ -219,7 +220,7 @@ export class CombatRig {
     this.statsTxt.setVisible(this.open);
     this.infoTxt.setVisible(this.open);
     this.hintTxt.setVisible(this.open);
-    this.scene.input.setDefaultCursor(this.open ? "default" : "none");
+    syncRigSystemCursor(this.scene);
     this.uiCam.setVisible(this.open);
     if (this.open) this.refreshPreview();
     else this.overlay.clear();
@@ -298,6 +299,10 @@ export class CombatRig {
     );
 
     this.layoutPreview(e, dt);
+    const over =
+      (this.preview.visible && this.hoverUvOn(this.preview)) ||
+      (this.mountPreview.visible && this.hoverUvOn(this.mountPreview));
+    syncRigSystemCursor(this.scene, over ? "crosshair" : "default");
   }
 
   private pageSize(): number {
@@ -394,9 +399,13 @@ export class CombatRig {
 
     for (const panel of panels) {
       const cx = x + panel.boxW * 0.5;
-      panel.spr.setPosition(cx, cy);
+      // Panel is the texture AABB center; Phaser position is the origin, so offset
+      // when mounts use an authored pivot (often near the muzzle) instead of 0.5/0.5.
+      this.placeSpriteAtPanelCenter(panel.spr, cx, cy);
       this.drawCheckerPanel(cx - panel.boxW * 0.5, cy - panel.boxH * 0.5, panel.boxW, panel.boxH, pad);
-      drawRigUvAxes(this.overlay, panel.spr);
+      drawRigSpritePreviewGuides(this.overlay, panel.spr, {
+        hoverUv: this.hoverUvOn(panel.spr),
+      });
       x += panel.boxW + panelGap;
     }
 
@@ -412,9 +421,9 @@ export class CombatRig {
     if (e.cat !== "fx" && this.showMarks) {
       if (hasShot) {
         const shot = panels[panels.length - 1]!;
-        const bx = shot.spr.x - shot.boxW * 0.5;
-        const by = shot.spr.y - shot.boxH * 0.5;
-        this.drawShotMarks(shot.rot, bx, by, shot.boxW, shot.boxH);
+        const shotLeft = listRight + pad + (hasMount ? panels[0]!.boxW + panelGap : 0);
+        const shotTop = cy - shot.boxH * 0.5;
+        this.drawShotMarks(shot.rot, shotLeft, shotTop, shot.boxW, shot.boxH);
         const blast = parseBlast(e);
         if (blast > 0) {
           this.overlay.lineStyle(1.2, 0xff6a22, 0.65);
@@ -425,14 +434,24 @@ export class CombatRig {
     }
   }
 
+  /** Place sprite so its unrotated texture AABB is centered at (cx, cy). */
+  private placeSpriteAtPanelCenter(spr: Phaser.GameObjects.Image, cx: number, cy: number): void {
+    spr.setPosition(
+      cx + (spr.originX - 0.5) * spr.displayWidth,
+      cy + (spr.originY - 0.5) * spr.displayHeight
+    );
+  }
+
   /** Pivot + authored muzzle tips on the gun-mount texture (SPRITE_SPECS). */
   private drawMountMarks(spr: Phaser.GameObjects.Image, tex: string): void {
     const g = this.overlay;
     const toX = (u: number) => spr.x + (u - spr.originX) * spr.displayWidth;
     const toY = (v: number) => spr.y + (v - spr.originY) * spr.displayHeight;
-    const origin = lookupSpriteOrigin(tex) ?? { x: 0.5, y: 0.7 };
-    const ox = toX(origin.x);
-    const oy = toY(origin.y);
+    const authored = lookupSpriteOrigin(tex);
+    const origin = authored ?? { x: spr.originX, y: spr.originY };
+    drawRigSpritePreviewGuides(g, spr, {
+      origin: { x: origin.x, y: origin.y, authored: !!authored },
+    });
     for (const p of lookupSpriteMuzzles(tex)) {
       const x = toX(p.x);
       const y = toY(p.y);
@@ -442,10 +461,20 @@ export class CombatRig {
       g.lineStyle(1, 0xffe8c0, 0.95);
       g.strokeCircle(x, y, r);
     }
-    g.lineStyle(1.25, ORIGIN_COLOR, 0.95);
-    g.strokeCircle(ox, oy, 3);
-    g.lineBetween(ox - 7, oy, ox + 7, oy);
-    g.lineBetween(ox, oy - 7, ox, oy + 7);
+  }
+
+  private hoverUvOn(spr: Phaser.GameObjects.Image): { x: number; y: number } | null {
+    if (!spr.visible || !spr.width || !spr.height) return null;
+    const lp = spr.getLocalPoint(
+      this.scene.input.activePointer.x,
+      this.scene.input.activePointer.y,
+      undefined,
+      this.uiCam
+    );
+    if (lp.x < -0.5 || lp.y < -0.5 || lp.x > spr.width + 0.5 || lp.y > spr.height + 0.5) {
+      return null;
+    }
+    return { x: lp.x / spr.width, y: lp.y / spr.height };
   }
 
   private drawCheckerPanel(bx: number, by: number, boxW: number, boxH: number, pad: number): void {

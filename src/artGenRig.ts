@@ -7,7 +7,7 @@ import {
   resetArtGen,
   type ArtGenDef,
 } from "./artGen";
-import { RIG_INFO, RIG_VALUE, drawRigUvAxes, makeRigText } from "./rigUi";
+import { RIG_INFO, RIG_VALUE, drawRigSpritePreviewGuides, makeRigText, syncRigSystemCursor } from "./rigUi";
 import { nameGameTexture } from "./sprites";
 
 const DEPTH = 9450;
@@ -225,7 +225,7 @@ export class ArtGenRig {
     this.infoTxt.setVisible(this.open);
     this.descTxt.setVisible(this.open);
     this.hintTxt.setVisible(this.open);
-    this.scene.input.setDefaultCursor(this.open ? "default" : "none");
+    syncRigSystemCursor(this.scene);
     this.uiCam.setVisible(this.open);
     if (this.open) {
       this.dirtyLayout = true;
@@ -416,7 +416,25 @@ export class ArtGenRig {
     this.board.lineStyle(1, 0xe8b84a, 0.55);
     this.board.strokeRect(bx - 10, by - 10, bw + 20, bh + 20);
     this.overlay.clear();
-    drawRigUvAxes(this.overlay, this.preview);
+    const hover = this.hoverUvOn(this.preview);
+    drawRigSpritePreviewGuides(this.overlay, this.preview, {
+      hoverUv: hover,
+    });
+    syncRigSystemCursor(this.scene, hover ? "crosshair" : "default");
+  }
+
+  private hoverUvOn(spr: Phaser.GameObjects.Image): { x: number; y: number } | null {
+    if (!spr.visible || !spr.width || !spr.height) return null;
+    const lp = spr.getLocalPoint(
+      this.scene.input.activePointer.x,
+      this.scene.input.activePointer.y,
+      undefined,
+      this.uiCam
+    );
+    if (lp.x < -0.5 || lp.y < -0.5 || lp.x > spr.width + 0.5 || lp.y > spr.height + 0.5) {
+      return null;
+    }
+    return { x: lp.x / spr.width, y: lp.y / spr.height };
   }
 }
 

@@ -21,7 +21,8 @@ import {
   RIG_INFO,
   RIG_LIVE,
   dumpRig,
-  drawRigUvAxes,
+  drawRigSpritePreviewGuides,
+  syncRigSystemCursor,
 } from "./rigUi";
 import { artSourceOf, isCatalogArt, isUuidTexture, nameGameTexture } from "./sprites";
 
@@ -252,7 +253,7 @@ export class SpriteRig {
     this.liveTxt.setVisible(this.open);
     this.infoTxt.setVisible(this.open);
     this.hintTxt.setVisible(this.open);
-    this.scene.input.setDefaultCursor(this.open ? "default" : "none");
+    syncRigSystemCursor(this.scene);
     this.uiCam.setVisible(this.open);
     if (this.open) {
       this.refreshPreview();
@@ -337,7 +338,7 @@ export class SpriteRig {
     const frame = frames[this.frameIdx]!;
     const p = this.scene.input.activePointer;
     const uv = this.uvAt(p);
-    this.scene.input.setDefaultCursor(uv ? "crosshair" : "default");
+    syncRigSystemCursor(this.scene, uv ? "crosshair" : "default");
     const origin = this.originOf(key);
     const tex = this.scene.textures.get(key);
     const fr = tex.get(frame);
@@ -599,20 +600,12 @@ export class SpriteRig {
     const spr = this.preview;
     const toX = (u: number) => spr.x + (u - spr.originX) * spr.displayWidth;
     const toY = (v: number) => spr.y + (v - spr.originY) * spr.displayHeight;
-    const left = toX(0);
-    const right = toX(1);
-    const top = toY(0);
-    const bot = toY(1);
 
     if (hover) {
-      const hx = toX(hover.uvx);
-      const hy = toY(hover.uvy);
-      g.lineStyle(1, 0x7ad0ff, 0.85);
-      g.lineBetween(hx, top, hx, bot);
-      g.lineBetween(left, hy, right, hy);
+      drawRigSpritePreviewGuides(g, spr, {
+        hoverUv: { x: hover.uvx, y: hover.uvy },
+      });
     }
-
-    drawRigUvAxes(g, spr);
 
     if (!this.showMarks) return;
 
@@ -644,16 +637,13 @@ export class SpriteRig {
       g.lineStyle(1, 0xffe8c0, 0.95);
       g.strokeCircle(x, y, r);
     }
-    // Origin mark only when authored in SPRITE_SPECS (not the 0.5/0.5 default).
+    // Center / pivot: gold when authored in SPRITE_SPECS, solid white when default.
     const authored = lookupSpriteOrigin(key);
-    if (authored) {
-      const ox = toX(authored.x);
-      const oy = toY(authored.y);
-      g.lineStyle(1.25, 0xe8b84a, 0.95);
-      g.lineBetween(ox - 7, oy, ox + 7, oy);
-      g.lineBetween(ox, oy - 7, ox, oy + 7);
-      g.strokeCircle(ox, oy, 3);
-    }
+    drawRigSpritePreviewGuides(g, spr, {
+      origin: authored
+        ? { x: authored.x, y: authored.y, authored: true }
+        : { x: spr.originX, y: spr.originY, authored: false },
+    });
     if (this.pinned) {
       const px = toX(this.pinned.uvx);
       const py = toY(this.pinned.uvy);

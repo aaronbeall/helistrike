@@ -153,11 +153,11 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     ],
   },
   craft_stealthhawk: {
-    origin: uv(0.5, 0.4),
+    origin: uv(0.498, 0.489),
     points: [
-      { role: "rotor", x: 0.5, y: 0.4 },
+      { role: "rotor", x: 0.498, y: 0.489 },
       { role: "gun", x: 0.5, y: 0.16 },
-      ...pts("hardpoint", [uv(0.22, 0.48), uv(0.78, 0.48)]),
+      ...pts("hardpoint", [uv(0.179, 0.491), uv(0.820, 0.493)]),
     ],
   },
   craft_cyberhawk: {
@@ -215,7 +215,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
 
   craft_cyberhawk_rotor: { origin: uv(0.498, 0.459) },
   craft_cyberhawk_rotor_hulk: { origin: uv(0.481, 0.501) },
-  craft_stealthhawk_rotor: { origin: uv(0.491, 0.491) },
+  craft_stealthhawk_rotor: { origin: uv(0.497, 0.496) },
   craft_stealthhawk_rotor_hulk: { origin: uv(0.449, 0.511) },
   craft_chinook_rotor: { origin: uv(0.5, 0.5) },
   craft_osprey_rotor: { origin: uv(0.5, 0.5) },

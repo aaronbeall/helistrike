@@ -53,7 +53,8 @@ import {
   formatRotOff,
   makeRigText,
   setStackedTexts,
-  drawRigUvAxes,
+  drawRigSpritePreviewGuides,
+  syncRigSystemCursor,
 } from "./rigUi";
 
 const DEPTH = 9250;
@@ -73,8 +74,6 @@ type Filter = "all" | "ground" | "air" | "water" | "building" | "troop";
 const FILTERS: Filter[] = ["all", "ground", "air", "water", "building", "troop"];
 
 type Composition = "assembled" | "separated";
-
-const ORIGIN_COLOR = 0xe8b84a;
 
 type PreviewPart = {
   tex: string;
@@ -317,7 +316,7 @@ export class RosterRig {
     this.liveTxt.setVisible(this.open);
     this.infoTxt.setVisible(this.open);
     this.hintTxt.setVisible(this.open);
-    this.scene.input.setDefaultCursor(this.open ? "default" : "none");
+    syncRigSystemCursor(this.scene);
     this.uiCam.setVisible(this.open);
     if (this.open) this.refreshPreview();
     else {
@@ -433,7 +432,7 @@ export class RosterRig {
 
     if (ent.cat === "craft") this.layoutCraftPreview(craftOf(ent.kind));
     else this.layoutPreview(ent.kind, specOf(ent.kind));
-    this.scene.input.setDefaultCursor(this.uvAt(this.scene.input.activePointer) ? "crosshair" : "default");
+    syncRigSystemCursor(this.scene, this.uvAt(this.scene.input.activePointer) ? "crosshair" : "default");
   }
 
   private pageSize(): number {
@@ -1020,6 +1019,13 @@ export class RosterRig {
     return null;
   }
 
+  /** Hover UV on a specific preview image, if the pointer is over it. */
+  private hoverUvOn(im: Phaser.GameObjects.Image): { x: number; y: number } | null {
+    const hit = this.uvAt(this.scene.input.activePointer);
+    if (!hit || hit.im !== im) return null;
+    return { x: hit.uvx, y: hit.uvy };
+  }
+
   private drawHullMarks(opts: {
     kind?: UnitKind;
     radius: number;
@@ -1053,8 +1059,15 @@ export class RosterRig {
       g.strokeCircle(px, py, 4);
     }
 
-    drawRigUvAxes(g, this.hull);
-    for (const part of this.parts) drawRigUvAxes(g, part);
+    drawRigSpritePreviewGuides(g, this.hull, {
+      hoverUv: this.hoverUvOn(this.hull),
+    });
+    for (const part of this.parts) {
+      if (!part.visible) continue;
+      drawRigSpritePreviewGuides(g, part, {
+        hoverUv: this.hoverUvOn(part),
+      });
+    }
 
     if (!this.showMarks) return;
 
@@ -1188,12 +1201,12 @@ export class RosterRig {
       return { x: im.x + lx * ca - ly * sa, y: im.y + lx * sa + ly * ca };
     };
 
-    const catalogOrigin = lookupSpriteOrigin(texKey) ?? pivot;
-    const ox = toWorld(catalogOrigin.x, catalogOrigin.y);
-    g.lineStyle(1.25, ORIGIN_COLOR, 0.95);
-    g.lineBetween(ox.x - 7, ox.y, ox.x + 7, ox.y);
-    g.lineBetween(ox.x, ox.y - 7, ox.x, ox.y + 7);
-    g.strokeCircle(ox.x, ox.y, 3);
+    const catalogOrigin = lookupSpriteOrigin(texKey);
+    drawRigSpritePreviewGuides(g, im, {
+      origin: catalogOrigin
+        ? { x: catalogOrigin.x, y: catalogOrigin.y, authored: true }
+        : { x: pivot.x, y: pivot.y, authored: false },
+    });
 
     const points = lookupSpritePoints(texKey);
     const mounts = points
