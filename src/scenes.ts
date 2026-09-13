@@ -58,7 +58,7 @@ import {
   type Footprint,
 } from "./footprint";
 import { lookupSpriteMuzzles, lookupSpriteOrigin } from "./spriteOrigin";
-import { allCrafts, craftAgility, craftAimsWithTurret, craftBombDrop, craftCameraScale, craftComposite, craftCompositePartScale, craftCrewHudTag, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftGunPreferDegrees, craftGunPreferOffset, craftGunSocketSlots, craftHardpointMounts, craftLoadoutLabel, craftLoadoutParts, craftOf, craftOrigin, craftPreviewExhaustScale, craftPreviewExhaustTint, craftPreviewFitScale, craftRotorMounts, craftSocketBarrelCount, craftSocketMultiplicity, craftSocketPoints, craftSocketStartingAmmo, rotorDrawSpan, rotorMountsOf, rotorSpinSign, selectCraft, type CraftComposite } from "./craft";
+import { allCrafts, craftAgility, craftAimsWithTurret, craftBombDrop, craftCameraScale, craftComposite, craftCompositePartScale, craftCrewHudTag, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftGunPreferDegrees, craftGunPreferOffset, craftGunSocketSlots, craftHardpointMounts, craftLoadoutLabel, craftLoadoutParts, craftOf, craftOrigin, craftPreviewExhaustScale, craftPreviewExhaustTint, craftPreviewFitScale, craftRotorFlightSpeed, craftRotorMounts, craftRotorPreviewSpinMs, craftRotorTiltMul, craftSocketBarrelCount, craftSocketMultiplicity, craftSocketPoints, craftSocketStartingAmmo, rotorDrawSpan, rotorMountsOf, rotorSpinSign, selectCraft, type CraftComposite } from "./craft";
 import { allMissions, missionOf, selectMission } from "./mission";
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
 import { rigsAnyOpen, installRigHotkeys } from "./rigs";
@@ -67,7 +67,7 @@ import { setThermalPipeline, type ThermalPalette } from "./thermal";
 import { createTerrain25D, type Terrain25D } from "./terrain25d";
 import { LOAD_TIPS } from "./tips";
 import { fbm } from "./noise";
-import { preloadArt, prepareArt, extractBiomeTiles, bakeHeliHudWireTexture, heliHudWireUv, shadowAlpha, shadowKey, spriteUvPos, FX_SHEET_SIZE, FX_VARIANTS, registerArt, nameGameTexture, spritePivot, type HeliHudWireBake } from "./sprites";
+import { preloadArt, prepareArt, extractBiomeTiles, bakeHeliHudWireTexture, heliHudWireUv, shadowAlpha, shadowKey, spriteUvPos, FX_SHEET_SIZE, FX_VARIANTS, registerArt, nameGameTexture, spritePivot, muzzleGlowKey, type HeliHudWireBake } from "./sprites";
 import {
   generateWorld,
   generateWorldAsync,
@@ -205,6 +205,8 @@ type StingerJob = {
   duration: number;
   target?: { x: number; y: number; z?: number };
   done?: () => void;
+  /** Subtle = no bar, quieter type; Space frees cam/message early (time warp stays). */
+  style?: "dramatic" | "subtle";
 };
 
 function projectileFxScale(from: Shot["from"], effectiveInterval = PROJECTILE_FX_BASE_INTERVAL): number {
@@ -565,6 +567,7 @@ export class MenuScene extends Phaser.Scene {
   create(): void {
     const { width: w, height: h } = this.scale;
     this.cameras.main.setBackgroundColor("#1c1812");
+    this.input.setDefaultCursor("default");
     ensureMissionPreviews(this.textures);
     ensureExhaustGlow(this.textures);
     if (this.textures.exists("menu_splash")) {
@@ -637,7 +640,7 @@ export class MenuScene extends Phaser.Scene {
         this.tweens.add({
           targets: rotor,
           rotation: sign * Math.PI * 2,
-          duration: 60000,
+          duration: craftRotorPreviewSpinMs(craft),
           repeat: -1,
           ease: "Linear",
         });
@@ -1205,6 +1208,7 @@ export class LoadScene extends Phaser.Scene {
   private heliY = 0;
   private rotorAng = 0;
   private rotorSpd = 4;
+  private rotorFlight = 32;
   private loadU = 0.02;
 
   constructor() {
@@ -1214,10 +1218,13 @@ export class LoadScene extends Phaser.Scene {
     // Craft preview reuses craft_* textures; chrome Text/Graphics get load_* names.
     const { width: w, height: h } = this.scale;
     this.cameras.main.setBackgroundColor("#1c1812");
+    this.input.setDefaultCursor("default");
     this.heliY = h * 0.34;
     const hx = w / 2;
     const zs = 0.925;
     const craft = craftOf();
+    this.rotorFlight = craftRotorFlightSpeed(craft);
+    this.rotorSpd = this.rotorFlight * 0.12;
     const composite = craftComposite(craft);
     this.body = this.add
       .image(hx, this.heliY, composite.body.tex)
@@ -1322,10 +1329,12 @@ export class LoadScene extends Phaser.Scene {
 
   update(_t: number, dt: number): void {
     const dts = dt / 1000;
-    const targetSpd = 4 + this.loadU * 30;
+    const flight = this.rotorFlight;
+    const idle = flight * 0.12;
+    const targetSpd = idle + this.loadU * (flight * 1.06 - idle);
     this.rotorSpd = Phaser.Math.Linear(this.rotorSpd, targetSpd, 1 - Math.pow(0.14, dts));
     this.rotorAng += this.rotorSpd * dts;
-    const disc = Phaser.Math.Clamp((this.rotorSpd - 10) / 22, 0, 1);
+    const disc = Phaser.Math.Clamp((this.rotorSpd - flight * 0.3) / Math.max(1, flight * 0.7), 0, 1);
     const bob = Math.sin(_t / 420) * 1.6;
     this.body.y = this.heliY + bob;
     this.rotors.forEach((rotor, i) => {
@@ -1371,6 +1380,10 @@ export class MissionScene extends Phaser.Scene {
   craftParts!: CraftComposite;
   gun!: Phaser.GameObjects.Image;
   guns: Phaser.GameObjects.Image[] = [];
+  /** Additive tip heat glows paired 1:1 with turret `guns` (not fixed muzzles). */
+  gunHeatGlows: Phaser.GameObjects.Image[] = [];
+  /** Tip glow heat 0–1 (snap on fire, ~9s fade). */
+  gunTipHeat: number[] = [];
   shadow!: Phaser.GameObjects.Image;
   reticle!: Phaser.GameObjects.Image;
   reticleMark!: Phaser.GameObjects.Graphics;
@@ -1564,6 +1577,12 @@ export class MissionScene extends Phaser.Scene {
   stingerTarget?: { x: number; y: number; z?: number };
   /** Queued while another stinger is on screen. */
   stingerQueue: StingerJob[] = [];
+  stingerStyle: "dramatic" | "subtle" = "dramatic";
+  /** Space dismissed subtle stinger chrome/cam early; timer (time warp) continues. */
+  stingerReleased = false;
+  /** Keep thermal/sensor palette during SPIKE/TOW impact linger after the shot is gone. */
+  sensorLingerPalette: ThermalPalette | null = null;
+  sensorLingerT = 0;
   /** Live player crash hulk for camera follow. */
   playerCrashDebris?: Debris;
   /** End-screen prompt (BIRD DOWN / MISSION COMPLETE) — sim keeps running. */
@@ -1746,6 +1765,9 @@ export class MissionScene extends Phaser.Scene {
     this.towLookHold = 0;
     this.towLookX = 0;
     this.towLookY = 0;
+    this.sensorLingerPalette = null;
+    this.sensorLingerT = 0;
+    this.stingerReleased = false;
     this.playLastFrame = false;
     this.debugHit = false;
     this.debugBlast = false;
@@ -1880,6 +1902,17 @@ export class MissionScene extends Phaser.Scene {
         .setDepth(Layer.WORLD)
         .setOrigin(part.origin.x, part.origin.y)
     );
+    this.gunHeatGlows = this.guns.map((gun) => {
+      const glowTex = muzzleGlowKey(gun.texture.key);
+      const key = this.textures.exists(glowTex) ? glowTex : gun.texture.key;
+      return this.add
+        .image(0, 0, key)
+        .setVisible(false)
+        .setOrigin(gun.originX, gun.originY)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setDepth(Layer.WORLD);
+    });
+    this.gunTipHeat = this.guns.map(() => 0);
     this.gun =
       this.guns[0] ??
       this.add
@@ -3398,7 +3431,7 @@ export class MissionScene extends Phaser.Scene {
               },
           aim.x,
           aim.y,
-          this.specterPilot ? false : this.keySpace.isDown,
+          this.specterPilot ? false : this.keySpace.isDown && !(this.stingerStyle === "subtle" && this.stingerT > 0 && !this.stingerReleased),
           this.specterPilot ? false : this.keyShift.isDown
         );
         this.syncProjectionPose();
@@ -3450,7 +3483,7 @@ export class MissionScene extends Phaser.Scene {
               },
           aim.x,
           aim.y,
-          this.specterPilot ? false : this.keySpace.isDown,
+          this.specterPilot ? false : this.keySpace.isDown && !(this.stingerStyle === "subtle" && this.stingerT > 0 && !this.stingerReleased),
           this.specterPilot ? false : this.keyShift.isDown
         );
 
@@ -3531,24 +3564,24 @@ export class MissionScene extends Phaser.Scene {
             `${h.name} · KILL`,
             0xe8b84a,
             4.2,
-            completedTarget
+            completedTarget,
+            undefined,
+            "subtle"
           );
         }
       }
     }
     if (!hvAlive && this.heli.phase !== "dead" && !this.missionEndQueued) {
       this.missionEndQueued = true;
-      // Lock out flight / fire for the victory beat (stinger → end prompt).
-      this.over = true;
-      this.win = true;
-      this.hideAimChrome();
+      // Keep flight controls through the victory stinger; lock only when end() runs.
       this.showStinger(
         "MISSION COMPLETE",
         `${missionOf().label} · all objectives neutralized`,
         0xe8b84a,
         5.2,
         completedTarget,
-        () => this.end(true)
+        () => this.end(true),
+        "dramatic"
       );
     }
     if (this.heli.phase === "dead") {
@@ -3778,6 +3811,7 @@ export class MissionScene extends Phaser.Scene {
       for (const rotor of this.rotors) rotor.setVisible(false);
       for (const gun of this.guns) gun.setVisible(false);
       this.gun.setVisible(false);
+      for (const glow of this.gunHeatGlows) glow.setVisible(false);
       this.shadow.setVisible(false);
       for (const muzzle of this.muzzlePool) muzzle.setVisible(false);
       for (const glow of this.muzzleGlowPool) glow.setVisible(false);
@@ -3802,8 +3836,9 @@ export class MissionScene extends Phaser.Scene {
     const sy = 1 - Math.abs(h.pitch) * 0.14;
     this.body.setScale(sx * zs, sy * zs);
     const tiltRot = projectHeading(h.angle, h.x, h.y, h.z);
-    const rOffF = h.pitch * 16 * zs;
-    const rOffS = h.roll * 14 * zs;
+    const tiltMul = craftRotorTiltMul(craft);
+    const rOffF = h.pitch * 16 * zs * tiltMul;
+    const rOffS = h.roll * 14 * zs * tiltMul;
     const gunParts = this.craftParts.guns;
     const gunSlots = craftGunSocketSlots(craft);
     const aimSlot =
@@ -3859,6 +3894,8 @@ export class MissionScene extends Phaser.Scene {
           ? (h.stationAim[slot]?.[barrel] ?? h.gunAngle)
           : h.gunAngle;
       const gunRot = projectHeading(ang + Math.PI / 2, h.x, h.y, h.z);
+      this.gunTipHeat[i] = Math.max(0, (this.gunTipHeat[i] ?? 0) - (1 / 9) * dt);
+      const tipH = this.gunTipHeat[i] ?? 0;
       gun
         .setVisible(true)
         .setPosition(at.x, at.y)
@@ -3866,8 +3903,12 @@ export class MissionScene extends Phaser.Scene {
         .setScale(zs * gunSc)
         .setDepth(worldDepth(h.z, ZOff.gun + i * 0.001, h.y));
       applyEdgeLight(gun, gun.rotation);
-      applyThermalHeat(gun, this.thermalOn, 0.9);
+      applyThermalHeat(gun, this.thermalOn, 0.3);
+      this.syncGunHeatGlow(i, gun, tipH);
     });
+    for (let i = this.guns.length; i < this.gunHeatGlows.length; i++) {
+      this.gunHeatGlows[i]?.setVisible(false);
+    }
     const rotorParts = this.craftParts.rotors;
     if (!rotorParts.length) {
       for (const rotor of this.rotors) rotor.setVisible(false);
@@ -3875,7 +3916,7 @@ export class MissionScene extends Phaser.Scene {
       this.rotors.forEach((rotor, i) => {
         const part = rotorParts[i]!;
         const spinKey = part.spinTex;
-        const useSpin = !!spinKey && h.rotorSpd >= 16 && this.textures.exists(spinKey);
+        const useSpin = !!spinKey && h.rotorSpd >= craftRotorFlightSpeed(craft) * 0.5 && this.textures.exists(spinKey);
         const rotorKey = useSpin ? spinKey! : part.tex;
         rotor.setVisible(true);
         if (rotor.texture.key !== rotorKey) rotor.setTexture(rotorKey);
@@ -4229,7 +4270,7 @@ export class MissionScene extends Phaser.Scene {
     const g = this.sight;
     g.clear();
     const pylon = this.missilePylon(h.weapon);
-    const release = this.bombReleaseVelocity(spec, pylon.x, pylon.y, aim, 0);
+    const release = this.bombReleaseVelocity(spec, pylon.x, pylon.y, aim, 0, h.weapon);
     let x = pylon.x;
     let y = pylon.y;
     let z = h.z + ZOff.shot;
@@ -4288,14 +4329,17 @@ export class MissionScene extends Phaser.Scene {
     ox: number,
     oy: number,
     aim: { x: number; y: number },
-    yawOff: number
+    yawOff: number,
+    slot?: number
   ): { vx: number; vy: number; vz: number; angle: number } {
     const h = this.heli;
-    const tune = craftBombDrop(h.spec);
+    const socket = slot != null ? h.spec.sockets[slot] : h.spec.sockets[h.weapon];
+    const tune = craftBombDrop(h.spec, socket);
     const grav = spec.gravity?.acceleration ?? 210;
     const term = spec.gravity?.terminalVelocity ?? 520;
     const z0 = h.z + ZOff.shot;
     const gnd = groundZ(this.world, aim.x, aim.y);
+    // Socket momentum: fraction of craft vel. Low (Chinook) → aim-led; high (Lightning) → carry.
     const baseVx = h.vx * tune.momentum;
     const baseVy = h.vy * tune.momentum;
     const wantDx = aim.x - ox;
@@ -4313,41 +4357,26 @@ export class MissionScene extends Phaser.Scene {
       loft: number;
     } | null = null;
 
-    const baseSpd = Math.hypot(baseVx, baseVy);
-    const ux = baseSpd > 8 ? baseVx / baseSpd : Math.cos(h.angle);
-    const uy = baseSpd > 8 ? baseVy / baseSpd : Math.sin(h.angle);
-
     for (let i = 0; i < 9; i++) {
       const loft = loftLo + ((loftHi - loftLo) * i) / 8;
       const vz = Math.max(0, h.vz) + loft;
       const fallT = this.estimateBombFallTime(z0, vz, gnd, grav, term);
       const wantVx = wantDx / fallT;
       const wantVy = wantDy / fallT;
-      const needBx = wantVx - baseVx;
-      const needBy = wantVy - baseVy;
-
-      // Split into along-momentum vs lateral. Never brake along-track.
-      const alongNeed = needBx * ux + needBy * uy;
-      const latBx = needBx - ux * alongNeed;
-      const latBy = needBy - uy * alongNeed;
-      const alongBoost = Math.max(0, alongNeed);
-      const latMag = Math.hypot(latBx, latBy);
-
-      // Lateral gets first claim on maxBoost (same budget as a still throw sideways).
-      let latScale = 1;
-      if (latMag > tune.maxBoost && latMag > 1e-6) latScale = tune.maxBoost / latMag;
-      const boostLatX = latBx * latScale;
-      const boostLatY = latBy * latScale;
-      const latUsed = latMag * latScale;
-      const remain = Math.max(0, tune.maxBoost - latUsed);
-      const alongUsed = Math.min(alongBoost, remain);
-
-      const vx = baseVx + ux * alongUsed + boostLatX;
-      const vy = baseVy + uy * alongUsed + boostLatY;
+      // Corrective boost toward aim in any direction (incl. reverse / sideways).
+      let bx = wantVx - baseVx;
+      let by = wantVy - baseVy;
+      const bMag = Math.hypot(bx, by);
+      if (bMag > tune.maxBoost && bMag > 1e-6) {
+        const s = tune.maxBoost / bMag;
+        bx *= s;
+        by *= s;
+      }
+      const vx = baseVx + bx;
+      const vy = baseVy + by;
       const landX = ox + vx * fallT;
       const landY = oy + vy * fallT;
       const miss = Math.hypot(landX - aim.x, landY - aim.y);
-      // Prefer lower miss; among near ties, prefer more loft so the arc reads clearly.
       if (
         !best ||
         miss < best.miss - 5 ||
@@ -4511,6 +4540,41 @@ export class MissionScene extends Phaser.Scene {
     const sy = gun.y + mx * sa + my * ca;
     const at = screenToWorldAtZ(sx, sy, this.heli.z);
     return { x: at.x, y: at.y };
+  }
+
+  /** Snap tip glow on fire. Fixed muzzles skip. */
+  pulseTurretGunHeat(gunI: number): void {
+    if (gunI < 0 || gunI >= this.guns.length) return;
+    this.gunTipHeat[gunI] = Math.min(1, (this.gunTipHeat[gunI] ?? 0) + 0.05);
+  }
+
+  /**
+   * Tip heat: additive `{gun}_muzzle_glow` overlay (baked tip→30% gradient clipped to barrel).
+   */
+  syncGunHeatGlow(gunI: number, gun: Phaser.GameObjects.Image, tipHeat: number): void {
+    const glow = this.gunHeatGlows[gunI];
+    if (!glow) return;
+    const glowTex = muzzleGlowKey(gun.texture.key);
+    if (tipHeat < 0.02 || !gun.visible || !this.textures.exists(glowTex)) {
+      glow.setVisible(false);
+      return;
+    }
+    if (glow.texture.key !== glowTex) glow.setTexture(glowTex);
+    glow
+      .setVisible(true)
+      .setPosition(gun.x, gun.y)
+      .setRotation(gun.rotation)
+      .setOrigin(gun.originX, gun.originY)
+      .setScale(gun.scaleX, gun.scaleY)
+      .setDepth(gun.depth + 0.02)
+      .setAlpha(Phaser.Math.Clamp(tipHeat, 0, 1));
+    if (this.thermalOn) {
+      glow.setBlendMode(Phaser.BlendModes.NORMAL);
+      applyThermalHeat(glow, true, Phaser.Math.Linear(0.55, 1, tipHeat));
+    } else {
+      glow.clearTint();
+      glow.setBlendMode(Phaser.BlendModes.ADD);
+    }
   }
 
   /**
@@ -4830,16 +4894,19 @@ export class MissionScene extends Phaser.Scene {
       const aim = autoTarget ?? (lockOn && lockId != null ? this.unitById(lockId) : undefined) ?? air;
       const along = projectAlong(px, py, ang, aim ? aim.x : ptr.x, aim ? aim.y : ptr.y);
       const dist = Math.max(80, along);
-      const t = dist / spec.speed;
+      const inherit = spec.launch.mode === "muzzle" ? spec.launch.inheritMomentum : 0.35;
+      const accelRail = spec.launch.mode === "muzzle" && spec.launch.acceleration != null;
+      // AA rail: near-zero leave along craft heading. Instant muzzle (Hydra): full catalog speed.
+      const ownSpd = accelRail ? 10 : spec.speed;
+      const hvx = h.vx * inherit + Math.cos(ang) * ownSpd;
+      const hvy = h.vy * inherit + Math.sin(ang) * ownSpd;
+      const alongSpd = Math.max(40, hvx * Math.cos(ang) + hvy * Math.sin(ang));
+      const t = dist / alongSpd;
       const tx = px + Math.cos(ang) * dist;
       const ty = py + Math.sin(ang) * dist;
       const tz = aim && isAerial(aim.kind)
         ? aim.z + heightOf(aim.kind) * 0.5
         : groundZ(this.world, tx, ty);
-      const inherit = spec.launch.mode === "muzzle" ? spec.launch.inheritMomentum : 0.35;
-      const accelRail = spec.launch.mode === "muzzle" && spec.launch.acceleration != null;
-      // AA rail: near-zero leave along craft heading. Instant muzzle (Hydra): full catalog speed.
-      const ownSpd = accelRail ? 10 : spec.speed;
       const seekLoft = g.mode === "lock_on" ? g.seekDelay : undefined;
       this.spawnShot({
         kind: spec.kind,
@@ -4852,8 +4919,8 @@ export class MissionScene extends Phaser.Scene {
         x: px,
         y: py,
         z: h.z + ZOff.shot,
-        vx: h.vx * inherit + Math.cos(ang) * ownSpd,
-        vy: h.vy * inherit + Math.sin(ang) * ownSpd,
+        vx: hvx,
+        vy: hvy,
         vz: lockOn
           ? h.vz * inherit + (accelRail ? 0 : Math.max(28, ownSpd * 0.08))
           : (tz - h.z) / t,
@@ -4916,7 +4983,11 @@ export class MissionScene extends Phaser.Scene {
       const aim = autoTarget ?? air;
       const along = projectAlong(tip.x, tip.y, ang, aim ? aim.x : ptr.x, aim ? aim.y : ptr.y);
       const dist = Math.max(80, along);
-      const t = dist / spd;
+      const hvx = h.vx * inherit + Math.cos(ang) * spd;
+      const hvy = h.vy * inherit + Math.sin(ang) * spd;
+      // Flight time from actual along-barrel speed (incl. craft momentum) so vz matches laser tip.
+      const alongSpd = Math.max(40, hvx * Math.cos(ang) + hvy * Math.sin(ang));
+      const t = dist / alongSpd;
       const tx = tip.x + Math.cos(ang) * dist;
       const ty = tip.y + Math.sin(ang) * dist;
       const tz = aim && isAerial(aim.kind)
@@ -4949,8 +5020,8 @@ export class MissionScene extends Phaser.Scene {
         x: tip.x,
         y: tip.y,
         z: z0,
-        vx: h.vx * inherit + Math.cos(ang) * spd,
-        vy: h.vy * inherit + Math.sin(ang) * spd,
+        vx: hvx,
+        vy: hvy,
         vz: lockOn ? h.vz * inherit + Math.max(28, spd * 0.08) : (tz - z0) / t,
         angle: ang,
         life,
@@ -4966,6 +5037,7 @@ export class MissionScene extends Phaser.Scene {
         tint: spec.payload.mode === "plasma_helix" ? 0x66eeff : undefined,
         warpTimeScale: spec.payload.mode === "warp" ? spec.payload.timeScale : undefined,
       });
+      if (!fixed) this.pulseTurretGunHeat(mountedGunI);
       if (spec.beam || spec.payload.mode === "beam") {
         const beamEnd = worldToScreen(tx, ty, tz);
         const beam = this.add.graphics().setDepth(worldDepth(z0, ZOff.muzzle, tip.y));
@@ -5095,7 +5167,7 @@ export class MissionScene extends Phaser.Scene {
     const pylon = this.missilePylon(slot);
     const aim =
       st.gx != null && st.gy != null ? { x: st.gx, y: st.gy } : ptr;
-    const release = this.bombReleaseVelocity(spec, pylon.x, pylon.y, aim, yawOff);
+    const release = this.bombReleaseVelocity(spec, pylon.x, pylon.y, aim, yawOff, slot);
     this.spawnShot({
       kind: spec.kind,
       from: "player",
@@ -6604,7 +6676,14 @@ export class MissionScene extends Phaser.Scene {
         if (lingerSensor || lingerWire) {
           this.towLookX = s.x;
           this.towLookY = s.y;
-          this.towLookHold = lingerSensor ? 1.45 : 0.9;
+          this.towLookHold = lingerSensor ? 1.65 : 0.95;
+          if (lingerSensor) {
+            const view = s.wpnId ? PLAYER_WPNS[s.wpnId]?.sensorView : undefined;
+            if (view) {
+              this.sensorLingerPalette = this.sensorPaletteOf(view.palette);
+              this.sensorLingerT = this.towLookHold;
+            }
+          }
         }
         // Cluster open at impact
         if (beh?.payload.mode === "cluster" && st && !st.bomblet && !st.opened) {
@@ -6726,6 +6805,7 @@ export class MissionScene extends Phaser.Scene {
         const tx = u ? u.x : s.x + s.vx;
         const ty = u ? u.y : s.y + s.vy;
         const tz = u ? u.z + heightOf(u.kind) * 0.5 : groundZ(this.world, s.x, s.y);
+        const dist = Math.hypot(tx - s.x, ty - s.y);
         const home = norm3(tx - s.x, ty - s.y, tz - s.z);
         // While still slow, steer from nose (craft leave heading) — not residual drift.
         const dir0 =
@@ -6733,7 +6813,32 @@ export class MissionScene extends Phaser.Scene {
             ? { x: Math.cos(s.angle), y: Math.sin(s.angle), z: 0.2 }
             : { x: s.vx, y: s.vy, z: s.vz };
         const turn = (beh.steering?.turnRate ?? 7.4) * dt;
-        const d = steerDir(dir0.x, dir0.y, dir0.z, home.x, home.y, home.z, turn);
+        // Hellfire: after pop-up, yaw hard then dive gently (ridge-clearing arc).
+        const hellfire =
+          s.wpnId === "hellfire_missile" || s.wpnId === "mini_hellfire_missile";
+        let hx = home.x;
+        let hy = home.y;
+        let hz = home.z;
+        if (hellfire) {
+          const horizWant = Math.atan2(ty - s.y, tx - s.x);
+          const horizErr = Math.abs(Phaser.Math.Angle.Wrap(horizWant - s.angle));
+          // Far / not facing yet: bias home toward a high waypoint above the target.
+          const rangeBlend = Phaser.Math.Clamp(1 - dist / 520, 0, 1);
+          const faceBlend = 1 - Phaser.Math.Clamp(horizErr / 0.85, 0, 1);
+          const dive = rangeBlend * faceBlend;
+          const clearZ = tz + Phaser.Math.Linear(140, 18, dive);
+          const toClear = norm3(tx - s.x, ty - s.y, clearZ - s.z);
+          // Soften vertical home so pitch follows turn radius, not a snap dive into ridges.
+          const zGain = 0.18 + 0.82 * dive;
+          hx = toClear.x;
+          hy = toClear.y;
+          hz = toClear.z * zGain;
+          const n = Math.hypot(hx, hy, hz) || 1;
+          hx /= n;
+          hy /= n;
+          hz /= n;
+        }
+        const d = steerDir(dir0.x, dir0.y, dir0.z, hx, hy, hz, turn);
         s.angle = Math.atan2(d.y, d.x);
         s.vx = d.x * spd;
         s.vy = d.y * spd;
@@ -7002,7 +7107,10 @@ export class MissionScene extends Phaser.Scene {
 
   missileIgnite(s: Shot): void {
     if (s.from === "player" && (s.kind === "lock-on-missile" || s.beh?.guidance.mode === "lock_on")) {
-      const pitch = 0.92;
+      // Hellfire-class: steep brief pop-up. Soft loft weapons use steering.loft only.
+      const hellfirePop =
+        s.wpnId === "hellfire_missile" || s.wpnId === "mini_hellfire_missile";
+      const pitch = hellfirePop ? 1.15 : 0.92;
       const spd = Math.max(Math.hypot(s.vx, s.vy), 90);
       s.vx = Math.cos(s.angle) * spd * Math.cos(pitch);
       s.vy = Math.sin(s.angle) * spd * Math.cos(pitch);
@@ -7011,7 +7119,7 @@ export class MissionScene extends Phaser.Scene {
         s.beh?.guidance.mode === "lock_on"
           ? s.beh.guidance.seekDelay
           : s.beh?.steering?.loft ?? LOCK_ON_SEEK_DELAY;
-      s.loft = seekDelay;
+      s.loft = hellfirePop ? Math.min(seekDelay, 0.3) : seekDelay;
     } else if (s.from === "player") {
       // Soft loft only when authored; GPS/ground munitions should not leap skyward.
       if (s.beh?.steering?.loft != null) {
@@ -8549,6 +8657,7 @@ export class MissionScene extends Phaser.Scene {
     for (const rotor of this.rotors) rotor.setVisible(false);
     for (const gun of this.guns) gun.setVisible(false);
     this.gun.setVisible(false);
+    for (const glow of this.gunHeatGlows) glow.setVisible(false);
     this.shadow.setVisible(false);
     const hz = h.z + h.height * 0.5;
     const blast = 56;
@@ -10512,7 +10621,12 @@ export class MissionScene extends Phaser.Scene {
         applyThermalHeat(
           part,
           this.thermalOn,
-          texKey.includes("rotor") ? bodyHeat * 0.48 : Math.min(1, bodyHeat + 0.08)
+          texKey.includes("rotor")
+            ? bodyHeat * 0.48
+            : sp.building
+              // AA / SAM / tower guns are live emitters — hot vs cold concrete.
+              ? 0.9
+              : Math.min(1, bodyHeat + 0.08)
         );
       };
       guns.forEach((g, gi) => {
@@ -12379,7 +12493,7 @@ export class MissionScene extends Phaser.Scene {
       this.tweens.add({
         targets: rotor,
         rotation: (part.spinSign ?? -1) * Math.PI * 2,
-        duration: 60000,
+        duration: craftRotorPreviewSpinMs(helpCraft),
         repeat: -1,
         ease: "Linear",
       });
@@ -12689,12 +12803,15 @@ export class MissionScene extends Phaser.Scene {
   applyThermalMode(): void {
     const sensor = this.activeSensorShot();
     const view = sensor?.wpnId ? PLAYER_WPNS[sensor.wpnId]?.sensorView : undefined;
-    const want = this.thermalManual || !!view;
+    const lingerOn = this.sensorLingerT > 0 && this.sensorLingerPalette != null;
+    const want = this.thermalManual || !!view || lingerOn;
     const palette: ThermalPalette = view
       ? this.sensorPaletteOf(view.palette)
-      : this.heli.spec.kind === "prometheus"
-        ? "full_spectrum"
-        : "white_hot";
+      : lingerOn
+        ? this.sensorLingerPalette!
+        : this.heli.spec.kind === "prometheus" || this.heli.spec.kind === "cyberhawk"
+          ? "full_spectrum"
+          : "white_hot";
     if (want === this.thermalOn && (!want || this.thermalPalette === palette)) return;
 
     this.thermalOn = want;
@@ -13854,7 +13971,7 @@ export class MissionScene extends Phaser.Scene {
   syncLookCam(dt: number): void {
     this.applyThermalMode();
     // Death cam owns look immediately — don't let HV/mission stingers steal it.
-    if (this.heli.phase !== "dead" && this.stingerT > 0 && this.stingerTarget) {
+    if (this.heli.phase !== "dead" && this.stingerT > 0 && this.stingerTarget && !this.stingerReleased) {
       const elapsed = this.stingerDuration - this.stingerT;
       const ease = (t: number) => {
         const u = Phaser.Math.Clamp(t, 0, 1);
@@ -13983,9 +14100,16 @@ export class MissionScene extends Phaser.Scene {
       rate = 5.4;
     } else if (this.towLookHold > 0) {
       this.towLookHold = Math.max(0, this.towLookHold - dt);
+      if (this.sensorLingerT > 0) {
+        this.sensorLingerT = Math.max(0, this.sensorLingerT - dt);
+        if (this.sensorLingerT <= 0) this.sensorLingerPalette = null;
+      }
       ox += (this.towLookX - this.heli.x) * 0.82;
       oy += (this.towLookY - this.heli.y) * 0.82;
       rate = 5.4;
+    } else if (this.sensorLingerT > 0) {
+      this.sensorLingerT = 0;
+      this.sensorLingerPalette = null;
     }
     const k = 1 - Math.exp(-rate * dt);
     this.lookCamX = Phaser.Math.Linear(this.lookCamX, ox, k);
@@ -14368,38 +14492,50 @@ export class MissionScene extends Phaser.Scene {
     color: number,
     duration: number,
     target?: { x: number; y: number; z?: number },
-    done?: () => void
+    done?: () => void,
+    style: "dramatic" | "subtle" = "dramatic"
   ): void {
     if (this.stingerT > 0) {
-      this.stingerQueue.push({ title, detail, color, duration, target, done });
+      this.stingerQueue.push({ title, detail, color, duration, target, done, style });
       return;
     }
-    this.presentStinger({ title, detail, color, duration, target, done });
+    this.presentStinger({ title, detail, color, duration, target, done, style });
   }
 
   presentStinger(job: StingerJob): void {
     this.stingerRoot?.destroy(true);
     const { width, height } = this.scale;
-    const bg = this.add.rectangle(width / 2, height / 2, width, 92, 0x090908, 0.82);
-    const edgeTop = this.add.rectangle(width / 2, height / 2 - 46, width, 2, job.color, 0.9);
-    const edgeBottom = this.add.rectangle(width / 2, height / 2 + 46, width, 2, job.color, 0.9);
+    const style = job.style ?? "dramatic";
+    this.stingerStyle = style;
+    this.stingerReleased = false;
+    const kids: Phaser.GameObjects.GameObject[] = [];
+    if (style === "dramatic") {
+      kids.push(this.add.rectangle(width / 2, height / 2, width, 92, 0x090908, 0.82));
+      kids.push(this.add.rectangle(width / 2, height / 2 - 46, width, 2, job.color, 0.9));
+      kids.push(this.add.rectangle(width / 2, height / 2 + 46, width, 2, job.color, 0.9));
+    }
+    const titleSize = style === "subtle" ? "26px" : "38px";
+    const titleAlpha = style === "subtle" ? 0.88 : 1;
     const text = this.add
-      .text(width / 2, height / 2 - 8, job.title, {
+      .text(width / 2, height / 2 - (style === "subtle" ? 4 : 8), job.title, {
         fontFamily: "Black Ops One, Impact, sans-serif",
-        fontSize: "38px",
+        fontSize: titleSize,
         color: `#${job.color.toString(16).padStart(6, "0")}`,
         align: "center",
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setAlpha(titleAlpha);
     const sub = this.add
-      .text(width / 2, height / 2 + 26, job.detail, {
+      .text(width / 2, height / 2 + (style === "subtle" ? 22 : 26), job.detail, {
         fontFamily: "Share Tech Mono, monospace",
-        fontSize: "14px",
-        color: "#e8e0cc",
+        fontSize: style === "subtle" ? "12px" : "14px",
+        color: style === "subtle" ? "#c8c0aa" : "#e8e0cc",
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setAlpha(style === "subtle" ? 0.82 : 1);
+    kids.push(text, sub);
     const root = this.add
-      .container(0, 0, [bg, edgeTop, edgeBottom, text, sub])
+      .container(0, 0, kids)
       .setScrollFactor(0)
       .setDepth(Layer.HUD + 80)
       .setAlpha(0);
@@ -14413,14 +14549,31 @@ export class MissionScene extends Phaser.Scene {
     this.stingerDone = job.done;
   }
 
+  /** Subtle objective stinger: Space frees camera + hides banner; time warp keeps running. */
+  releaseSubtleStingerEarly(): void {
+    if (this.stingerT <= 0 || this.stingerStyle !== "subtle" || this.stingerReleased) return;
+    this.stingerReleased = true;
+    this.stingerTarget = undefined;
+    this.stingerRoot?.setVisible(false);
+  }
+
   tickStinger(wallDt: number): void {
     if (this.stingerT <= 0 || !this.stingerRoot) return;
+    if (
+      this.stingerStyle === "subtle" &&
+      !this.stingerReleased &&
+      Phaser.Input.Keyboard.JustDown(this.keySpace)
+    ) {
+      this.releaseSubtleStingerEarly();
+    }
     this.stingerT = Math.max(0, this.stingerT - wallDt);
     const elapsed = this.stingerDuration - this.stingerT;
     const fadeIn = Phaser.Math.Clamp(elapsed / 0.12, 0, 1);
     const fadeOut = Phaser.Math.Clamp(this.stingerT / 0.22, 0, 1);
-    this.stingerRoot.setAlpha(Math.min(fadeIn, fadeOut));
-    if (this.stingerText) {
+    if (!this.stingerReleased) {
+      this.stingerRoot.setAlpha(Math.min(fadeIn, fadeOut));
+    }
+    if (this.stingerText && !this.stingerReleased) {
       this.stingerText.setScale(Phaser.Math.Linear(1.12, 1, Phaser.Math.Clamp(elapsed / 0.3, 0, 1)));
     }
     if (this.stingerT === 0) {
@@ -14428,6 +14581,7 @@ export class MissionScene extends Phaser.Scene {
       this.stingerRoot = undefined;
       this.stingerText = undefined;
       this.stingerTarget = undefined;
+      this.stingerReleased = false;
       const done = this.stingerDone;
       this.stingerDone = undefined;
       done?.();

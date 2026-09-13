@@ -452,7 +452,7 @@ export type ArtSource = "image" | "generated";
  *    or authoring intermediates (`src_*` load sheets, relief `brush_*`).
  * 4. Derived keys:
  *    - **Art variants (catalog):** alternate appearances of the subject —
- *      `{rotor}_spin`, `{base}__{camo}`. Standalone generated art like `fx_shadow`
+ *      `{rotor}_spin`, `{base}__{camo}`, `{gun}_muzzle_glow`. Standalone generated art like `fx_shadow`
  *      counts as its own sprite, not a utility map.
  *    - **Utility maps (hidden):** runtime effect/mode buffers — `{base}_sh0..3`,
  *      `{base}_heat`, `{base}_sink`, and `hud_wire_sh`. Still bake them for gameplay;
@@ -765,7 +765,14 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     const srcKey = `src_${art.key}`;
     if (!textures.exists(srcKey)) continue;
     // Gun mounts are authored barrel-up — no rotate.
-    put(textures, art.key, fit(keyImage(src(textures, srcKey), "magenta"), art.size));
+    const gun = fit(keyImage(src(textures, srcKey), "magenta"), art.size);
+    put(textures, art.key, gun);
+    put(
+      textures,
+      `${art.key}_muzzle_glow`,
+      bakeMuzzleGlow(gun, muzzleGlowPalette(art.key)),
+      "generated"
+    );
   }
 
   const blastSrc = src(textures, "src_blasts");
@@ -1256,6 +1263,48 @@ function keyPixels(img: HTMLImageElement, mode: "magenta" | "studio" | "edge"): 
   }
   g.putImageData(pix, 0, 0);
   return c;
+}
+
+/**
+ * Tip heat overlay for a barrel-up gun: hot color from the top down to 30% height,
+ * clipped to the gun's opaque pixels. Runtime alpha = tip heat.
+ */
+export function muzzleGlowKey(gunKey: string): string {
+  return `${gunKey.replace(/__(woodland|desert|urban|snow|digital)$/, "")}_muzzle_glow`;
+}
+
+function muzzleGlowPalette(key: string): "hot" | "cool" {
+  return key === "gun_railgun" || key === "gun_plasma" || key === "gun_tesla" ? "cool" : "hot";
+}
+
+export function bakeMuzzleGlow(
+  src: HTMLCanvasElement,
+  palette: "hot" | "cool" = "hot"
+): HTMLCanvasElement {
+  const w = src.width;
+  const h = src.height;
+  const out = document.createElement("canvas");
+  out.width = w;
+  out.height = h;
+  const g = out.getContext("2d", { willReadFrequently: true })!;
+  const reach = Math.max(1, h * 0.3);
+  const grad = g.createLinearGradient(0, 0, 0, reach);
+  if (palette === "cool") {
+    grad.addColorStop(0, "rgba(230,255,255,1)");
+    grad.addColorStop(0.28, "rgba(112,232,255,0.92)");
+    grad.addColorStop(0.7, "rgba(48,150,220,0.38)");
+    grad.addColorStop(1, "rgba(20,90,180,0)");
+  } else {
+    grad.addColorStop(0, "rgba(255,250,230,1)");
+    grad.addColorStop(0.28, "rgba(255,150,40,0.94)");
+    grad.addColorStop(0.7, "rgba(255,70,20,0.38)");
+    grad.addColorStop(1, "rgba(180,30,8,0)");
+  }
+  g.fillStyle = grad;
+  g.fillRect(0, 0, w, reach);
+  g.globalCompositeOperation = "destination-in";
+  g.drawImage(src, 0, 0);
+  return out;
 }
 
 /**

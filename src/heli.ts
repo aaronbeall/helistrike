@@ -2,6 +2,9 @@ import Phaser from "phaser";
 import {
   craftGunPreferOffset,
   craftOf,
+  craftRotorFlightSpeed,
+  craftRotorSpoolDur,
+  craftRotorSpoolPeak,
   craftSocketBarrelCount,
   type CraftKind,
 } from "./craft";
@@ -28,12 +31,9 @@ export const CRUISE_DAMP = 2.2;
 /** How fast cruise's ground reference tracks real terrain. Low = ignore rivers. */
 export const GND_FOLLOW = 0.55;
 
-/** Rotor spool before the lift-off prompt (seconds). */
-export const SPOOL_DUR = 2.35;
-const ROTOR_SPOOL_PEAK = 26;
-const ROTOR_FLIGHT = 32;
-/** Rotor speed before dust-off starts kicking in during spool. */
+/** Rotor speed before dust-off starts kicking in during spool (Apache-ref units). */
 const DUST_ROTOR_MIN = 15;
+const DUST_ROTOR_MIN_REF_PEAK = 26;
 /** Pad sit height above ground while waiting for lift-off (landing-gear clearance). */
 const PAD_AGL = 5.5;
 
@@ -122,17 +122,15 @@ export class Heli {
   }
 
   private get spoolDur(): number {
-    return this.spec.spoolDur ?? SPOOL_DUR;
+    return craftRotorSpoolDur(this.spec);
   }
 
   private get rotorFlight(): number {
-    return this.spec.rotorFlight ?? ROTOR_FLIGHT;
+    return craftRotorFlightSpeed(this.spec);
   }
 
   private get rotorSpoolPeak(): number {
-    return this.spec.rotorFlight != null
-      ? this.spec.rotorFlight * (ROTOR_SPOOL_PEAK / ROTOR_FLIGHT)
-      : ROTOR_SPOOL_PEAK;
+    return craftRotorSpoolPeak(this.spec);
   }
 
   startAirborne(angle: number, world: WorldData): void {
@@ -165,7 +163,7 @@ export class Heli {
   get dustPower(): number {
     if (this.phase === "spool") {
       const peak = this.rotorSpoolPeak;
-      const dustMin = peak * (DUST_ROTOR_MIN / ROTOR_SPOOL_PEAK);
+      const dustMin = peak * (DUST_ROTOR_MIN / DUST_ROTOR_MIN_REF_PEAK);
       if (this.rotorSpd < dustMin) return 0;
       const u = Phaser.Math.Clamp(
         (this.rotorSpd - dustMin) / Math.max(1, peak - dustMin),
@@ -253,6 +251,11 @@ export class Heli {
         (Math.cos(this.angle) * toMx + Math.sin(this.angle) * toMy) / toMLen;
       if (this.edgeTurn && safelyInland && headingIn > 0.55) this.edgeTurn = false;
       if (this.edgeTurn) desired = Math.atan2(toMy, toMx);
+      else if (controllable && left !== right) {
+        // Circling: A/D retarget yaw to ±90° from mouse aim (same momentum yaw as mouse turn).
+        const mouseAng = Math.atan2(aimY - this.y, aimX - this.x);
+        desired = mouseAng + (right ? Math.PI / 2 : -Math.PI / 2);
+      }
     }
     if (controllable) {
       const err = Phaser.Math.Angle.Wrap(desired - this.angle);

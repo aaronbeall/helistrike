@@ -8,6 +8,10 @@ import { weaponMountTex } from "./combat";
 
 const DEFAULT_ORIGIN = { x: 0.5, y: 0.5 };
 
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n));
+}
+
 /**
  * Playable / selectable craft.
  * UV layout lives in SPRITE_SPECS for body/gun textures — craft only names textures
@@ -76,13 +80,18 @@ export interface CraftSocket {
   muzzleFire?: "single" | "alternate" | "simultaneous";
   /** Crew-served station flavor (door / ramp / belly gunners) — not a technical "auto" tag. */
   crew?: CrewRole;
+  /**
+   * Gravity-bomb release for this hardpoint. Socket wins over craft-level `bombDrop`.
+   * Lower `momentum` = more aim-directed (Chinook); higher = carry craft velocity (Lightning).
+   */
+  bombDrop?: CraftBombDrop;
 }
 
-/** Per-craft gravity-bomb launcher (momentum inherit + capped corrective boost). */
+/** Per-socket / per-craft gravity-bomb launcher (momentum inherit + capped corrective boost). */
 export interface CraftBombDrop {
   /** Fraction of craft horizontal velocity inherited (0–1). */
   momentum: number;
-  /** Max horizontal boost the launcher can add (world units / sec). */
+  /** Max horizontal boost toward aim the launcher can add (world units / sec). */
   maxBoost: number;
   /** Base upward release impulse (world units / sec). */
   loft: number;
@@ -117,10 +126,12 @@ export interface CraftSpec {
   rotorHulk?: string;
   /** Draw multiplier for the rotor overlay relative to its baked texture size. */
   rotorScale?: number;
-  /** Rotor wind-up duration before lift-off; defaults to global heli spool. */
-  spoolDur?: number;
-  /** Steady flight rotor angular speed; defaults to global heli rotor flight speed. */
-  rotorFlight?: number;
+  /**
+   * Blade mass / inertia relative to Apache (= 1). Drives spool duration and
+   * spin rate (mission + previews). Omit → derived from `rotorDrawSpan`.
+   * Tiny (Murder Drone ~0.3) = near-instant spool + fast spin; Chinook >1 = slower.
+   */
+  rotorInertia?: number;
   /** Sprite nose-up offset (world aim 0 is +X). */
   rotOff: number;
   forwardThrust: number;
@@ -142,8 +153,8 @@ export interface CraftSpec {
   /** Future pickup/place capability; no cargo gameplay exists yet. */
   liftClass?: "medium" | "heavy";
   /**
-   * Gravity-bomb release tuning. Momentum is inherited, then a capped
-   * boost steers the impact toward the aim. Omit → shared defaults.
+   * Fallback gravity-bomb release when a socket omits `bombDrop`.
+   * Prefer authoring on the bomb hardpoint itself.
    */
   bombDrop?: CraftBombDrop;
   /**
@@ -206,6 +217,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
       { id: "wing_gun_l", class: "fixed", controller: "pilot", weapon: "minigun", points: "muzzle", muzzleFire: "simultaneous" },
       { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket", points: "hardpoint" },
       { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "hellfire_missile", points: "hardpoint" },
+      { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "tow_missile", points: "hardpoint" },
     ],
   },
   cobra: {
@@ -316,9 +328,8 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 520, strafeThrust: 280, maxSpeed: 310, minSpeed: 0, yawRate: 0.72, yawAccel: 3.4, drag: 1.65,
     verticalThrust: 340, cruiseThrust: 34, cruiseAgl: 48, maxAgl: 125,
     liftClass: "heavy",
-    bombDrop: { momentum: 1, maxBoost: 100, loft: 130, loftMax: 220 },
     sockets: [
-      // Forward cabin guns: explicit mount ↔ heading (same multi-mount model as Blackhawk doors).
+      // Forward cabin guns: explicit mount ↔ heading (same multi-mount model as Black Hawk doors).
       {
         id: "cabin_forward",
         class: "turret",
@@ -331,8 +342,23 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
         ],
         traverse: 240,
       },
-      { id: "bomb_bay_1", class: "hardpoint", controller: "pilot", weapon: "heavy_bomb", points: "hardpoint" },
-      { id: "bomb_bay_2", class: "hardpoint", controller: "pilot", weapon: "cluster_bomb", points: "hardpoint" },
+      // Heavy lift: low momentum inherit so hover / reverse drops can go where aimed.
+      {
+        id: "bomb_bay_1",
+        class: "hardpoint",
+        controller: "pilot",
+        weapon: "heavy_bomb",
+        points: "hardpoint",
+        bombDrop: { momentum: 0.28, maxBoost: 240, loft: 130, loftMax: 230 },
+      },
+      {
+        id: "bomb_bay_2",
+        class: "hardpoint",
+        controller: "pilot",
+        weapon: "cluster_bomb",
+        points: "hardpoint",
+        bombDrop: { momentum: 0.28, maxBoost: 240, loft: 130, loftMax: 230 },
+      },
       // Ramp gun faces aft.
       {
         id: "cabin_ramp",
@@ -392,8 +418,8 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
   },
   stealthhawk: {
     kind: "stealthhawk",
-    name: "Stealthhawk",
-    fullName: "XH-60 Stealthhawk",
+    name: "Stealth Hawk",
+    fullName: "XH-60 Stealth Hawk",
     flightModel: "heli",
     sizeM: 14.7,
     ammoScale: 1,
@@ -411,16 +437,16 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     sockets: [
       { id: "chin_turret", class: "turret", controller: "pilot", weapon: "concealed_cannon", points: "gun", traverse: 220 },
       { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "guided_rockets", points: "hardpoint" },
-      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "smoke_bomb", points: "hardpoint" },
-      { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "stinger_missile", points: "hardpoint" },
+      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "stinger_missile", points: "hardpoint" },
+      { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "smoke_bomb", points: "hardpoint" },
     ],
     enemyAimMul: 0.55,
     enemySeekerMul: 0.42,
   },
   cyberhawk: {
     kind: "cyberhawk",
-    name: "Cyberhawk",
-    fullName: "XH-88 Cyberhawk",
+    name: "Cyber Hawk",
+    fullName: "XH-88 Cyber Hawk",
     flightModel: "heli",
     sizeM: 14.7,
     ammoScale: 1.05,
@@ -473,9 +499,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     gunVisible: false,
     rotor: "craft_quad_drone_rotor",
     rotorHulk: "craft_quad_drone_rotor_hulk",
-    rotorScale: 0.4,
-    spoolDur: 0.55,
-    rotorFlight: 52,
+    rotorScale: 0.26,
     rotOff: Math.PI / 2,
     forwardThrust: 760, strafeThrust: 700, maxSpeed: 440, minSpeed: 0, yawRate: 4.35, yawAccel: 23.5, drag: 1.05,
     verticalThrust: 650, cruiseThrust: 60, cruiseAgl: 38, maxAgl: 105,
@@ -483,7 +507,14 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
       { id: "belly_gun", class: "fixed", controller: "pilot", weapon: "machine_gun", points: "muzzle" },
       { id: "belly_coil", class: "fixed", controller: "pilot", weapon: "tesla_beam", points: "muzzle" },
       { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "mini_hellfire_missile", points: "hardpoint" },
-      { id: "bomb_bay", class: "hardpoint", controller: "pilot", weapon: "mini_bomb", points: "hardpoint" },
+      {
+        id: "bomb_bay",
+        class: "hardpoint",
+        controller: "pilot",
+        weapon: "mini_bomb",
+        points: "hardpoint",
+        bombDrop: { momentum: 0.45, maxBoost: 160, loft: 110, loftMax: 190 },
+      },
     ],
   },
   lightning_ii: {
@@ -506,7 +537,15 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
       { id: "nose_gun", class: "fixed", controller: "pilot", weapon: "medium_gatling_cannon", points: "muzzle" },
       { id: "internal_bay_1", class: "hardpoint", controller: "pilot", weapon: "long_range_missile", points: "hardpoint" },
       { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "sidewinder_missile", points: "hardpoint" },
-      { id: "internal_bay_2", class: "hardpoint", controller: "pilot", weapon: "gps_bomb", points: "hardpoint" },
+      // Fast attack: bombs carry craft speed; little corrective throw.
+      {
+        id: "internal_bay_2",
+        class: "hardpoint",
+        controller: "pilot",
+        weapon: "gps_bomb",
+        points: "hardpoint",
+        bombDrop: { momentum: 0.92, maxBoost: 70, loft: 85, loftMax: 150 },
+      },
     ],
   },
   gunship: {
@@ -579,8 +618,22 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     sockets: [
       { id: "nose_gun", class: "fixed", controller: "pilot", weapon: "heavy_cannon", points: "muzzle" },
       { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "heavy_guided_missile", points: "hardpoint" },
-      { id: "bomb_bay_1", class: "hardpoint", controller: "pilot", weapon: "bomb", points: "hardpoint" },
-      { id: "bomb_bay_2", class: "hardpoint", controller: "pilot", weapon: "gps_bomb", points: "hardpoint" },
+      {
+        id: "bomb_bay_1",
+        class: "hardpoint",
+        controller: "pilot",
+        weapon: "bomb",
+        points: "hardpoint",
+        bombDrop: { momentum: 0.78, maxBoost: 110, loft: 100, loftMax: 180 },
+      },
+      {
+        id: "bomb_bay_2",
+        class: "hardpoint",
+        controller: "pilot",
+        weapon: "gps_bomb",
+        points: "hardpoint",
+        bombDrop: { momentum: 0.85, maxBoost: 90, loft: 90, loftMax: 160 },
+      },
     ],
   },
   prometheus: {
@@ -628,15 +681,18 @@ export function craftOf(kind: CraftKind = selected): CraftSpec {
 }
 
 const DEFAULT_BOMB_DROP: CraftBombDrop = {
-  momentum: 1,
-  maxBoost: 100,
+  momentum: 0.55,
+  maxBoost: 160,
   loft: 125,
   loftMax: 210,
 };
 
-/** Gravity-bomb release tune for a craft (Chinook has authored values). */
-export function craftBombDrop(c: CraftSpec = craftOf()): CraftBombDrop {
-  const d = c.bombDrop;
+/** Gravity-bomb release tune: socket → craft → defaults. */
+export function craftBombDrop(
+  c: CraftSpec = craftOf(),
+  socket?: CraftSocket | null
+): CraftBombDrop {
+  const d = socket?.bombDrop ?? c.bombDrop;
   if (!d) return { ...DEFAULT_BOMB_DROP };
   return {
     momentum: d.momentum,
@@ -735,6 +791,68 @@ export function rotorDrawSpan(tex: string, partScale = 1): number {
   if (tex === "craft_apache_rotor") return 124 * 1.08 * partScale;
   if (tex.includes("rotor") && tex !== "enemy_drone_rotor") return 108 * partScale;
   return 108 * partScale;
+}
+
+/** Apache main-rotor draw span — inertia reference (= 1). */
+export const APACHE_ROTOR_SPAN = rotorDrawSpan("craft_apache_rotor", 1);
+
+/** Largest on-screen rotor diameter for a craft (main disc, not tip tanks). */
+export function craftRotorDrawSpan(c: CraftSpec = craftOf()): number {
+  if (!c.rotor) return APACHE_ROTOR_SPAN;
+  const base = c.rotorScale ?? 1;
+  const mounts = rotorMountsOf(c.body);
+  if (!mounts.length) return rotorDrawSpan(c.rotor, base);
+  let best = 0;
+  for (const m of mounts) {
+    const span = rotorDrawSpan(c.rotor, base * (m.scale ?? 1));
+    if (span > best) best = span;
+  }
+  return best || rotorDrawSpan(c.rotor, base);
+}
+
+/**
+ * Blade inertia relative to Apache (1). Authored `rotorInertia` wins; otherwise
+ * derived from effective rotor draw span.
+ */
+export function craftRotorInertia(c: CraftSpec = craftOf()): number {
+  if (c.rotorInertia != null) return clamp(c.rotorInertia, 0.12, 3);
+  if (!c.rotor) return 1;
+  return clamp(craftRotorDrawSpan(c) / APACHE_ROTOR_SPAN, 0.15, 2.5);
+}
+
+/** Reference spool / flight rates at Apache inertia (= 1). */
+const ROTOR_SPOOL_DUR_REF = 2.35;
+const ROTOR_FLIGHT_REF = 32;
+const ROTOR_SPOOL_PEAK_REF = 26;
+
+/** Seconds to wind up before lift-off prompt. */
+export function craftRotorSpoolDur(c: CraftSpec = craftOf()): number {
+  const i = craftRotorInertia(c);
+  return clamp(ROTOR_SPOOL_DUR_REF * Math.pow(i, 1.15), 0.22, 4.5);
+}
+
+/** Steady flight rotor angular speed. */
+export function craftRotorFlightSpeed(c: CraftSpec = craftOf()): number {
+  const i = craftRotorInertia(c);
+  return clamp(ROTOR_FLIGHT_REF / Math.pow(i, 0.45), 18, 72);
+}
+
+/** Peak angular speed at end of spool (before easing up to flight). */
+export function craftRotorSpoolPeak(c: CraftSpec = craftOf()): number {
+  return craftRotorFlightSpeed(c) * (ROTOR_SPOOL_PEAK_REF / ROTOR_FLIGHT_REF);
+}
+
+/** Menu / help idle: ms per full revolution (Apache ≈ 60s). */
+export function craftRotorPreviewSpinMs(c: CraftSpec = craftOf()): number {
+  return Math.round(60000 * Math.pow(craftRotorInertia(c), 0.85));
+}
+
+/**
+ * Screen-space disc lean vs body pitch/roll (Apache = 1).
+ * Smaller / lighter discs shift less; keeps the fake parallax in proportion.
+ */
+export function craftRotorTiltMul(c: CraftSpec = craftOf()): number {
+  return clamp(craftRotorInertia(c), 0.14, 1.35);
 }
 
 /**

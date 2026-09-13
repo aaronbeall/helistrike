@@ -310,12 +310,14 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   hellfire_missile: {
     id: "hellfire_missile", name: "HELLFIRE", fullName: "HELLFIRE MISSILE", designation: "AGM-114R HELLFIRE II", ammo: 8, fireCd: 0.55, speed: 380,
     dmg: 185, blast: 175, life: 4.9, kind: "lock-on-missile", look: ordLook("laserGuided"), scale: 1, trailScale: 0.55,
-    guidance: lockOn(0.5, 160), launch: motor(250, 500, 2.1), payload: HE, control: { mode: "lock_then_click" },
-    steering: { turnRate: 7.4 }, fits: FIT_HARDPOINT, notes: ["laser lock; fire-and-forget after launch"],
+    // Brief steep pop-up, then seek with soft dive (see lock_on flight + missileIgnite).
+    guidance: lockOn(0.5, 160, RETICLE, 0.28), launch: motor(250, 500, 2.1), payload: HE, control: { mode: "lock_then_click" },
+    steering: { turnRate: 7.8, loft: 0.28 }, fits: FIT_HARDPOINT, notes: ["laser lock; steep pop then gentle dive"],
   },
   tv_missile: {
     id: "tv_missile", name: "SPIKE", fullName: "SPIKE MISSILE", designation: "SPIKE NLOS COMMAND MISSILE", ammo: 6, fireCd: 1.15, speed: 340,
     dmg: 205, blast: 172, life: 30, kind: "guided-missile", look: ordLook("guided"), scale: 0.95, trailScale: 0.52,
+    // Same kick-motor / steer family as TOW; adds soft-lock, commit dash, thermal seeker, no wire.
     guidance: {
       mode: "steer_commit",
       lockTime: 0.45,
@@ -328,8 +330,8 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     steering: { turnRate: 2.4, terminalTurnRate: 6.5, loft: 0.22 },
     sensorView: { mode: "thermal", source: "seeker", palette: "white_hot" },
     fits: FIT_HARDPOINT, notes: [
-      "cruises under seeker POV; soft-lock steers and dives on unit, broken lock returns to mouse",
-      "second click commits to lock or aim point — dash thrust, camera follows then lingers on impact",
+      "steer family with TOW — soft-lock + second-click commit instead of wire hold",
+      "thermal seeker cam; linger holds thermal until camera returns",
     ],
   },
   minigun: {
@@ -348,8 +350,9 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   tow_missile: {
     id: "tow_missile", name: "TOW", fullName: "TOW MISSILE", designation: "BGM-71E TOW 2A MISSILE", ammo: 6, fireCd: 1.1, speed: 340,
     dmg: 176, blast: 160, life: 5.2, kind: "guided-missile", look: ordLook("guided"), scale: 1, trailScale: 0.52,
+    // Steer family with SPIKE: hold wire, no lock/commit/thermal (could add later).
     guidance: { mode: "steer", steerRate: 2.2, maxAngle: 0.75, wire: true }, launch: motor(250, 420, 2.4), payload: HE,
-    control: HOLD, steering: { turnRate: 2.2 }, fits: FIT_HARDPOINT, notes: ["continuous command guidance"],
+    control: HOLD, steering: { turnRate: 2.2 }, fits: FIT_HARDPOINT, notes: ["continuous wire command; same steer family as SPIKE"],
   },
   sidewinder_missile: {
     id: "sidewinder_missile", name: "SIDEWINDER", fullName: "SIDEWINDER MISSILE", designation: "AIM-9X SIDEWINDER", ammo: 12, fireCd: 0.28, speed: 980,
@@ -408,12 +411,12 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     fits: FIT_GUN, notes: ["suppressed report and low muzzle flash"],
   },
   smoke_bomb: {
-    id: "smoke_bomb", name: "SMOKE", fullName: "SMOKE BOMB", designation: "LASER-GUIDED SMOKE BOMB", ammo: 8, fireCd: 1.15, speed: 370,
-    dmg: 24, blast: 195, life: 6, kind: "guided-missile", look: ordLook("canister"), scale: 0.88, trailScale: 0.52,
+    id: "smoke_bomb", name: "SMOKE", fullName: "SMOKE BOMB", designation: "LASER-GUIDED SMOKE BOMB", ammo: 8, fireCd: 1.15, speed: 145,
+    dmg: 24, blast: 195, life: 9, kind: "guided-missile", look: ordLook("canister"), scale: 0.88, trailScale: 0.4,
     guidance: { mode: "steer_commit", lockTime: 0.4, lockRadius: 210, wire: false, terminalOnSecondClick: true },
-    launch: motor(250, 400, 2.2), payload: { mode: "smoke", duration: 12, radius: 190, blocksLos: true },
-    control: { mode: "first_second_click" }, steering: { turnRate: 3, terminalTurnRate: 6.5, loft: 0.32 },
-    fits: FIT_HARDPOINT, notes: ["NLOS delivery creates persistent LOS-blocking smoke"],
+    launch: motor(70, 95, 3.8), payload: { mode: "smoke", duration: 12, radius: 190, blocksLos: true },
+    control: { mode: "first_second_click" }, steering: { turnRate: 2.4, terminalTurnRate: 5.2, loft: 0.28 },
+    fits: FIT_HARDPOINT, notes: ["slow NLOS canister — persistent LOS-blocking smoke"],
   },
   stinger_missile: {
     id: "stinger_missile", name: "STINGER", fullName: "STINGER MISSILE", designation: "FIM-92 STINGER STEALTH POD", ammo: 10, fireCd: 0.5, speed: 475,
@@ -422,11 +425,11 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     steering: { turnRate: 9.4 }, fits: FIT_HARDPOINT, notes: ["low-signature heat seeker"],
   },
   railgun: {
-    id: "railgun", name: "RAILGUN", fullName: "RAILGUN", designation: "RG-40 HYPERVELOCITY RAILGUN", ammo: 160, fireCd: 0.38, speed: 1850,
-    dmg: 46, blast: 8, life: 0.16, kind: "cannon", look: cannonLook("railgun"), mount: MOUNT_RAILGUN,
+    id: "railgun", name: "RAILGUN", fullName: "RAILGUN", designation: "RG-40 HYPERVELOCITY RAILGUN", ammo: 180, fireCd: 0.2, speed: 1850,
+    dmg: 52, blast: 12, life: 0.16, kind: "cannon", look: cannonLook("railgun"), mount: MOUNT_RAILGUN,
     tracer: { w: 140, h: 14, core: [255, 255, 255], mid: [120, 220, 255], rim: [40, 120, 255], glow: 1.15 }, scale: 0.85,
     guidance: NONE, launch: MUZZLE, payload: { mode: "kinetic", penetration: 1.4 }, control: HOLD,
-    fits: FIT_GUN, notes: ["hypervelocity penetrator; slow automatic fire"],
+    fits: FIT_GUN, notes: ["hypervelocity penetrator; paced automatic fire"],
   },
   swarm_missile: {
     id: "swarm_missile", name: "STARSTREAK", fullName: "STARSTREAK MISSILE", designation: "STARSTREAK HVM BEAM-RIDING DARTS", ammo: 18, fireCd: 0.48, speed: 820,

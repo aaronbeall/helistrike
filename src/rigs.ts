@@ -102,7 +102,7 @@ export class RigsScene extends Phaser.Scene {
     });
   }
 
-  /** Keep the OS cursor visible while any rig is open; restore hidden only when all close. */
+  /** Keep the OS cursor visible while any rig is open; restore scene-appropriate cursor when all close. */
   syncSystemCursor(prefer?: string): void {
     syncRigSystemCursor(this, prefer);
   }

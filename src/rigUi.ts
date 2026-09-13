@@ -515,16 +515,41 @@ export function drawRigSpritePreviewGuides(
 
 /**
  * Keep the OS cursor visible while any rig overlay is open.
- * Closing a rig no longer forces `none` if another rig is still open.
+ * When all rigs close, restore combat hide only if mission is the active scene
+ * (menu/load keep the system cursor — canvas cursor is shared across scenes).
  */
 export function syncRigSystemCursor(from: Phaser.Scene, prefer?: string): void {
   const r = from.scene.get("rigs") as
     | { ready?: boolean; anyOpen?: () => boolean; input: Phaser.Input.InputPlugin }
     | null;
-  if (r?.ready && typeof r.anyOpen === "function") {
-    if (r.anyOpen()) r.input.setDefaultCursor(prefer ?? "default");
-    else r.input.setDefaultCursor("none");
+  const apply = (cursor: string) => {
+    from.input.setDefaultCursor(cursor);
+    if (r?.input && r.input !== from.input) r.input.setDefaultCursor(cursor);
+  };
+  if (r?.ready && typeof r.anyOpen === "function" && r.anyOpen()) {
+    apply(prefer ?? "default");
     return;
   }
-  from.input.setDefaultCursor(prefer ?? "default");
+  const mission = from.scene.get("mission") as
+    | (Phaser.Scene & {
+        helpOpen?: boolean;
+        exitOpen?: boolean;
+        editOpen?: boolean;
+        debugOpen?: boolean;
+        debugCamOpen?: boolean;
+        debugSpawnOpen?: boolean;
+      })
+    | null;
+  if (mission?.sys.isActive()) {
+    const ui =
+      !!mission.helpOpen ||
+      !!mission.exitOpen ||
+      !!mission.editOpen ||
+      !!mission.debugOpen ||
+      !!mission.debugCamOpen ||
+      !!mission.debugSpawnOpen;
+    apply(ui ? "default" : "none");
+    return;
+  }
+  apply(prefer ?? "default");
 }
