@@ -318,23 +318,17 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     liftClass: "heavy",
     bombDrop: { momentum: 1, maxBoost: 100, loft: 130, loftMax: 220 },
     sockets: [
-      // Forward cabin guns: outboard with forward lean.
+      // Forward cabin guns: explicit mount ↔ heading (same multi-mount model as Blackhawk doors).
       {
-        id: "cabin_fwd_l",
+        id: "cabin_forward",
         class: "turret",
         controller: "automatic",
         weapon: "machine_gun",
         points: "gun",
-        mounts: [{ id: "fwd_l", heading: -50 }],
-        traverse: 240,
-      },
-      {
-        id: "cabin_fwd_r",
-        class: "turret",
-        controller: "automatic",
-        weapon: "machine_gun",
-        points: "gun",
-        mounts: [{ id: "fwd_r", heading: 50 }],
+        mounts: [
+          { id: "fwd_l", heading: -50 },
+          { id: "fwd_r", heading: 50 },
+        ],
         traverse: 240,
       },
       { id: "bomb_bay_1", class: "hardpoint", controller: "pilot", weapon: "heavy_bomb", points: "hardpoint" },
@@ -379,7 +373,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
         weapon: "minigun",
         points: "gun",
         mounts: [{ id: "belly" }],
-        traverse: 300,
+        traverse: 360,
         crew: "belly",
       },
       { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "guided_rockets", points: "hardpoint" },
