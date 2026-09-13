@@ -533,10 +533,20 @@ export function gunsOf(u: { kind: UnitKind; parts?: PartMount[] }): PartMount[] 
   return u.parts ?? defaultGunsFromRoll(u.kind) ?? UNIT_SPECS[u.kind].guns;
 }
 
+/**
+ * HP is a Chain Gun hit-budget (28 dmg / 0.096s). No armor soak — roles are HP.
+ *   1        troops, bike, drone
+ *   2–4      soft skin / canvas
+ *   5–8      light armor, boats, scouts, SAM, gunship
+ *   12       MBT baseline (~1.15s clean burst)
+ *   13       heavy heli (a little above a tank)
+ *   14–20    hardened buildings
+ *   40       battleship
+ */
 const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   tank: {
     label: "TANK",
-    health: 90,
+    health: 336,
     radius: 22,
     box: { halfW: 19, halfL: 34 },
     height: 20,
@@ -569,7 +579,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   },
   heli: {
     label: "GUNSHIP",
-    health: 80,
+    health: 224,
     radius: 22,
     height: 16,
     flyZ: 48,
@@ -603,7 +613,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   },
   boat: {
     label: "PATROL BOAT",
-    health: 70,
+    health: 168,
     radius: 28,
     box: { halfW: 13, halfL: 44 },
     height: 16,
@@ -621,7 +631,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   },
   tower: {
     label: "AA TOWER",
-    health: 110,
+    health: 280,
     radius: 28,
     box: { halfW: 34, halfL: 37 },
     height: 48,
@@ -654,7 +664,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   },
   bunker: {
     label: "BUNKER",
-    health: 260,
+    health: 560,
     radius: 54,
     height: 32,
     texture: "building_bunker",
@@ -670,7 +680,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   },
   radar: {
     label: "RADAR",
-    health: 200,
+    health: 392,
     radius: 72,
     box: { halfW: 57, halfL: 104 },
     height: 56,
@@ -693,7 +703,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   },
   pickup: {
     label: "PICKUP",
-    health: 42,
+    health: 70,
     radius: 18,
     box: { halfW: 11, halfL: 28 },
     height: 14,
@@ -710,7 +720,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   },
   truck: {
     label: "TRUCK",
-    health: 55,
+    health: 84,
     radius: 20,
     box: { halfW: 14, halfL: 32 },
     height: 16,
@@ -726,7 +736,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   },
   tanker: {
     label: "TANKER",
-    health: 70,
+    health: 112,
     radius: 22,
     box: { halfW: 13, halfL: 33 },
     height: 16,
@@ -758,7 +768,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   },
   lav: {
     label: "LAV",
-    health: 62,
+    health: 168,
     radius: 18,
     box: { halfW: 13, halfL: 27 },
     height: 16,
@@ -776,7 +786,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   },
   lav_aa: {
     label: "LAV-AA",
-    health: 54,
+    health: 140,
     radius: 18,
     box: { halfW: 13, halfL: 27 },
     height: 18,
@@ -799,7 +809,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   },
   sam: {
     label: "SAM",
-    health: 80,
+    health: 196,
     radius: 22,
     box: { halfW: 15, halfL: 32 },
     height: 20,
@@ -822,7 +832,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   },
   ptboat: {
     label: "PT BOAT",
-    health: 48,
+    health: 70,
     radius: 14,
     box: { halfW: 7, halfL: 24 },
     height: 12,
@@ -840,7 +850,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   },
   battleship: {
     label: "BATTLESHIP",
-    health: 420,
+    health: 1120,
     radius: 92,
     box: { halfW: 28, halfL: 133 },
     height: 40,
@@ -927,7 +937,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   },
   mounted_mg: {
     label: "MOUNTED MG TROOP",
-    health: 12,
+    health: 36,
     radius: 12,
     height: 12,
     texture: "enemy_troop_mounted_mg",
@@ -1007,7 +1017,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   },
   barn: {
     label: "BARN",
-    health: 140,
+    health: 196,
     radius: 34,
     box: { halfW: 23, halfL: 41 },
     height: 28,
@@ -1022,7 +1032,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   },
   tent: {
     label: "TENT",
-    health: 40,
+    health: 50,
     radius: 20,
     box: { halfW: 18, halfL: 30 },
     height: 14,
@@ -1037,7 +1047,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   },
   fob: {
     label: "FOB",
-    health: 220,
+    health: 448,
     radius: 52,
     box: { halfW: 61, halfL: 53 },
     height: 28,
@@ -1054,7 +1064,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   },
   lookout: {
     label: "LOOKOUT",
-    health: 90,
+    health: 168,
     radius: 22,
     box: { halfW: 23, halfL: 25 },
     height: 56,
@@ -1072,7 +1082,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   },
   drone: {
     label: "DRONE",
-    health: 22,
+    health: 24,
     radius: 6,
     height: 6,
     flyZ: 36,
@@ -1094,7 +1104,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   },
   heli_small: {
     label: "SCOUT HELI",
-    health: 48,
+    health: 112,
     radius: 14,
     height: 12,
     flyZ: 44,
@@ -1133,7 +1143,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   },
   heli_heavy: {
     label: "HEAVY HELI",
-    health: 160,
+    health: 364,
     radius: 40,
     height: 24,
     flyZ: 52,

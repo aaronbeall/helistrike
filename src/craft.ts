@@ -217,7 +217,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
       { id: "wing_gun_l", class: "fixed", controller: "pilot", weapon: "minigun", points: "muzzle", muzzleFire: "simultaneous" },
       { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket", points: "hardpoint" },
       { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "hellfire_missile", points: "hardpoint" },
-      { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "tow_missile", points: "hardpoint" },
+      { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "heavy_cal_pod", points: "hardpoint" },
     ],
   },
   cobra: {

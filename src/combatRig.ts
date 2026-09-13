@@ -9,7 +9,7 @@ import {
   type PlayerWpnSpec,
 } from "./combat";
 import { allCrafts } from "./craft";
-import { ENEMY_WPNS, usesOfWeapon } from "./roster";
+import { ENEMY_WPNS, usesOfWeapon, type ShotKind } from "./roster";
 import {
   RIG_INFO,
   RIG_VALUE,
@@ -53,6 +53,26 @@ const LINE_H = 16;
 type Filter = "all" | "player" | "preset" | "fx";
 const FILTERS: Filter[] = ["all", "player", "preset", "fx"];
 
+type TypeFilter =
+  | "all"
+  | "cannon"
+  | "rocket"
+  | "missile"
+  | "lock-on"
+  | "guided"
+  | "bomb"
+  | "beam";
+const TYPE_FILTERS: TypeFilter[] = [
+  "all",
+  "cannon",
+  "rocket",
+  "missile",
+  "lock-on",
+  "guided",
+  "bomb",
+  "beam",
+];
+
 export type CombatCat = "player" | "preset" | "fx";
 
 export interface CombatEntry {
@@ -70,6 +90,8 @@ export interface CombatEntry {
   rotOff?: number;
   stats: string[];
   info: string[];
+  /** Weapon-type match keys for F-cycle (cannon / rocket / missile / …). */
+  tags?: string[];
 }
 
 /**
@@ -83,6 +105,7 @@ export class CombatRig {
   private scene: Phaser.Scene;
   private idx = 0;
   private filter: Filter = "all";
+  private typeFilter: TypeFilter = "all";
   private zoom = 2;
   private frameT = 0;
   private showMarks = true;
@@ -192,6 +215,13 @@ export class CombatRig {
         this.idx = 0;
         this.refreshPreview();
       });
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.F).on("down", () => {
+        if (!this.open) return;
+        const i = TYPE_FILTERS.indexOf(this.typeFilter);
+        this.typeFilter = TYPE_FILTERS[(i + 1) % TYPE_FILTERS.length]!;
+        this.idx = 0;
+        this.refreshPreview();
+      });
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.O).on("down", () => {
         if (!this.open) return;
         this.showMarks = !this.showMarks;
@@ -275,13 +305,31 @@ export class CombatRig {
   update(dt: number): void {
     if (!this.open) return;
     const items = this.filtered();
-    if (!items.length) return;
     if (this.idx >= items.length) this.idx = 0;
-    const e = items[this.idx]!;
-
     this.hintTxt.setText(
-      `COMBAT RIG   ↑ ↓ select   , . page   - + zoom ${this.zoom}×   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}`
+      `COMBAT RIG   ↑ ↓ select   , . page   - + zoom ${this.zoom}×   G ${this.filter.toUpperCase()}   F ${this.typeFilter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}`
     );
+
+    if (!items.length) {
+      this.listTxt.setText(
+        `— ${this.filter.toUpperCase()} / ${this.typeFilter.toUpperCase()}  (0/${this.entries.length}) —`
+      );
+      this.preview.setVisible(false);
+      this.mountPreview.setVisible(false);
+      this.board.clear();
+      this.overlay.clear();
+      setStatsAndInfo(
+        this.statsTxt,
+        this.infoTxt,
+        [],
+        ["no entries for this filter"],
+        LIST_X + LIST_W + 20,
+        LIST_Y
+      );
+      return;
+    }
+
+    const e = items[this.idx]!;
 
     const size = this.pageSize();
     const pages = Math.max(1, Math.ceil(items.length / size));
@@ -290,7 +338,7 @@ export class CombatRig {
     const slice = items.slice(start, start + size);
     this.listTxt.setText(
       [
-        `— ${this.filter.toUpperCase()}  ${page + 1} / ${pages}  (${items.length}/${this.entries.length}) —`,
+        `— ${this.filter.toUpperCase()} / ${this.typeFilter.toUpperCase()}  ${page + 1} / ${pages}  (${items.length}/${this.entries.length}) —`,
         ...slice.map((row, i) => {
           const mark = start + i === this.idx ? "▸" : " ";
           return `${mark} ${row.label.padEnd(22)} ${row.tag}`;
@@ -314,8 +362,12 @@ export class CombatRig {
   }
 
   private filtered(): CombatEntry[] {
-    if (this.filter === "all") return this.entries;
-    return this.entries.filter((e) => e.cat === this.filter);
+    return this.entries.filter((e) => {
+      if (this.filter !== "all" && e.cat !== this.filter) return false;
+      if (this.typeFilter === "all") return true;
+      if (e.cat === "fx") return false;
+      return e.tags?.includes(this.typeFilter) ?? false;
+    });
   }
 
   private refreshPreview(): void {
@@ -516,6 +568,16 @@ export class CombatRig {
   }
 }
 
+/** F-cycle match keys. Most-specific type first. */
+function weaponTypeTags(kind: ShotKind, launchMode?: string): string[] {
+  if (launchMode === "drop") return ["bomb"];
+  if (launchMode === "beam") return kind === "cannon" ? ["beam", "cannon"] : ["beam"];
+  if (kind === "cannon") return ["cannon"];
+  if (kind === "rocket") return ["rocket"];
+  if (kind === "lock-on-missile") return ["lock-on", "missile"];
+  return ["guided", "missile"];
+}
+
 function parseBlast(e: CombatEntry): number {
   for (const line of e.stats) {
     const m = line.match(/\bblast:\s*(\d+(?:\.\d+)?)/i);
@@ -553,6 +615,7 @@ function playerEntries(): CombatEntry[] {
       cat: "player" as const,
       label: w.name,
       tag: "PLY",
+      tags: weaponTypeTags(w.kind, w.launch?.mode),
       tex: w.look,
       ...(w.mount ? { mountTex: w.mount } : {}),
       rotOff: 0,
@@ -618,6 +681,7 @@ function presetEntries(): CombatEntry[] {
       cat: "preset" as const,
       label: p.label,
       tag: "PRE",
+      tags: weaponTypeTags(p.w.kind),
       tex: p.w.look,
       rotOff: 0,
       stats: [...dumpRig({ id: p.id, label: p.label, ...p.w }), ...shotLayoutDump()],

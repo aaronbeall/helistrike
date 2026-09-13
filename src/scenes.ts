@@ -193,8 +193,8 @@ const LOCK_ON_Z_MAX = SHOT_Z_REF * 1.21;
 const PROJECTILE_FX_BASE_INTERVAL = 0.07;
 const ENEMY_PROJECTILE_FX_MUL = 0.72;
 /** M230 chain gun — muzzle FX size reference (`spec.scale` / `blast`). */
-const MUZZLE_FX_REF_SCALE = 0.58;
-const MUZZLE_FX_REF_BLAST = 18;
+const MUZZLE_FX_REF_SCALE = 0.56;
+const MUZZLE_FX_REF_BLAST = 36;
 
 /** Survives MissionScene restart (R → load → mission). */
 let persistedFxOn = true;
@@ -213,6 +213,15 @@ type StingerJob = {
 function projectileFxScale(from: Shot["from"], effectiveInterval = PROJECTILE_FX_BASE_INTERVAL): number {
   const cadence = Phaser.Math.Clamp(effectiveInterval / PROJECTILE_FX_BASE_INTERVAL, 0.18, 1);
   return cadence * (from === "enemy" ? ENEMY_PROJECTILE_FX_MUL : 1);
+}
+
+/** Parse `30MM` / `.50 CAL` from a catalog designation. */
+function caliberMmFromDesignation(designation: string): number | undefined {
+  const mm = designation.match(/(\d+(?:\.\d+)?)\s*MM\b/i);
+  if (mm) return Number(mm[1]);
+  const cal = designation.match(/\.(\d+)\s*CAL/i);
+  if (cal) return Number(cal[1]) * 0.254;
+  return undefined;
 }
 
 /** Player gun muzzle FX vs M230 — LMGs smaller, heavies a bit larger. */
@@ -3203,6 +3212,22 @@ export class MissionScene extends Phaser.Scene {
     };
   }
 
+  /** Light bounce scorch, stretched along incoming debris travel. */
+  stampDebrisBounceScorch(x: number, y: number, vx: number, vy: number): void {
+    if (isWater(this.world, x, y)) return;
+    const key = `fx_blast_${(Math.random() * 4) | 0}`;
+    const scarKey = this.textures.exists(key) ? key : "fx_blast_0";
+    if (!this.textures.exists(scarKey)) return;
+    const spd = Math.hypot(vx, vy);
+    const ang = spd > 8 ? Math.atan2(vy, vx) : Math.random() * Math.PI * 2;
+    const base = range(0.07, 0.12);
+    const stretch = 1.2 + Math.min(0.55, spd * 0.002);
+    const sx = base * stretch * range(0.9, 1.12);
+    const sy = base * range(0.42, 0.62);
+    const alpha = range(0.16, 0.28);
+    this.stampWreck(scarKey, x, y, ang, sx, alpha, 0.5, 0.5, sy, undefined, undefined, false);
+  }
+
   stampLightBlast(x: number, y: number, vx: number, vy: number): void {
     if (isWater(this.world, x, y)) return;
     const key = `fx_blast_${(Math.random() * 4) | 0}`;
@@ -3648,6 +3673,24 @@ export class MissionScene extends Phaser.Scene {
 
   troopDrawAng(u: Unit): number {
     return this.troopSoftTurret(u) ? u.turret : u.angle;
+  }
+
+  /** Projected hull facing with a cap so 2.5D poles can't snap the sprite 180°. */
+  unitDrawRot(u: Unit, worldRot: number): number {
+    const raw = projectHeading(worldRot, u.x, u.y, u.z);
+    const prev = u.drawRot;
+    if (prev == null || !Number.isFinite(prev)) {
+      u.drawRot = raw;
+      return raw;
+    }
+    const jump = Math.abs(Phaser.Math.Angle.Wrap(raw - prev));
+    if (jump > 1.15) {
+      const visDt = Math.min(0.05, (this.game.loop.delta || 16) / 1000);
+      u.drawRot = Phaser.Math.Angle.RotateTo(prev, raw, 2.6 * visDt);
+    } else {
+      u.drawRot = raw;
+    }
+    return u.drawRot;
   }
 
   mountAt(host: Unit, tex: string, mount: { x: number; y: number }): { x: number; y: number } {
@@ -5039,6 +5082,23 @@ export class MissionScene extends Phaser.Scene {
         warpTimeScale: spec.payload.mode === "warp" ? spec.payload.timeScale : undefined,
       });
       this.missileMuzzle(px, py, h.z, ang, projectileFxScale("player", spec.fireCd));
+      if (
+        spec.kind === "cannon" &&
+        (spec.payload.mode === "kinetic" || spec.payload.mode === "he")
+      ) {
+        this.spawnShellEject({
+          x: px,
+          y: py,
+          z: h.z - 12,
+          barrelAng: ang,
+          designation: spec.designation,
+          scale: spec.scale,
+          dmg: spec.dmg,
+          side,
+          aerial: true,
+          fireCd: spec.fireCd,
+        });
+      }
       return;
     }
 
@@ -5183,16 +5243,23 @@ export class MissionScene extends Phaser.Scene {
               mountUv: mountedGunUv,
             });
         const ejectAt = muzzleUv ? tip : screenToWorldAtZ(mountedGun.x, mountedGun.y, h.z);
-        this.spawnShellEject({
-          x: ejectAt.x,
-          y: ejectAt.y,
-          z: h.z - 12,
-          barrelAng: ang,
-          dmg: spec.dmg,
-          side,
-          aerial: true,
-          fireCd: spec.fireCd,
-        });
+        if (
+          spec.kind === "cannon" &&
+          (spec.payload.mode === "kinetic" || spec.payload.mode === "he")
+        ) {
+          this.spawnShellEject({
+            x: ejectAt.x,
+            y: ejectAt.y,
+            z: h.z - 12,
+            barrelAng: ang,
+            designation: spec.designation,
+            scale: spec.scale,
+            dmg: spec.dmg,
+            side,
+            aerial: true,
+            fireCd: spec.fireCd,
+          });
+        }
       }
     }
   }
@@ -5861,10 +5928,16 @@ export class MissionScene extends Phaser.Scene {
     this.spawnImpactFlash(x, y, z, 0xfff2c8, Math.max(36, size * 1.35), 0.75, 120);
   }
 
-  /** Spent casing size from projectile damage (call sites already gate to cannons). */
-  shellGirth(dmg: number): number {
-    // dmg 1 → ~0.34, player chain 8 → ~0.55, heavy 12–16 → ~0.7–0.8
-    return Phaser.Math.Clamp(0.3 + Math.sqrt(Math.max(0.25, dmg)) * 0.125, 0.3, 0.85);
+  /** Spent casing size from caliber (designation mm), else projectile scale, else dmg. */
+  shellGirth(opts: { designation?: string; scale?: number; dmg?: number }): number {
+    const mm = opts.designation ? caliberMmFromDesignation(opts.designation) : undefined;
+    if (mm != null) {
+      return Phaser.Math.Clamp(0.2 + Math.pow(mm / 7.62, 0.55) * 0.26, 0.28, 1.2);
+    }
+    if (opts.scale != null) {
+      return Phaser.Math.Clamp(0.26 + opts.scale * 0.5, 0.28, 1.15);
+    }
+    return Phaser.Math.Clamp(0.3 + Math.sqrt(Math.max(0.25, opts.dmg ?? 4)) * 0.125, 0.3, 0.85);
   }
 
   /**
@@ -5934,7 +6007,9 @@ export class MissionScene extends Phaser.Scene {
     y: number;
     z: number;
     barrelAng: number;
-    dmg: number;
+    designation?: string;
+    scale?: number;
+    dmg?: number;
     /** +1 barrel-right / −1 barrel-left (from midline). Required for consistent eject. */
     side: number;
     /** Air craft: spawn/draw under hull. Ground: spawn/draw above. */
@@ -5942,14 +6017,14 @@ export class MissionScene extends Phaser.Scene {
     /** Weapon fire interval (s). Lower = faster = slightly harder eject. */
     fireCd?: number;
   }): void {
-    const girth = this.shellGirth(opts.dmg);
+    const girth = this.shellGirth(opts);
     if (girth <= 0) return;
     const side = opts.side >= 0 ? 1 : -1;
     const ejectAng = opts.barrelAng + side * (Math.PI / 2) + range(-0.28, 0.28);
     // Subtle cadence bias: chain (~0.07s) punches harder than slow AA (~2–3s).
     const cd = Phaser.Math.Clamp(opts.fireCd ?? 0.45, 0.05, 3.2);
     const rateMul = Phaser.Math.Linear(1.2, 0.82, Phaser.Math.Clamp((cd - 0.06) / 1.6, 0, 1));
-    const girthMul = Phaser.Math.Linear(1.05, 0.82, (girth - 0.28) / 0.44);
+    const girthMul = Phaser.Math.Linear(1.05, 0.78, Phaser.Math.Clamp((girth - 0.28) / 0.72, 0, 1));
     const spd = range(22, 48) * girthMul * rateMul;
     const shellKeys = ["fx_shell", "fx_shell_1", "fx_shell_2", "fx_shell_3", "fx_shell_4"];
     const available = shellKeys.filter((k) => this.textures.exists(k));
@@ -6586,7 +6661,7 @@ export class MissionScene extends Phaser.Scene {
               ? { x: Math.cos(s.angle), y: Math.sin(s.angle), z: 0.12 }
               : { x: s.vx, y: s.vy, z: s.vz };
           const age = Math.max(0, s.motor ?? 0);
-          const steerRate = Phaser.Math.Linear(0.78, 0.26, Phaser.Math.Clamp(age / 5.5, 0, 1));
+          const steerRate = Phaser.Math.Linear(1.05, 0.35, Phaser.Math.Clamp(age / 5.5, 0, 1));
           const d = steerDir(dir0.x, dir0.y, dir0.z, home.x, home.y, home.z, steerRate * seekMul * dt);
           s.angle = Math.atan2(d.y, d.x);
           const spd = Math.min(Math.max(cur, 220) + 50 * dt, 380);
@@ -6920,7 +6995,6 @@ export class MissionScene extends Phaser.Scene {
         const tx = u ? u.x : s.x + s.vx;
         const ty = u ? u.y : s.y + s.vy;
         const tz = u ? u.z + heightOf(u.kind) * 0.5 : groundZ(this.world, s.x, s.y);
-        const dist = Math.hypot(tx - s.x, ty - s.y);
         const home = norm3(tx - s.x, ty - s.y, tz - s.z);
         // While still slow, steer from nose (craft leave heading) — not residual drift.
         const dir0 =
@@ -6928,32 +7002,8 @@ export class MissionScene extends Phaser.Scene {
             ? { x: Math.cos(s.angle), y: Math.sin(s.angle), z: 0.2 }
             : { x: s.vx, y: s.vy, z: s.vz };
         const turn = (beh.steering?.turnRate ?? 7.4) * dt;
-        // Hellfire: after pop-up, yaw hard then dive gently (ridge-clearing arc).
-        const hellfire =
-          s.wpnId === "hellfire_missile" || s.wpnId === "mini_hellfire_missile";
-        let hx = home.x;
-        let hy = home.y;
-        let hz = home.z;
-        if (hellfire) {
-          const horizWant = Math.atan2(ty - s.y, tx - s.x);
-          const horizErr = Math.abs(Phaser.Math.Angle.Wrap(horizWant - s.angle));
-          // Far / not facing yet: bias home toward a high waypoint above the target.
-          const rangeBlend = Phaser.Math.Clamp(1 - dist / 520, 0, 1);
-          const faceBlend = 1 - Phaser.Math.Clamp(horizErr / 0.85, 0, 1);
-          const dive = rangeBlend * faceBlend;
-          const clearZ = tz + Phaser.Math.Linear(140, 18, dive);
-          const toClear = norm3(tx - s.x, ty - s.y, clearZ - s.z);
-          // Soften vertical home so pitch follows turn radius, not a snap dive into ridges.
-          const zGain = 0.18 + 0.82 * dive;
-          hx = toClear.x;
-          hy = toClear.y;
-          hz = toClear.z * zGain;
-          const n = Math.hypot(hx, hy, hz) || 1;
-          hx /= n;
-          hy /= n;
-          hz /= n;
-        }
-        const d = steerDir(dir0.x, dir0.y, dir0.z, hx, hy, hz, turn);
+        // Same turn radius in 3D — pitch to the target in the same time as the XY yaw.
+        const d = steerDir(dir0.x, dir0.y, dir0.z, home.x, home.y, home.z, turn);
         s.angle = Math.atan2(d.y, d.x);
         s.vx = d.x * spd;
         s.vy = d.y * spd;
@@ -7182,6 +7232,9 @@ export class MissionScene extends Phaser.Scene {
   spawnClusterBomblets(parent: Shot, count: number, spread: number): void {
     const beh = parent.beh;
     if (!beh) return;
+    const cluster = beh.payload.mode === "cluster" ? beh.payload : undefined;
+    const bombletDmg = cluster?.bombletDmg ?? parent.dmg * 0.22;
+    const bombletBlast = cluster?.bombletBlast ?? parent.blast * 0.28;
     for (let i = 0; i < count; i++) {
       const a = (i / count) * Math.PI * 2 + Math.random() * 0.4;
       const r = spread * (0.35 + Math.random() * 0.65);
@@ -7211,8 +7264,8 @@ export class MissionScene extends Phaser.Scene {
         vz: 40 + Math.random() * 80,
         angle: a,
         life: 0.85 + Math.random() * 0.4,
-        blast: parent.blast * 0.28,
-        dmg: parent.dmg * 0.22,
+        blast: bombletBlast,
+        dmg: bombletDmg,
         look: parent.look,
         scale: (parent.scale ?? 1) * 0.45,
         fxInterval: 0.2,
@@ -8962,9 +9015,12 @@ export class MissionScene extends Phaser.Scene {
               f.vz < -50 &&
               Math.hypot(f.vx, f.vy, f.vz) > 120
             ) {
+              const ivx = f.vx;
+              const ivy = f.vy;
               f.bounces--;
               // Same elevation bounce as wheels, weaker so flight path barely turns.
               this.bounceDebrisSlope(f, 0.32);
+              if (!f.key.includes("organic")) this.stampDebrisBounceScorch(f.x, f.y, ivx, ivy);
               f.spin *= range(0.78, 1.22);
               f.spin += range(-2.4, 2.4);
               f.angle += range(-0.28, 0.28);
@@ -9955,6 +10011,34 @@ export class MissionScene extends Phaser.Scene {
     return this.mapEdgeSteer(u.x, u.y, dry.x, dry.y);
   }
 
+  /** True when this hull is pressed into another solid — same class as rim jam. */
+  groundUnitBlocked(u: Unit): boolean {
+    const uR = circumRadiusOf(u.kind);
+    for (const o of this.units) {
+      if (o.dead || o.id === u.id || o.pinId != null) continue;
+      const osp = specOf(o.kind);
+      if (osp.aerial || osp.water || osp.move === "boat") continue;
+      if (
+        !(
+          osp.building ||
+          osp.move === "static" ||
+          isGroundVehicle(o.kind) ||
+          osp.move === "inf" ||
+          osp.move === "flee"
+        )
+      )
+        continue;
+      const pad = osp.building || osp.move === "static" ? 10 : 6;
+      const maxR = uR + circumRadiusOf(o.kind) + pad + 2;
+      const dx = u.x - o.x;
+      const dy = u.y - o.y;
+      if (dx * dx + dy * dy > maxR * maxR) continue;
+      const ov = footprintOverlap(footprintInto(u, 0, 0), footprintInto(o, pad, 1));
+      if (ov.hit && ov.depth > 1.5) return true;
+    }
+    return false;
+  }
+
   /** Soft depenetration vs buildings / other ground units after a move. */
   separateGround(u: Unit): void {
     const uR = circumRadiusOf(u.kind);
@@ -10185,15 +10269,24 @@ export class MissionScene extends Phaser.Scene {
     // Bikes can't pivot in place — need real forward speed, like trucks (trucks get it from low turn rate).
     const minTurnSpd = u.kind === "motorcycle" ? 24 : 7;
     const rim = this.mapEdgeWeight(u.x, u.y);
-    // Rim unlock: containOnMap brakes outbound speed → minTurnSpd gate used to freeze turn forever.
-    if (drive && (!wheeled || spd > minTurnSpd || rim > 0.28)) {
+    const jammed = this.groundUnitBlocked(u);
+    // Unlock in-place turn at the rim or when wedged into other units
+    // (otherwise minTurnSpd + collision brake freezes heading forever).
+    const turnDt = Math.min(dt, 1 / 20);
+    if (drive && (!wheeled || spd > minTurnSpd || rim > 0.28 || jammed)) {
       const turnGate =
-        wheeled && rim < 0.28 ? Phaser.Math.Clamp((spd - minTurnSpd) / 18, 0.15, 1) : 1;
+        wheeled && rim < 0.28 && !jammed
+          ? Phaser.Math.Clamp((spd - minTurnSpd) / 18, 0.15, 1)
+          : 1;
       u.angle = Phaser.Math.Angle.RotateTo(
         u.angle,
         want,
-        d.turn * (0.45 + 0.55 * slow) * turnGate * dt
+        d.turn * (0.45 + 0.55 * slow) * turnGate * turnDt
       );
+    }
+    if (jammed && spd < 18) {
+      u.vx += Math.cos(want) * 50 * dt;
+      u.vy += Math.sin(want) * 50 * dt;
     }
     const nx = Math.cos(u.angle);
     const ny = Math.sin(u.angle);
@@ -10347,7 +10440,11 @@ export class MissionScene extends Phaser.Scene {
             const twd = Math.hypot(twx, twy);
             const want = twd < 12 ? u.angle : Math.atan2(twy, twx);
             // Invisible base faces / walks the path.
-            u.angle = Phaser.Math.Angle.RotateTo(u.angle, want, (fleeing ? 2.4 : 2.1) * dt);
+            u.angle = Phaser.Math.Angle.RotateTo(
+              u.angle,
+              want,
+              (fleeing ? 2.4 : 2.1) * Math.min(dt, 1 / 20)
+            );
             const limp = fleeing && wounded && sp.organic;
             const gaitHz = limp ? 0.0044 : fleeing ? 0.0128 : 0.0075;
             const walk = Math.sin(this.time.now * gaitHz + u.id * 2.1);
@@ -10545,6 +10642,7 @@ export class MissionScene extends Phaser.Scene {
             y: ejectAt.y,
             z: shellZ,
             barrelAng: fireAng,
+            scale: wpn.scale,
             dmg: wpn.dmg,
             side: this.enemyShellEjectSide(u, gunI),
             aerial: !!sp.aerial,
@@ -10665,7 +10763,7 @@ export class MissionScene extends Phaser.Scene {
       const scrX = scr.x;
       const scrY = scr.y;
       if (!this.projectedInView(scrX, scrY, 220)) continue;
-      const drawRot = projectHeading(rot, u.x, u.y, u.z);
+      const drawRot = this.unitDrawRot(u, rot);
       const zs = scr.scale;
       const pivot = spritePivot(textureOf(u.kind));
       const ox = pivot.x;
@@ -13104,13 +13202,13 @@ export class MissionScene extends Phaser.Scene {
 
   pulseTestBarrel(amount: number): void {
     if (!this.fxBarrel || !this.fxOn) return;
-    this.fxBarrelPulse = Math.max(this.fxBarrelPulse, Phaser.Math.Clamp(amount, 0, 0.7));
+    this.fxBarrelPulse = Math.max(this.fxBarrelPulse, Phaser.Math.Clamp(amount, 0, 0.28));
   }
 
   tickTestPostFx(dt: number): void {
     if (!this.fxOn || !this.fxBarrel) return;
     if (this.fxBarrelPulse > 0.002) {
-      this.fxBarrel.amount = 1 + this.fxBarrelPulse;
+      this.fxBarrel.amount = 1 + this.fxBarrelPulse * 0.55;
       this.fxBarrelPulse *= Math.pow(0.04, dt);
     } else {
       this.fxBarrel.amount = 1;

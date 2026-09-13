@@ -164,16 +164,20 @@ function drawTracerShape(opts: {
   blunt?: number;
   glow?: number;
   twin?: boolean;
+  shape?: "tear" | "bolt" | "orb";
 }): HTMLCanvasElement {
   const { w, h, core, mid, rim } = opts;
   const blunt = opts.blunt ?? 0;
   const glow = opts.glow ?? 0.55;
+  const shape = opts.shape ?? "tear";
   const c = canvas(w, h);
   const g = ctxOf(c);
   const cy = h / 2;
-  const headX = w * (0.76 + blunt * 0.06);
-  const headR = h * (0.26 + blunt * 0.08);
-  const tailX = w * 0.05;
+  const headX =
+    shape === "orb" ? w * 0.56 : shape === "bolt" ? w * 0.86 : w * (0.76 + blunt * 0.06);
+  const headR =
+    shape === "orb" ? h * 0.34 : shape === "bolt" ? h * 0.16 : h * (0.26 + blunt * 0.08);
+  const tailX = shape === "orb" ? w * 0.18 : w * 0.05;
   const rgb = (ch: TracerRgb, a: number) => `rgba(${ch[0]},${ch[1]},${ch[2]},${a})`;
 
   const tear = (scaleX: number, scaleY: number) => {
@@ -207,21 +211,52 @@ function drawTracerShape(opts: {
     g.closePath();
   };
 
+  const bolt = (scaleX: number, scaleY: number) => {
+    const half = h * 0.26 * scaleY;
+    const waist = h * 0.12 * scaleY;
+    const nose = w * 0.93 * scaleX + (1 - scaleX) * w * 0.5;
+    const body = w * 0.38;
+    const chin = w * 0.72;
+    const tail = w * 0.07;
+    g.beginPath();
+    g.moveTo(tail, cy);
+    g.lineTo(tail + w * 0.1, cy - waist);
+    g.lineTo(body, cy - half);
+    g.lineTo(chin, cy - half);
+    g.lineTo(nose, cy);
+    g.lineTo(chin, cy + half);
+    g.lineTo(body, cy + half);
+    g.lineTo(tail + w * 0.1, cy + waist);
+    g.closePath();
+  };
+
+  const orb = (scaleX: number, scaleY: number) => {
+    g.beginPath();
+    g.ellipse(w * 0.56, cy, w * 0.34 * scaleX, h * 0.36 * scaleY, 0, 0, Math.PI * 2);
+    g.closePath();
+  };
+
+  const profile = (scaleX: number, scaleY: number) => {
+    if (shape === "bolt") bolt(scaleX, scaleY);
+    else if (shape === "orb") orb(scaleX, scaleY);
+    else tear(scaleX, scaleY);
+  };
+
   const paint = () => {
     const along = g.createLinearGradient(tailX, cy, headX + headR, cy);
-    along.addColorStop(0, rgb(rim, 0));
+    along.addColorStop(0, rgb(rim, shape === "orb" ? 0.15 : 0));
     along.addColorStop(0.22, rgb(rim, 0.22));
     along.addColorStop(0.55, rgb(mid, 0.85));
     along.addColorStop(0.82, rgb(core, 1));
     along.addColorStop(1, rgb(core, 0.15));
 
     g.save();
-    tear(1.06, 1.12);
+    profile(1.06, 1.12);
     g.fillStyle = rgb(rim, 0.28);
     g.fill();
     g.restore();
 
-    tear(1, 1);
+    profile(1, 1);
     g.fillStyle = along;
     g.fill();
 
@@ -230,7 +265,14 @@ function drawTracerShape(opts: {
     coreGrad.addColorStop(0.45, rgb(mid, 0.7));
     coreGrad.addColorStop(1, rgb(rim, 0));
     g.beginPath();
-    g.arc(headX, cy, headR * 1.05, 0, Math.PI * 2);
+    if (shape === "bolt") {
+      g.moveTo(headX + headR * 1.4, cy);
+      g.lineTo(headX - headR * 0.4, cy - headR);
+      g.lineTo(headX - headR * 0.4, cy + headR);
+      g.closePath();
+    } else {
+      g.arc(headX, cy, headR * 1.05, 0, Math.PI * 2);
+    }
     g.fillStyle = coreGrad;
     g.fill();
 

@@ -7,6 +7,7 @@ import {
   allKinds,
   partsRollOf,
   specOf,
+  type ShotKind,
   type UnitKind,
   type UnitSpec,
   type WeaponSpec,
@@ -30,8 +31,29 @@ const PAD_B = 44;
 type BalanceCat = "craft" | "weapons" | "enemies";
 const CATS: BalanceCat[] = ["craft", "weapons", "enemies"];
 
-type WeaponFilter = "all" | "player" | "enemy";
-const WEAPON_FILTERS: WeaponFilter[] = ["all", "player", "enemy"];
+type WeaponFilter =
+  | "all"
+  | "player"
+  | "enemy"
+  | "cannon"
+  | "rocket"
+  | "missile"
+  | "lock-on"
+  | "guided"
+  | "bomb"
+  | "beam";
+const WEAPON_FILTERS: WeaponFilter[] = [
+  "all",
+  "player",
+  "enemy",
+  "cannon",
+  "rocket",
+  "missile",
+  "lock-on",
+  "guided",
+  "bomb",
+  "beam",
+];
 
 type EnemyFilter = "all" | "troop" | "vehicle" | "aerial" | "building";
 const ENEMY_FILTERS: EnemyFilter[] = ["all", "troop", "vehicle", "aerial", "building"];
@@ -53,6 +75,8 @@ type BalancePoint = {
   group: string;
   color: number;
   values: Record<string, number>;
+  /** Extra match keys for F-cycle filters (weapons: type + side). */
+  tags?: string[];
 };
 
 const CRAFT_AXES: AxisDef[] = [
@@ -166,6 +190,15 @@ const DEFAULT_AXES: Record<BalanceCat, { x: string; y: string }> = {
   enemies: { x: "health", y: "radius" },
 };
 
+type ChartView = "scatter" | "bars" | "profile" | "ratio";
+const CHART_VIEWS: ChartView[] = ["scatter", "bars", "profile", "ratio"];
+const VIEW_LABEL: Record<ChartView, string> = {
+  scatter: "SCATTER",
+  bars: "BARS",
+  profile: "PROFILE",
+  ratio: "RATIO",
+};
+
 const GROUP_COLORS: Record<string, number> = {
   heli: 0x6adf6a,
   vtol: 0x5ec8ff,
@@ -175,6 +208,10 @@ const GROUP_COLORS: Record<string, number> = {
   cannon: 0xe8b84a,
   rocket: 0xff8c42,
   missile: 0x5ec8ff,
+  "lock-on": 0x7ad0ff,
+  guided: 0x4a9fff,
+  bomb: 0xc4a06a,
+  beam: 0x66e0e8,
   vehicle: 0xe8b84a,
   troop: 0xd878ff,
   aerial: 0x5ec8ff,
@@ -199,7 +236,10 @@ export class BalanceRig {
   private weaponFilter: WeaponFilter = "all";
   private enemyFilter: EnemyFilter = "all";
   private craftFilter: CraftFilter = "all";
+  private view: ChartView = "scatter";
   private points: BalancePoint[] = [];
+  private chartHits: { x0: number; y0: number; x1: number; y1: number; id: string; axis?: string }[] =
+    [];
   root: Phaser.GameObjects.Container;
   private dim!: Phaser.GameObjects.Rectangle;
   private board!: Phaser.GameObjects.Graphics;
@@ -310,11 +350,16 @@ export class BalanceRig {
         this.logScale = !this.logScale;
         this.refresh();
       });
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.V).on("down", () => {
+        if (!this.open) return;
+        this.cycleView(1);
+      });
     }
 
     scene.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
       if (!this.open || !p.leftButtonDown()) return;
       if (p.x >= LIST_X && p.x < LIST_X + LIST_W) this.pickFromList(p.y);
+      else this.pickFromChart(p.x, p.y);
     });
 
     this.onBuilt?.(this.root);
@@ -338,6 +383,7 @@ export class BalanceRig {
     else {
       this.chart.clear();
       this.board.clear();
+      this.chartHits = [];
       for (const t of this.labelPool) t.setVisible(false);
     }
   }
@@ -353,8 +399,14 @@ export class BalanceRig {
   update(): void {
     if (!this.open) return;
     const filter = this.filterLabel();
+    const viewHint =
+      this.view === "bars"
+        ? `V ${VIEW_LABEL[this.view]} · Y`
+        : this.view === "ratio"
+          ? `V ${VIEW_LABEL[this.view]} · Y/X`
+          : `V ${VIEW_LABEL[this.view]}`;
     this.hintTxt.setText(
-      `BALANCE RIG   ↑ ↓ select   G ${this.cat.toUpperCase()}   F ${filter}   X/Y axes   L log ${this.logScale ? "ON" : "off"}   O labels ${this.showLabels ? "ON" : "OFF"}`
+      `BALANCE RIG   ↑ ↓ select   G ${this.cat.toUpperCase()}   F ${filter}   ${viewHint}   X/Y axes   L log ${this.logScale ? "ON" : "off"}   O labels ${this.showLabels ? "ON" : "OFF"}`
     );
   }
 
@@ -388,6 +440,27 @@ export class BalanceRig {
     this.refresh();
   }
 
+  private cycleView(dir: number): void {
+    const i = CHART_VIEWS.indexOf(this.view);
+    this.view = CHART_VIEWS[(i + dir + CHART_VIEWS.length) % CHART_VIEWS.length]!;
+    this.refresh();
+  }
+
+  private pickFromChart(px: number, py: number): void {
+    const hit = this.chartHits.find((h) => px >= h.x0 && px <= h.x1 && py >= h.y0 && py <= h.y1);
+    if (!hit) return;
+    if (hit.axis) {
+      this.yAxis = hit.axis;
+      this.refresh();
+      return;
+    }
+    const items = this.filtered();
+    const i = items.findIndex((p) => p.id === hit.id);
+    if (i < 0) return;
+    this.idx = i;
+    this.refresh();
+  }
+
   private cycleAxis(which: "x" | "y", dir: number): void {
     const axes = CAT_AXES[this.cat];
     const cur = which === "x" ? this.xAxis : this.yAxis;
@@ -404,7 +477,10 @@ export class BalanceRig {
       if (!p.id.startsWith(prefix)) return false;
       if (this.cat === "weapons") {
         if (this.weaponFilter === "all") return true;
-        return p.id.startsWith(`weapons:${this.weaponFilter}:`);
+        if (this.weaponFilter === "player" || this.weaponFilter === "enemy") {
+          return p.id.startsWith(`weapons:${this.weaponFilter}:`);
+        }
+        return p.tags?.includes(this.weaponFilter) ?? false;
       }
       if (this.cat === "enemies") {
         if (this.enemyFilter === "all") return true;
@@ -444,6 +520,8 @@ export class BalanceRig {
       this.statsTxt.setText("");
       this.chart.clear();
       this.board.clear();
+      this.chartHits = [];
+      for (const t of this.labelPool) t.setVisible(false);
       return;
     }
     if (this.idx >= items.length) this.idx = 0;
@@ -492,6 +570,36 @@ export class BalanceRig {
     yDef: AxisDef,
     stats: { head: string[]; hot: string[]; rest: string[] }
   ): void {
+    const frame = this.beginPlot(stats, this.view === "scatter" ? PAD_L : 108);
+    this.chartHits = [];
+    this.chart.clear();
+    if (this.view === "bars") {
+      this.drawRankedBars(frame, items, selected, (p) => p.values[yDef.id] ?? 0, yDef.id, "Y");
+      return;
+    }
+    if (this.view === "ratio") {
+      const title = `${yDef.id} / ${xDef.id}`;
+      this.drawRankedBars(
+        frame,
+        items,
+        selected,
+        (p) => ratioValue(p.values[yDef.id] ?? 0, p.values[xDef.id] ?? 0),
+        title,
+        "Y/X"
+      );
+      return;
+    }
+    if (this.view === "profile") {
+      this.drawProfile(frame, items, selected);
+      return;
+    }
+    this.drawScatter(frame, items, selected, xDef, yDef);
+  }
+
+  private beginPlot(
+    stats: { head: string[]; hot: string[]; rest: string[] },
+    padL: number
+  ): PlotFrame {
     const w = this.scene.scale.width;
     const h = this.scene.scale.height;
     const left = LIST_X + LIST_W + 24;
@@ -516,7 +624,7 @@ export class BalanceRig {
     const plotB = bottom - 8;
     const plotW = Math.max(120, plotR - plotL);
     const plotH = Math.max(120, plotB - plotT);
-    const ix0 = plotL + PAD_L;
+    const ix0 = plotL + padL;
     const iy0 = plotT + PAD_T;
     const ix1 = plotR - PAD_R;
     const iy1 = plotB - PAD_B;
@@ -529,19 +637,35 @@ export class BalanceRig {
     this.board.lineStyle(1, 0x3a3428, 0.9);
     this.board.strokeRect(plotL - 8, plotT - 8, plotW + 16, plotH + 16);
 
+    return { plotL, plotR, plotT, plotB, ix0, iy0, ix1, iy1, innerW, innerH };
+  }
+
+  private hideLabelsFrom(li: number): void {
+    while (li < this.labelPool.length) {
+      this.labelPool[li++]!.setVisible(false).setRotation(0);
+    }
+  }
+
+  private labelAt(i: number): Phaser.GameObjects.Text {
+    this.ensureLabels(i + 1);
+    return this.labelPool[i]!;
+  }
+
+  private drawScatter(
+    frame: PlotFrame,
+    items: BalancePoint[],
+    selected: BalancePoint,
+    xDef: AxisDef,
+    yDef: AxisDef
+  ): void {
+    const { plotL, ix0, iy0, ix1, iy1, innerW, innerH } = frame;
     const xs = items.map((p) => p.values[xDef.id] ?? 0);
     const ys = items.map((p) => p.values[yDef.id] ?? 0);
-    const xMin = Math.min(...xs);
-    const xMax = Math.max(...xs);
-    const yMin = Math.min(...ys);
-    const yMax = Math.max(...ys);
-    const xDomain = axisDomain(xMin, xMax, this.logScale);
-    const yDomain = axisDomain(yMin, yMax, this.logScale);
-
+    const xDomain = axisDomain(Math.min(...xs), Math.max(...xs), this.logScale);
+    const yDomain = axisDomain(Math.min(...ys), Math.max(...ys), this.logScale);
     const toX = (v: number) => ix0 + axisNorm(v, xDomain, this.logScale) * innerW;
     const toY = (v: number) => iy1 - axisNorm(v, yDomain, this.logScale) * innerH;
 
-    this.chart.clear();
     this.chart.lineStyle(1, 0x2a261c, 0.85);
     for (let i = 0; i <= 4; i++) {
       const gx = ix0 + (innerW * i) / 4;
@@ -549,14 +673,17 @@ export class BalanceRig {
       this.chart.lineBetween(gx, iy0, gx, iy1);
       this.chart.lineBetween(ix0, gy, ix1, gy);
     }
+    const medX = median(xs);
+    const medY = median(ys);
+    this.chart.lineStyle(1, 0x8a7a50, 0.4);
+    this.chart.lineBetween(toX(medX), iy0, toX(medX), iy1);
+    this.chart.lineBetween(ix0, toY(medY), ix1, toY(medY));
     this.chart.lineStyle(1.5, 0x5a5040, 1);
     this.chart.strokeRect(ix0, iy0, innerW, innerH);
 
     for (const p of items) {
-      const xv = p.values[xDef.id] ?? 0;
-      const yv = p.values[yDef.id] ?? 0;
-      const px = toX(xv);
-      const py = toY(yv);
+      const px = toX(p.values[xDef.id] ?? 0);
+      const py = toY(p.values[yDef.id] ?? 0);
       const sel = p === selected;
       const r = sel ? 7 : 4.5;
       this.chart.fillStyle(p.color, sel ? 1 : 0.82);
@@ -565,57 +692,184 @@ export class BalanceRig {
         this.chart.lineStyle(2, 0xffffff, 0.95);
         this.chart.strokeCircle(px, py, r + 3);
       }
+      this.chartHits.push({ x0: px - 10, y0: py - 10, x1: px + 10, y1: py + 10, id: p.id });
     }
 
-    this.ensureLabels(items.length + 6);
     let li = 0;
-    const place = (
-      text: string,
-      x: number,
-      y: number,
-      color = RIG_INFO,
-      originX = 0,
-      originY = 0,
-      rotation = 0
-    ) => {
-      const t = this.labelPool[li++]!;
-      t.setText(text)
-        .setPosition(x, y)
-        .setColor(color)
-        .setVisible(true)
-        .setOrigin(originX, originY)
-        .setRotation(rotation);
-    };
     const xTitle = this.logScale ? `log ${xDef.id} (X)` : `${xDef.id} (X)`;
     const yTitle = this.logScale ? `log ${yDef.id} (Y)` : `${yDef.id} (Y)`;
-    // Y title vertical, left of tick numbers.
-    place(yTitle, plotL + 12, (iy0 + iy1) * 0.5, GOLD, 0.5, 0.5, -Math.PI / 2);
-    // Y ticks against the plot's left edge.
-    place(fmtNum(yDomain.hi), ix0 - 6, iy0, RIG_INFO, 1, 0.5);
-    place(fmtNum(yDomain.lo), ix0 - 6, iy1, RIG_INFO, 1, 0.5);
-    // X ticks under the frame.
-    place(fmtNum(xDomain.lo), ix0, iy1 + 6, RIG_INFO, 0, 0);
-    place(fmtNum(xDomain.hi), ix1, iy1 + 6, RIG_INFO, 1, 0);
-    // X title centered below ticks.
-    place(xTitle, (ix0 + ix1) * 0.5, iy1 + 24, GOLD, 0.5, 0);
+    li = this.placeLabel(li, yTitle, plotL + 12, (iy0 + iy1) * 0.5, GOLD, 0.5, 0.5, -Math.PI / 2);
+    li = this.placeLabel(li, fmtNum(yDomain.hi), ix0 - 6, iy0, RIG_INFO, 1, 0.5);
+    li = this.placeLabel(li, fmtNum(yDomain.lo), ix0 - 6, iy1, RIG_INFO, 1, 0.5);
+    li = this.placeLabel(li, fmtNum(xDomain.lo), ix0, iy1 + 6, RIG_INFO, 0, 0);
+    li = this.placeLabel(li, fmtNum(xDomain.hi), ix1, iy1 + 6, RIG_INFO, 1, 0);
+    li = this.placeLabel(li, xTitle, (ix0 + ix1) * 0.5, iy1 + 24, GOLD, 0.5, 0);
+    li = this.placeLabel(li, `med ${fmtNum(medY)} / ${fmtNum(medX)}`, ix1, iy0 - 4, "#8a7a50", 1, 1);
 
     if (this.showLabels) {
       for (const p of items) {
-        if (li >= this.labelPool.length) this.ensureLabels(li + 8);
-        const xv = p.values[xDef.id] ?? 0;
-        const yv = p.values[yDef.id] ?? 0;
-        const t = this.labelPool[li++]!;
-        t.setText(p.short)
-          .setPosition(toX(xv) + 8, toY(yv) - 8)
-          .setColor(p === selected ? PAPER : RIG_INFO)
-          .setVisible(true)
-          .setOrigin(0, 0.5)
-          .setRotation(0);
+        li = this.placeLabel(
+          li,
+          p.short,
+          toX(p.values[xDef.id] ?? 0) + 8,
+          toY(p.values[yDef.id] ?? 0) - 8,
+          p === selected ? PAPER : RIG_INFO,
+          0,
+          0.5
+        );
       }
     }
-    while (li < this.labelPool.length) {
-      this.labelPool[li++]!.setVisible(false).setRotation(0);
+    this.hideLabelsFrom(li);
+  }
+
+  private drawRankedBars(
+    frame: PlotFrame,
+    items: BalancePoint[],
+    selected: BalancePoint,
+    valueOf: (p: BalancePoint) => number,
+    metric: string,
+    axisTag: string
+  ): void {
+    const { plotL, ix0, iy0, ix1, iy1, innerW, innerH } = frame;
+    const ranked = [...items].sort((a, b) => valueOf(b) - valueOf(a) || a.label.localeCompare(b.label));
+    const vals = ranked.map(valueOf);
+    const domain = barDomain(Math.min(...vals), Math.max(...vals), this.logScale);
+    const med = median(vals);
+    const minRow = 12;
+    const maxFit = Math.max(6, Math.floor(innerH / minRow));
+    let vis = ranked;
+    if (ranked.length > maxFit) {
+      const selI = Math.max(0, ranked.indexOf(selected));
+      const start = Phaser.Math.Clamp(selI - Math.floor(maxFit / 2), 0, ranked.length - maxFit);
+      vis = ranked.slice(start, start + maxFit);
     }
+    const rowH = innerH / vis.length;
+    const barH = Math.max(5, rowH * 0.62);
+
+    this.chart.lineStyle(1, 0x2a261c, 0.85);
+    for (let i = 1; i <= 4; i++) {
+      const gx = ix0 + (innerW * i) / 4;
+      this.chart.lineBetween(gx, iy0, gx, iy1);
+    }
+    const medX = ix0 + axisNorm(med, domain, this.logScale) * innerW;
+    this.chart.lineStyle(1, 0x8a7a50, 0.55);
+    this.chart.lineBetween(medX, iy0, medX, iy1);
+    this.chart.lineStyle(1.5, 0x5a5040, 1);
+    this.chart.strokeRect(ix0, iy0, innerW, innerH);
+
+    let li = 0;
+    for (let i = 0; i < vis.length; i++) {
+      const p = vis[i]!;
+      const v = valueOf(p);
+      const bw = Math.max(2, axisNorm(v, domain, this.logScale) * innerW);
+      const rowY = iy0 + i * rowH;
+      const by = rowY + (rowH - barH) * 0.5;
+      const sel = p === selected;
+      this.chart.fillStyle(p.color, sel ? 1 : 0.72);
+      this.chart.fillRect(ix0, by, bw, barH);
+      if (sel) {
+        this.chart.lineStyle(1.5, 0xffffff, 0.95);
+        this.chart.strokeRect(ix0, by, bw, barH);
+      }
+      this.chartHits.push({ x0: plotL, y0: rowY, x1: ix1 + 8, y1: rowY + rowH, id: p.id });
+      const nameCol = sel ? PAPER : hexColor(p.color);
+      li = this.placeLabel(li, p.short, ix0 - 8, rowY + rowH * 0.5, nameCol, 1, 0.5);
+      if (this.showLabels) {
+        li = this.placeLabel(li, fmtNum(v), ix0 + bw + 6, rowY + rowH * 0.5, sel ? PAPER : RIG_INFO, 0, 0.5);
+      }
+    }
+
+    const title = this.logScale ? `log ${metric} (${axisTag})` : `${metric} (${axisTag})`;
+    li = this.placeLabel(li, title, (ix0 + ix1) * 0.5, iy1 + 24, GOLD, 0.5, 0);
+    li = this.placeLabel(li, fmtNum(domain.lo), ix0, iy1 + 6, RIG_INFO, 0, 0);
+    li = this.placeLabel(li, fmtNum(domain.hi), ix1, iy1 + 6, RIG_INFO, 1, 0);
+    li = this.placeLabel(li, `med ${fmtNum(med)}`, medX, iy0 - 4, "#8a7a50", 0.5, 1);
+    this.hideLabelsFrom(li);
+  }
+
+  private drawProfile(frame: PlotFrame, items: BalancePoint[], selected: BalancePoint): void {
+    const { plotL, ix0, iy0, ix1, iy1, innerW, innerH } = frame;
+    const axes = CAT_AXES[this.cat];
+    const rowH = innerH / axes.length;
+    const barH = Math.max(6, rowH * 0.42);
+
+    this.chart.lineStyle(1, 0x2a261c, 0.85);
+    for (let i = 1; i <= 4; i++) {
+      const gx = ix0 + (innerW * i) / 4;
+      this.chart.lineBetween(gx, iy0, gx, iy1);
+    }
+    this.chart.lineStyle(1.5, 0x5a5040, 1);
+    this.chart.strokeRect(ix0, iy0, innerW, innerH);
+
+    let li = 0;
+    for (let i = 0; i < axes.length; i++) {
+      const axis = axes[i]!;
+      const vals = items.map((p) => p.values[axis.id] ?? 0);
+      const hi = Math.max(...vals, 1e-9);
+      const med = median(vals);
+      const selV = selected.values[axis.id] ?? 0;
+      const rowY = iy0 + i * rowH;
+      const by = rowY + (rowH - barH) * 0.5;
+      this.chart.fillStyle(0x2a261c, 0.9);
+      this.chart.fillRect(ix0, by, innerW, barH);
+      const bw = (selV / hi) * innerW;
+      const hot = axis.id === this.yAxis || axis.id === this.xAxis;
+      this.chart.fillStyle(selected.color, hot ? 1 : 0.78);
+      this.chart.fillRect(ix0, by, Math.max(2, bw), barH);
+      const medX = ix0 + (med / hi) * innerW;
+      this.chart.lineStyle(1.5, 0xe8b84a, 0.85);
+      this.chart.lineBetween(medX, by - 2, medX, by + barH + 2);
+      if (hot) {
+        this.chart.lineStyle(1.2, 0xffffff, 0.8);
+        this.chart.strokeRect(ix0, by, Math.max(2, bw), barH);
+      }
+      this.chartHits.push({
+        x0: plotL,
+        y0: rowY,
+        x1: ix1 + 8,
+        y1: rowY + rowH,
+        id: selected.id,
+        axis: axis.id,
+      });
+      const tag = axis.id === this.yAxis ? "Y" : axis.id === this.xAxis ? "X" : "";
+      const name = tag ? `${axis.id} (${tag})` : axis.id;
+      li = this.placeLabel(li, name, ix0 - 8, rowY + rowH * 0.5, hot ? GOLD : RIG_INFO, 1, 0.5);
+      if (this.showLabels) {
+        li = this.placeLabel(
+          li,
+          `${fmtNum(selV)} / ${fmtNum(hi)}`,
+          ix0 + Math.max(2, bw) + 6,
+          rowY + rowH * 0.5,
+          PAPER,
+          0,
+          0.5
+        );
+      }
+    }
+    li = this.placeLabel(li, `${selected.short} vs set max · gold = median`, (ix0 + ix1) * 0.5, iy1 + 18, GOLD, 0.5, 0);
+    li = this.placeLabel(li, "0", ix0, iy1 + 6, RIG_INFO, 0, 0);
+    li = this.placeLabel(li, "max", ix1, iy1 + 6, RIG_INFO, 1, 0);
+    this.hideLabelsFrom(li);
+  }
+
+  private placeLabel(
+    i: number,
+    text: string,
+    x: number,
+    y: number,
+    color = RIG_INFO,
+    originX = 0,
+    originY = 0,
+    rotation = 0
+  ): number {
+    this.labelAt(i)
+      .setText(text)
+      .setPosition(x, y)
+      .setColor(color)
+      .setVisible(true)
+      .setOrigin(originX, originY)
+      .setRotation(rotation);
+    return i + 1;
   }
 
   private ensureLabels(n: number): void {
@@ -648,6 +902,16 @@ function fmtNum(v: number): string {
 
 function colorOf(group: string): number {
   return GROUP_COLORS[group] ?? GROUP_COLORS.other!;
+}
+
+/** F-cycle match keys. Most-specific type first (used for chart color). */
+function weaponTypeTags(kind: ShotKind, launchMode?: string): string[] {
+  if (launchMode === "drop") return ["bomb"];
+  if (launchMode === "beam") return kind === "cannon" ? ["beam", "cannon"] : ["beam"];
+  if (kind === "cannon") return ["cannon"];
+  if (kind === "rocket") return ["rocket"];
+  if (kind === "lock-on-missile") return ["lock-on", "missile"];
+  return ["guided", "missile"];
 }
 
 /** Burst/salvo-aware sustained DPS matching enemy fire cadence. */
@@ -713,6 +977,40 @@ function enemySecondaryDps(sp: UnitSpec): { dps: number; mounts: number } {
 }
 
 type AxisDomain = { lo: number; hi: number };
+type PlotFrame = {
+  plotL: number;
+  plotR: number;
+  plotT: number;
+  plotB: number;
+  ix0: number;
+  iy0: number;
+  ix1: number;
+  iy1: number;
+  innerW: number;
+  innerH: number;
+};
+
+function hexColor(n: number): string {
+  return `#${n.toString(16).padStart(6, "0")}`;
+}
+
+function median(values: number[]): number {
+  if (!values.length) return 0;
+  const s = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid]! : (s[mid - 1]! + s[mid]!) * 0.5;
+}
+
+function ratioValue(y: number, x: number): number {
+  if (!Number.isFinite(y) || !Number.isFinite(x) || Math.abs(x) < 1e-9) return 0;
+  return y / x;
+}
+
+function barDomain(min: number, max: number, log: boolean): AxisDomain {
+  if (log) return axisDomain(Math.max(min, 1e-6), Math.max(max, 1e-5), true);
+  const hi = Math.max(Math.abs(max), Math.abs(min), 1e-6) * 1.04;
+  return { lo: Math.min(0, min), hi: min < 0 ? Math.max(0, max) + (max - min) * 0.04 || hi : hi };
+}
 
 function axisKeys(def: AxisDef | undefined, values: Record<string, number>, preferred: string[]): string[] {
   if (!def) return [];
@@ -843,8 +1141,8 @@ function buildBalanceCatalog(): BalancePoint[] {
   }
 
   for (const w of Object.values(PLAYER_WPNS)) {
-    const kindGroup =
-      w.kind === "cannon" ? "cannon" : w.kind === "rocket" ? "rocket" : "missile";
+    const tags = weaponTypeTags(w.kind, w.launch?.mode);
+    const kindGroup = tags[0] ?? "missile";
     const salvoN = w.salvo?.count ?? 1;
     const salvoGap = w.salvo?.interval ?? 0;
     out.push({
@@ -852,7 +1150,8 @@ function buildBalanceCatalog(): BalancePoint[] {
       label: w.name,
       short: w.name.length > 12 ? w.name.slice(0, 11) + "…" : w.name,
       group: `player/${kindGroup}`,
-      color: colorOf("player"),
+      color: colorOf(kindGroup),
+      tags,
       values: {
         dps: sustainedDps(w.dmg, w.fireCd, salvoN, salvoGap),
         dmg: w.dmg,
@@ -871,14 +1170,15 @@ function buildBalanceCatalog(): BalancePoint[] {
 
   for (const p of ENEMY_WPNS) {
     const w = p.w;
-    const kindGroup =
-      w.kind === "cannon" ? "cannon" : w.kind === "rocket" ? "rocket" : "missile";
+    const tags = weaponTypeTags(w.kind);
+    const kindGroup = tags[0] ?? "missile";
     out.push({
       id: `weapons:enemy:${p.id}`,
       label: p.label,
       short: p.label,
       group: `enemy/${kindGroup}`,
-      color: colorOf("enemy"),
+      color: colorOf(kindGroup),
+      tags,
       values: {
         dps: sustainedDps(w.dmg, w.fireCd, w.burst ?? 1, w.burstGap ?? 0),
         dmg: w.dmg,
