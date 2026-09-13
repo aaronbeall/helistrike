@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { heatClassCategory, heatClassScore, type HeatClass, type SmokeVolume, type Unit } from "./combat";
+import { heatClassCategory, heatClassScore, type HeatClass, type SmokePuff, type Unit } from "./combat";
 import { isAerial, isGroundVehicle, isOrganic, specOf } from "./roster";
 
 /** Classify a unit for heat-seeker preference ordering. */
@@ -74,19 +74,25 @@ export function distPointToSegment(
   return Math.hypot(apx - abx * t, apy - aby * t);
 }
 
-/** True when unit→heli line of sight intersects a smoke volume. */
-export function smokeBlocksLos(
-  volumes: readonly SmokeVolume[],
-  ax: number,
-  ay: number,
-  bx: number,
-  by: number
-): boolean {
-  for (const s of volumes) {
-    if (s.t <= 0) continue;
-    if (distPointToSegment(s.x, s.y, ax, ay, bx, by) <= s.radius) return true;
+/** How many live screen-smoke actors overlap a point (optional unit-radius pad). */
+export function smokeCoverAt(
+  puffs: readonly SmokePuff[],
+  x: number,
+  y: number,
+  pad = 0
+): number {
+  let n = 0;
+  for (const p of puffs) {
+    if (p.t <= 0) continue;
+    if (Math.hypot(p.x - x, p.y - y) <= p.radius + pad) n++;
   }
-  return false;
+  return n;
+}
+
+/** 1 = full vision, 0 = cannot see. Saturates at a few overlapping puffs. */
+export function smokeVisionMul(cover: number, saturate = 3): number {
+  if (cover <= 0) return 1;
+  return Phaser.Math.Clamp(1 - cover / saturate, 0, 1);
 }
 
 /** Heat-seeker score: prefer class, then health, then closer aim angle. */

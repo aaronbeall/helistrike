@@ -168,6 +168,8 @@ export interface CraftSpec {
   enemyAimMul?: number;
   /** Enemy seeker acquisition/tracking multiplier; lower is harder to lock. */
   enemySeekerMul?: number;
+  /** Enemy spotting / awareness range multiplier. Does not change aim, fire, or chase. */
+  enemyAwareMul?: number;
 }
 
 /** Catalog of player-selectable craft. */
@@ -218,7 +220,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     sockets: [
       { id: "wing_gun_l", class: "fixed", controller: "pilot", weapon: "minigun", points: "muzzle", muzzleFire: "simultaneous" },
       { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket", points: "hardpoint" },
-      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "hellfire_missile", points: "hardpoint" },
+      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "stinger_missile", points: "hardpoint" },
       { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "heavy_cal_pod", points: "hardpoint" },
     ],
   },
@@ -438,12 +440,13 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     verticalThrust: 340, cruiseThrust: 36, cruiseAgl: 46, maxAgl: 118,
     sockets: [
       { id: "chin_turret", class: "turret", controller: "pilot", weapon: "concealed_cannon", points: "gun", traverse: 220 },
-      { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "guided_rockets", points: "hardpoint" },
+      { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "guided_rockets", points: "hardpoint", ammoMul: 0.75 },
       { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "stinger_missile", points: "hardpoint" },
       { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "smoke_bomb", points: "hardpoint" },
     ],
     enemyAimMul: 0.55,
     enemySeekerMul: 0.42,
+    enemyAwareMul: 0.55,
   },
   cyberhawk: {
     kind: "cyberhawk",

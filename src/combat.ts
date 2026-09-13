@@ -439,12 +439,12 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     fits: FIT_GUN, notes: ["suppressed report and low muzzle flash"],
   },
   smoke_bomb: {
-    id: "smoke_bomb", name: "SMOKE", fullName: "SMOKE BOMB", designation: "LASER-GUIDED SMOKE BOMB", ammo: 8, fireCd: 1.15, speed: 145,
+    id: "smoke_bomb", name: "SMOKE", fullName: "SMOKE BOMB", designation: "COMMAND-GUIDED SMOKE BOMB", ammo: 8, fireCd: 1.15, speed: 290,
     dmg: 24, blast: 195, life: 9, kind: "guided-missile", look: ordLook("canister"), scale: 0.88, trailScale: 0.4,
-    guidance: { mode: "steer_commit", lockTime: 0.4, lockRadius: 210, wire: false, terminalOnSecondClick: true },
-    launch: motor(70, 95, 3.8), payload: { mode: "smoke", duration: 12, radius: 190, blocksLos: true },
-    control: { mode: "first_second_click" }, steering: { turnRate: 2.4, terminalTurnRate: 5.2, loft: 0.28 },
-    fits: FIT_HARDPOINT, notes: ["slow NLOS canister — persistent LOS-blocking smoke"],
+    guidance: { mode: "steer", steerRate: 2.2, maxAngle: 0.75, wire: false },
+    launch: motor(215, 360, 2.4), payload: { mode: "smoke", duration: 14, radius: 130, blocksLos: true },
+    control: CLICK, steering: { turnRate: 2.2 },
+    fits: FIT_HARDPOINT, notes: ["TOW-family steer — dives into the reticle; stacked puffs cut awareness / fire range"],
   },
   stinger_missile: {
     id: "stinger_missile", name: "STINGER", fullName: "STINGER MISSILE", designation: "FIM-92 STINGER STEALTH POD", ammo: 10, fireCd: 0.5, speed: 475,
@@ -737,17 +737,26 @@ export interface ShotState {
   bomblet?: boolean;
 }
 
-/** Persistent LOS-blocking smoke screen produced by a smoke payload. */
-export interface SmokeVolume {
+/**
+ * One drifting chemical puff from a smoke payload.
+ * Sim object (vision stacking) — never an FX-budget particle.
+ */
+export interface SmokePuff {
   x: number;
   y: number;
   z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  /** World-XY overlap radius for vision stacking. */
   radius: number;
   /** Seconds remaining. */
   t: number;
   max: number;
-  /** Emit accumulator so puff density is frame-rate independent. */
-  puff: number;
+  tint: number;
+  spin: number;
+  ang: number;
+  frame: number;
 }
 
 /** Heat-seeker preference ordering: air > vehicles > buildings > troops. */
