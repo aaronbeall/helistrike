@@ -17,6 +17,9 @@ export const ZOff = {
   smoke: 0.45,
   fire: 1.7,
   muzzle: -1,
+  /** Hurt-smoke: above hull / flying hulks, below hurt fire. */
+  hurtSmoke: 0.85,
+  /** Hurt-fire: above hull + hurt smoke, below rotors. */
   dmg: 1.5,
   turret: 1.6,
   rotor: 2.5,

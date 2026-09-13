@@ -49,6 +49,7 @@ import {
 import { isAerial, isGroundVehicle, isOrganic, hasSoftBlood, specOf, driveOf, spawnAngle, pickTroop, labelOf, allKinds, gunsOf, rollParts, crewOf, muzzlesOfGun, type ShotKind, type ShotLook } from "./roster";
 import {
   circumRadiusOf,
+  closestOnFootprint,
   distToFootprint,
   footprintInto,
   footprintOf,
@@ -3851,15 +3852,18 @@ export class MissionScene extends Phaser.Scene {
       gunParts[0]?.mount ??
       craftOrigin(craft);
     const aimMount = spriteUvPos(this.body, aimMountUv.x, aimMountUv.y);
-    // Aim in world XY (mount unprojected; pointer is ground-unprojected).
+    // Aim from the muzzle tip (not the mount) at the 2.5D reticle point.
     // Player mouse drives automatic stations only when selected; otherwise they track themselves.
     if (!craftAimsWithTurret(craft)) {
       h.gunAngle = h.angle;
       h.syncStationAimToHull();
     } else if (h.phase === "flight" || h.phase === "ready" || h.phase === "spool") {
-      const aim = this.worldPointer();
-      const mountW = screenToWorldAtZ(aimMount.x, aimMount.y + bob, h.z);
-      const want = Math.atan2(aim.y - mountW.y, aim.x - mountW.x);
+      const aim = this.reticleAimWorld(this.reticleUnit());
+      const gunI = aimSlot != null ? this.gunVisualIndexForSlot(aimSlot) : 0;
+      const from = this.guns[gunI]?.visible
+        ? this.gunTip(gunI)
+        : screenToWorldAtZ(aimMount.x, aimMount.y + bob, h.z);
+      const want = Math.atan2(aim.y - from.y, aim.x - from.x);
       for (let slot = 0; slot < craft.sockets.length; slot++) {
         const socket = craft.sockets[slot]!;
         if (socket.class !== "turret") continue;
@@ -4224,43 +4228,60 @@ export class MissionScene extends Phaser.Scene {
       this.drawBombTrajectory(aim);
       return;
     }
-    let ox: number;
-    let oy: number;
-    let wx: number;
-    let wy: number;
-    let bx: number;
-    let by: number;
-    const oz = h.z + ZOff.shot;
     if (!missile) {
       const tip = this.cannonSightOrigin(h.weapon);
-      wx = tip.x;
-      wy = tip.y;
-      const tipScr = worldToScreen(tip.x, tip.y, h.z);
-      ox = tipScr.x;
-      oy = tipScr.y;
       const socket = h.spec.sockets[h.weapon];
-      const aimAng = socket?.class === "fixed" ? h.angle : h.gunAngle;
-      const along = Math.max(80, projectAlong(wx, wy, aimAng, aim.x, aim.y));
-      bx = wx + Math.cos(aimAng) * along;
-      by = wy + Math.sin(aimAng) * along;
-    } else {
-      const pylon = this.missilePylon();
-      wx = pylon.x;
-      wy = pylon.y;
-      const pylonScr = worldToScreen(pylon.x, pylon.y, h.z);
-      ox = pylonScr.x;
-      oy = pylonScr.y;
-      const along = Math.max(80, projectAlong(pylon.x, pylon.y, h.angle, aim.x, aim.y));
-      bx = pylon.x + Math.cos(h.angle) * along;
-      by = pylon.y + Math.sin(h.angle) * along;
+      const aimAng =
+        socket?.class === "fixed"
+          ? h.angle
+          : (h.stationAim[h.weapon]?.[0] ?? h.gunAngle);
+      const origin = this.playerShotOrigin(tip, aimAng, spec);
+      const clip = this.playerSightAimWorld(origin.x, origin.y, origin.z, aimAng);
+      if (!this.sightPastMuzzle(origin, clip, h.weapon)) {
+        this.sight.clear();
+        return;
+      }
+      const tipScr = worldToScreen(tip.x, tip.y, h.z);
+      const from = this.worldToHud(tipScr.x, tipScr.y);
+      const toScr = worldToScreen(clip.x, clip.y, clip.z);
+      const to = this.worldToHud(toScr.x, toScr.y);
+      this.drawSightLine(from.x, from.y, to.x, to.y, "cannon");
+      return;
     }
-    const air = this.hoverAerial();
-    const bz = air ? air.z + heightOf(air.kind) * 0.5 : groundZ(this.world, bx, by);
-    const clip = this.sightTerrainHitWorld(wx, wy, oz, bx, by, bz);
-    const from = this.worldToHud(ox, oy);
+    const pylon = this.missilePylon();
+    const origin = this.playerShotOrigin(pylon, h.angle, spec);
+    const clip = this.playerSightAimWorld(origin.x, origin.y, origin.z, h.angle);
+    if (!this.sightPastMuzzle(pylon, clip, h.weapon)) {
+      this.sight.clear();
+      return;
+    }
+    const pylonScr = worldToScreen(pylon.x, pylon.y, h.z);
+    const from = this.worldToHud(pylonScr.x, pylonScr.y);
     const toScr = worldToScreen(clip.x, clip.y, clip.z);
     const to = this.worldToHud(toScr.x, toScr.y);
-    this.drawSightLine(from.x, from.y, to.x, to.y, missile ? "missile" : "cannon");
+    this.drawSightLine(from.x, from.y, to.x, to.y, "missile");
+  }
+
+  /** True once the aim point is past the barrel (pivot → muzzle + 1). */
+  sightPastMuzzle(
+    emit: { x: number; y: number },
+    clip: { x: number; y: number },
+    slot = this.heli.weapon
+  ): boolean {
+    const h = this.heli;
+    const socket = h.spec.sockets[slot];
+    let px = h.x;
+    let py = h.y;
+    if (socket?.class === "turret") {
+      const gun = this.guns[this.gunVisualIndexForSlot(slot)] ?? this.gun;
+      if (gun?.visible) {
+        const at = screenToWorldAtZ(gun.x, gun.y, h.z);
+        px = at.x;
+        py = at.y;
+      }
+    }
+    const near = Math.hypot(emit.x - px, emit.y - py) + 1;
+    return Math.hypot(clip.x - px, clip.y - py) > near;
   }
 
   /** Dotted curve estimating gravity-bomb path from the active bay. */
@@ -4415,6 +4436,72 @@ export class MissionScene extends Phaser.Scene {
       if (z <= gnd + 4) return Math.max(0.2, t);
     }
     return Math.max(0.2, t);
+  }
+
+  /**
+   * Shared laser / ballistic aim. XY follows `aimAng` (gun / nose). The
+   * reticle is unprojected in 2.5D: onto ground, or onto the unit/building
+   * height under the cursor (not the ground point behind the sprite).
+   */
+  playerSightAimWorld(
+    ox: number,
+    oy: number,
+    oz: number,
+    aimAng: number,
+    unit?: Unit,
+    aimAt?: { x: number; y: number }
+  ): { x: number; y: number; z: number } {
+    const tgt = unit ?? this.reticleUnit();
+    const ptr = aimAt
+      ? {
+          x: aimAt.x,
+          y: aimAt.y,
+          z: tgt
+            ? tgt.z + heightOf(tgt.kind) * 0.5
+            : groundZ(this.world, aimAt.x, aimAt.y),
+        }
+      : this.reticleAimWorld(tgt);
+    const along = Math.max(8, projectAlong(ox, oy, aimAng, ptr.x, ptr.y));
+    const bx = ox + Math.cos(aimAng) * along;
+    const by = oy + Math.sin(aimAng) * along;
+    return this.sightTerrainHitWorld(ox, oy, oz, bx, by, ptr.z);
+  }
+
+  /** Actual leave point: barrel tip + tracer-origin nudge (`spawnShot` applies the same). */
+  playerShotOrigin(
+    tip: { x: number; y: number },
+    angle: number,
+    spec: PlayerWpnSpec
+  ): { x: number; y: number; z: number } {
+    const z = this.heli.z + ZOff.shot;
+    const xy = this.shotSpawnXY(tip.x, tip.y, angle, z, spec.look, spec.scale ?? 1);
+    return { x: xy.x, y: xy.y, z };
+  }
+
+  /**
+   * Screen cursor → world point on the aim plane. A sprite under the reticle
+   * uses the camera ray at that body's height (feet→head by screen Y), then
+   * snaps onto the footprint so thin troops aren't aimed behind their billboard.
+   */
+  reticleAimWorld(unit?: Unit): { x: number; y: number; z: number } {
+    const scr = this.pointerScreen();
+    if (!unit) {
+      const g = screenToWorldOnGround(this.world, scr.x, scr.y);
+      return { x: g.x, y: g.y, z: g.z };
+    }
+    const h = heightOf(unit.kind);
+    const z0 = unit.z;
+    const z1 = z0 + h;
+    const feetY = worldToScreen(unit.x, unit.y, z0).y;
+    const headY = worldToScreen(unit.x, unit.y, z1).y;
+    const span = feetY - headY;
+    const t = Math.abs(span) < 1 ? 0.5 : Phaser.Math.Clamp((feetY - scr.y) / span, 0, 1);
+    const z = z0 + h * t;
+    const at = screenToWorldAtZ(scr.x, scr.y, z);
+    const fp = footprintOf(unit);
+    if (pointInFootprint(at.x, at.y, fp)) return { x: at.x, y: at.y, z };
+    const snapped = closestOnFootprint(at.x, at.y, fp);
+    return { x: snapped.x, y: snapped.y, z };
   }
 
   /** First point along a world beam where altitude meets terrain. */
@@ -4868,7 +4955,7 @@ export class MissionScene extends Phaser.Scene {
     spec: PlayerWpnSpec,
     beh: ReturnType<typeof shotBehaviorOf>,
     st: ShotState,
-    ptr: { x: number; y: number },
+    _ptr: { x: number; y: number },
     yawOff: number,
     autoTarget?: Unit,
     barrelIndex = 0
@@ -4890,23 +4977,35 @@ export class MissionScene extends Phaser.Scene {
       const lockOn = g.mode === "lock_on";
       const lockId =
         autoTarget?.id ?? (lockOn ? h.lockTarget?.id : undefined);
-      const air = autoTarget && isAerial(autoTarget.kind) ? autoTarget : this.hoverAerial();
-      const aim = autoTarget ?? (lockOn && lockId != null ? this.unitById(lockId) : undefined) ?? air;
-      const along = projectAlong(px, py, ang, aim ? aim.x : ptr.x, aim ? aim.y : ptr.y);
-      const dist = Math.max(80, along);
+      const zTgt =
+        autoTarget ??
+        (lockOn && lockId != null ? this.unitById(lockId) : undefined) ??
+        this.reticleUnit();
       const inherit = spec.launch.mode === "muzzle" ? spec.launch.inheritMomentum : 0.35;
       const accelRail = spec.launch.mode === "muzzle" && spec.launch.acceleration != null;
       // AA rail: near-zero leave along craft heading. Instant muzzle (Hydra): full catalog speed.
       const ownSpd = accelRail ? 10 : spec.speed;
-      const hvx = h.vx * inherit + Math.cos(ang) * ownSpd;
-      const hvy = h.vy * inherit + Math.sin(ang) * ownSpd;
-      const alongSpd = Math.max(40, hvx * Math.cos(ang) + hvy * Math.sin(ang));
-      const t = dist / alongSpd;
-      const tx = px + Math.cos(ang) * dist;
-      const ty = py + Math.sin(ang) * dist;
-      const tz = aim && isAerial(aim.kind)
-        ? aim.z + heightOf(aim.kind) * 0.5
-        : groundZ(this.world, tx, ty);
+      const origin = this.playerShotOrigin({ x: px, y: py }, ang, spec);
+      const clip = this.playerSightAimWorld(
+        origin.x,
+        origin.y,
+        origin.z,
+        ang,
+        zTgt,
+        autoTarget
+      );
+      const dx = clip.x - origin.x;
+      const dy = clip.y - origin.y;
+      const dz = clip.z - origin.z;
+      const dist3 = Math.max(8, Math.hypot(dx, dy, dz));
+      const hFrac = Math.hypot(dx, dy) / dist3;
+      const hvx = lockOn
+        ? h.vx * inherit + Math.cos(ang) * ownSpd
+        : Math.cos(ang) * ownSpd * hFrac;
+      const hvy = lockOn
+        ? h.vy * inherit + Math.sin(ang) * ownSpd
+        : Math.sin(ang) * ownSpd * hFrac;
+      const t = dist3 / Math.max(40, ownSpd);
       const seekLoft = g.mode === "lock_on" ? g.seekDelay : undefined;
       this.spawnShot({
         kind: spec.kind,
@@ -4923,9 +5022,9 @@ export class MissionScene extends Phaser.Scene {
         vy: hvy,
         vz: lockOn
           ? h.vz * inherit + (accelRail ? 0 : Math.max(28, ownSpd * 0.08))
-          : (tz - h.z) / t,
+          : dz / t,
         angle: ang,
-        life: lockOn ? spec.life : t + spec.life,
+        life: lockOn ? spec.life : t + 0.05,
         targetId: lockId,
         blast: beh.blast,
         dmg: beh.dmg,
@@ -4979,20 +5078,26 @@ export class MissionScene extends Phaser.Scene {
       const tipScreenY = tipScr.y;
       const tipScale = tipScr.scale;
       const z0 = h.z + ZOff.shot;
-      const air = autoTarget && isAerial(autoTarget.kind) ? autoTarget : this.hoverAerial();
-      const aim = autoTarget ?? air;
-      const along = projectAlong(tip.x, tip.y, ang, aim ? aim.x : ptr.x, aim ? aim.y : ptr.y);
-      const dist = Math.max(80, along);
-      const hvx = h.vx * inherit + Math.cos(ang) * spd;
-      const hvy = h.vy * inherit + Math.sin(ang) * spd;
-      // Flight time from actual along-barrel speed (incl. craft momentum) so vz matches laser tip.
-      const alongSpd = Math.max(40, hvx * Math.cos(ang) + hvy * Math.sin(ang));
-      const t = dist / alongSpd;
-      const tx = tip.x + Math.cos(ang) * dist;
-      const ty = tip.y + Math.sin(ang) * dist;
-      const tz = aim && isAerial(aim.kind)
-        ? aim.z + heightOf(aim.kind) * 0.5
-        : groundZ(this.world, tx, ty);
+      const origin = this.playerShotOrigin(tip, ang, spec);
+      const clip = this.playerSightAimWorld(
+        origin.x,
+        origin.y,
+        origin.z,
+        ang,
+        autoTarget,
+        autoTarget
+      );
+      const dx = clip.x - origin.x;
+      const dy = clip.y - origin.y;
+      const dz = clip.z - origin.z;
+      const dist3 = Math.max(8, Math.hypot(dx, dy, dz));
+      const t = dist3 / Math.max(40, spd);
+      const hFrac = Math.hypot(dx, dy) / dist3;
+      const hvx = Math.cos(ang) * spd * hFrac;
+      const hvy = Math.sin(ang) * spd * hFrac;
+      const tx = clip.x;
+      const ty = clip.y;
+      const tz = clip.z;
       const beamRange = spec.launch.mode === "beam" ? spec.launch.range : undefined;
       const g = spec.guidance;
       const lockOn = g.mode === "lock_on";
@@ -5003,7 +5108,7 @@ export class MissionScene extends Phaser.Scene {
         ? beamRange / spd
         : lockOn
           ? spec.life
-          : t + (air ? 0.55 : spec.life);
+          : t + 0.05;
       const seekLoft = g.mode === "lock_on" ? g.seekDelay : undefined;
       this.spawnShot({
         kind: spec.kind,
@@ -5053,7 +5158,7 @@ export class MissionScene extends Phaser.Scene {
           spdMax: 110 + 90 * sparkMul,
           bx: Math.cos(ang),
           by: Math.sin(ang),
-          bz: (tz - z0) / Math.max(40, dist),
+          bz: dz / Math.max(40, dist3),
           tight: 0.9,
           scaleMul: 0.32 * sparkMul,
           stretchMul: 1.55 + 1.05 * sparkMul,
@@ -5703,27 +5808,37 @@ export class MissionScene extends Phaser.Scene {
     const tip = this.muzzleFlashTip(flash);
     const at = worldToScreen(tip.x, tip.y, tip.z);
     const depth = worldDepth(this.heli.z, ZOff.muzzle + 0.15, this.heli.y);
+    const fade = flash.life0 > 1e-4 ? Phaser.Math.Clamp(flash.life / flash.life0, 0, 1) : 0;
     muzzle
       .setVisible(true)
       .setOrigin(0.14, 0.5)
       .setPosition(at.x, at.y)
       .setRotation(projectHeading(flash.ang, tip.x, tip.y, tip.z) + flash.rotJitter)
       .setScale(flash.scaleMul * at.scale)
-      .setBlendMode(Phaser.BlendModes.ADD)
-      .setTint(0xfff6d0)
-      .setAlpha(1)
+      .setAlpha(fade)
       .setDepth(depth);
+    if (this.thermalOn) {
+      muzzle.setBlendMode(Phaser.BlendModes.NORMAL);
+      applyThermalHeat(muzzle, true, 0.96 * fade);
+    } else {
+      muzzle.setBlendMode(Phaser.BlendModes.ADD);
+      applyThermalHeat(muzzle, false, 0, 0xfff6d0);
+    }
     if (glow) {
       const gSize = flash.glowMul * at.scale;
-      const gLife = flash.life0 > 1e-4 ? flash.life / flash.life0 : 0;
       glow
         .setVisible(true)
         .setPosition(at.x, at.y)
         .setDisplaySize(gSize, gSize)
-        .setAlpha(0.75 * gLife)
-        .setBlendMode(Phaser.BlendModes.ADD)
-        .setTint(0xfff2c8)
+        .setAlpha(0.75 * fade)
         .setDepth(depth + 0.05);
+      if (this.thermalOn) {
+        glow.setBlendMode(Phaser.BlendModes.NORMAL);
+        applyThermalHeat(glow, true, 0.92 * fade);
+      } else {
+        glow.setBlendMode(Phaser.BlendModes.ADD);
+        applyThermalHeat(glow, false, 0, 0xfff2c8);
+      }
     }
   }
 
@@ -9252,8 +9367,7 @@ export class MissionScene extends Phaser.Scene {
       originX: pivot.x,
       originY: pivot.y,
     };
-    // Above falling/settled hull, same band as live unit damage (under rotors/turrets when applicable).
-    const { fire, smoke } = this.pairFx(f.z, f.y, this.flame, this.hurtSmoke, ZOff.dmg, ZOff.smoke);
+    const { fire, smoke } = this.pairHurtFx(f.z, f.y, this.flame, this.hurtSmoke);
     const airMul = f.heliCrash ? 1.65 : 1;
     for (const s of f.dmgFlames) {
       const p = spriteUvPos(spr, s.u, s.v);
@@ -9342,6 +9456,23 @@ export class MissionScene extends Phaser.Scene {
     const d = worldDepth(z, off, y);
     if (em.depth !== d) em.setDepth(d);
     return em;
+  }
+
+  /**
+   * Hurt fire + smoke on the same world-depth stack as hull sprites:
+   * body (0 / +posted) < smoke < fire < rotor. No FX-band rounding.
+   */
+  pairHurtFx(
+    z: number,
+    y: number,
+    fireProto: Phaser.GameObjects.Particles.ParticleEmitter,
+    smokeProto: Phaser.GameObjects.Particles.ParticleEmitter,
+    zBias = 0
+  ): { fire: Phaser.GameObjects.Particles.ParticleEmitter; smoke: Phaser.GameObjects.Particles.ParticleEmitter } {
+    return {
+      fire: this.fxAtWorld(z, y, fireProto, ZOff.dmg + zBias),
+      smoke: this.fxAtWorld(z, y, smokeProto, ZOff.hurtSmoke + zBias),
+    };
   }
 
   /**
@@ -10708,13 +10839,18 @@ export class MissionScene extends Phaser.Scene {
         if (flash.texture.key !== "fx_muzzle") flash.setTexture("fx_muzzle");
         flash
           .setFrame(u.muzzleFrame ?? 0)
-          .setBlendMode(Phaser.BlendModes.ADD)
-          .setTint(0xfff6d0)
           .setOrigin(0.15, 0.5)
           .setPosition(tipScr.x, tipScr.y)
           .setRotation(projectHeading(ang + jitR, tip.x, tip.y, u.z))
           .setScale((sp.organic ? 0.7 : 1.15) * zs * jitS)
           .setAlpha(Phaser.Math.Clamp(u.muzzleT / 0.07, 0, 1));
+        if (this.thermalOn) {
+          flash.setBlendMode(Phaser.BlendModes.NORMAL);
+          applyThermalHeat(flash, true, 0.96 * Phaser.Math.Clamp(u.muzzleT / 0.07, 0, 1));
+        } else {
+          flash.setBlendMode(Phaser.BlendModes.ADD);
+          applyThermalHeat(flash, false, 0, 0xfff6d0);
+        }
         if (flash.depth !== flashDepth) flash.setDepth(flashDepth);
         clearEdgeLight(flash);
       }
@@ -11389,9 +11525,9 @@ export class MissionScene extends Phaser.Scene {
     const w = this.scale.width;
     const hgt = this.scale.height;
     const pad = 36;
-    const cx = w / 2;
-    const cy = hgt / 2;
-    const ang = Math.atan2(sy - cy, sx - cx);
+    const look = this.camLookWorld();
+    const camHud = this.worldToHudScreen(look.x, look.y, look.z);
+    const ang = Math.atan2(sy - camHud.sy, sx - camHud.sx);
     const ax = Phaser.Math.Clamp(sx, pad, w - pad);
     const ay = Phaser.Math.Clamp(sy, pad, hgt - pad);
     g.fillStyle(color, 0.92 * alpha);
@@ -11458,13 +11594,9 @@ export class MissionScene extends Phaser.Scene {
   }
 
   unitOnHud(u: Unit, pad = 36): { on: boolean; sx: number; sy: number } {
-    const cam = this.cameras.main;
-    const view = cam.worldView;
+    const { sx, sy } = this.worldToHudScreen(u.x, u.y, u.z);
     const w = this.scale.width;
     const h = this.scale.height;
-    const at = worldToScreen(u.x, u.y, u.z);
-    const sx = ((at.x - view.x) / view.width) * w;
-    const sy = ((at.y - view.y) / view.height) * h;
     const on = sx > pad && sx < w - pad && sy > pad && sy < h - pad;
     return { on, sx, sy };
   }
@@ -11500,6 +11632,29 @@ export class MissionScene extends Phaser.Scene {
       }
     }
     return best;
+  }
+
+  /** World point the play camera is looking at (heli, or TOW/SPIKE/stinger chase). */
+  camLookWorld(): { x: number; y: number; z: number } {
+    const a = this.playerCamAnchor();
+    return {
+      x: a.x + this.lookCamX,
+      y: a.y + this.lookCamY,
+      z:
+        this.stingerT > 0 && this.stingerTarget?.z != null && !this.stingerReleased
+          ? this.stingerTarget.z
+          : a.z,
+    };
+  }
+
+  worldToHudScreen(x: number, y: number, z: number): { sx: number; sy: number } {
+    const cam = this.cameras.main;
+    const view = cam.worldView;
+    const at = worldToScreen(x, y, z);
+    return {
+      sx: ((at.x - view.x) / view.width) * this.scale.width,
+      sy: ((at.y - view.y) / view.height) * this.scale.height,
+    };
   }
 
   /** Unit under reticle (footprint tested in projected screen space). */
@@ -11903,8 +12058,9 @@ export class MissionScene extends Phaser.Scene {
     const u = this.units.find((q) => q.hv === spec.id);
     const done = !u || u.dead;
     if (done) return { text: `× ${spec.name}  KILL`, done: true };
-    const dx = u.x - this.heli.x;
-    const dy = u.y - this.heli.y;
+    const look = this.camLookWorld();
+    const dx = u.x - look.x;
+    const dy = u.y - look.y;
     const dist = Math.hypot(dx, dy);
     const brg = Phaser.Math.RadToDeg(Math.atan2(dx, -dy));
     const compass = bearing(brg);
@@ -11979,9 +12135,9 @@ export class MissionScene extends Phaser.Scene {
         ay = Math.max(pad, vis.sy - above);
         ang = Math.PI / 2;
       } else {
-        const cx = w / 2;
-        const cy = h / 2;
-        ang = Math.atan2(vis.sy - cy, vis.sx - cx);
+        const look = this.camLookWorld();
+        const camHud = this.worldToHudScreen(look.x, look.y, look.z);
+        ang = Math.atan2(vis.sy - camHud.sy, vis.sx - camHud.sx);
         ax = Phaser.Math.Clamp(vis.sx, pad, w - pad);
         ay = Phaser.Math.Clamp(vis.sy, pad, h - pad);
       }
@@ -11997,7 +12153,8 @@ export class MissionScene extends Phaser.Scene {
       g.restore();
       const label = this.hvArrowLabels[used++];
       if (!label) continue;
-      const dist = Math.hypot(u.x - this.heli.x, u.y - this.heli.y) | 0;
+      const look = this.camLookWorld();
+      const dist = Math.hypot(u.x - look.x, u.y - look.y) | 0;
       let lx: number;
       let ly: number;
       let ox: number;
@@ -14423,7 +14580,7 @@ export class MissionScene extends Phaser.Scene {
         h.dmgSites.push({ ...uv, scale: range(0.42, 0.8) });
       }
       if (want) {
-        const { fire, smoke } = this.pairFx(h.z, h.y, this.playerFlame, this.playerHurtSmoke, ZOff.dmg, ZOff.smoke);
+        const { fire, smoke } = this.pairHurtFx(h.z, h.y, this.playerFlame, this.playerHurtSmoke);
         for (const s of h.dmgSites) {
           const base = spriteUvPos(this.body, s.u, s.v);
           // Keep sparks on the damage pin — wide jitter reads as loose trail spray.
@@ -14469,7 +14626,7 @@ export class MissionScene extends Phaser.Scene {
         u.dmgSites.push({ ...uv, scale: range(0.38, 0.75) });
       }
       const zBias = u.pinId != null ? ZOff.posted : 0;
-      const { fire, smoke } = this.pairFx(u.z, u.y, this.flame, this.hurtSmoke, ZOff.dmg + zBias, ZOff.smoke + zBias);
+      const { fire, smoke } = this.pairHurtFx(u.z, u.y, this.flame, this.hurtSmoke, zBias);
       const sp = specOf(u.kind);
       const sizeMul = sp.aerial ? 1.65 : sp.building ? 1.15 : 1;
       for (const s of u.dmgSites) {
@@ -14533,6 +14690,10 @@ export class MissionScene extends Phaser.Scene {
       })
       .setOrigin(0.5)
       .setAlpha(style === "subtle" ? 0.82 : 1);
+    if (style === "subtle") {
+      text.setStroke("#0c0a08", 5).setShadow(0, 2, "#000000", 8, true, true);
+      sub.setStroke("#0c0a08", 4).setShadow(0, 2, "#000000", 6, true, true);
+    }
     kids.push(text, sub);
     const root = this.add
       .container(0, 0, kids)
