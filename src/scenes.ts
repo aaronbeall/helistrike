@@ -2140,6 +2140,7 @@ export class MissionScene extends Phaser.Scene {
     this.debris = [];
     this.simParticles = [];
     this.smokePuffs = [];
+    this.gpsDistTxt = [];
     this.thermalWreckMarks = [];
     this.exhaustPrevWorld = [];
     this.exhaustMountCursor = 0;
@@ -15328,7 +15329,10 @@ export class MissionScene extends Phaser.Scene {
         .setScale(sc)
         .setAlpha(0.52);
     }
-    for (let i = labelI; i < this.gpsDistTxt.length; i++) this.gpsDistTxt[i]!.setVisible(false);
+    for (let i = labelI; i < this.gpsDistTxt.length; i++) {
+      const t = this.gpsDistTxt[i];
+      if (t?.active) t.setVisible(false);
+    }
     if (any) {
       g.setVisible(true);
       g.setDepth(depth);
@@ -15337,22 +15341,29 @@ export class MissionScene extends Phaser.Scene {
   }
 
   acquireGpsDistTxt(i: number): Phaser.GameObjects.Text {
-    while (this.gpsDistTxt.length <= i) {
-      const t = this.add
-        .text(0, 0, "", {
-          fontFamily: "Share Tech Mono, monospace",
-          fontSize: "11px",
-          color: "#f0d56a",
-        })
-        .setOrigin(0.5, 1)
-        .setDepth(Layer.FIELD)
-        .setVisible(false)
-        .setStroke("#1c100c", 2)
-        .setAlpha(0.52);
-      this.bindFieldHud(t);
-      this.gpsDistTxt.push(t);
+    while (this.gpsDistTxt.length <= i) this.gpsDistTxt.push(this.makeGpsDistTxt());
+    const existing = this.gpsDistTxt[i];
+    // Scene restart destroys old Text objects but the pool array can linger — replace.
+    if (!existing || !existing.active || !existing.scene) {
+      this.gpsDistTxt[i] = this.makeGpsDistTxt();
     }
     return this.gpsDistTxt[i]!;
+  }
+
+  makeGpsDistTxt(): Phaser.GameObjects.Text {
+    const t = this.add
+      .text(0, 0, "", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "11px",
+        color: "#f0d56a",
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(Layer.FIELD)
+      .setVisible(false)
+      .setStroke("#1c100c", 2)
+      .setAlpha(0.52);
+    this.bindFieldHud(t);
+    return t;
   }
 
   /** Instant near-mouse lock diamond for the Tesla coil cannon. */
@@ -18545,7 +18556,7 @@ export class MissionScene extends Phaser.Scene {
       this.lockGfx.clear();
       this.lockTxt.setVisible(false);
       this.lockInbdTxt.setVisible(false);
-      for (const t of this.gpsDistTxt) t.setVisible(false);
+      for (const t of this.gpsDistTxt) if (t.active) t.setVisible(false);
       this.lockHudTxt.setVisible(false);
       this.lockInbdHudTxt.setVisible(false);
       this.lockArrowGfx.clear();
