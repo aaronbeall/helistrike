@@ -45,43 +45,50 @@ void main() {
 
   vec2 c = uv * 2.0 - 1.0;
   float r = length(c);
-  float edge = smoothstep(0.28, 1.2, r);
+  // Soft center, strong rim — distortion lives at the frame edge.
+  float edge = smoothstep(0.38, 1.05, r);
+  edge *= edge;
   vec2 dir = c / max(r, 1e-4);
 
-  // Multi-scale phase grain — fine digital crawl + mid cells.
-  float fine = noise(uv * 240.0 + vec2(uTime * 4.2, -uTime * 2.8));
-  float mid = noise(uv * 86.0 + vec2(-uTime * 1.6, uTime * 2.1));
-  float micro = hash(floor(uv * 520.0 + uTime * 18.0));
-  float detail = fine * 0.45 + mid * 0.35 + micro * 0.2;
-  float spark = step(0.78, fine) * (0.5 + 0.5 * mid);
-  float band = sin(uTime * 5.2 + r * 18.0 + mid * 6.28);
-  float shimmer = 0.45 + 0.55 * band;
+  // Fine phase veil — high-freq pattern that drives the warp.
+  vec2 drift = vec2(uTime * 0.55, -uTime * 0.38);
+  float n1 = noise(uv * 96.0 + drift);
+  float n2 = noise(uv * 210.0 - drift * 1.7 + 17.0);
+  float n3 = noise(uv * 420.0 + drift * 2.4 + 41.0);
+  // Ridged detail so the pattern reads as thin filaments, not soft blobs.
+  float ridge = 1.0 - abs(n1 * 2.0 - 1.0);
+  float detail = ridge * 0.5 + n2 * 0.32 + n3 * 0.18;
+  float filament = smoothstep(0.42, 0.92, detail);
 
-  // Soft radial base + strong local warp locked to the fine detail.
-  vec2 detailWarp = vec2(
-    noise(uv * 190.0 + vec2(uTime * 5.4, 11.0)) - 0.5,
-    noise(uv * 190.0 + vec2(7.0, -uTime * 4.6)) - 0.5
-  );
-  float local = 0.35 + detail * 0.9 + spark * 0.7;
-  vec2 warped = uv + dir * (0.012 * amt * edge * shimmer);
-  warped += detailWarp * (0.028 * amt * edge * local);
-  warped.x += sin(uv.y * 110.0 + uTime * 8.0 + fine * 14.0) * 0.009 * amt * edge * local;
-  warped.y += cos(uv.x * 88.0 - uTime * 6.4 + mid * 10.0) * 0.007 * amt * edge * local;
-  // Sparse hot-pixel jitter so the rim reads as dissolving phase dust.
-  warped += (vec2(micro, hash(floor(uv * 520.0) + 19.0)) - 0.5) * (0.012 * amt * edge * spark);
+  // Pattern gradient → local warp direction (screen bends along the fine details).
+  float eps = 0.0028;
+  float dx = noise((uv + vec2(eps, 0.0)) * 96.0 + drift)
+           - noise((uv - vec2(eps, 0.0)) * 96.0 + drift);
+  float dy = noise((uv + vec2(0.0, eps)) * 96.0 + drift)
+           - noise((uv - vec2(0.0, eps)) * 96.0 + drift);
+  vec2 g = vec2(dx, dy);
+  float gLen = max(length(g), 1e-4);
+  vec2 gDir = g / gLen;
+  // Tangential crawl along filaments + radial push scaled by detail.
+  vec2 tang = vec2(-gDir.y, gDir.x);
+  float push = (0.022 + 0.045 * filament) * amt * edge;
+  vec2 warped = uv;
+  warped += gDir * ((detail - 0.5) * 2.0) * push;
+  warped += tang * (n2 - 0.5) * push * 1.35;
+  warped += dir * (filament * 0.018 * amt * edge);
+  // Extra fine jitter on the hottest filaments so edges look liquid.
+  warped += (vec2(n3, n2) - 0.5) * (0.014 * amt * edge * filament);
   warped = clamp(warped, 0.0, 1.0);
 
-  float split = (0.007 + 0.016 * detail + 0.01 * spark) * amt * edge;
-  float rr = texture2D(uMainSampler, warped + vec2(split, split * 0.35)).r;
+  float split = (0.004 + 0.012 * filament) * amt * edge;
+  float rr = texture2D(uMainSampler, warped + gDir * split).r;
   float gg = texture2D(uMainSampler, warped).g;
-  float bb = texture2D(uMainSampler, warped - vec2(split, -split * 0.25)).b;
+  float bb = texture2D(uMainSampler, warped - gDir * split).b;
   vec3 color = vec3(rr, gg, bb);
 
-  // Cool rim light with fine speckled energy on the detail peaks.
-  vec3 rim = vec3(0.35, 0.85, 1.15) * (0.1 + 0.22 * shimmer + 0.35 * spark);
-  color += rim * edge * amt * (0.55 + detail * 0.7);
-  color = mix(color, color * vec3(0.74, 0.9, 1.28), edge * amt * (0.35 + detail * 0.35));
-  color += vec3(0.55, 0.95, 1.35) * spark * edge * amt * 0.18;
+  // Light cool tint only — keep the warp readable.
+  color = mix(color, color * vec3(0.78, 0.92, 1.22), edge * amt * (0.25 + filament * 0.35));
+  color += vec3(0.25, 0.7, 1.05) * filament * edge * amt * 0.08;
 
   gl_FragColor = vec4(max(color, vec3(0.0)), 1.0);
 }

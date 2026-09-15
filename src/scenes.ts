@@ -6205,7 +6205,6 @@ export class MissionScene extends Phaser.Scene {
       hitIds: pierce != null ? [] : undefined,
       gx,
       gy,
-      drone: spec.payload.mode === "drone" || undefined,
       helix: helixPayload ? 0 : undefined,
       helixSide: helixPayload ? Math.sin(phase) : undefined,
       helixOff: helixPayload ? 9.5 : undefined,
@@ -7298,7 +7297,6 @@ export class MissionScene extends Phaser.Scene {
   autoStationRange(spec: PlayerWpnSpec, slot?: number): number {
     const sockRange = slot != null ? this.heli.spec.sockets[slot]?.range : undefined;
     if (sockRange != null && sockRange > 0) return sockRange;
-    if (spec.guidance.mode === "seek") return spec.guidance.acquireRadius;
     if (spec.launch.mode === "beam") return spec.launch.range;
     return 340;
   }
@@ -8027,11 +8025,11 @@ export class MissionScene extends Phaser.Scene {
     this.spawnImpactFlash(at.x, at.y, z, 0xc8f0ff, 70 * at.scale, 0.9, 220);
     this.spawnImpactFlash(at.x, at.y, z, 0xe080ff, 42 * at.scale, 0.75, 160);
     this.spawnPhotonBlastFlash(at.x, at.y, z, at.scale);
-    this.spawnBlastRing(x, y, z, Math.max(110, blast * 0.9), {
+    this.spawnBlastRing(x, y, z, Math.max(48, blast * 0.38), {
       tint: 0xe8c0ff,
-      alpha: 0.78,
-      duration: 400,
-      expand: 3.8,
+      alpha: 0.72,
+      duration: 320,
+      expand: 2.4,
     });
     this.shake = Math.min(9, this.shake + 2.8);
   }
@@ -8630,7 +8628,6 @@ export class MissionScene extends Phaser.Scene {
    */
   shotDrawRotation(s: Shot, x = s.x, y = s.y, z = s.z): number {
     const missile =
-      !!s.st?.drone ||
       s.kind === "lock-on-missile" ||
       s.kind === "guided-missile";
     if (missile) return projectHeading(s.angle, x, y, z);
@@ -9193,30 +9190,21 @@ export class MissionScene extends Phaser.Scene {
         }
       }
 
-      const dronePersist = !!st?.drone && !st.detonate;
       const g1 = groundZ(this.world, s.x, s.y);
       const a0 = z0 - g0;
       const a1 = s.z - g1;
       let hit = !s.deadfall && s.from !== "enemy" && s.life <= 0;
-      if (dronePersist && hit) {
-        // Life elapsed → detonate
-        st!.detonate = true;
-      }
       if (preIgnite && a1 > 0) {
         /* skip ground collision during pre-ignition repel */
-      } else if (!dronePersist && a0 > 0.05 && a1 <= 0) {
+      } else if (a0 > 0.05 && a1 <= 0) {
         const u = a0 / (a0 - a1);
         s.x = x0 + (s.x - x0) * u;
         s.y = y0 + (s.y - y0) * u;
         s.z = g0 + (g1 - g0) * u;
         hit = true;
-      } else if (!dronePersist && a1 <= 0 && a0 <= 0.05) {
+      } else if (a1 <= 0 && a0 <= 0.05) {
         s.z = g1;
         hit = true;
-      } else if (dronePersist && a1 < CRUISE_AGL * 0.35) {
-        // Keep drones above ground
-        s.z = g1 + CRUISE_AGL * 0.45;
-        if (s.vz < 0) s.vz *= 0.2;
       }
 
       let victim: Unit | undefined;
@@ -9307,7 +9295,6 @@ export class MissionScene extends Phaser.Scene {
           }
         }
       }
-      if (st?.detonate) hit = true;
       if (hit) {
         this.releaseEnergyTrail(s);
         const lingerSensor =
@@ -9637,38 +9624,6 @@ export class MissionScene extends Phaser.Scene {
         const home = norm3(st.gx - s.x, st.gy - s.y, gndImpact - s.z);
         const turn = (beh.steering?.turnRate ?? g.steerRate) * dt;
         flyMissile(s, home, turn, spd, { noseZ: -0.35, slowThresh: 8 });
-        return;
-      }
-
-      if (g.mode === "seek" || st.drone) {
-        if (st.drone && this.spectrePilot) {
-          // Direct pilot takeover — skip autonomous seek this frame.
-          return;
-        }
-        if (!s.targetId || (g.mode === "seek" && g.retarget)) {
-          const acq = g.mode === "seek" ? g.acquireRadius : 300;
-          const n = this.nearestUnit(s.x, s.y, acq);
-          if (n) s.targetId = n.id;
-        }
-        const u = s.targetId != null ? this.unitById(s.targetId) : undefined;
-        if (u) {
-          const home = norm3(u.x - s.x, u.y - s.y, u.z + heightOf(u.kind) * 0.4 - s.z);
-          const turn = (beh.steering?.turnRate ?? 4.8) * dt;
-          flyMissile(s, home, turn, Math.min(spd, beh.cruiseSpeed), {
-            noseZ: 0,
-            slowThresh: 8,
-          });
-          if (Math.hypot(u.x - s.x, u.y - s.y) < circumRadiusOf(u.kind) + 20) st.detonate = true;
-        }
-        if (st.drone) {
-          const wantZ = groundZ(this.world, s.x, s.y) + CRUISE_AGL * 0.55;
-          if (!this.spectrePilot) s.vz += (wantZ - s.z) * 1.8 * dt;
-          const gnd = groundZ(this.world, s.x, s.y) + 12;
-          if (s.z < gnd) {
-            s.z = gnd;
-            if (s.vz < 0) s.vz = 0;
-          }
-        }
         return;
       }
 
@@ -10629,7 +10584,6 @@ export class MissionScene extends Phaser.Scene {
 
   deadfallShot(s: Shot): void {
     if (s.deadfall) return;
-    if (s.st?.drone) return;
     if (s.kind === "cannon" || s.kind === "beam") return;
     s.deadfall = true;
     s.homePlayer = false;
@@ -14585,9 +14539,7 @@ export class MissionScene extends Phaser.Scene {
       const im = kids[i * 2 + 1]!;
       if (!cameraPointVisible(s.z, s.y)) return;
       const st = s.st;
-      const key = st?.drone && this.textures.exists("craft_quad_drone")
-        ? "craft_quad_drone"
-        : shotLookOf(s);
+      const key = shotLookOf(s);
       const rot = s.angle;
       let wx = s.x;
       let wy = s.y;
@@ -14605,8 +14557,8 @@ export class MissionScene extends Phaser.Scene {
       if (!this.projectedInView(drawX, drawY, 120)) return;
       const drawRot = this.shotDrawRotation(s, wx, wy, wz);
       const photon = key === "shot_photon";
-      const ox = st?.drone ? 0.5 : SHOT_ORIGIN.x;
-      const sc = (st?.drone ? 0.55 : s.scale ?? 1) * (st?.helixOff ? 1.06 : 1);
+      const ox = SHOT_ORIGIN.x;
+      const sc = (s.scale ?? 1) * (st?.helixOff ? 1.06 : 1);
       const energy = !!(s.energyTrail || s.energyTrails);
       sh.setVisible(true).setOrigin(ox, 0.5);
       this.applyCastShadow(sh, wx, wy, wz, key, rot, sc);
@@ -17113,14 +17065,13 @@ export class MissionScene extends Phaser.Scene {
           s.from === "player" &&
           s.wpnId === selected.id &&
           !!s.st &&
-          !s.st.detonate &&
           !s.st.bomblet
       );
       if (mine) return mine;
     }
     for (let i = this.shots.length - 1; i >= 0; i--) {
       const s = this.shots[i]!;
-      if (s.from !== "player" || !s.wpnId || !s.st || s.st.detonate || s.st.bomblet) continue;
+      if (s.from !== "player" || !s.wpnId || !s.st || s.st.bomblet) continue;
       if (PLAYER_WPNS[s.wpnId]?.sensorView) return s;
     }
     return undefined;

@@ -118,12 +118,6 @@ export type WeaponGuidance =
       mode: "waypoint";
       steerRate: number;
       pointOnClick: true;
-    }
-  | {
-      /** Autonomous acquire within radius; optional retarget. */
-      mode: "seek";
-      acquireRadius: number;
-      retarget: boolean;
     };
 
 export type WeaponLaunch =
@@ -158,9 +152,8 @@ export type WeaponPayload =
       bombletBlast: number;
     }
   | { mode: "smoke"; duration: number; radius: number; blocksLos: true }
-  | { mode: "drone"; duration: number; persistent: true; autonomous: true }
   | { mode: "remote"; remote: RemoteKind; duration: number }
-  | { mode: "beam"; shape: "line" | "cone"; chain?: number; stun?: number; /** 0–1 fraction of muzzle→aim where the primary beam forks. */ splitAt?: number; splitChance?: number; splitCount?: number; reflect?: boolean; maxBounces?: number }
+  | { mode: "beam"; shape: "line" | "cone"; chain?: number; stun?: number; /** 0–1 fraction of muzzle→aim where the primary beam forks. */ splitAt?: number; splitCount?: number; reflect?: boolean; maxBounces?: number }
   | { mode: "plasma_helix"; strands: number }
   | { mode: "warp"; timeScale: number };
 
@@ -244,7 +237,7 @@ export interface PlayerWpnSpec {
   steering?: WeaponSteering;
   gravity?: WeaponGravity;
   salvo?: WeaponSalvo;
-  /** Optional camera treatment for future seeker/drone POV modes. */
+  /** Optional camera treatment for seeker / remote POV modes. */
   sensorView?: WeaponSensorView;
   /**
    * Lock HUD copy / tone (Sidewinder HEAT/FOX-2).
@@ -844,10 +837,6 @@ export interface ShotState {
   /** Latched GPS / designated impact point. */
   gx?: number;
   gy?: number;
-  /** Persistent controllable drone. */
-  drone?: boolean;
-  /** Drone was commanded to detonate. */
-  detonate?: boolean;
   /** Plasma strand phase and lateral sign. */
   helix?: number;
   helixSide?: number;
@@ -1016,7 +1005,7 @@ export interface EnergyTrailNode {
 export interface Shot {
   kind: ShotKind;
   from: "player" | "enemy";
-  /** Stable handle for shots the player keeps commanding (drone, NLOS terminal). */
+  /** Stable handle for shots the player keeps commanding (NLOS terminal). */
   id?: number;
   /** Loadout identity that fired this projectile. */
   wpnId?: WpnId;
