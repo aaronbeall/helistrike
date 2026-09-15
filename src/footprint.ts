@@ -110,6 +110,95 @@ export function pointInFootprint(px: number, py: number, fp: Footprint): boolean
 }
 
 /**
+ * First hit of a 2D ray (ox,oy)+(dx,dy)*t against a footprint, for t in [0, range].
+ * `dx,dy` need not be normalized in XY — t is in the same units as the 3D ray parameter
+ * when (dx,dy,dz) is a unit 3D direction.
+ */
+export function rayHitFootprint(
+  ox: number,
+  oy: number,
+  dx: number,
+  dy: number,
+  range: number,
+  fp: Footprint
+): number | null {
+  const span = rayHitFootprintInterval(ox, oy, dx, dy, range, fp);
+  return span ? span.t0 : null;
+}
+
+/** Enter/exit parameter interval of a 2D ray against a footprint, clipped to [0, range]. */
+export function rayHitFootprintInterval(
+  ox: number,
+  oy: number,
+  dx: number,
+  dy: number,
+  range: number,
+  fp: Footprint
+): { t0: number; t1: number } | null {
+  if (range < 0) return null;
+
+  if (fp.shape === "circle") {
+    const a = dx * dx + dy * dy;
+    const fx = ox - fp.x;
+    const fy = oy - fp.y;
+    const c0 = fx * fx + fy * fy - fp.r * fp.r;
+    if (a < 1e-10) {
+      if (c0 > 0) return null;
+      return { t0: 0, t1: range };
+    }
+    const b = 2 * (fx * dx + fy * dy);
+    const disc = b * b - 4 * a * c0;
+    if (disc < 0) return null;
+    const s = Math.sqrt(disc);
+    const inv = 0.5 / a;
+    let t0 = (-b - s) * inv;
+    let t1 = (-b + s) * inv;
+    if (t0 > t1) {
+      const tmp = t0;
+      t0 = t1;
+      t1 = tmp;
+    }
+    t0 = Math.max(0, t0);
+    t1 = Math.min(range, t1);
+    if (t0 > t1) return null;
+    return { t0, t1 };
+  }
+
+  const c = Math.cos(fp.angle);
+  const s = Math.sin(fp.angle);
+  const oA = (ox - fp.x) * c + (oy - fp.y) * s;
+  const oS = -(ox - fp.x) * s + (oy - fp.y) * c;
+  const dA = dx * c + dy * s;
+  const dS = -dx * s + dy * c;
+
+  let tMin = 0;
+  let tMax = range;
+
+  const slab = (o: number, d: number, lo: number, hi: number): boolean => {
+    if (Math.abs(d) < 1e-10) {
+      return o >= lo && o <= hi;
+    }
+    let t1 = (lo - o) / d;
+    let t2 = (hi - o) / d;
+    if (t1 > t2) {
+      const tmp = t1;
+      t1 = t2;
+      t2 = tmp;
+    }
+    tMin = Math.max(tMin, t1);
+    tMax = Math.min(tMax, t2);
+    return tMin <= tMax;
+  };
+
+  if (!slab(oA, dA, -fp.halfL, fp.halfL)) return null;
+  if (!slab(oS, dS, -fp.halfW, fp.halfW)) return null;
+  if (tMin < 0) tMin = 0;
+  if (tMax > range) tMax = range;
+  if (tMin > tMax) return null;
+  return { t0: tMin, t1: tMax };
+}
+
+/**
  * Uniform random point inside a footprint, inset by `inset` so a disk of that
  * radius stays inside the body (clamped; collapses to center if inset eats all).
  */

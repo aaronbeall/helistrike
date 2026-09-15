@@ -238,7 +238,7 @@ export function generateWorld(
   const trees = decor.filter((d) => d.kind === "tree" || d.kind === "pine" || d.kind === "palm").map((d) => ({ x: d.x, y: d.y }));
   const rocks = decor.filter((d) => d.kind === "rock" || d.kind === "boulder" || d.kind === "snowrock").map((d) => ({ x: d.x, y: d.y }));
 
-  onProgress?.(1, "ready");
+  onProgress?.(0.97, "laydown");
   return { seed, missionId: profile.id, height, biome, spawnX, spawnY, hv, spawns, trees, rocks, decor, roads, terrain };
 }
 
@@ -279,7 +279,9 @@ export function generateWorldAsync(
         worker.terminate();
         // Canvas + road paint are DOM-only — must run on main after the worker returns.
         onProgress?.(0.98, "roads");
-        resolve(worldFromGen(msg.world));
+        const world = worldFromGen(msg.world);
+        onProgress?.(1, "ready");
+        resolve(world);
       } catch (err) {
         fail(err);
       }
@@ -1968,18 +1970,21 @@ export function paintRoadsOntoCanvas(
       g.rotate(ang);
       g.globalAlpha = waterSeg ? 0.92 : road.spur ? 0.72 : 0.8;
       // Warp the stamp as a continuous ribbon along the polyline (no radial stamps).
-      // Near tile wrap, (u%tile)/tile can land at ~1 so room→0 and piece→1e-14 —
-      // that froze mission load on the main thread after "ready" (seed-dependent long chords).
+      // At a tile seam, leftover room can be ~0 so piece never advances — that froze
+      // the load bar at 100% on long chords. Always consume at least half a texel.
       let drawn = 0;
-      while (drawn < drawLen - 1e-3) {
+      const maxIters = Math.max(8, Math.ceil(drawLen) + 8);
+      for (let iter = 0; iter < maxIters && drawn < drawLen - 1e-3; iter++) {
         const u0 = u + drawn;
         let phase = u0 % tile;
         if (phase < 0) phase += tile;
-        if (phase > tile - 1e-6) phase = 0;
+        const toWrap = tile - phase;
+        let piece = Math.min(drawLen - drawn, toWrap);
+        if (piece < 0.5) {
+          drawn += Math.min(drawLen - drawn, 0.5);
+          continue;
+        }
         const srcStart = (phase / tile) * spr.width;
-        const room = Math.max(1e-6, spr.width - srcStart);
-        const maxPiece = Math.max(1e-3, (room / spr.width) * tile);
-        const piece = Math.min(drawLen - drawn, maxPiece);
         const srcW = Math.max(0.5, (piece / tile) * spr.width);
         g.drawImage(spr, srcStart, 0, srcW, spr.height, drawn, -h * 0.5, piece, h);
         drawn += piece;

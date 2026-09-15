@@ -13,7 +13,8 @@ export type SpritePointRole =
   | "troop"
   | "hardpoint"
   | "exhaust"
-  | "muzzle";
+  | "muzzle"
+  | "wingtip";
 
 export interface SpritePoint {
   role: SpritePointRole;
@@ -100,7 +101,10 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
         uv(0.074, 0.923),
         uv(0.925, 0.923),
       ], "quad"),
-      ...pts("muzzle", [uv(0.31, 0.72), uv(0.69, 0.72)], "coil"),
+      // Twin side-pod tips (paired simultaneous fire — alternating yaw-couples a tiny quad).
+      ...pts("muzzle", [uv(0.30, 0.365), uv(0.70, 0.365)], "pod"),
+      // Tesla / belly emitter — centerline, slightly forward of the origin.
+      { role: "gun", x: 0.5, y: 0.46, id: "coil" },
       ...pts("hardpoint", [uv(0.24, 0.55), uv(0.76, 0.55)]),
     ],
   },
@@ -184,9 +188,13 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
   craft_gunship: {
     origin: uv(0.5, 0.5),
     points: [
-      { role: "gun", x: 0.28, y: 0.45, id: "side" },
+      // Port-side battery forward → aft (25mm / 40mm / 105mm).
+      { role: "gun", x: 0.418, y: 0.219, id: "spooky" },
+      { role: "gun", x: 0.415, y: 0.312, id: "bofors" },
+      { role: "gun", x: 0.417, y: 0.564, id: "howitzer" },
       ...pts("rotor", [uv(0.185, 0.284), uv(0.322, 0.284), uv(0.671, 0.286), uv(0.811, 0.286)], "prop"),
-      ...pts("hardpoint", [uv(0.418, 0.219), uv(0.415, 0.312), uv(0.417, 0.564)]),
+      // Wing PGM pylon (modern AC-130 style).
+      { role: "hardpoint", x: 0.28, y: 0.45, id: "wing" },
     ],
   },
   craft_warthog: {
@@ -194,6 +202,8 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     points: [
       { role: "gun", x: 0.5, y: 0.12 },
       ...pts("hardpoint", [uv(0.22, 0.5), uv(0.78, 0.5)]),
+      { role: "wingtip", x: 0.008, y: 0.586, id: "wingtip_l" },
+      { role: "wingtip", x: 0.987, y: 0.586, id: "wingtip_r" },
       ...pts("exhaust", [uv(0.408, 0.813), uv(0.585, 0.81)]),
     ],
   },
@@ -209,6 +219,8 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
         uv(0.78, 0.52),
         uv(0.945, 0.68),
       ]),
+      { role: "wingtip", x: 0.004, y: 0.747, id: "wingtip_l" },
+      { role: "wingtip", x: 0.995, y: 0.747, id: "wingtip_r" },
       ...pts("exhaust", [uv(0.499, 0.913)]),
     ],
   },
@@ -440,6 +452,11 @@ export function lookupSpritePoints(key: string, role?: SpritePointRole): SpriteP
   const ptsList = resolveSpec(key)?.points ?? [];
   if (!role) return ptsList;
   return ptsList.filter((p) => p.role === role);
+}
+
+/** Overlay / bind label: authored `id`, else the role. Never invent numbered display names. */
+export function spritePointLabel(p: Pick<SpritePoint, "role" | "id">): string {
+  return p.id ?? p.role;
 }
 
 export function lookupSpriteMuzzles(key: string): Uv[] {

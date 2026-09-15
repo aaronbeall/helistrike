@@ -18,6 +18,7 @@ JOBS = [
     ("helistrike-fx-muzzle.png", "muzzle.png", 0.5),
     ("helistrike-fx-dirt.png", "dirt.png", 0.48),
     ("helistrike-fx-splash.png", "splash.png", 0.52),
+    ("helistrike-fx-zap.png", "zap.png", 0.5),
 ]
 
 

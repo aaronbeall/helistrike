@@ -1,6 +1,7 @@
 import { specOf, type DebrisCat, type ShotKind, type ShotLook, type UnitKind, type PartMount } from "./roster";
 import type { SocketClass } from "./craft";
 import type { CamoKind } from "./camo";
+import type { RemoteKind } from "./remote";
 
 export type { DebrisCat, UnitKind } from "./roster";
 
@@ -21,9 +22,10 @@ const ORD = {
   missile: "shot_missile",
   aa: "shot_aam",
   miniRocket: "shot_mini_rocket",
-  long: "shot_long",
   bomb: "shot_bomb",
+  wingedBomb: "shot_winged_bomb",
   canister: "shot_canister",
+  photon: "shot_photon",
 } as const;
 
 function ordLook(key: keyof typeof ORD): ShotLook {
@@ -35,16 +37,24 @@ function cannonLook(id: string): ShotLook {
   return `shot_cannon_${id}`;
 }
 
+export type LockCategory = "air" | "ground" | "vehicle";
+
 export type LockAcquire =
   /** Nearest-ish unit under the aim point within lockRadius (size-biased). */
-  | { policy: "reticle" }
+  | {
+      policy: "reticle";
+      /** Omit = any unit. Maverick AG: ground + vehicle only. */
+      categories?: readonly LockCategory[];
+    }
   /** Prefer hotter signature classes inside a nose cone. */
   | {
       policy: "signature";
-      categories: readonly ("air" | "ground" | "vehicle")[];
+      categories: readonly LockCategory[];
       minHealth: number;
       /** Max angle from craft heading (radians) that can soft-lock. */
       maxOffBoresight: number;
+      /** Tighter cone for vehicle-class heat (omit = use maxOffBoresight). */
+      vehicleMaxOffBoresight?: number;
     };
 
 /**
@@ -63,6 +73,8 @@ export type WeaponGuidance =
       groundHugging?: boolean;
       /** Draw a command wire even when not laser-gated. */
       wire?: boolean;
+      /** Additive neon ribbon instead of exhaust / TOW wire. */
+      energyTrail?: boolean;
     }
   | {
       /** Pre-fire unit lock, then home that id after launch (fire-and-forget). */
@@ -72,6 +84,14 @@ export type WeaponGuidance =
       /** Delay after ignite / leave before seek engages. */
       seekDelay: number;
       acquire: LockAcquire;
+      /** Additive neon ribbon instead of exhaust / TOW wire. */
+      energyTrail?: boolean;
+      /** Parallel ribbons (Photon / Starstreak-style). Default 1. */
+      energyRibbons?: number;
+      /** Turn harder as the dart closes (far → near). */
+      proxTurn?: { far: number; near: number; nearDist: number };
+      /** Airburst when this close to the lock (prevents overshoot loops). */
+      proxFuse?: { xy: number; /** Optional 3D fuse radius (defaults to xy). */ z?: number };
     }
   | {
       /**
@@ -88,6 +108,10 @@ export type WeaponGuidance =
       breakLockRadius?: number;
       /** Hold this AGL while under player control (before terminal dive). */
       cruiseAgl?: number;
+      /** Additive neon ribbon instead of exhaust / TOW wire. */
+      energyTrail?: boolean;
+      /** Parallel ribbons. Default 1. */
+      energyRibbons?: number;
     }
   | {
       /** Steer toward a world point designated on click. */
@@ -114,8 +138,17 @@ export type WeaponLaunch =
   | { mode: "beam"; range: number; duration: number };
 
 export type WeaponPayload =
-  | { mode: "kinetic"; penetration?: number }
-  | { mode: "he" }
+  | {
+      mode: "kinetic";
+      penetration?: number;
+      /** Every Nth round becomes HE (Avenger 4:1 API/HEI combat mix → `heEvery: 5`). */
+      heEvery?: number;
+      /** 0–1 partial HE flash/splash on every kinetic hit (Equalizer SAPHEI). */
+      heBlend?: number;
+      /** Ground-impact dirt volume vs a normal cannon hit. */
+      dustMul?: number;
+    }
+  | { mode: "he"; dustMul?: number }
   | {
       mode: "cluster";
       bomblets: number;
@@ -125,9 +158,9 @@ export type WeaponPayload =
       bombletBlast: number;
     }
   | { mode: "smoke"; duration: number; radius: number; blocksLos: true }
-  | { mode: "emp"; duration: number; radius: number; disables: true }
   | { mode: "drone"; duration: number; persistent: true; autonomous: true }
-  | { mode: "beam"; shape: "line" | "cone"; chain?: number }
+  | { mode: "remote"; remote: RemoteKind; duration: number }
+  | { mode: "beam"; shape: "line" | "cone"; chain?: number; stun?: number; /** 0–1 fraction of muzzle→aim where the primary beam forks. */ splitAt?: number; splitChance?: number; splitCount?: number; reflect?: boolean; maxBounces?: number }
   | { mode: "plasma_helix"; strands: number }
   | { mode: "warp"; timeScale: number };
 
@@ -154,6 +187,8 @@ export interface WeaponSalvo {
   count: number;
   interval: number;
   spread?: number;
+  /** Random yaw/pitch within this cone (radians) instead of even salvo spread. */
+  cone?: number;
 }
 
 /** Render treatment requested while viewing through a weapon-mounted sensor. */
@@ -211,6 +246,20 @@ export interface PlayerWpnSpec {
   salvo?: WeaponSalvo;
   /** Optional camera treatment for future seeker/drone POV modes. */
   sensorView?: WeaponSensorView;
+  /**
+   * Lock HUD copy / tone (Sidewinder HEAT/FOX-2).
+   * `seeking` while soft-locking; `locked` once committed.
+   */
+  lockHud?: {
+    seeking: string;
+    locked: string;
+    color: number;
+    textColor: string;
+  };
+  /** Multiplier applied to damage vs aerial units (direct + splash). */
+  airDmgMul?: number;
+  /** After ignite, hold cruise speed with no further accel / drag ramp. */
+  constantSpeed?: boolean;
   /** Socket classes this weapon may install into. */
   fits: SocketClass[];
   notes: string[];
@@ -270,6 +319,8 @@ export interface CannonTracerBake {
 }
 
 const RETICLE: LockAcquire = { policy: "reticle" };
+/** AG reticle lock — vehicles / buildings, not air or troops. */
+const RETICLE_AG: LockAcquire = { policy: "reticle", categories: ["vehicle"] };
 const lockOn = (
   lockTime: number,
   lockRadius: number,
@@ -283,14 +334,16 @@ const lockOn = (
   acquire,
 });
 const signature = (
-  categories: readonly ("air" | "ground" | "vehicle")[],
+  categories: readonly LockCategory[],
   maxOffBoresight: number,
-  minHealth = 1
+  minHealth = 1,
+  vehicleMaxOffBoresight?: number
 ): LockAcquire => ({
   policy: "signature",
   categories,
   minHealth,
   maxOffBoresight,
+  ...(vehicleMaxOffBoresight != null ? { vehicleMaxOffBoresight } : {}),
 });
 const motor = (
   speed: number,
@@ -322,20 +375,20 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   },
   rocket: {
     id: "rocket", name: "HYDRA", fullName: "HYDRA ROCKET PODS", designation: "HYDRA 70 ROCKET PODS", ammo: 38, fireCd: 0.22, speed: 620,
-    dmg: 258, blast: 205, life: 3.4, kind: "rocket", look: ordLook("rocket"), scale: 1, trailScale: 0.72,
+    dmg: 258, blast: 255, life: 3.4, kind: "rocket", look: ordLook("rocket"), scale: 1, trailScale: 0.72,
     guidance: NONE, launch: MUZZLE, payload: HE, control: HOLD,
     fits: FIT_HARDPOINT, notes: ["unguided dumbfire — 1.3× kills a tank (258 / 336)"],
   },
   hellfire_missile: {
     id: "hellfire_missile", name: "HELLFIRE", fullName: "HELLFIRE MISSILE", designation: "AGM-114R HELLFIRE II", ammo: 8, fireCd: 0.55, speed: 380,
-    dmg: 360, blast: 230, life: 4.9, kind: "lock-on-missile", look: ordLook("laserGuided"), scale: 1, trailScale: 0.55,
+    dmg: 360, blast: 155, life: 4.9, kind: "lock-on-missile", look: ordLook("laserGuided"), scale: 1, trailScale: 0.55,
     // Brief steep pop-up, then seek with soft dive (see lock_on flight + missileIgnite).
     guidance: lockOn(0.5, 160, RETICLE, 0.28), launch: motor(250, 500, 2.1), payload: HE, control: { mode: "lock_then_click" },
     steering: { turnRate: 7.8, loft: 0.28 }, fits: FIT_HARDPOINT, notes: ["laser lock; pop-up then 3D home at turnRate"],
   },
   tv_missile: {
     id: "tv_missile", name: "SPIKE", fullName: "SPIKE MISSILE", designation: "SPIKE NLOS COMMAND MISSILE", ammo: 6, fireCd: 1.15, speed: 290,
-    dmg: 380, blast: 235, life: 30, kind: "guided-missile", look: ordLook("guided"), scale: 0.95, trailScale: 0.52,
+    dmg: 380, blast: 160, life: 30, kind: "guided-missile", look: ordLook("guided"), scale: 0.95, trailScale: 0.52,
     // Same kick-motor / steer family as TOW; adds soft-lock, commit dash, thermal seeker, no wire.
     guidance: {
       mode: "steer_commit",
@@ -361,7 +414,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     fits: FIT_GUN, notes: ["same 7.62 as the M240 — volume only, zippy needles"],
   },
   gatling: {
-    id: "gatling", name: "GATLING", fullName: "GATLING GUN", designation: "M197 20MM THREE-BARREL GATLING", ammo: 900, fireCd: 0.08, speed: 1200,
+    id: "gatling", name: "GATLING", fullName: "20MM GATLING GUN", designation: "M197 20MM THREE-BARREL GATLING", ammo: 900, fireCd: 0.08, speed: 1200,
     dmg: 20, blast: 26, life: 0.11, kind: "cannon", look: cannonLook("gatling"), mount: MOUNT_GATLING,
     tracer: { w: 66, h: 10, core: [255, 250, 210], mid: [255, 175, 55], rim: [230, 90, 25], blunt: 0.28, glow: 0.55 }, scale: 0.66,
     guidance: NONE, launch: MUZZLE, payload: { mode: "kinetic", penetration: 0.78 }, control: HOLD,
@@ -369,23 +422,26 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   },
   tow_missile: {
     id: "tow_missile", name: "TOW", fullName: "TOW MISSILE", designation: "BGM-71E TOW 2A MISSILE", ammo: 6, fireCd: 1.1, speed: 290,
-    dmg: 350, blast: 220, life: 6.1, kind: "guided-missile", look: ordLook("guided"), scale: 1, trailScale: 0.52,
+    dmg: 350, blast: 145, life: 6.1, kind: "guided-missile", look: ordLook("guided"), scale: 1, trailScale: 0.52,
     // Steer family with SPIKE: hold wire, no lock/commit/thermal (could add later).
     guidance: { mode: "steer", steerRate: 2.2, maxAngle: 0.75, wire: true }, launch: motor(215, 360, 2.4), payload: HE,
     control: HOLD, steering: { turnRate: 2.2 }, fits: FIT_HARDPOINT, notes: ["continuous wire command; same steer family as SPIKE"],
   },
   sidewinder_missile: {
-    id: "sidewinder_missile", name: "SIDEWINDER", fullName: "SIDEWINDER MISSILE", designation: "AIM-9X SIDEWINDER", ammo: 12, fireCd: 0.28, speed: 980,
-    dmg: 200, blast: 130, life: 3.6, kind: "lock-on-missile", look: ordLook("aa"), scale: 0.68, trailScale: 0.72,
+    id: "sidewinder_missile", name: "SIDEWINDER", fullName: "SIDEWINDER MISSILE (AIR-TO-AIR)", designation: "AIM-9X SIDEWINDER", ammo: 12, fireCd: 0.28, speed: 980,
+    dmg: 170, blast: 80, life: 3.6, kind: "lock-on-missile", look: ordLook("aa"), scale: 0.68, trailScale: 0.72,
     guidance: lockOn(
-      0.22,
+      0.14,
       165,
-      signature(["air", "vehicle"], 1.55),
+      // Wide air cone; vehicles need near nose-on heat.
+      signature(["air", "vehicle"], 1.55, 1, 0.38),
       0.12
     ),
     launch: railAccel(970), payload: HE, control: { mode: "lock_then_click" },
     steering: { turnRate: 3, loft: 0.12 }, fits: FIT_HARDPOINT,
-    notes: ["WVR heat seeker — muzzle rail at craft heading, near-zero leave, ~1s to high cruise"],
+    airDmgMul: 2.15,
+    lockHud: { seeking: "HEAT", locked: "FOX-2", color: 0xff6622, textColor: "#ff8844" },
+    notes: ["WVR heat seeker — snap lock, air-biased punch; vehicles need nose heat"],
   },
   machine_gun: {
     id: "machine_gun", name: "MACHINE GUN", fullName: "7.62MM MACHINE GUN", designation: "M240D 7.62MM MACHINE GUN", ammo: 3200, fireCd: 0.066, speed: 1040,
@@ -395,18 +451,18 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   },
   heavy_bomb: {
     id: "heavy_bomb", name: "MOAB", fullName: "MASSIVE ORDNANCE AIR BLAST", designation: "GBU-43/B MASSIVE ORDNANCE AIR BLAST", ammo: 2, fireCd: 2.4, speed: 165,
-    dmg: 980, blast: 480, life: 7.5, kind: "guided-missile", look: ordLook("bomb"), scale: 1.75, trailScale: 0.52,
+    dmg: 980, blast: 400, life: 7.5, kind: "guided-missile", look: ordLook("bomb"), scale: 1.75, trailScale: 0.52,
     guidance: NONE, launch: DROP, payload: HE, control: CLICK, gravity: GRAVITY, fits: FIT_HARDPOINT, notes: ["momentum-first drop; craft bombDrop tune caps corrective boost"],
   },
   cluster_bomb: {
     id: "cluster_bomb", name: "ROCKEYE", fullName: "ROCKEYE CLUSTER BOMB", designation: "CBU-100 ROCKEYE II CLUSTER BOMB", ammo: 5, fireCd: 1.35, speed: 185,
     dmg: 42, blast: 78, life: 6.8, kind: "guided-missile", look: ordLook("bomb"), scale: 1.2, trailScale: 0.52,
-    guidance: NONE, launch: DROP, payload: { mode: "cluster", bomblets: 18, spread: 145, bombletDmg: 82, bombletBlast: 70 }, control: CLICK,
+    guidance: NONE, launch: DROP, payload: { mode: "cluster", bomblets: 18, spread: 145, bombletDmg: 82, bombletBlast: 95 }, control: CLICK,
     gravity: GRAVITY, fits: FIT_HARDPOINT, notes: ["dispenser pop is light; damage is the bomblet pattern"],
   },
   guided_rockets: {
     id: "guided_rockets", name: "MICROS MISSILES", fullName: "DEFENSE MICRO-MISSILES", designation: "FORWARD DEFENSE MICRO-MISSILE POD", ammo: 80, fireCd: 0.24, speed: 420,
-    dmg: 110, blast: 85, life: 4.1, kind: "rocket", look: ordLook("rocket"), scale: 0.5, trailScale: 0.32,
+    dmg: 110, blast: 140, life: 4.1, kind: "rocket", look: ordLook("rocket"), scale: 0.5, trailScale: 0.32,
     guidance: {
       mode: "steer",
       steerRate: 0.55,
@@ -436,7 +492,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     id: "concealed_cannon", name: "LOW-RCS", fullName: "LOW-RCS CANNON", designation: "20MM LOW-RCS CANNON", ammo: 820, fireCd: 0.105, speed: 1080,
     dmg: 13.5, blast: 15, life: 0.1, kind: "cannon", look: cannonLook("concealed_cannon"), mount: MOUNT_MACHINE, tracer: { w: 52, h: 8, core: [220, 230, 240], mid: [140, 160, 180], rim: [70, 90, 110], glow: 0.22 }, scale: 0.6, silent: true,
     guidance: NONE, launch: MUZZLE, payload: { mode: "kinetic", penetration: 0.5 }, control: HOLD,
-    fits: FIT_GUN, notes: ["suppressed report and low muzzle flash"],
+    fits: FIT_GUN, notes: ["suppressed report and low muzzle flash", "bonus damage vs stunned or smoke-blinded targets"],
   },
   smoke_bomb: {
     id: "smoke_bomb", name: "SMOKE", fullName: "SMOKE BOMB", designation: "COMMAND-GUIDED SMOKE BOMB", ammo: 8, fireCd: 1.15, speed: 290,
@@ -448,7 +504,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   },
   stinger_missile: {
     id: "stinger_missile", name: "STINGER", fullName: "STINGER MISSILE", designation: "FIM-92 STINGER STEALTH POD", ammo: 10, fireCd: 0.5, speed: 475,
-    dmg: 168, blast: 110, life: 4.7, kind: "lock-on-missile", look: ordLook("missile"), scale: 0.6, trailScale: 0.55,
+    dmg: 168, blast: 85, life: 4.7, kind: "lock-on-missile", look: ordLook("missile"), scale: 0.6, trailScale: 0.55,
     guidance: lockOn(0.38, 185, signature(["air", "ground", "vehicle"], 1.05)), launch: motor(220, 550, 1.8), payload: HE, control: { mode: "lock_then_click" },
     steering: { turnRate: 9.4 }, fits: FIT_HARDPOINT, notes: ["low-signature heat seeker"],
   },
@@ -460,84 +516,133 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     fits: FIT_GUN, notes: ["hypervelocity penetrator; paced automatic fire"],
   },
   swarm_missile: {
-    id: "swarm_missile", name: "STARSTREAK", fullName: "STARSTREAK MISSILE", designation: "STARSTREAK HVM BEAM-RIDING DARTS", ammo: 18, fireCd: 0.48, speed: 820,
-    dmg: 115, blast: 80, life: 3.8, kind: "guided-missile", look: ordLook("missile"), scale: 0.58, trailScale: 0.55,
-    guidance: { mode: "steer", steerRate: 14, maxAngle: 1.1 },
-    launch: MUZZLE, payload: { mode: "kinetic", penetration: 0.9 },
-    control: HOLD, steering: { turnRate: 14 },
-    salvo: { count: 3, interval: 0.065, spread: 0.04 }, fits: FIT_HARDPOINT,
-    notes: ["laser beam-riding — hold fire and keep reticle on target; not fire-and-forget"],
+    id: "swarm_missile", name: "STARSTREAK", fullName: "STARSTREAK MISSILE", designation: "STARSTREAK HVM GUIDED DARTS", ammo: 92, fireCd: 0.095, speed: 920,
+    dmg: 99, blast: 105, life: 4.2, kind: "rocket", look: ordLook("miniRocket"), scale: 0.4, trailScale: 0, jitter: 0.42,
+    guidance: {
+      mode: "steer",
+      steerRate: 0.62,
+      maxAngle: 0.18,
+      energyTrail: true,
+    },
+    launch: MUZZLE,
+    payload: { mode: "cluster", bomblets: 3, spread: 64, bombletDmg: 14, bombletBlast: 26 },
+    control: HOLD,
+    steering: { turnRate: 0.62 },
+    fits: FIT_HARDPOINT,
+    notes: ["rapid jittered darts; neon ribbon; energy bomblets arc onto cone targets"],
   },
   attack_drone: {
-    id: "attack_drone", name: "SPECTER", fullName: "SPECTER DRONE", designation: "SPECTER REMOTE ATTACK DRONE", ammo: 3, fireCd: 3, speed: 320,
-    dmg: 258, blast: 140, life: 22, kind: "guided-missile", look: ordLook("guided"), scale: 0.55, trailScale: 0.35,
-    guidance: { mode: "seek", acquireRadius: 300, retarget: true }, launch: motor(150, 200, 4.5),
-    payload: { mode: "drone", duration: 18, persistent: true, autonomous: true }, control: CLICK,
-    steering: { turnRate: 6.5 },
-    sensorView: { mode: "thermal", source: "remote", palette: "white_hot" },
-    fits: FIT_HARDPOINT, notes: ["takes over flight controls while active", "click again to detonate"],
-  },
-  emp: {
-    id: "emp", name: "EMP", fullName: "EMP PULSE", designation: "TACTICAL EMP PULSE EMITTER", ammo: 6, fireCd: 1.8, speed: 1,
-    dmg: 18, blast: 230, life: 0.2, kind: "rocket", look: ordLook("rocket"), scale: 1.4, trailScale: 0.56,
-    guidance: NONE, launch: { mode: "beam", range: 235, duration: 0.25 },
-    payload: { mode: "emp", duration: 8, radius: 230, disables: true }, control: CLICK,
-    fits: FIT_GUN, notes: ["radial pulse disables affected systems"],
+    id: "attack_drone", name: "SPECTRE", fullName: "SPECTRE DRONE", designation: "SPECTRE REMOTE ATTACK DRONE", ammo: 3, fireCd: 3, speed: 280,
+    dmg: 258, blast: 100, life: 45, kind: "guided-missile", look: ordLook("guided"), scale: 0.55, trailScale: 0,
+    guidance: NONE, launch: { mode: "muzzle", inheritMomentum: 0.85 },
+    payload: { mode: "remote", remote: "spectre", duration: 45 }, control: CLICK,
+    steering: { turnRate: 5.4 },
+    sensorView: { mode: "thermal", source: "remote", palette: "full_spectrum" },
+    fits: FIT_HARDPOINT, notes: ["launches as a separate controllable craft", "Q / RMB drop camera without detonating", "select Spectre slot to return view", "click Spectre in its view to detonate"],
   },
   plasma_cannon: {
-    id: "plasma_cannon", name: "PLASMA HELIX", fullName: "PLASMA HELIX CANNON", designation: "PLASMA HELIX CANNON", ammo: 1800, fireCd: 0.09, speed: 1050,
-    dmg: 12, blast: 22, life: 0.1, kind: "cannon", look: cannonLook("plasma_cannon"), mount: MOUNT_PLASMA,
+    id: "plasma_cannon", name: "PLASMA HELIX", fullName: "PLASMA HELIX CANNON", designation: "PLASMA HELIX CANNON", ammo: 1800, fireCd: 0.2, speed: 1050,
+    dmg: 42, blast: 52, life: 0.14, kind: "cannon", look: cannonLook("plasma_cannon"), mount: MOUNT_PLASMA,
     tracer: { w: 34, h: 22, core: [210, 255, 160], mid: [80, 255, 60], rim: [20, 160, 40], glow: 1.05, shape: "orb" }, scale: 0.7,
     guidance: NONE, launch: MUZZLE, payload: { mode: "plasma_helix", strands: 3 }, control: HOLD,
-    fits: FIT_GUN, notes: ["triple rapidly spiralling green plasma strands"],
+    salvo: { count: 3, interval: 0.01 },
+    fits: FIT_GUN, notes: ["quick 3-round burst; phase-offset strands braid with depth"],
   },
   laser_rocket: {
-    id: "laser_rocket", name: "REFRACTOR", fullName: "REFRACTOR ROCKET", designation: "REFRACTOR ENERGY ROCKET", ammo: 44, fireCd: 0.16, speed: 760,
-    dmg: 280, blast: 185, life: 2.8, kind: "rocket", look: ordLook("rocket"), scale: 0.86, trailScale: 0.56,
-    guidance: { mode: "steer", steerRate: 1.8, maxAngle: 0.42 }, launch: MUZZLE, payload: HE, control: HOLD,
-    steering: { turnRate: 1.8 }, fits: ["hardpoint", "fixed"] as SocketClass[], notes: ["refractive guided energy bolt"],
+    id: "laser_rocket", name: "REFRACTOR", fullName: "REFRACTOR BEAM", designation: "REFRACTOR ENERGY BEAM", ammo: 72, fireCd: 0.2, speed: 1,
+    dmg: 210, blast: 88, life: 0.16, kind: "beam", look: cannonLook("plasma_cannon"), mount: MOUNT_PLASMA,
+    tracer: { w: 48, h: 10, core: [255, 220, 255], mid: [180, 90, 255], rim: [80, 40, 255], glow: 1.1, shape: "bolt" }, scale: 0.7, beam: true,
+    guidance: NONE,
+    launch: { mode: "beam", range: 780, duration: 0.14 },
+    payload: {
+      mode: "beam",
+      shape: "line",
+      splitAt: 0.3,
+      splitCount: 8,
+      reflect: true,
+      maxBounces: 3,
+    },
+    control: HOLD,
+    fits: ["hardpoint", "fixed"] as SocketClass[],
+    notes: ["solid beam forks at 30% to reticle into a spray; ground hits shatter into random smaller beams"],
   },
   photon_missile: {
-    id: "photon_missile", name: "PHOTON", fullName: "PHOTON MISSILE", designation: "PHOTON SEEKER MISSILE", ammo: 12, fireCd: 0.42, speed: 880,
-    dmg: 390, blast: 240, life: 3.2, kind: "lock-on-missile", look: ordLook("laserGuided"), scale: 0.92, trailScale: 0.55,
-    guidance: lockOn(0.22, 245), launch: MUZZLE, payload: HE, control: { mode: "lock_then_click" },
-    steering: { turnRate: 12 }, fits: ["hardpoint", "fixed"] as SocketClass[], notes: ["high-energy omniband seeker"],
+    id: "photon_missile", name: "PHOTON", fullName: "PHOTON MISSILE", designation: "PHOTON SEEKER MISSILE", ammo: 12, fireCd: 0.42, speed: 2100,
+    dmg: 820, blast: 155, life: 5.5, kind: "lock-on-missile", look: ordLook("photon"), scale: 0.78, trailScale: 0,
+    guidance: {
+      mode: "lock_on",
+      lockTime: 0.22,
+      lockRadius: 245,
+      seekDelay: 0.28,
+      acquire: RETICLE,
+      energyTrail: true,
+      energyRibbons: 3,
+      proxTurn: { far: 12, near: 34, nearDist: 520 },
+      // Safety net only — prefer real body hits; fuse catches near-miss overshoots.
+      proxFuse: { xy: 26, z: 36 },
+    },
+    launch: motor(140, 4200, 0.55),
+    payload: HE, control: { mode: "lock_then_click" },
+    steering: { turnRate: 18 }, fits: ["hardpoint", "fixed"] as SocketClass[],
+    notes: ["wide loft fly-off then gradual high-altitude descent onto lock; Tesla-scale impact storm"],
   },
   warp_bomb: {
-    id: "warp_bomb", name: "WARP BOMB", fullName: "WARP BOMB", designation: "WB-1 WARP MISSILE", ammo: 4, fireCd: 1.4, speed: 2800,
-    dmg: 560, blast: 340, life: 5.5, kind: "guided-missile", look: ordLook("guided"), scale: 1.05, trailScale: 0.52,
-    guidance: { mode: "waypoint", steerRate: 4.2, pointOnClick: true }, launch: MUZZLE,
+    id: "warp_bomb", name: "WARPWIRE BOMB", fullName: "WARPWIRE BOMB", designation: "WB-1 WARPWIRE BOMB", ammo: 4, fireCd: 1.25, speed: 340,
+    dmg: 560, blast: 330, life: 30, kind: "guided-missile", look: ordLook("photon"), scale: 1.35, trailScale: 0,
+    // SPIKE-family soft-lock / second-click commit; leaves at cruise with immediate steer (no kick coast).
+    guidance: {
+      mode: "steer_commit",
+      lockTime: 0.45,
+      lockRadius: 60,
+      wire: false,
+      breakLockRadius: 90,
+      terminalOnSecondClick: true,
+      energyTrail: true,
+      energyRibbons: 3,
+    },
+    launch: {
+      mode: "kick_motor",
+      kickSpeed: 340,
+      igniteDelay: 0,
+      acceleration: 0,
+      burnTime: 0.05,
+      inheritMomentum: 0.35,
+    },
     payload: { mode: "warp", timeScale: 0.1 },
-    control: { mode: "designate_then_release" }, steering: { turnRate: 4.2, loft: 0.12 },
-    sensorView: { mode: "thermal", source: "remote", palette: "full_spectrum" },
-    fits: FIT_HARDPOINT, notes: ["warp missile: world crawls, projectile is extremely fast in real time"],
+    control: { mode: "first_second_click" },
+    steering: { turnRate: 32, terminalTurnRate: 48 },
+    constantSpeed: true,
+    fits: FIT_HARDPOINT,
+    notes: ["SPIKE-path warp bomb; magenta ribbons + energy orbs/sparks; world crawls while in flight"],
   },
   medium_gatling_cannon: {
-    id: "medium_gatling_cannon", name: "EQUALIZER", fullName: "EQUALIZER GATLING", designation: "25MM GAU-22/A EQUALIZER GATLING GUN", ammo: 500, fireCd: 0.042, speed: 1450,
-    dmg: 18, blast: 20, life: 0.11, kind: "cannon", look: cannonLook("medium_gatling_cannon"), mount: MOUNT_GATLING,
+    id: "medium_gatling_cannon", name: "EQUALIZER", fullName: "EQUALIZER GATLING GUN", designation: "25MM GAU-22/A EQUALIZER GATLING GUN", ammo: 500, fireCd: 0.042, speed: 1500,
+    dmg: 22, blast: 28, life: 0.115, kind: "cannon", look: cannonLook("medium_gatling_cannon"), mount: MOUNT_GATLING,
     tracer: { w: 118, h: 9, core: [255, 248, 215], mid: [255, 165, 48], rim: [220, 80, 22], blunt: 0.14, glow: 0.58 }, scale: 0.78,
-    guidance: NONE, launch: MUZZLE, payload: { mode: "kinetic", penetration: 0.82 }, control: HOLD,
-    fits: FIT_GUN, notes: ["jet 25mm — gun-run stream, below Avenger, above Spooky"],
+    guidance: NONE, launch: { mode: "muzzle", inheritMomentum: 1 },
+    payload: { mode: "kinetic", penetration: 0.95, heBlend: 0.18, dustMul: 1.85 },
+    control: HOLD,
+    fits: FIT_GUN, notes: ["jet 25mm SAPHEI — punchier kinetic + subtle HE; dusty impacts"],
   },
-  long_range_missile: {
-    id: "long_range_missile", name: "AMRAAM", fullName: "AMRAAM MISSILE", designation: "AIM-120D AMRAAM", ammo: 16, fireCd: 0.7, speed: 680,
-    dmg: 260, blast: 170, life: 9.5, kind: "lock-on-missile", look: ordLook("long"), scale: 0.95, trailScale: 0.62,
-    guidance: lockOn(0.85, 520, RETICLE, 0.65), launch: railAccel(1200), payload: HE, control: { mode: "lock_then_click" },
-    steering: { turnRate: 3.8, loft: 0.65 }, fits: FIT_HARDPOINT,
-    notes: ["BVR radar/laser — muzzle rail at craft heading, near-zero leave, hard accel"],
+  light_gps_missile: {
+    id: "light_gps_missile", name: "PYROS", fullName: "PYROS GPS MISSILE", designation: "PYROS LIGHT GPS GUIDED MISSILE", ammo: 24, fireCd: 0.45, speed: 460,
+    dmg: 155, blast: 95, life: 4.8, kind: "guided-missile", look: ordLook("guided"), scale: 0.68, trailScale: 0.42,
+    guidance: { mode: "waypoint", steerRate: 6.2, pointOnClick: true }, launch: motor(180, 560, 2.0), payload: HE,
+    control: { mode: "designate_then_release" }, steering: { turnRate: 6.2 },
+    fits: FIT_HARDPOINT, notes: ["light GPS AG missile — tube kick then burn; softer than Griffin"],
   },
   gps_bomb: {
-    id: "gps_bomb", name: "JDAM", fullName: "JDAM BOMB", designation: "GBU-31 JDAM", ammo: 8, fireCd: 0.95, speed: 205,
-    dmg: 450, blast: 280, life: 7, kind: "guided-missile", look: ordLook("bomb"), scale: 1.1, trailScale: 0.52,
-    guidance: { mode: "waypoint", steerRate: 1.85, pointOnClick: true }, launch: DROP, payload: HE,
-    control: { mode: "designate_then_release" }, steering: { turnRate: 1.85 }, gravity: GRAVITY,
-    fits: FIT_HARDPOINT, notes: ["clicked GPS point; steers while falling"],
+    id: "gps_bomb", name: "JDAM", fullName: "JDAM GPS BOMB", designation: "GBU-31 JDAM GPS PRECISION-GUIDED BOMB", ammo: 8, fireCd: 0.95, speed: 205,
+    dmg: 450, blast: 305, life: 7, kind: "guided-missile", look: ordLook("wingedBomb"), scale: 1.1, trailScale: 0.52,
+    guidance: { mode: "waypoint", steerRate: 3.15, pointOnClick: true }, launch: DROP, payload: HE,
+    control: { mode: "designate_then_release" }, steering: { turnRate: 3.15 }, gravity: GRAVITY,
+    fits: FIT_HARDPOINT, notes: ["clicked GPS point; steers hard while falling"],
   },
   heavy_artillery: {
-    id: "heavy_artillery", name: "HOWITZER", fullName: "HOWITZER", designation: "105MM M102 HOWITZER", ammo: 24, fireCd: 1.15, speed: 480,
-    dmg: 270, blast: 235, life: 0.28, kind: "cannon", look: cannonLook("heavy_artillery"), mount: MOUNT_ARTILLERY, tracer: { w: 88, h: 16, core: [255, 250, 230], mid: [255, 170, 50], rim: [180, 70, 20], blunt: 0.85, glow: 0.4 }, scale: 1.45,
+    id: "heavy_artillery", name: "HOWITZER", fullName: "HOWITZER ARTILLERY", designation: "105MM M102 HOWITZER ARTILLERY", ammo: 28, fireCd: 1.0, speed: 520,
+    dmg: 420, blast: 310, life: 2.8, kind: "cannon", look: cannonLook("heavy_artillery"), mount: MOUNT_ARTILLERY, tracer: { w: 96, h: 18, core: [255, 250, 230], mid: [255, 170, 50], rim: [180, 70, 20], blunt: 0.85, glow: 0.48 }, scale: 1.55,
     guidance: NONE, launch: MUZZLE, payload: HE, control: CLICK,
-    gravity: { acceleration: 220, terminalVelocity: 900 }, fits: FIT_GUN, notes: ["lobbed 105mm — slower than the Apache 30mm"],
+    gravity: { acceleration: 200, terminalVelocity: 900 }, fits: FIT_GUN, notes: ["lobbed 105mm — Hellfire-class punch, wide HE splash"],
   },
   medium_cannon: {
     id: "medium_cannon", name: "BOFORS", fullName: "BOFORS CANNON", designation: "40MM BOFORS CANNON", ammo: 90, fireCd: 0.32, speed: 680,
@@ -546,50 +651,57 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     fits: FIT_GUN, notes: ["medium-caliber explosive cannon"],
   },
   light_cannon: {
-    id: "light_cannon", name: "SPOOKY", fullName: "SPOOKY CANNON", designation: "25MM GAU-12/U SPOOKY GATLING CANNON", ammo: 3000, fireCd: 0.052, speed: 1160,
+    id: "light_cannon", name: "SPOOKY", fullName: "SPOOKY GATLING GUN", designation: "25MM GAU-12/U SPOOKY GATLING CANNON", ammo: 3000, fireCd: 0.052, speed: 1160,
     dmg: 16.5, blast: 20, life: 0.115, kind: "cannon", look: cannonLook("light_cannon"), mount: MOUNT_GATLING,
     tracer: { w: 114, h: 9, core: [255, 248, 215], mid: [255, 170, 52], rim: [225, 85, 24], blunt: 0.12, glow: 0.56 }, scale: 0.76,
     guidance: NONE, launch: MUZZLE, payload: { mode: "kinetic", penetration: 0.82 }, control: HOLD,
     fits: FIT_GUN, notes: ["gunship 25mm hose — GAU-12/U, not the F-35 Equalizer"],
   },
   gps_missile: {
-    id: "gps_missile", name: "GRIFFIN", fullName: "GRIFFIN MISSILE", designation: "AGM-176 GRIFFIN", ammo: 12, fireCd: 0.7, speed: 410,
-    dmg: 270, blast: 185, life: 5, kind: "lock-on-missile", look: ordLook("guided"), scale: 0.84, trailScale: 0.52,
-    guidance: { mode: "waypoint", steerRate: 5.8, pointOnClick: true }, launch: motor(220, 450, 2.2), payload: HE,
+    id: "gps_missile", name: "GRIFFIN", fullName: "GRIFFIN GPS GUIDED MISSILE", designation: "AGM-176 GRIFFIN GPS GUIDED MISSILE", ammo: 12, fireCd: 0.7, speed: 580,
+    dmg: 270, blast: 125, life: 5, kind: "guided-missile", look: ordLook("guided"), scale: 0.84, trailScale: 0.52,
+    guidance: { mode: "waypoint", steerRate: 5.8, pointOnClick: true }, launch: motor(240, 780, 2.5), payload: HE,
     control: { mode: "designate_then_release" }, steering: { turnRate: 5.8 },
-    fits: FIT_HARDPOINT, notes: ["powered GPS missile steers to clicked point"],
+    fits: FIT_HARDPOINT, notes: ["tube kick then hard burn to GPS aim point"],
   },
   heavy_cannon: {
-    id: "heavy_cannon", name: "AVENGER", fullName: "AVENGER CANNON", designation: "30MM GAU-8/A AVENGER GATLING GUN", ammo: 1150, fireCd: 0.04, speed: 1520,
-    dmg: 20, blast: 24, life: 0.12, kind: "cannon", look: cannonLook("heavy_cannon"), mount: MOUNT_GATLING,
+    id: "heavy_cannon", name: "AVENGER", fullName: "AVENGER GATLING GUN", designation: "30MM GAU-8/A AVENGER GATLING GUN", ammo: 1150, fireCd: 0.04, speed: 1580,
+    dmg: 170, blast: 32, life: 0.125, kind: "cannon", look: cannonLook("heavy_cannon"), mount: MOUNT_GATLING,
     tracer: { w: 132, h: 10, core: [255, 252, 230], mid: [255, 160, 45], rim: [210, 70, 20], blunt: 0.16, glow: 0.68 }, scale: 0.88,
-    guidance: NONE, launch: MUZZLE, payload: { mode: "kinetic", penetration: 1.05 }, control: HOLD,
-    fits: FIT_GUN, notes: ["GAU-8 stream — fast 30mm, opposite of the Apache orb"],
+    guidance: NONE, launch: { mode: "muzzle", inheritMomentum: 1 },
+    payload: { mode: "kinetic", penetration: 1.4, heEvery: 5, dustMul: 2.15 },
+    control: HOLD,
+    fits: FIT_GUN, notes: ["GAU-8 — one-taps soft armor/LAV; tanks fall in ~2"],
   },
   heavy_guided_missile: {
-    id: "heavy_guided_missile", name: "MAVERICK", fullName: "MAVERICK MISSILE", designation: "AGM-65 MAVERICK", ammo: 6, fireCd: 0.72, speed: 445,
-    dmg: 420, blast: 250, life: 5.5, kind: "lock-on-missile", look: ordLook("laserGuided"), scale: 0.98, trailScale: 0.55,
-    guidance: lockOn(0.62, 225), launch: MUZZLE, payload: HE, control: { mode: "lock_then_click" },
-    steering: { turnRate: 6.8 }, fits: FIT_HARDPOINT, notes: ["laser lock and fire-and-forget"],
+    id: "heavy_guided_missile", name: "MAVERICK", fullName: "MAVERICK MISSILE (AIR-TO-GROUND)", designation: "AGM-65 MAVERICK", ammo: 6, fireCd: 0.72, speed: 445,
+    dmg: 420, blast: 170, life: 5.5, kind: "lock-on-missile", look: ordLook("laserGuided"), scale: 0.98, trailScale: 0.55,
+    guidance: lockOn(0.62, 225, RETICLE_AG), launch: MUZZLE, payload: HE, control: { mode: "lock_then_click" },
+    steering: { turnRate: 6.8 }, fits: FIT_HARDPOINT, notes: ["AG laser lock — vehicle/building only; fire-and-forget"],
   },
   bomb: {
     id: "bomb", name: "IRON BOMB", fullName: "IRON BOMB", designation: "MARK 82 GENERAL-PURPOSE BOMB", ammo: 10, fireCd: 0.72, speed: 220,
-    dmg: 380, blast: 260, life: 6.5, kind: "guided-missile", look: ordLook("bomb"), scale: 1, trailScale: 0.52,
+    dmg: 380, blast: 285, life: 6.5, kind: "guided-missile", look: ordLook("bomb"), scale: 1, trailScale: 0.52,
     guidance: NONE, launch: DROP, payload: HE, control: CLICK, gravity: GRAVITY,
     fits: FIT_HARDPOINT, notes: ["aim-biased gravity bomb; momentum extends forward reach"],
   },
   tesla_beam: {
-    id: "tesla_beam", name: "TESLA COIL", fullName: "TESLA BEAM", designation: "TESLA COIL", ammo: 900, fireCd: 0.05, speed: 1,
+    id: "tesla_beam", name: "TESLA COIL", fullName: "TESLA COIL", designation: "TESLA COIL ARC CANNON", ammo: 900, fireCd: 0.05, speed: 1,
     dmg: 9, blast: 0, life: 0.05, kind: "cannon", look: cannonLook("tesla_beam"), mount: MOUNT_TESLA,
     tracer: { w: 80, h: 10, core: [230, 255, 255], mid: [80, 240, 255], rim: [20, 120, 255], glow: 0.85 }, scale: 0.62, beam: true,
-    guidance: { mode: "seek", acquireRadius: 240, retarget: true },
-    launch: { mode: "beam", range: 240, duration: 0.05 },
-    payload: { mode: "beam", shape: "line", chain: 1 },
-    control: HOLD, fits: FIT_GUN, notes: ["continuous lightning arc to reticle-near enemies"],
+    guidance: NONE,
+    launch: { mode: "beam", range: 155, duration: 0.05 },
+    payload: { mode: "beam", shape: "line", chain: 1, stun: 1 },
+    control: HOLD, fits: FIT_GUN,
+    notes: [
+      "chin/barrel cannon — arc to the unit nearest the mouse; coil reach is per craft socket",
+      "three spiraling electric streams — not a projectile",
+      "stun lingers ~1s after the arc leaves; longer hold builds up to ~4s",
+    ],
   },
   mini_hellfire_missile: {
-    id: "mini_hellfire_missile", name: "MINI-HELLFIRE", fullName: "MINI-HELLFIRE MISSILE", designation: "MINI-HELLFIRE MISSILE", ammo: 14, fireCd: 0.38, speed: 420,
-    dmg: 270, blast: 160, life: 4.4, kind: "lock-on-missile", look: ordLook("laserGuided"), scale: 0.62, trailScale: 0.55,
+    id: "mini_hellfire_missile", name: "MICRO-HELLFIRE", fullName: "MICRO-HELLFIRE MISSILE", designation: "MICRO-HELLFIRE MISSILE", ammo: 14, fireCd: 0.38, speed: 420,
+    dmg: 270, blast: 110, life: 4.4, kind: "lock-on-missile", look: ordLook("laserGuided"), scale: 0.31, trailScale: 0.55,
     guidance: lockOn(0.32, 145), launch: motor(200, 520, 1.7), payload: HE, control: { mode: "lock_then_click" },
     steering: { turnRate: 8.9 }, fits: FIT_HARDPOINT, notes: ["compact laser-guided fire-and-forget missile"],
   },
@@ -669,8 +781,19 @@ export interface Unit {
   pinMount?: number;
   camo?: CamoKind;
   strike?: number;
-  /** Seconds of EMP disable remaining: no movement, no firing. */
-  empT?: number;
+  /**
+   * Seconds of stun remaining. Stunned units get no AI inputs (move, turn, aim, fire)
+   * but keep coasting on existing velocity / spin with friction.
+   */
+  stunT?: number;
+  /** Hull yaw rate (rad/s). Recorded from AI so stun can coast turning. */
+  omega?: number;
+  /** Primary turret yaw rate (rad/s). */
+  turretOmega?: number;
+  /** Per-barrel turret yaw rates (rad/s), parallel to `turrets`. */
+  turretOmegas?: number[];
+  /** Seconds until the next stun zap overlay stamp. */
+  stunZapT?: number;
   parts?: PartMount[];
   missileCd?: number;
   missileSide?: number;
@@ -702,6 +825,10 @@ export interface ShotBehavior {
   readonly blast: number;
   /** Trail puff scale vs projectile draw scale. */
   readonly trailScale?: number;
+  /** Aerial damage multiplier captured at launch. */
+  readonly airDmgMul?: number;
+  /** Hold cruiseSpeed flat after motor ignite (no ramp). */
+  readonly constantSpeed?: boolean;
 }
 
 /** Mutable per-projectile guidance / payload state. */
@@ -727,6 +854,8 @@ export interface ShotState {
   helixOff?: number;
   /** Helix oscillation frequency (rad/s-ish). */
   helixFreq?: number;
+  /** Phase offset on the helix sine (radians) so burst rounds braid. */
+  helixPhase?: number;
   /** Cluster / smoke payload already opened. */
   opened?: boolean;
   /** Remaining armor targets a penetrator can pass through. */
@@ -785,7 +914,53 @@ export function shotBehaviorOf(spec: PlayerWpnSpec): ShotBehavior {
     dmg: spec.dmg,
     blast: spec.blast,
     trailScale: spec.trailScale,
+    airDmgMul: spec.airDmgMul,
+    constantSpeed: spec.constantSpeed,
   };
+}
+
+/**
+ * Avenger-style combat mix: every `heEvery`th kinetic round becomes HEI
+ * (no pierce, wider blast). Returns pierce for the spawned shot.
+ */
+export function applyKineticCombatMix(
+  spec: PlayerWpnSpec,
+  beh: ShotBehavior,
+  roundIndex: number
+): { beh: ShotBehavior; pierce: number | undefined } {
+  const payload = spec.payload;
+  const basePierce =
+    payload.mode === "kinetic" && payload.penetration != null ? payload.penetration : undefined;
+  if (payload.mode !== "kinetic" || payload.heEvery == null || payload.heEvery < 2) {
+    return { beh, pierce: basePierce };
+  }
+  const heRound = roundIndex % payload.heEvery === 0;
+  if (!heRound) return { beh, pierce: basePierce };
+  const dustMul = payload.dustMul;
+  return {
+    beh: {
+      ...beh,
+      payload: dustMul != null ? { mode: "he", dustMul } : { mode: "he" },
+      // HEI: softer pen trade for splash — punchier than baseline blast.
+      dmg: beh.dmg * 1.08,
+      blast: beh.blast * 1.9,
+    },
+    pierce: undefined,
+  };
+}
+
+/** Ground-impact dirt multiplier from payload (jet cannons kick up more dust). */
+export function payloadDustMul(payload: WeaponPayload | undefined): number {
+  if (!payload) return 1;
+  if (payload.mode === "kinetic" || payload.mode === "he") return payload.dustMul ?? 1;
+  return 1;
+}
+
+/** Partial HE FX weight for SAPHEI-style kinetic (0 if full HE / pure kinetic). */
+export function payloadHeBlend(payload: WeaponPayload | undefined): number {
+  if (payload?.mode !== "kinetic") return 0;
+  const b = payload.heBlend ?? 0;
+  return b <= 0 ? 0 : b >= 1 ? 1 : b;
 }
 
 /** True when guidance drives a lock HUD / soft-lock pipeline. */
@@ -800,6 +975,42 @@ export function guidanceIsLockOn(
   g: WeaponGuidance
 ): g is Extract<WeaponGuidance, { mode: "lock_on" }> {
   return g.mode === "lock_on";
+}
+
+/** Neon ribbon (Starstreak / Photon / Warp) instead of exhaust / command wire. */
+export function guidanceHasEnergyTrail(g: WeaponGuidance): boolean {
+  return (g.mode === "steer" || g.mode === "lock_on" || g.mode === "steer_commit") && !!g.energyTrail;
+}
+
+/** Parallel ribbon count for energy-trail weapons (default 1). */
+export function guidanceEnergyRibbons(g: WeaponGuidance): number {
+  if (!guidanceHasEnergyTrail(g)) return 0;
+  if ((g.mode === "lock_on" || g.mode === "steer_commit") && g.energyRibbons != null) {
+    return Math.max(1, g.energyRibbons | 0);
+  }
+  return 1;
+}
+
+/** Seconds a ribbon node stays visible after it is spawned. */
+export const ENERGY_TRAIL_NODE_LIFE = 1.85;
+/** Plasma Helix spiral ribbon — short braid fade. */
+export const HELIX_TRAIL_NODE_LIFE = 0.5;
+
+export type EnergyTrailHue = "cyan" | "green" | "magenta";
+
+export interface EnergyTrailNode {
+  x: number;
+  y: number;
+  z: number;
+  /** Exhaust kick opposite the dart (strong at spawn, then drag). */
+  bx: number;
+  by: number;
+  bz: number;
+  life: number;
+  /** Fade reference life; defaults to ENERGY_TRAIL_NODE_LIFE. */
+  max?: number;
+  /** Ribbon color set; defaults cyan (Starstreak / Photon). */
+  hue?: EnergyTrailHue;
 }
 
 export interface Shot {
@@ -844,8 +1055,118 @@ export interface Shot {
   wire?: { x: number; y: number; z: number }[];
   wireSide?: number;
   wireTrim?: number;
+  /** Additive neon ribbon nodes (Starstreak). Offsets wander so the path ripples. */
+  energyTrail?: EnergyTrailNode[];
+  /** Parallel energy ribbons (Photon). When set, preferred over `energyTrail`. */
+  energyTrails?: EnergyTrailNode[][];
+  /** EMP / electronics kill: no seek, no trail, falls and detonates on the ground. */
+  deadfall?: boolean;
+  /** EMP countermeasure killed seeker logic; dart keeps flying dumb. */
+  seekDisabled?: boolean;
   /** While this player projectile is active, cap simulation speed to this multiplier. */
   warpTimeScale?: number;
+}
+
+/** Decoy spark used by the flares countermeasure. */
+export interface Flare {
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  life: number;
+  max: number;
+}
+
+export type CountermeasureId = "flares" | "timewarp" | "phase_cloak" | "emp";
+
+export interface CountermeasureSpec {
+  id: CountermeasureId;
+  name: string;
+  duration: number;
+  cooldown: number;
+}
+
+export const COUNTERMEASURES: Record<CountermeasureId, CountermeasureSpec> = {
+  flares: { id: "flares", name: "FLARES", duration: 12, cooldown: 8 },
+  timewarp: { id: "timewarp", name: "TIMEWARP", duration: 14, cooldown: 6 },
+  phase_cloak: { id: "phase_cloak", name: "PHASE CLOAK", duration: 5.5, cooldown: 16 },
+  emp: { id: "emp", name: "EMP", duration: 4, cooldown: 11 },
+};
+
+function formatCmSeconds(n: number): string {
+  return `${Number.isInteger(n) ? n : n.toFixed(1)}s`;
+}
+
+/** Hangar / help: effect duration then cooldown. */
+export function countermeasureTimingLabel(cm: CountermeasureSpec): string {
+  return `${formatCmSeconds(cm.duration)} / ${formatCmSeconds(cm.cooldown)} CD`;
+}
+
+export function craftCountermeasure(id?: CountermeasureId): CountermeasureId {
+  return id ?? "flares";
+}
+
+/** Apply or extend a stun. Safe to call on already-stunned units. */
+export function stunUnit(u: Unit, duration: number): void {
+  if (u.dead || duration <= 0) return;
+  u.stunT = Math.max(u.stunT ?? 0, duration);
+}
+
+export function unitStunned(u: Unit): boolean {
+  return (u.stunT ?? 0) > 0;
+}
+
+function wrapPi(a: number): number {
+  return Math.atan2(Math.sin(a), Math.cos(a));
+}
+
+/**
+ * Coast a stunned unit: no new AI, existing linear + angular rates decay to rest.
+ * Callers still step position against terrain / altitude.
+ */
+export function tickStunKinematics(u: Unit, dt: number): void {
+  u.stunT = Math.max(0, (u.stunT ?? 0) - dt);
+  const drag = Math.pow(0.28, dt);
+  const spinDrag = Math.pow(0.18, dt);
+  u.vx *= drag;
+  u.vy *= drag;
+  const omega = (u.omega ?? 0) * spinDrag;
+  u.omega = omega;
+  u.angle += omega * dt;
+  const tOmega = (u.turretOmega ?? 0) * spinDrag;
+  u.turretOmega = tOmega;
+  u.turret += tOmega * dt;
+  const n = u.turrets.length;
+  if (!n) return;
+  if (!u.turretOmegas) u.turretOmegas = [];
+  for (let i = 0; i < n; i++) {
+    const w = (u.turretOmegas[i] ?? tOmega) * spinDrag;
+    u.turretOmegas[i] = w;
+    u.turrets[i] = (u.turrets[i] ?? 0) + w * dt;
+  }
+  u.turretOmegas.length = n;
+  u.turret = u.turrets[0]!;
+}
+
+/** Snapshot hull / turret rates from this frame's pose change so stun can coast them. */
+export function recordUnitSpin(
+  u: Unit,
+  prevAngle: number,
+  prevTurret: number,
+  prevTurrets: readonly number[],
+  dt: number
+): void {
+  if (dt <= 1e-8) return;
+  u.omega = wrapPi(u.angle - prevAngle) / dt;
+  u.turretOmega = wrapPi(u.turret - prevTurret) / dt;
+  if (!u.turretOmegas) u.turretOmegas = [];
+  const n = u.turrets.length;
+  for (let i = 0; i < n; i++) {
+    u.turretOmegas[i] = wrapPi((u.turrets[i] ?? 0) - (prevTurrets[i] ?? 0)) / dt;
+  }
+  u.turretOmegas.length = n;
 }
 
 /** Manually simulated terrain-interacting particles. Other visual FX use Phaser emitters. */
@@ -876,6 +1197,7 @@ export interface SimParticle {
   blood?: boolean;
   /** Blood particle already painted a multiply stain onto the terrain. */
   stamped?: boolean;
+  orb?: boolean;
   shock?: boolean;
   ox?: number;
   oy?: number;

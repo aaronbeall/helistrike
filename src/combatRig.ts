@@ -571,7 +571,7 @@ export class CombatRig {
 /** F-cycle match keys. Most-specific type first. */
 function weaponTypeTags(kind: ShotKind, launchMode?: string): string[] {
   if (launchMode === "drop") return ["bomb"];
-  if (launchMode === "beam") return kind === "cannon" ? ["beam", "cannon"] : ["beam"];
+  if (kind === "beam" || launchMode === "beam") return kind === "cannon" ? ["beam", "cannon"] : ["beam"];
   if (kind === "cannon") return ["cannon"];
   if (kind === "rocket") return ["rocket"];
   if (kind === "lock-on-missile") return ["lock-on", "missile"];
@@ -641,6 +641,16 @@ function traverseForWeapon(wpnId: string): number | undefined {
   return undefined;
 }
 
+function rangeForWeapon(wpnId: string): string | undefined {
+  const bits: string[] = [];
+  for (const c of allCrafts()) {
+    for (const s of c.sockets) {
+      if (s.weapon === wpnId && s.range != null) bits.push(`${c.name} ${s.range}`);
+    }
+  }
+  return bits.length ? bits.join(" · ") : undefined;
+}
+
 function formatPlayer(w: PlayerWpnSpec): { stats: string[]; info: string[] } {
   const crafts = craftsUsingWeapon(w.id);
   const info = [
@@ -654,6 +664,10 @@ function formatPlayer(w: PlayerWpnSpec): { stats: string[]; info: string[] } {
   const trav = traverseForWeapon(w.id);
   if (trav != null) {
     info.push(`traverse: ${trav}° (from craft socket)`);
+  }
+  const sockRange = rangeForWeapon(w.id);
+  if (sockRange) {
+    info.push(`range: ${sockRange} (from craft socket)`);
   }
   if (w.kind === "lock-on-missile" || w.kind === "guided-missile") {
     info.push(

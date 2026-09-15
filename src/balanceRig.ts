@@ -907,7 +907,7 @@ function colorOf(group: string): number {
 /** F-cycle match keys. Most-specific type first (used for chart color). */
 function weaponTypeTags(kind: ShotKind, launchMode?: string): string[] {
   if (launchMode === "drop") return ["bomb"];
-  if (launchMode === "beam") return kind === "cannon" ? ["beam", "cannon"] : ["beam"];
+  if (kind === "beam" || launchMode === "beam") return kind === "cannon" ? ["beam", "cannon"] : ["beam"];
   if (kind === "cannon") return ["cannon"];
   if (kind === "rocket") return ["rocket"];
   if (kind === "lock-on-missile") return ["lock-on", "missile"];

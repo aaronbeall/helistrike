@@ -1,5 +1,5 @@
 import type Phaser from "phaser";
-import { craftOf, craftPivot } from "./craft";
+import { craftOf, craftPivot, EXHAUST_TRAIL_FLAME_HUES } from "./craft";
 import { lookupSpriteOrigin, setSpriteOrigin } from "./spriteOrigin";
 
 const SRC = {
@@ -69,8 +69,13 @@ const UNIT_PART_ART: readonly { key: string; size: number; hulk?: boolean }[] = 
 /**
  * Shared ordnance projectile PNGs (nose-up, magenta key) under `public/sprites/shots/`.
  * Multiple weapons map onto these looks. Cannon tracers are baked at runtime.
+ * Photon uses composite flare parts (`PHOTON_FLARE_ART`); the old orb is shelved.
  */
-export const PLAYER_ORDNANCE_SHOT_ART: readonly { look: string; size: number }[] = [
+export const PLAYER_ORDNANCE_SHOT_ART: readonly {
+  look: string;
+  size: number;
+  keyPreserve?: boolean;
+}[] = [
   { look: "shot_rocket", size: 28 },
   { look: "shot_laser_guided", size: 36 },
   { look: "shot_guided", size: 34 },
@@ -79,7 +84,16 @@ export const PLAYER_ORDNANCE_SHOT_ART: readonly { look: string; size: number }[]
   { look: "shot_mini_rocket", size: 22 },
   { look: "shot_long", size: 34 },
   { look: "shot_bomb", size: 44 },
+  { look: "shot_winged_bomb", size: 40 },
   { look: "shot_canister", size: 32 },
+];
+
+/** Additive Photon lens-flare layers (black-keyed). Old `shot_photon` lives in `shots/_shelf/`. */
+export const PHOTON_FLARE_ART: readonly { key: string; file: string; size: number }[] = [
+  { key: "photon_glow", file: "sprites/shots/photon_glow.png", size: 52 },
+  { key: "photon_stream_h", file: "sprites/shots/photon_stream_h.png", size: 64 },
+  { key: "photon_stream_diag", file: "sprites/shots/photon_stream_diag.png", size: 64 },
+  { key: "photon_core", file: "sprites/shots/photon_core.png", size: 30 },
 ];
 
 /**
@@ -168,7 +182,7 @@ export const DOODAD_ART: { key: string; size: number }[] = [
   { key: "snowrock", size: 34 },
 ];
 
-export const FX_KINDS = ["spark", "flame", "smoke", "muzzle", "exhaust", "dirt", "splash"] as const;
+export const FX_KINDS = ["spark", "flame", "smoke", "muzzle", "exhaust", "dirt", "splash", "zap"] as const;
 export type FxKind = (typeof FX_KINDS)[number];
 export const FX_VARIANTS = 4;
 /** Bake cell size per FX sheet (putFxSheet). */
@@ -180,9 +194,18 @@ export const FX_SHEET_SIZE: Record<FxKind, number> = {
   exhaust: 72,
   dirt: 22,
   splash: 20,
+  zap: 96,
 };
 /** Cells from src_blasts 2×2 grid → fx_blast_0..n-1. */
 export const FX_BLAST_CELLS = 4;
+
+/** Soft cloud banks for fixed-wing chase-cam parallax (Warthog / Lightning / Gunship). */
+export const CLOUD_ART: readonly { key: string; file: string; size: number }[] = [
+  { key: "cloud_1", file: "sprites/clouds/cloud-1.png", size: 220 },
+  { key: "cloud_2", file: "sprites/clouds/cloud-2.png", size: 280 },
+  { key: "cloud_3", file: "sprites/clouds/cloud-3.png", size: 150 },
+  { key: "cloud_4", file: "sprites/clouds/cloud-4.png", size: 260 },
+];
 
 export function preloadArt(scene: Phaser.Scene): void {
   scene.load.image("menu_splash", "menu-splash.png");
@@ -233,8 +256,15 @@ export function preloadArt(scene: Phaser.Scene): void {
       scene.load.image(`src_fx_${kind}_${i}`, `sprites/fx/${kind}-${i}.png`);
     }
   }
+  scene.load.image("src_fx_tesla_glow", "sprites/fx/tesla-glow.png");
+  for (const art of CLOUD_ART) {
+    scene.load.image(`src_${art.key}`, art.file);
+  }
   for (const art of PLAYER_ORDNANCE_SHOT_ART) {
     scene.load.image(`src_${art.look}`, `sprites/shots/${art.look}.png`);
+  }
+  for (const art of PHOTON_FLARE_ART) {
+    scene.load.image(`src_${art.key}`, art.file);
   }
   for (const art of PLAYER_GUN_MOUNT_ART) {
     scene.load.image(`src_${art.key}`, `sprites/guns/${art.key}.png`);
@@ -758,8 +788,12 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   for (const art of PLAYER_ORDNANCE_SHOT_ART) {
     const srcKey = `src_${art.look}`;
     if (!textures.exists(srcKey)) continue;
-    put(textures, art.look, fit(rotateCw90(keyImage(src(textures, srcKey), "magenta")), art.size));
+    const keyed = art.keyPreserve
+      ? trim(softenKeyedEnergyMatte(keyPixels(src(textures, srcKey), "edge")))
+      : keyImage(src(textures, srcKey), "magenta");
+    put(textures, art.look, fit(rotateCw90(keyed), art.size));
   }
+  putPhotonFlare(textures);
 
   for (const art of PLAYER_GUN_MOUNT_ART) {
     const srcKey = `src_${art.key}`;
@@ -785,6 +819,13 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
 
   for (const kind of FX_KINDS) {
     putFxSheet(textures, kind, FX_SHEET_SIZE[kind], kind === "dirt");
+  }
+  putTeslaGlow(textures);
+
+  for (const art of CLOUD_ART) {
+    const srcKey = `src_${art.key}`;
+    if (!textures.exists(srcKey)) continue;
+    put(textures, art.key, fit(keyImage(src(textures, srcKey), "magenta"), art.size));
   }
 
   const shadowSrc = [
@@ -1004,16 +1045,36 @@ function putFxSheet(
 ): void {
   const destKey = `fx_${kind}`;
   const cells: HTMLCanvasElement[] = [];
+  const tintCells: HTMLCanvasElement[] = [];
   for (let i = 0; i < FX_VARIANTS; i++) {
     const srcKey = `src_fx_${kind}_${i}`;
     if (!textures.exists(srcKey)) continue;
     const img = src(textures, srcKey);
-    let cell = fxKnockBlack(copyToCanvas(img, img.width, img.height));
-    if (kind === "exhaust") cell = whitenFx(cell);
-    cells.push(fit(trim(cell, 2), size));
+    const cell = fxKnockBlack(copyToCanvas(img, img.width, img.height));
+    let baked = fit(trim(cell, 2), size);
+    // Drop the left tear tip (U 0–0.25) so the nozzle reads as a wide cone.
+    if (kind === "exhaust") baked = fit(cropFxU(baked, 0.25), size);
+    cells.push(baked);
+    // Whitened smoke for multiply-tint wing trails (exhaust/flame use hue on graded art).
+    if (kind === "smoke") {
+      tintCells.push(fit(trim(whitenFx(copyToCanvas(cell, cell.width, cell.height)), 2), size));
+    }
   }
   if (!cells.length) return;
   putFxSpriteSheet(textures, destKey, cells, size);
+  if (tintCells.length) putFxSpriteSheet(textures, `${destKey}_tint`, tintCells, size);
+  // ParticleEmitter has no ColorMatrix preFX — bake craft trail hues up front.
+  if (kind === "flame") {
+    for (const hue of EXHAUST_TRAIL_FLAME_HUES) {
+      putFxSpriteSheet(
+        textures,
+        `fx_flame_hue_${hue}`,
+        cells.map((cell) => hueRotateCanvas(copyToCanvas(cell, cell.width, cell.height), hue)),
+        size,
+        "generated"
+      );
+    }
+  }
   if (bakeHeat) {
     const bakeCell =
       kind === "dirt"
@@ -1027,6 +1088,192 @@ function putFxSheet(
       "generated"
     );
   }
+}
+
+/** Keep horizontal U range [u0, u1] of an FX cell (tear tip cut for exhaust cones). */
+function cropFxU(src: HTMLCanvasElement, u0: number, u1 = 1): HTMLCanvasElement {
+  const a = Math.min(1, Math.max(0, u0));
+  const b = Math.min(1, Math.max(0, u1));
+  const x0 = Math.floor(Math.min(a, b) * src.width);
+  const x1 = Math.ceil(Math.max(a, b) * src.width);
+  const w = Math.max(1, x1 - x0);
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = src.height;
+  c.getContext("2d", { willReadFrequently: true })!.drawImage(
+    src,
+    x0,
+    0,
+    w,
+    src.height,
+    0,
+    0,
+    w,
+    src.height
+  );
+  return c;
+}
+
+/** Soft additive bloom cookie — knockout + extra radial feather so it never reads as a disc. */
+function putTeslaGlow(textures: Phaser.Textures.TextureManager): void {
+  if (!textures.exists("src_fx_tesla_glow")) return;
+  const img = src(textures, "src_fx_tesla_glow");
+  const cell = featherRadialGlow(
+    fxKnockBlack(copyToCanvas(img, img.width, img.height)),
+    2.15
+  );
+  put(textures, "fx_tesla_glow", fit(trim(cell, 2), 64));
+}
+
+/** Photon lens-flare stack — knock black for ADD; alias core as `shot_photon` for look ids. */
+function putPhotonFlare(textures: Phaser.Textures.TextureManager): void {
+  for (const art of PHOTON_FLARE_ART) {
+    const srcKey = `src_${art.key}`;
+    if (!textures.exists(srcKey)) continue;
+    const img = src(textures, srcKey);
+    let cell = fxKnockBlack(copyToCanvas(img, img.width, img.height));
+    // Stream art is a fat spindle; collapse to a thin centerline so spokes emit from the core.
+    if (art.key === "photon_stream_h") cell = photonStreamCenterRay(cell, "h");
+    else if (art.key === "photon_stream_diag") cell = photonStreamCenterRay(cell, "diag");
+    put(textures, art.key, fit(trim(cell, 2), art.size));
+  }
+  if (textures.exists("photon_core")) {
+    const img = textures.get("photon_core").getSourceImage() as CanvasImageSource;
+    const w = (img as HTMLCanvasElement).width || (img as HTMLImageElement).width;
+    const h = (img as HTMLCanvasElement).height || (img as HTMLImageElement).height;
+    put(textures, "shot_photon", copyToCanvas(img, w, h));
+  }
+}
+
+/**
+ * Rebuild a stream texture as a thin ray along its major axis so lens-flare spokes
+ * read as emitting from the photon center (source art hubs are wider than the core).
+ */
+function photonStreamCenterRay(src: HTMLCanvasElement, axis: "h" | "diag"): HTMLCanvasElement {
+  const w = src.width;
+  const h = src.height;
+  const g = src.getContext("2d", { willReadFrequently: true })!;
+  const pix = g.getImageData(0, 0, w, h);
+  const d = pix.data;
+  const out = g.createImageData(w, h);
+  const o = out.data;
+  const cx = (w - 1) * 0.5;
+  const cy = (h - 1) * 0.5;
+  // Perpendicular falloff — thin needle, not the fat authored hub.
+  const sigma = Math.max(1.35, Math.min(w, h) * 0.011);
+
+  const sample = (x: number, y: number) => {
+    const xi = Math.max(0, Math.min(w - 1, x | 0));
+    const yi = Math.max(0, Math.min(h - 1, y | 0));
+    const i = (yi * w + xi) * 4;
+    return { r: d[i]!, g: d[i + 1]!, b: d[i + 2]!, a: d[i + 3]! / 255 };
+  };
+
+  if (axis === "h") {
+    for (let x = 0; x < w; x++) {
+      let er = 0;
+      let eg = 0;
+      let eb = 0;
+      let ea = 0;
+      for (let y = 0; y < h; y++) {
+        const i = (y * w + x) * 4;
+        const a = d[i + 3]! / 255;
+        if (a < 0.01) continue;
+        er += d[i]! * a;
+        eg += d[i + 1]! * a;
+        eb += d[i + 2]! * a;
+        ea += a;
+      }
+      if (ea < 0.02) continue;
+      er /= ea;
+      eg /= ea;
+      eb /= ea;
+      // Preserve authored tip fade (energy falls off toward the ends).
+      const tip = Math.pow(Math.max(0, Math.min(1, 1 - Math.abs(x - cx) / Math.max(1, cx))), 0.35);
+      const peakA = Math.min(1, (ea / (h * 0.035)) * tip);
+      for (let y = 0; y < h; y++) {
+        const wgt = Math.exp(-0.5 * Math.pow((y - cy) / sigma, 2));
+        const a = Math.min(255, Math.round(peakA * wgt * 255));
+        if (a < 2) continue;
+        const i = (y * w + x) * 4;
+        o[i] = er;
+        o[i + 1] = eg;
+        o[i + 2] = eb;
+        o[i + 3] = a;
+      }
+    }
+  } else {
+    // Diagonal art runs bottom-left → top-right.
+    const len = Math.hypot(w, h);
+    const ux = w / len;
+    const uy = -h / len;
+    const vx = -uy;
+    const vy = ux;
+    const steps = Math.ceil(len);
+    for (let s = 0; s < steps; s++) {
+      const t = s / Math.max(1, steps - 1);
+      const along = (t - 0.5) * len;
+      const px = cx + ux * along;
+      const py = cy + uy * along;
+      let er = 0;
+      let eg = 0;
+      let eb = 0;
+      let ea = 0;
+      const half = Math.min(w, h) * 0.22;
+      for (let k = -half; k <= half; k += 1) {
+        const p = sample(px + vx * k, py + vy * k);
+        if (p.a < 0.01) continue;
+        er += p.r * p.a;
+        eg += p.g * p.a;
+        eb += p.b * p.a;
+        ea += p.a;
+      }
+      if (ea < 0.02) continue;
+      er /= ea;
+      eg /= ea;
+      eb /= ea;
+      const tip = Math.pow(Math.max(0, Math.min(1, 1 - Math.abs(t - 0.5) * 2)), 0.35);
+      const peakA = Math.min(1, (ea / (half * 0.55)) * tip);
+      for (let k = -sigma * 4; k <= sigma * 4; k += 0.5) {
+        const wgt = Math.exp(-0.5 * Math.pow(k / sigma, 2));
+        const a = Math.min(255, Math.round(peakA * wgt * 255));
+        if (a < 2) continue;
+        const x = Math.round(px + vx * k);
+        const y = Math.round(py + vy * k);
+        if (x < 0 || y < 0 || x >= w || y >= h) continue;
+        const i = (y * w + x) * 4;
+        if (a > o[i + 3]!) {
+          o[i] = er;
+          o[i + 1] = eg;
+          o[i + 2] = eb;
+          o[i + 3] = a;
+        }
+      }
+    }
+  }
+  g.putImageData(out, 0, 0);
+  return src;
+}
+
+function featherRadialGlow(src: HTMLCanvasElement, power: number): HTMLCanvasElement {
+  const g = src.getContext("2d", { willReadFrequently: true })!;
+  const pix = g.getImageData(0, 0, src.width, src.height);
+  const d = pix.data;
+  const cx = (src.width - 1) * 0.5;
+  const cy = (src.height - 1) * 0.5;
+  const rMax = Math.max(cx, cy) || 1;
+  for (let y = 0; y < src.height; y++) {
+    for (let x = 0; x < src.width; x++) {
+      const i = (y * src.width + x) * 4;
+      const nx = (x - cx) / rMax;
+      const ny = (y - cy) / rMax;
+      const t = Math.min(1, Math.sqrt(nx * nx + ny * ny));
+      const w = Math.pow(1 - t, power);
+      d[i + 3] = Math.round((d[i + 3] ?? 0) * w);
+    }
+  }
+  g.putImageData(pix, 0, 0);
+  return src;
 }
 
 function fxKnockBlack(src: HTMLCanvasElement): HTMLCanvasElement {
@@ -1061,6 +1308,65 @@ function whitenFx(src: HTMLCanvasElement): HTMLCanvasElement {
   return src;
 }
 
+/** Rotate opaque pixel hues in-place (degrees). Preserves value/alpha grading. */
+function hueRotateCanvas(src: HTMLCanvasElement, degrees: number): HTMLCanvasElement {
+  if (!degrees) return src;
+  const g = src.getContext("2d", { willReadFrequently: true })!;
+  const pix = g.getImageData(0, 0, src.width, src.height);
+  const d = pix.data;
+  const turn = ((degrees % 360) + 360) % 360;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3]! < 2) continue;
+    const r = d[i]! / 255;
+    const g0 = d[i + 1]! / 255;
+    const b = d[i + 2]! / 255;
+    const max = Math.max(r, g0, b);
+    const min = Math.min(r, g0, b);
+    const span = max - min;
+    let h = 0;
+    const l = (max + min) * 0.5;
+    const s = span < 1e-6 ? 0 : span / (1 - Math.abs(2 * l - 1));
+    if (span >= 1e-6) {
+      if (max === r) h = ((g0 - b) / span) % 6;
+      else if (max === g0) h = (b - r) / span + 2;
+      else h = (r - g0) / span + 4;
+      h *= 60;
+      if (h < 0) h += 360;
+    }
+    h = (h + turn) % 360;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+    const m = l - c / 2;
+    let rr = 0;
+    let gg = 0;
+    let bb = 0;
+    if (h < 60) {
+      rr = c;
+      gg = x;
+    } else if (h < 120) {
+      rr = x;
+      gg = c;
+    } else if (h < 180) {
+      gg = c;
+      bb = x;
+    } else if (h < 240) {
+      gg = x;
+      bb = c;
+    } else if (h < 300) {
+      rr = x;
+      bb = c;
+    } else {
+      rr = c;
+      bb = x;
+    }
+    d[i] = Math.round((rr + m) * 255);
+    d[i + 1] = Math.round((gg + m) * 255);
+    d[i + 2] = Math.round((bb + m) * 255);
+  }
+  g.putImageData(pix, 0, 0);
+  return src;
+}
+
 function copyToCanvas(img: CanvasImageSource, w: number, h: number): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = w;
@@ -1072,6 +1378,78 @@ function copyToCanvas(img: CanvasImageSource, w: number, h: number): HTMLCanvasE
 
 function keyImage(img: HTMLImageElement, mode: "magenta" | "studio" | "edge"): HTMLCanvasElement {
   return trim(keyPixels(img, mode));
+}
+
+/**
+ * Soften hard chroma-key silhouettes on additive energy orbs (Photon).
+ * Despills residual magenta fringe into alpha, then feathers the silhouette
+ * so ADD blend no longer reads as a cut-out disc.
+ */
+function softenKeyedEnergyMatte(src: HTMLCanvasElement): HTMLCanvasElement {
+  const g = src.getContext("2d", { willReadFrequently: true })!;
+  const pix = g.getImageData(0, 0, src.width, src.height);
+  const d = pix.data;
+  const w = src.width;
+  const h = src.height;
+  const n = w * h;
+  const aIn = new Float32Array(n);
+
+  for (let i = 0; i < n; i++) {
+    const o = i * 4;
+    let a = d[o + 3]! / 255;
+    if (a < 0.004) {
+      aIn[i] = 0;
+      continue;
+    }
+    const r = d[o]!;
+    const gc = d[o + 1]!;
+    const b = d[o + 2]!;
+    const chroma = (r + b) * 0.5 - gc;
+    const pair = Math.min(r, b);
+    // Magenta / purple fringe left by hard key → pull into soft alpha.
+    if (pair > 85 && chroma > 18 && gc < 175) {
+      const spill = Math.min(1, (chroma - 18) / 100);
+      a *= 1 - spill * 0.92;
+      const t = spill * 0.7;
+      d[o] = Math.round(r * (1 - t) + Math.min(255, gc + 28) * t);
+      d[o + 2] = Math.round(b * (1 - t) + Math.min(255, gc + 48) * t);
+    }
+    // Dim outer haze should not stay fully opaque.
+    const lum = Math.max(r, gc, b) / 255;
+    if (lum < 0.94) a *= Math.pow(Math.max(0.08, lum), 0.55);
+    aIn[i] = a;
+  }
+
+  const rad = 3;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      const o = i * 4;
+      const base = aIn[i]!;
+      if (base < 0.004) {
+        d[o + 3] = 0;
+        continue;
+      }
+      let sum = 0;
+      let cnt = 0;
+      for (let dy = -rad; dy <= rad; dy++) {
+        for (let dx = -rad; dx <= rad; dx++) {
+          if (dx * dx + dy * dy > rad * rad + 0.5) continue;
+          const xx = x + dx;
+          const yy = y + dy;
+          cnt++;
+          if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+          sum += aIn[yy * w + xx]!;
+        }
+      }
+      const cover = cnt > 0 ? sum / cnt : 0;
+      // Smoothstep cover so the rim eases out instead of clipping.
+      const soft = cover * cover * (3 - 2 * cover);
+      d[o + 3] = Math.round(Math.min(255, base * (0.18 + 0.82 * soft) * 255));
+    }
+  }
+  g.putImageData(pix, 0, 0);
+  return src;
 }
 
 function keyDoodad(img: HTMLImageElement): HTMLCanvasElement {
@@ -1189,6 +1567,13 @@ function keyPixels(img: HTMLImageElement, mode: "magenta" | "studio" | "edge"): 
     const b = d[o + 2]!;
     const chroma = (r + b) * 0.5 - gc;
     const pair = Math.min(r, b);
+    // Edge / keyPreserve: only peel saturated magenta backdrop. Never treat
+    // white / cyan / purple energy fills as key (Photon, Prometheus paint).
+    if (edgeOnly) {
+      if (gc > 120) return false;
+      if (Math.min(r, gc, b) > 170) return false;
+      return pair > 200 && chroma > 70 && gc < 100;
+    }
     if (pair > 155 && chroma > 20) return true;
     if (r > 170 && b > 170 && gc < 205 && chroma > 16) return true;
     const mx = Math.max(r, gc, b);

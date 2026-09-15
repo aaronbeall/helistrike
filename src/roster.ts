@@ -37,7 +37,7 @@ export type DebrisCat = "mech" | "struct" | "organic";
 export type ShotLook = string;
 
 /** Projectile flight behavior (independent of art `look`). */
-export type ShotKind = "cannon" | "rocket" | "lock-on-missile" | "guided-missile";
+export type ShotKind = "cannon" | "rocket" | "lock-on-missile" | "guided-missile" | "beam";
 
 export type MoveKind =
   | "static"
@@ -122,13 +122,15 @@ export interface SecondaryWpnSpec {
  * Tagged hull UV roles (SPRITE_SPECS point roles minus muzzle).
  * Shared by craft mounts and rig overlays.
  */
-export type HullMountRole = "gun" | "rotor" | "dish" | "troop" | "hardpoint" | "exhaust";
+export type HullMountRole = "gun" | "rotor" | "dish" | "troop" | "hardpoint" | "exhaust" | "wingtip";
 
 export interface HullMount {
   x: number;
   y: number;
   role: HullMountRole;
+  /** Authored point id, else role — same string sockets bind with. */
   label: string;
+  id?: string;
 }
 
 /** Shared marker colors for sprite / roster rigs. */
@@ -138,21 +140,9 @@ export const HULL_MOUNT_COLOR: Record<HullMountRole, number> = {
   dish: 0xe8b84a,
   troop: 0xd878ff,
   hardpoint: 0xff8c42,
-  exhaust: 0xb04aff
+  exhaust: 0xb04aff,
+  wingtip: 0xc8f0ff,
 };
-
-/** Suffix labels when a role appears more than once (`gun 1`, `secondary 2`). */
-export function numberMountLabels(list: { role: string; label: string }[]): void {
-  const total = new Map<string, number>();
-  for (const m of list) total.set(m.role, (total.get(m.role) ?? 0) + 1);
-  const seen = new Map<string, number>();
-  for (const m of list) {
-    if ((total.get(m.role) ?? 0) <= 1) continue;
-    const i = (seen.get(m.role) ?? 0) + 1;
-    seen.set(m.role, i);
-    m.label = `${m.label} ${i}`;
-  }
-}
 
 export interface UnitSpec {
   /** Display name (roster / HUD). */

@@ -7,7 +7,7 @@ import { PLAYER_WPNS, type PlayerWpnSpec } from "./combat";
 import { allCraftKinds, craftGunTexture, craftOf } from "./craft";
 import { bakeAllArtGens } from "./artGen";
 import { allKinds, gunsOf, specOf, type UnitKind } from "./roster";
-import { bakeShadows, bakeThermalHeatFromDarkness, registerArt } from "./sprites";
+import { bakeShadows, bakeThermalHeatFromDarkness, registerArt, FX_SHEET_SIZE } from "./sprites";
 
 type Ctx = CanvasRenderingContext2D;
 
@@ -341,7 +341,7 @@ function cannonTracerOpts(spec: PlayerWpnSpec): Parameters<typeof drawTracerShap
  */
 export function bakePlayerCannonLooks(textures: Phaser.Textures.TextureManager): void {
   for (const spec of Object.values(PLAYER_WPNS)) {
-    if (spec.kind !== "cannon") continue;
+    if (spec.kind !== "cannon" && spec.kind !== "beam") continue;
     const key = String(spec.look);
     if (textures.exists(key)) continue;
     add(textures, key, drawTracerShape(cannonTracerOpts(spec)));
@@ -439,6 +439,84 @@ function drawSmoke(): HTMLCanvasElement {
   return c;
 }
 
+/** Electrical zap burst — fallback if sprites/fx/zap*.png fail to load. */
+function drawZap(variant: number): HTMLCanvasElement {
+  const size = FX_SHEET_SIZE.zap;
+  const c = canvas(size, size);
+  const g = ctxOf(c);
+  const k = size / 40;
+  const cx = size * 0.5;
+  const cy = size * 0.5;
+  const seed = 1.7 + variant * 2.3;
+  const glow = g.createRadialGradient(cx, cy, 0.6 * k, cx, cy, 16 * k);
+  glow.addColorStop(0, "rgba(255,255,255,0.9)");
+  glow.addColorStop(0.22, "rgba(170,240,255,0.55)");
+  glow.addColorStop(0.58, "rgba(40,150,255,0.18)");
+  glow.addColorStop(1, "rgba(20,80,255,0)");
+  g.fillStyle = glow;
+  g.beginPath();
+  g.arc(cx, cy, 16 * k, 0, Math.PI * 2);
+  g.fill();
+  const forks = 3 + (variant % 3);
+  for (let f = 0; f < forks; f++) {
+    const a0 = seed + f * ((Math.PI * 2) / forks) + variant * 0.4;
+    g.beginPath();
+    let x = cx;
+    let y = cy;
+    g.moveTo(x, y);
+    const segs = 5;
+    for (let i = 1; i <= segs; i++) {
+      const u = i / segs;
+      const jag = Math.sin(seed * 4 + f * 9 + i * 2.1) * (6 - i) * k;
+      x = cx + Math.cos(a0) * (4 + u * 16) * k + Math.cos(a0 + Math.PI / 2) * jag;
+      y = cy + Math.sin(a0) * (4 + u * 16) * k + Math.sin(a0 + Math.PI / 2) * jag;
+      g.lineTo(x, y);
+    }
+    g.strokeStyle = f === 0 ? "rgba(255,255,255,0.95)" : "rgba(120,230,255,0.75)";
+    g.lineWidth = (f === 0 ? 1.55 : 0.85) * k;
+    g.lineCap = "round";
+    g.lineJoin = "round";
+    g.stroke();
+  }
+  return c;
+}
+
+/** Feathered additive bloom — never a hard disc. */
+function drawSoftGlow(size: number): HTMLCanvasElement {
+  const c = canvas(size, size);
+  const g = ctxOf(c);
+  const cx = size * 0.5;
+  const grd = g.createRadialGradient(cx, cx, 0, cx, cx, cx);
+  grd.addColorStop(0, "rgba(240,255,255,0.85)");
+  grd.addColorStop(0.12, "rgba(140,235,255,0.42)");
+  grd.addColorStop(0.32, "rgba(50,160,255,0.16)");
+  grd.addColorStop(0.58, "rgba(30,100,255,0.05)");
+  grd.addColorStop(1, "rgba(10,40,180,0)");
+  g.fillStyle = grd;
+  g.fillRect(0, 0, size, size);
+  return c;
+}
+
+function putZapSheet(textures: Phaser.Textures.TextureManager): void {
+  const size = FX_SHEET_SIZE.zap;
+  const n = 4;
+  const sheet = document.createElement("canvas");
+  sheet.width = size * n;
+  sheet.height = size;
+  const g = sheet.getContext("2d", { willReadFrequently: true })!;
+  for (let i = 0; i < n; i++) {
+    const cell = drawZap(i);
+    g.drawImage(cell, i * size + (size - cell.width) / 2, (size - cell.height) / 2);
+  }
+  if (textures.exists("fx_zap")) textures.remove("fx_zap");
+  textures.addSpriteSheet("fx_zap", sheet as unknown as HTMLImageElement, {
+    frameWidth: size,
+    frameHeight: size,
+    endFrame: n - 1,
+  });
+  registerArt("fx_zap", "generated");
+}
+
 function drawMuzzle(): HTMLCanvasElement {
   const c = canvas(16, 10);
   const g = ctxOf(c);
@@ -513,6 +591,9 @@ export function bakeAll(textures: Phaser.Textures.TextureManager): void {
   add(textures, "mark_reticle", drawReticle());
   add(textures, "mark_reticle_sq", drawReticleSquare());
   add(textures, "fx_flame", drawFlame());
+  add(textures, "fx_tesla_glow", drawSoftGlow(64));
+  add(textures, "fx_tesla_halo", drawSoftGlow(96));
+  putZapSheet(textures);
   // Scorch stamps: procedural stub only — prepareArt replaces with src_blasts.
   for (let i = 0; i < 4; i++) {
     const blast = drawBlastStamp(i);
@@ -561,6 +642,8 @@ function collectArtKeys(): string[] {
     "fx_spark",
     "fx_smoke",
     "fx_flame",
+    "fx_tesla_glow",
+    "fx_tesla_halo",
     "fx_blast_0",
     "fx_debris_metal",
     "fx_hulk_crater",
@@ -568,7 +651,7 @@ function collectArtKeys(): string[] {
     keys.add(k);
   }
   for (const spec of Object.values(PLAYER_WPNS)) {
-    if (spec.kind === "cannon") keys.add(String(spec.look));
+    if (spec.kind === "cannon" || spec.kind === "beam") keys.add(String(spec.look));
     if (spec.mount) keys.add(spec.mount);
   }
   return [...keys];

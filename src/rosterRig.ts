@@ -27,7 +27,6 @@ import {
   isInfantry,
   isWaterCraft,
   labelOf,
-  numberMountLabels,
   partsRollOf,
   partsRollPickIds,
   specOf,
@@ -42,6 +41,7 @@ import {
   lookupSpriteOrigin,
   lookupSpritePoints,
   rigMuzzleMarkRadius,
+  spritePointLabel,
 } from "./spriteOrigin";
 import { footprintOf, strokeFootprint } from "./footprint";
 import { nameGameTexture, spritePivot } from "./sprites";
@@ -1209,41 +1209,30 @@ export class RosterRig {
     });
 
     const points = lookupSpritePoints(texKey);
-    const mounts = points
-      .filter((p) => p.role !== "muzzle")
-      .map((p) => ({
-        x: p.x,
-        y: p.y,
-        role: p.role as HullMountRole,
-        label: p.role,
-      }));
-    numberMountLabels(mounts);
 
     let li = labelStart;
-    for (const m of mounts) {
-      const p = toWorld(m.x, m.y);
-      const color = pointColor(m.role);
-      g.fillStyle(color, 0.95);
-      g.fillRect(p.x - 2.5, p.y - 2.5, 5, 5);
-      g.lineStyle(1, 0x101010, 0.9);
-      g.strokeRect(p.x - 2.5, p.y - 2.5, 5, 5);
+    for (const p of points) {
+      const wpt = toWorld(p.x, p.y);
+      const color = pointColor(p.role);
+      if (p.role === "muzzle") {
+        const r = rigMuzzleMarkRadius(texKey);
+        g.fillStyle(color, 0.95);
+        g.fillCircle(wpt.x, wpt.y, r);
+        g.lineStyle(1, 0xffe8c0, 0.95);
+        g.strokeCircle(wpt.x, wpt.y, r);
+      } else {
+        g.fillStyle(color, 0.95);
+        g.fillRect(wpt.x - 2.5, wpt.y - 2.5, 5, 5);
+        g.lineStyle(1, 0x101010, 0.9);
+        g.strokeRect(wpt.x - 2.5, wpt.y - 2.5, 5, 5);
+      }
       const lab = this.mountLabels[li++];
       if (lab) {
-        lab.setText(m.label);
+        lab.setText(spritePointLabel(p));
         lab.setColor(hexColor(color));
-        lab.setPosition(p.x + 5, p.y - 6);
+        lab.setPosition(wpt.x + 5, wpt.y - 6);
         lab.setVisible(true);
       }
-    }
-
-    for (const p of points) {
-      if (p.role !== "muzzle") continue;
-      const w = toWorld(p.x, p.y);
-      const r = rigMuzzleMarkRadius(texKey);
-      g.fillStyle(0xff7a2a, 0.95);
-      g.fillCircle(w.x, w.y, r);
-      g.lineStyle(1, 0xffe8c0, 0.95);
-      g.strokeCircle(w.x, w.y, r);
     }
 
     return li;

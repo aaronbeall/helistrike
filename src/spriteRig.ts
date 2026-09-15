@@ -1,16 +1,11 @@
 import Phaser from "phaser";
 import { craftOf } from "./craft";
-import {
-  HULL_MOUNT_COLOR,
-  numberMountLabels,
-  usesOfTexture,
-  type HullMount,
-  type HullMountRole,
-} from "./roster";
+import { HULL_MOUNT_COLOR, usesOfTexture, type HullMountRole } from "./roster";
 import {
   lookupSpriteOrigin,
   lookupSpritePoints,
   rigMuzzleMarkRadius,
+  spritePointLabel,
   spriteSpecOf,
   type SpritePointRole,
 } from "./spriteOrigin";
@@ -367,7 +362,7 @@ export class SpriteRig {
       ].join("\n")
     );
 
-    const marks = rigMarks(key);
+    const points = lookupSpritePoints(key);
     const spec = spriteSpecOf(key);
     const stats: Record<string, unknown> = {
       key,
@@ -383,12 +378,7 @@ export class SpriteRig {
     if (frames.length > 1) {
       stats.frame = { i: this.frameIdx + 1, n: frames.length, name: String(frame) };
     }
-    if (marks.mounts.length) {
-      stats.mounts = marks.mounts.map((p) => ({ role: p.label, x: p.x, y: p.y }));
-    }
-    if (marks.muzzles.length) {
-      stats.muzzles = marks.muzzles.map((p) => ({ x: p.x, y: p.y }));
-    }
+    if (points.length) stats.points = points;
     if (!spec) stats.spec = "—";
     const usedBy = usesOfTexture(key);
     stats.usedBy = usedBy.length ? usedBy : "—";
@@ -609,33 +599,34 @@ export class SpriteRig {
 
     if (!this.showMarks) return;
 
-    const marks = rigMarks(key);
-    for (let i = 0; i < this.mountLabels.length; i++) {
-      const lab = this.mountLabels[i];
-      const p = marks.mounts[i];
-      if (!p) {
-        lab.setVisible(false);
-        continue;
+    const points = lookupSpritePoints(key);
+    let li = 0;
+    for (const p of points) {
+      const x = toX(p.x);
+      const y = toY(p.y);
+      const color = mountColor(p.role);
+      if (p.role === "muzzle") {
+        const r = rigMuzzleMarkRadius(key);
+        g.fillStyle(color, 0.95);
+        g.fillCircle(x, y, r);
+        g.lineStyle(1, 0xffe8c0, 0.95);
+        g.strokeCircle(x, y, r);
+      } else {
+        g.fillStyle(color, 0.95);
+        g.fillRect(x - 2.5, y - 2.5, 5, 5);
+        g.lineStyle(1, 0x101010, 0.9);
+        g.strokeRect(x - 2.5, y - 2.5, 5, 5);
       }
-      const x = toX(p.x);
-      const y = toY(p.y);
-      g.fillStyle(p.color, 0.95);
-      g.fillRect(x - 2.5, y - 2.5, 5, 5);
-      g.lineStyle(1, 0x101010, 0.9);
-      g.strokeRect(x - 2.5, y - 2.5, 5, 5);
-      lab.setText(p.label);
-      lab.setColor(hexColor(p.color));
-      lab.setPosition(x + 5, y - 6);
-      lab.setVisible(true);
+      const lab = this.mountLabels[li++];
+      if (lab) {
+        lab.setText(spritePointLabel(p));
+        lab.setColor(hexColor(color));
+        lab.setPosition(x + 5, y - 6);
+        lab.setVisible(true);
+      }
     }
-    for (const p of marks.muzzles) {
-      const x = toX(p.x);
-      const y = toY(p.y);
-      const r = rigMuzzleMarkRadius(key);
-      g.fillStyle(0xff7a2a, 0.95);
-      g.fillCircle(x, y, r);
-      g.lineStyle(1, 0xffe8c0, 0.95);
-      g.strokeCircle(x, y, r);
+    while (li < this.mountLabels.length) {
+      this.mountLabels[li++]!.setVisible(false);
     }
     // Center / pivot: gold when authored in SPRITE_SPECS, solid white when default.
     const authored = lookupSpriteOrigin(key);
@@ -675,8 +666,6 @@ function fallbackCopy(text: string): void {
   document.body.removeChild(el);
 }
 
-type RigMount = HullMount & { color: number };
-
 function mountColor(role: SpritePointRole | HullMountRole): number {
   if (role === "muzzle") return 0xff7a2a;
   return HULL_MOUNT_COLOR[role as HullMountRole] ?? 0x9a9480;
@@ -684,24 +673,4 @@ function mountColor(role: SpritePointRole | HullMountRole): number {
 
 function hexColor(n: number): string {
   return `#${n.toString(16).padStart(6, "0")}`;
-}
-
-/** Overlay marks from SPRITE_SPECS only (catalog view). */
-function rigMarks(key: string): { mounts: RigMount[]; muzzles: { x: number; y: number }[] } {
-  const points = lookupSpritePoints(key);
-  const mounts: RigMount[] = points
-    .filter((p) => p.role !== "muzzle")
-    .map((p) => ({
-      x: p.x,
-      y: p.y,
-      role: p.role as HullMountRole,
-      label: p.role,
-      color: mountColor(p.role),
-    }));
-  numberMountLabels(mounts);
-  for (const m of mounts) m.color = mountColor(m.role);
-  return {
-    mounts,
-    muzzles: points.filter((p) => p.role === "muzzle").map((p) => ({ x: p.x, y: p.y })),
-  };
 }

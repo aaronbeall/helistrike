@@ -119,6 +119,7 @@
 * [ ] Hulk break-apart effect (dynamic splitting of hulk graphics into individual parts)
 * [ ] Predictive firing (enemy units and craft gunners, fire at predicted location, accuracy of prediction falls off with range and speed)
 * [ ] Lens flare
+* [ ] Stats (mission, all time)
 
 ## Fix
 
@@ -138,3 +139,21 @@
 * [ ] Camera change shouldn't change reticle location
 * [ ] Spash down debris/hulks/shells in water should either disappear or become blue and sink to bottom, and not draw craters
 * [ ] Switching from thermal to normal reveals pink graphics
+
+## Achievements
+
+* Craft unlocks
+* Per-weapon kill totals
+* All time total kills
+* Specials
+  * Ride The Lightning -- kill a vehicle with tesla coil from directly above
+  * Search and destroy -- kill a vehicle beyond radar range with a guided missile (TOW, SPIKE)
+  * Coming in Hot -- kill 5+ enemies with a single sustained burst of gun fire, without stopping
+  * You Can't Hide -- kill an enemy with lock-on missile without line of sight
+  * Death from Above -- kill 5+ enemies with single howitzer shot
+  * Brrrrrt -- kill 5+ enemies with Avenger cannon in a single sustained burst
+  * Dark Knight Rises -- kill 5 enemies while blinded from the same smoke bomb
+  * Lights Out -- kill 5 enemies who are stunned by the same EMP
+  * Pinned Down -- shoot through 2+ enemies with a single railgun round
+  * Thunder Run -- beat a mission without ever letting go of thrust
+  * Knife Fight -- complete a mission with guns only (no missiles, rockets, bombs or flares)

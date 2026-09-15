@@ -1,10 +1,9 @@
-import { lookupSpriteOrigin, lookupSpritePoints, mountsOf } from "./spriteOrigin";
+import { lookupSpriteOrigin, lookupSpritePoints, mountsOf, spritePointLabel } from "./spriteOrigin";
 import {
-  numberMountLabels,
   type HullMount,
   type HullMountRole,
 } from "./roster";
-import { weaponMountTex } from "./combat";
+import { weaponMountTex, type CountermeasureId } from "./combat";
 
 const DEFAULT_ORIGIN = { x: 0.5, y: 0.5 };
 
@@ -83,6 +82,11 @@ export interface CraftSocket {
   /** Extra capacity on this station, on top of craft `ammoScale`. */
   ammoMul?: number;
   /**
+   * Engage / beam envelope override in world units (Tesla coil muzzle reach).
+   * Omit → weapon catalog `launch.range`.
+   */
+  range?: number;
+  /**
    * Gravity-bomb release for this hardpoint. Socket wins over craft-level `bombDrop`.
    * Lower `momentum` = more aim-directed (Chinook); higher = carry craft velocity (Lightning).
    */
@@ -105,6 +109,8 @@ export interface CraftSpec {
   kind: CraftKind;
   name: string;
   fullName: string;
+  /** Short fantasy combat identity shown on the craft profile (hangar / help). */
+  role: string;
   flightModel: "heli" | "vtol" | "plane";
   /** Largest real-world plan-view envelope in meters; Apache baseline for fictional craft. */
   sizeM: number;
@@ -168,8 +174,10 @@ export interface CraftSpec {
   enemyAimMul?: number;
   /** Enemy seeker acquisition/tracking multiplier; lower is harder to lock. */
   enemySeekerMul?: number;
-  /** Enemy spotting / awareness range multiplier. Does not change aim, fire, or chase. */
+  /** Enemy spotting / chase-engage range multiplier. Does not change aim accuracy or weapon fire range. Helis also get a slight extra cut at low AGL. */
   enemyAwareMul?: number;
+  /** Countermeasure on E. Omit → flares. */
+  countermeasure?: CountermeasureId;
 }
 
 /** Catalog of player-selectable craft. */
@@ -178,6 +186,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     kind: "apache",
     name: "Apache",
     fullName: "AH-64E Apache",
+    role: "Heavy Gunship",
     flightModel: "heli",
     sizeM: 14.7,
     ammoScale: 1,
@@ -202,6 +211,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     kind: "little_bird",
     name: "Little Bird",
     fullName: "AH-6 Little Bird",
+    role: "Knife Fighter",
     flightModel: "heli",
     sizeM: 9.94,
     ammoScale: 0.7,
@@ -228,10 +238,11 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     kind: "cobra",
     name: "Cobra",
     fullName: "AH-1 Cobra",
+    role: "Classic Striker",
     flightModel: "heli",
     sizeM: 17.75,
-    ammoScale: 1.1,
-    health: 95,
+    ammoScale: 1.05,
+    health: 88,
     radius: 16,
     height: 13,
     body: "craft_cobra",
@@ -240,11 +251,12 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     rotorHulk: "craft_cobra_rotor_hulk",
     rotorScale: 1.24,
     rotOff: Math.PI / 2,
-    forwardThrust: 600, strafeThrust: 410, maxSpeed: 375, minSpeed: 0, yawRate: 3.25, yawAccel: 16.5, drag: 1.45,
-    verticalThrust: 410, cruiseThrust: 42, cruiseAgl: 46, maxAgl: 118,
+    // Hot-rod classic: snappier than Apache/Viper, thinner skin.
+    forwardThrust: 640, strafeThrust: 450, maxSpeed: 395, minSpeed: 0, yawRate: 3.45, yawAccel: 18.5, drag: 1.35,
+    verticalThrust: 440, cruiseThrust: 46, cruiseAgl: 46, maxAgl: 118,
     sockets: [
       { id: "chin_turret", class: "turret", controller: "pilot", weapon: "gatling", points: "gun", traverse: 280 },
-      { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket", points: "hardpoint" },
+      { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket", points: "hardpoint", ammoMul: 1.45 },
       { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "sidewinder_missile", points: "hardpoint" },
       { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "tow_missile", points: "hardpoint" },
     ],
@@ -253,10 +265,11 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     kind: "viper",
     name: "Viper",
     fullName: "AH-1Z Viper",
+    role: "Modern Striker",
     flightModel: "heli",
     sizeM: 17.8,
-    ammoScale: 1.15,
-    health: 110,
+    ammoScale: 1.2,
+    health: 118,
     radius: 17,
     height: 13,
     body: "craft_viper",
@@ -265,19 +278,21 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     rotorHulk: "craft_viper_rotor_hulk",
     rotorScale: 1.24,
     rotOff: Math.PI / 2,
-    forwardThrust: 610, strafeThrust: 430, maxSpeed: 390, minSpeed: 0, yawRate: 3.3, yawAccel: 17, drag: 1.4,
-    verticalThrust: 420, cruiseThrust: 43, cruiseAgl: 48, maxAgl: 122,
+    // Near-Cobra agility with more punch / armor; Hellfire + TOW.
+    forwardThrust: 620, strafeThrust: 430, maxSpeed: 385, minSpeed: 0, yawRate: 3.3, yawAccel: 17, drag: 1.38,
+    verticalThrust: 425, cruiseThrust: 44, cruiseAgl: 48, maxAgl: 122,
     sockets: [
       { id: "chin_turret", class: "turret", controller: "pilot", weapon: "gatling", points: "gun", traverse: 280 },
       { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket", points: "hardpoint" },
-      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "sidewinder_missile", points: "hardpoint" },
-      { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "tow_missile", points: "hardpoint" },
+      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "hellfire_missile", points: "hardpoint" },
+      { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "tow_missile", points: "hardpoint", ammoMul: 8 / 7 },
     ],
   },
   blackhawk: {
     kind: "blackhawk",
     name: "Black Hawk",
     fullName: "UH-60M Black Hawk",
+    role: "Assault Transport",
     flightModel: "heli",
     sizeM: 19.76,
     ammoScale: 1.3,
@@ -317,6 +332,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     kind: "chinook",
     name: "Chinook",
     fullName: "CH-47F Chinook",
+    role: "Heavy Lift",
     flightModel: "heli",
     sizeM: 30.1,
     ammoScale: 1.6,
@@ -380,6 +396,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     kind: "osprey",
     name: "Osprey",
     fullName: "MV-22B Osprey",
+    role: "Tiltrotor Assault",
     flightModel: "vtol",
     sizeM: 25.8,
     ammoScale: 1.4,
@@ -424,6 +441,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     kind: "stealthhawk",
     name: "Stealth Hawk",
     fullName: "XH-60 Stealth Hawk",
+    role: "Stealth Striker",
     flightModel: "heli",
     sizeM: 14.7,
     ammoScale: 1,
@@ -446,12 +464,14 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     ],
     enemyAimMul: 0.55,
     enemySeekerMul: 0.42,
-    enemyAwareMul: 0.55,
+    enemyAwareMul: 0.32,
+    countermeasure: "emp",
   },
   cyberhawk: {
     kind: "cyberhawk",
     name: "Cyber Hawk",
     fullName: "XH-88 Cyber Hawk",
+    role: "Tech Gunship",
     flightModel: "heli",
     sizeM: 14.7,
     ammoScale: 1.05,
@@ -462,7 +482,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     hulk: "craft_cyberhawk_hulk",
     rotor: "craft_cyberhawk_rotor",
     rotorHulk: "craft_cyberhawk_rotor_hulk",
-    rotorScale: 1.24,
+    rotorScale: 1,
     rotOff: Math.PI / 2,
     forwardThrust: 740, strafeThrust: 500, maxSpeed: 500, minSpeed: 0, yawRate: 3.35, yawAccel: 16, drag: 1.2,
     verticalThrust: 480, cruiseThrust: 48, cruiseAgl: 46, maxAgl: 118,
@@ -477,22 +497,25 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
         traverse: 150,
       },
       { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "swarm_missile", points: "hardpoint" },
-      { id: "bomb_bay", class: "hardpoint", controller: "pilot", weapon: "attack_drone", points: "hardpoint" },
       {
-        id: "chin_aux",
+        id: "tesla_coil",
         class: "turret",
         controller: "pilot",
-        weapon: "emp",
+        weapon: "tesla_beam",
         points: "gun",
         mounts: [{ id: "chin" }],
-        traverse: 120,
+        traverse: 150,
+        range: 260,
       },
+      { id: "bomb_bay", class: "hardpoint", controller: "pilot", weapon: "attack_drone", points: "hardpoint" },
     ],
+    countermeasure: "timewarp",
   },
   quad_drone: {
     kind: "quad_drone",
     name: "Murder Drone",
     fullName: "MQ-27 Murder Drone",
+    role: "Kill Drone",
     flightModel: "heli",
     sizeM: 1.9,
     ammoScale: 0.65,
@@ -506,11 +529,11 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     rotorHulk: "craft_quad_drone_rotor_hulk",
     rotorScale: 0.26,
     rotOff: Math.PI / 2,
-    forwardThrust: 760, strafeThrust: 700, maxSpeed: 440, minSpeed: 0, yawRate: 4.35, yawAccel: 23.5, drag: 1.05,
+    forwardThrust: 760, strafeThrust: 700, maxSpeed: 440, minSpeed: 0, yawRate: 8.7, yawAccel: 47, drag: 1.05,
     verticalThrust: 650, cruiseThrust: 60, cruiseAgl: 38, maxAgl: 105,
     sockets: [
-      { id: "belly_gun", class: "fixed", controller: "pilot", weapon: "machine_gun", points: "muzzle" },
-      { id: "belly_coil", class: "fixed", controller: "pilot", weapon: "tesla_beam", points: "muzzle" },
+      { id: "belly_gun", class: "fixed", controller: "pilot", weapon: "machine_gun", points: "muzzle", muzzleFire: "simultaneous" },
+      { id: "belly_coil", class: "fixed", controller: "pilot", weapon: "tesla_beam", points: "gun", range: 120 },
       { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "mini_hellfire_missile", points: "hardpoint" },
       {
         id: "bomb_bay",
@@ -521,11 +544,13 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
         bombDrop: { momentum: 0.45, maxBoost: 160, loft: 110, loftMax: 190 },
       },
     ],
+    countermeasure: "emp",
   },
   lightning_ii: {
     kind: "lightning_ii",
     name: "Lightning II",
     fullName: "F-35B Lightning II",
+    role: "Fast Attack",
     flightModel: "vtol",
     sizeM: 15.7,
     ammoScale: 1.5,
@@ -540,7 +565,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     verticalThrust: 380, cruiseThrust: 40, cruiseAgl: 210, maxAgl: 420,
     sockets: [
       { id: "nose_gun", class: "fixed", controller: "pilot", weapon: "medium_gatling_cannon", points: "muzzle" },
-      { id: "internal_bay_1", class: "hardpoint", controller: "pilot", weapon: "long_range_missile", points: "hardpoint" },
+      { id: "internal_bay_1", class: "hardpoint", controller: "pilot", weapon: "light_gps_missile", points: "hardpoint" },
       { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "sidewinder_missile", points: "hardpoint" },
       // Fast attack: bombs carry craft speed; little corrective throw.
       {
@@ -549,7 +574,45 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
         controller: "pilot",
         weapon: "gps_bomb",
         points: "hardpoint",
-        bombDrop: { momentum: 0.92, maxBoost: 70, loft: 85, loftMax: 150 },
+        // JDAM: less carry, more aim throw — fins do the rest in flight.
+        bombDrop: { momentum: 0.48, maxBoost: 185, loft: 105, loftMax: 190 },
+      },
+    ],
+  },
+  warthog: {
+    kind: "warthog",
+    name: "Warthog",
+    fullName: "A-10C Warthog",
+    role: "Tank Buster",
+    flightModel: "plane",
+    sizeM: 17.42,
+    ammoScale: 1.3,
+    health: 150,
+    radius: 40,
+    height: 13,
+    body: "craft_warthog",
+    hulk: "craft_warthog_hulk",
+    rotOff: Math.PI / 2,
+    forwardThrust: 1200, strafeThrust: 0, maxSpeed: 760, minSpeed: 400, yawRate: 1.85, yawAccel: 8.2, drag: 0.75,
+    verticalThrust: 180, cruiseThrust: 24, cruiseAgl: 280, maxAgl: 560,
+    sockets: [
+      { id: "nose_gun", class: "fixed", controller: "pilot", weapon: "heavy_cannon", points: "muzzle" },
+      { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "heavy_guided_missile", points: "hardpoint" },
+      {
+        id: "bomb_bay_1",
+        class: "hardpoint",
+        controller: "pilot",
+        weapon: "bomb",
+        points: "hardpoint",
+        bombDrop: { momentum: 0.45, maxBoost: 195, loft: 110, loftMax: 195 },
+      },
+      {
+        id: "bomb_bay_2",
+        class: "hardpoint",
+        controller: "pilot",
+        weapon: "gps_bomb",
+        points: "hardpoint",
+        bombDrop: { momentum: 0.52, maxBoost: 170, loft: 100, loftMax: 180 },
       },
     ],
   },
@@ -557,6 +620,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     kind: "gunship",
     name: "Gunship",
     fullName: "AC-130 Gunship",
+    role: "Loiter Gunship",
     flightModel: "plane",
     sizeM: 39.7,
     ammoScale: 2,
@@ -569,7 +633,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     rotorHulk: "craft_osprey_rotor_hulk",
     rotorScale: 0.24,
     rotOff: Math.PI / 2,
-    forwardThrust: 500, strafeThrust: 0, maxSpeed: 300, minSpeed: 190, yawRate: 0.7, yawAccel: 2, drag: 1.5,
+    forwardThrust: 580, strafeThrust: 0, maxSpeed: 340, minSpeed: 200, yawRate: 0.95, yawAccel: 2.6, drag: 1.25,
     verticalThrust: 90, cruiseThrust: 14, cruiseAgl: 320, maxAgl: 520,
     sockets: [
       {
@@ -578,8 +642,8 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
         controller: "automatic",
         weapon: "heavy_artillery",
         points: "gun",
-        mounts: [{ id: "side" }],
-        heading: 90,
+        mounts: [{ id: "howitzer" }],
+        heading: -90,
         traverse: 160,
       },
       {
@@ -588,8 +652,8 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
         controller: "automatic",
         weapon: "medium_cannon",
         points: "gun",
-        mounts: [{ id: "side" }],
-        heading: 90,
+        mounts: [{ id: "bofors" }],
+        heading: -90,
         traverse: 160,
       },
       {
@@ -598,46 +662,16 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
         controller: "automatic",
         weapon: "light_cannon",
         points: "gun",
-        mounts: [{ id: "side" }],
-        heading: 90,
+        mounts: [{ id: "spooky" }],
+        heading: -90,
         traverse: 160,
       },
-      { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "gps_missile", points: "hardpoint" },
-    ],
-  },
-  warthog: {
-    kind: "warthog",
-    name: "Warthog",
-    fullName: "A-10C Warthog",
-    flightModel: "plane",
-    sizeM: 17.42,
-    ammoScale: 1.3,
-    health: 150,
-    radius: 40,
-    height: 13,
-    body: "craft_warthog",
-    hulk: "craft_warthog_hulk",
-    rotOff: Math.PI / 2,
-    forwardThrust: 1200, strafeThrust: 0, maxSpeed: 760, minSpeed: 300, yawRate: 1.25, yawAccel: 5.5, drag: 0.75,
-    verticalThrust: 180, cruiseThrust: 24, cruiseAgl: 280, maxAgl: 560,
-    sockets: [
-      { id: "nose_gun", class: "fixed", controller: "pilot", weapon: "heavy_cannon", points: "muzzle" },
-      { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "heavy_guided_missile", points: "hardpoint" },
       {
-        id: "bomb_bay_1",
+        id: "wing_hardpoint",
         class: "hardpoint",
         controller: "pilot",
-        weapon: "bomb",
+        weapon: "gps_missile",
         points: "hardpoint",
-        bombDrop: { momentum: 0.78, maxBoost: 110, loft: 100, loftMax: 180 },
-      },
-      {
-        id: "bomb_bay_2",
-        class: "hardpoint",
-        controller: "pilot",
-        weapon: "gps_bomb",
-        points: "hardpoint",
-        bombDrop: { momentum: 0.85, maxBoost: 90, loft: 90, loftMax: 160 },
       },
     ],
   },
@@ -645,6 +679,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     kind: "prometheus",
     name: "Prometheus",
     fullName: "XV-99 Prometheus",
+    role: "Phase Striker",
     flightModel: "vtol",
     sizeM: 14.7,
     ammoScale: 1.2,
@@ -664,6 +699,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
       { id: "nose_rail_2", class: "fixed", controller: "pilot", weapon: "photon_missile", points: "muzzle" },
       { id: "bomb_bay", class: "hardpoint", controller: "pilot", weapon: "warp_bomb", points: "hardpoint" },
     ],
+    countermeasure: "phase_cloak",
   },
 };
 
@@ -683,6 +719,29 @@ export function craftKind(): CraftKind {
 /** Active craft, or a named one. */
 export function craftOf(kind: CraftKind = selected): CraftSpec {
   return CRAFTS[kind];
+}
+
+/** Fixed-wing attack jets (Warthog / Lightning) — not the AC-130 gunship. */
+export function craftIsJet(c: CraftSpec | CraftKind): boolean {
+  const kind = typeof c === "string" ? c : c.kind;
+  return kind === "warthog" || kind === "lightning_ii";
+}
+
+/** AC-130-style orbit bird — A/D hold-to-yaw, mouse aims guns only. */
+export function craftIsGunship(c: CraftSpec | CraftKind): boolean {
+  const kind = typeof c === "string" ? c : c.kind;
+  return kind === "gunship";
+}
+
+/** Fixed-wing birds get altitude cloud parallax in chase cam (Warthog / Lightning / Gunship). */
+export function craftHasCloudParallax(c: CraftSpec | CraftKind): boolean {
+  const spec = typeof c === "string" ? craftOf(c) : c;
+  return spec.flightModel === "plane";
+}
+
+/** Hull noses toward the reticle (helis / jets). Gunship is false — keys yaw, mouse aims. */
+export function craftNoseFollowsAim(c: CraftSpec = craftOf()): boolean {
+  return !craftIsGunship(c);
 }
 
 const DEFAULT_BOMB_DROP: CraftBombDrop = {
@@ -1151,6 +1210,28 @@ export function craftPreviewExhaustTint(kind: CraftKind | string): number {
   return 0x70d8ff;
 }
 
+/**
+ * Hue rotation (degrees) from the authored warm exhaust/flame art toward each
+ * craft's look. 0 keeps the source orange grading intact.
+ * Nozzle Images use runtime ColorMatrix; trail particles use pre-baked sheets
+ * (`craftExhaustFlameSheet`) because ParticleEmitter has no preFX.
+ */
+export function craftExhaustFlameHue(kind: CraftKind | string): number {
+  if (kind === "prometheus") return 248;
+  if (kind === "warthog") return 0;
+  if (kind === "lightning_ii") return 185;
+  return 172;
+}
+
+/** Non-zero trail flame hues that must exist as `fx_flame_hue_<n>` sheets. */
+export const EXHAUST_TRAIL_FLAME_HUES: readonly number[] = [172, 185, 248];
+
+/** Particle texture for craft exhaust trails (graded flame, hue pre-baked). */
+export function craftExhaustFlameSheet(kind: CraftKind | string): string {
+  const hue = craftExhaustFlameHue(kind);
+  return hue === 0 ? "fx_flame" : `fx_flame_hue_${hue}`;
+}
+
 /** Body origin from SPRITE_SPECS. */
 export function craftOrigin(c: CraftSpec = craftOf()): { x: number; y: number } {
   return lookupSpriteOrigin(c.body) ?? DEFAULT_ORIGIN;
@@ -1281,6 +1362,11 @@ export function craftExhaustMounts(c: CraftSpec = craftOf()): { x: number; y: nu
   return mountsOf(c.body, "exhaust");
 }
 
+/** Wingtip UVs for bank contrails (jets). */
+export function craftWingTipMounts(c: CraftSpec = craftOf()): { x: number; y: number; id?: string }[] {
+  return lookupSpritePoints(c.body, "wingtip");
+}
+
 /** Pivot for a craft texture (body origin or gun origin). */
 export function craftPivot(key: string): { x: number; y: number } | undefined {
   const k = key.replace(/__(woodland|desert|urban|snow|digital)$/, "");
@@ -1290,15 +1376,20 @@ export function craftPivot(key: string): { x: number; y: number } | undefined {
   return undefined;
 }
 
-/** Tagged hull mounts for a craft — from SPRITE_SPECS body points. */
+/** Tagged hull mounts for a craft — from SPRITE_SPECS body points (ids preserved). */
 export function craftMountsOf(sp: CraftSpec): HullMount[] {
-  const roles: HullMountRole[] = ["gun", "rotor", "hardpoint", "exhaust"];
+  const roles: HullMountRole[] = ["gun", "rotor", "hardpoint", "exhaust", "wingtip"];
   const tagged: HullMount[] = [];
   for (const role of roles) {
-    for (const p of mountsOf(sp.body, role)) {
-      tagged.push({ x: p.x, y: p.y, role, label: role });
+    for (const p of lookupSpritePoints(sp.body, role)) {
+      tagged.push({
+        x: p.x,
+        y: p.y,
+        role,
+        label: spritePointLabel(p),
+        id: p.id,
+      });
     }
   }
-  numberMountLabels(tagged);
   return tagged;
 }

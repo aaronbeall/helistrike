@@ -11,7 +11,7 @@ export function heatClassOf(u: Unit): HeatClass {
   return "vehicle";
 }
 
-/** Whether a heat-seeker guidance category list accepts this unit. */
+/** Whether a lock acquire category list accepts this unit. */
 export function heatCategoryOk(
   u: Unit,
   categories: readonly ("air" | "ground" | "vehicle")[]
