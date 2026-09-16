@@ -602,7 +602,7 @@ export class RosterRig {
         mount: g.mount,
         rot: 0,
         scale: g.scale ?? 1,
-        layer: sp.move === "heli" ? "below" : "above",
+        layer: (sp.behavior === "orbit_attack_heli" || sp.behavior === "kite_attack_heli") ? "below" : "above",
       });
     }
     for (const r of sp.rotors) {
@@ -1294,7 +1294,7 @@ function matchesFilter(kind: UnitKind, filter: Filter): boolean {
   if (filter === "air") return isAerial(kind);
   if (filter === "water") return isWaterCraft(kind);
   if (filter === "ground") {
-    return isGroundVehicle(kind) || (specOf(kind).move === "tank" && !isBuilding(kind));
+    return isGroundVehicle(kind) && !isBuilding(kind);
   }
   return true;
 }
@@ -1305,8 +1305,8 @@ function categoryTag(kind: UnitKind): string {
   if (sp.organic) return "INF";
   if (sp.aerial) return "AIR";
   if (sp.water) return "SEA";
-  if (isGroundVehicle(kind) || sp.move === "tank") return "VEH";
-  return sp.move.slice(0, 3).toUpperCase();
+  if (isGroundVehicle(kind) || sp.behavior === "orbit_attack_vehicle") return "VEH";
+  return sp.behavior.slice(0, 3).toUpperCase();
 }
 
 function formatCraft(craft: CraftSpec): { stats: string[]; info: string[] } {

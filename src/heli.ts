@@ -1,14 +1,14 @@
 import Phaser from "phaser";
 import {
+  craftControlScheme,
   craftGunPreferOffset,
-  craftIsGunship,
-  craftIsJet,
   craftOf,
   craftRotorFlightSpeed,
   craftRotorSpoolDur,
   craftRotorSpoolPeak,
   craftSocketBarrelCount,
   type CraftKind,
+  type CraftSpec,
 } from "./craft";
 import { groundZ, WORLD, type WorldData } from "./world";
 
@@ -25,12 +25,19 @@ export function pointInPlayableMap(x: number, y: number): boolean {
 }
 
 /**
- * Chase camera stays clamped to the map for helis / VTOL.
- * Plane craft (Warthog, Gunship) keep free tracking off-map.
- * Same craft set uses a hard map-edge position clamp (planes leave + U-turn).
+ * Leave-theater + forced U-turn + free chase cam.
+ * Planes (Warthog, Gunship) and plane-scheme VTOL (Lightning).
  */
-export function craftCameraEdgeLocked(spec: { flightModel: string }): boolean {
-  return spec.flightModel !== "plane";
+export function craftHasForcedUTurn(spec: CraftSpec): boolean {
+  return spec.flightModel === "plane" || craftControlScheme(spec) === "plane";
+}
+
+/**
+ * Chase camera / scroll clamp only for craft without forced U-turn
+ * (helis + non-plane-scheme VTOL like Osprey / Prometheus).
+ */
+export function craftCameraEdgeLocked(spec: CraftSpec): boolean {
+  return !craftHasForcedUTurn(spec);
 }
 
 /** Nape / cruise / pop-up ceilings are AGL (added to local groundZ), not world Z. */
@@ -163,8 +170,8 @@ export class Heli {
     this.vx = Math.cos(angle) * this.spec.minSpeed;
     this.vy = Math.sin(angle) * this.spec.minSpeed;
     this.vz = 0;
-    const jet = craftIsJet(this.spec);
-    this.thrustPower = this.spec.flightModel === "plane" || jet ? 0.55 : 0.22;
+    const planeScheme = craftControlScheme(this.spec) === "plane";
+    this.thrustPower = this.spec.flightModel === "plane" || planeScheme ? 0.55 : 0.22;
     this.syncStationAimToHull();
   }
 
@@ -249,8 +256,8 @@ export class Heli {
     this.rotor += this.rotorSpd * dt;
     if (this.gunBrakeT > 0) this.gunBrakeT = Math.max(0, this.gunBrakeT - dt);
 
-    const jet = craftIsJet(this.spec);
-    const gunship = craftIsGunship(this.spec);
+    const planeScheme = craftControlScheme(this.spec) === "plane";
+    const orbit = craftControlScheme(this.spec) === "orbit";
     const outside = !pointInPlayableMap(this.x, this.y);
     const aimInside = pointInPlayableMap(aimX, aimY);
     // Off-map recovery: respect an in-map mouse aim; otherwise blend aim with map center.
@@ -261,21 +268,22 @@ export class Heli {
     const turnAng = Math.atan2(turnY - this.y, turnX - this.x);
 
     // Default: nose toward reticle. Gunship yaws with A/D hold (below).
-    let desired = gunship ? this.angle : turnAng;
-    if (outside) {
+    let desired = orbit ? this.angle : turnAng;
+    const uTurn = craftHasForcedUTurn(this.spec);
+    if (outside && uTurn) {
       // Forced U-turn while off-map — turn target rules above always apply.
       this.edgeTurn = true;
       desired = turnAng;
     } else {
       this.edgeTurn = false;
-      if (!gunship && controllable && this.spec.flightModel === "plane" && left !== right) {
+      if (!orbit && controllable && this.spec.flightModel === "plane" && left !== right) {
         // Circling: A/D retarget yaw to ±90° from mouse aim (same momentum yaw as mouse turn).
         desired = turnAng + (right ? Math.PI / 2 : -Math.PI / 2);
-      } else if (!gunship) {
+      } else if (!orbit) {
         desired = turnAng;
       }
     }
-    if (controllable && gunship && !outside) {
+    if (controllable && orbit && !outside) {
       // Hold-to-turn: A/D applies yaw rate while pressed; release stops turning.
       const steerIn = (right ? 1 : 0) + (left ? -1 : 0);
       const maxRate = this.spec.yawRate;
@@ -287,10 +295,10 @@ export class Heli {
     } else if (controllable) {
       const err = Phaser.Math.Angle.Wrap(desired - this.angle);
       // Banked jets turn tighter — roll feeds yaw authority.
-      const bankMul = jet ? 1 + Math.abs(this.roll) * 0.85 : 1;
+      const bankMul = planeScheme ? 1 + Math.abs(this.roll) * 0.85 : 1;
       const maxRate = this.spec.yawRate * bankMul;
       const targetRate = Phaser.Math.Clamp(err * 5.4, -maxRate, maxRate);
-      const yawAcc = this.spec.yawAccel * (jet ? 1 + Math.abs(this.roll) * 0.45 : 1);
+      const yawAcc = this.spec.yawAccel * (planeScheme ? 1 + Math.abs(this.roll) * 0.45 : 1);
       if (this.angVel < targetRate) this.angVel = Math.min(targetRate, this.angVel + yawAcc * dt);
       else this.angVel = Math.max(targetRate, this.angVel - yawAcc * dt);
       this.angle += this.angVel * dt;
@@ -306,14 +314,14 @@ export class Heli {
     const fwd = (up ? 1 : 0) + (down ? -1 : 0);
     const str = (right ? 1 : 0) + (left ? -1 : 0);
     const collective = (spaceDown ? 1 : 0) + (shiftDown ? -1 : 0);
-    const idlePower = this.spec.flightModel === "plane" || jet ? 0.55 : 0.22;
+    const idlePower = this.spec.flightModel === "plane" || planeScheme ? 0.55 : 0.22;
     const forwardPower = fwd < 0
       ? Math.abs(fwd) * ((this.spec.reverseThrust ?? this.spec.forwardThrust) / this.spec.forwardThrust)
       : Math.abs(fwd);
     // Spool / ready bring the engines up; flight follows stick load.
     let thrustTarget = 0;
     if (controllable) {
-      const steerLoad = gunship
+      const steerLoad = orbit
         ? Math.abs(this.angVel) / Math.max(0.2, this.spec.yawRate)
         : Math.abs(str);
       thrustTarget = Math.max(idlePower, forwardPower, steerLoad, Math.abs(collective));
@@ -342,7 +350,7 @@ export class Heli {
         ? (this.spec.reverseThrust ?? this.spec.forwardThrust)
         : this.spec.forwardThrust;
       // Gunship speed is trimmed in the plane block below — skip axial thrust so W/S aren't cancelled by drag.
-      if (!gunship) {
+      if (!orbit) {
         ax += ca * fwd * longitudinalThrust;
         ay += sa * fwd * longitudinalThrust;
       }
@@ -359,9 +367,9 @@ export class Heli {
       const headingY = Math.sin(this.angle);
       // Gun fire dips the floor so recoil can bleed speed on a gun run.
       const minFloor =
-        jet && this.gunBrakeT > 0 ? this.spec.minSpeed * 0.68 : this.spec.minSpeed;
+        planeScheme && this.gunBrakeT > 0 ? this.spec.minSpeed * 0.68 : this.spec.minSpeed;
       let along = this.vx * headingX + this.vy * headingY;
-      if (gunship) {
+      if (orbit) {
         // Hold-to-trim: W climbs toward max, S bleeds toward min; coast holds current.
         const trim =
           fwd > 0 ? this.spec.maxSpeed : fwd < 0 ? minFloor : Phaser.Math.Clamp(along, minFloor, this.spec.maxSpeed);
@@ -370,7 +378,7 @@ export class Heli {
       }
       const forwardSpeed = Math.max(minFloor, along);
       // Jets keep more lateral momentum through a banked turn.
-      const slipDamp = jet ? 0.72 : 2.2;
+      const slipDamp = planeScheme ? 0.72 : 2.2;
       const lateralSpeed =
         (-this.vx * headingY + this.vy * headingX) * Math.exp(-slipDamp * dt);
       this.vx = headingX * forwardSpeed - headingY * lateralSpeed;
@@ -393,9 +401,9 @@ export class Heli {
     }
     this.x += this.vx * dt;
     this.y += this.vy * dt;
-    // Planes leave the map and recover via forced U-turn. Helis / VTOL can reverse
-    // or strafe out while the nose points inland — hard edge keeps them on the theater.
-    if (craftCameraEdgeLocked(this.spec)) {
+    // Leave + forced U-turn craft free the edge. Everyone else is hard-clamped
+    // (camera uses the same predicate via craftCameraEdgeLocked).
+    if (!craftHasForcedUTurn(this.spec)) {
       const margin = 40;
       this.x = Phaser.Math.Clamp(this.x, margin, WORLD - margin);
       this.y = Phaser.Math.Clamp(this.y, margin, WORLD - margin);
@@ -453,7 +461,7 @@ export class Heli {
 
     const localFwd = this.vx * ca + this.vy * sa;
     const localStr = -this.vx * sa + this.vy * ca;
-    if (jet && controllable) {
+    if (planeScheme && controllable) {
       // Bank into the turn from yaw rate; keep a bit of slip lean for feel.
       const yawBank = Phaser.Math.Clamp(
         -this.angVel / Math.max(0.35, this.spec.yawRate) * 0.95,
@@ -471,7 +479,7 @@ export class Heli {
         Phaser.Math.Clamp(localFwd / 320, -0.28, 0.32),
         1 - Math.pow(0.06, dt)
       );
-    } else if (gunship && controllable) {
+    } else if (orbit && controllable) {
       // Mild bank from A/D yaw rate — mouse aims guns only.
       const yawBank = Phaser.Math.Clamp(
         -this.angVel / Math.max(0.2, this.spec.yawRate) * 0.72,
@@ -501,7 +509,7 @@ export class Heli {
 
   /** Nose-gun reverse thrust (physics only) — jets. */
   applyGunRecoil(impulse: number): void {
-    if (!craftIsJet(this.spec) || impulse <= 0) return;
+    if (!this.spec.cannonInherit || impulse <= 0) return;
     const ca = Math.cos(this.angle);
     const sa = Math.sin(this.angle);
     this.vx -= ca * impulse;

@@ -1,7 +1,7 @@
 import Phaser from "phaser";
-import { PLAYER_WPNS, type PlayerWpnSpec } from "./combat";
+import { PLAYER_WPNS, type PlayerWpnSpec, type UnitClass } from "./combat";
 import { RIG_INFO, RIG_VALUE, makeRigText, row, setStackedTexts, syncRigSystemCursor } from "./rigUi";
-import { allCrafts } from "./craft";
+import { allCrafts, craftSocketFireStreams, craftSocketIsPrimary } from "./craft";
 import {
   ENEMY_WPNS,
   allKinds,
@@ -27,6 +27,8 @@ const PAD_L = 54;
 const PAD_R = 18;
 const PAD_T = 18;
 const PAD_B = 44;
+
+const UNIT_CLASSES: readonly UnitClass[] = ["air", "vehicle", "building", "troop"];
 
 type BalanceCat = "craft" | "weapons" | "enemies";
 const CATS: BalanceCat[] = ["craft", "weapons", "enemies"];
@@ -88,9 +90,23 @@ const CRAFT_AXES: AxisDef[] = [
   },
   {
     id: "firepower",
-    // Component keys are `loadout.<wpnId>` — expanded at highlight time.
-    highlight: [],
+    // Component keys: primary/secondary totals + `loadout.<wpnId>` — expanded at highlight time.
+    // Class firepower uses dmgMul; base firepower stays unmodified.
+    highlight: [
+      "primaryFirepower",
+      "secondaryFirepower",
+      "firepower.air",
+      "firepower.vehicle",
+      "firepower.building",
+      "firepower.troop",
+    ],
   },
+  { id: "primaryFirepower" },
+  { id: "secondaryFirepower" },
+  { id: "firepower.air" },
+  { id: "firepower.vehicle" },
+  { id: "firepower.building" },
+  { id: "firepower.troop" },
   { id: "yawRate" },
   { id: "radius" },
   { id: "maxAgl" },
@@ -100,8 +116,24 @@ const CRAFT_AXES: AxisDef[] = [
 const WEAPON_AXES: AxisDef[] = [
   {
     id: "dps",
-    highlight: ["dmg", "fireCd", "salvo.count", "salvo.interval", "burst", "burstGap"],
+    // Base dps is unmodified; class keys apply dmgMul.
+    highlight: [
+      "dps.air",
+      "dps.vehicle",
+      "dps.building",
+      "dps.troop",
+      "dmg",
+      "fireCd",
+      "salvo.count",
+      "salvo.interval",
+      "burst",
+      "burstGap",
+    ],
   },
+  { id: "dps.air" },
+  { id: "dps.vehicle" },
+  { id: "dps.building" },
+  { id: "dps.troop" },
   { id: "blast" },
   { id: "speed" },
   { id: "range", highlight: ["life"] },
@@ -146,6 +178,12 @@ const CAT_DETAIL_ORDER: Record<BalanceCat, string[]> = {
     "strafeThrust",
     "verticalThrust",
     "firepower",
+    "primaryFirepower",
+    "secondaryFirepower",
+    "firepower.air",
+    "firepower.vehicle",
+    "firepower.building",
+    "firepower.troop",
     "yawRate",
     "radius",
     "maxAgl",
@@ -153,6 +191,10 @@ const CAT_DETAIL_ORDER: Record<BalanceCat, string[]> = {
   ],
   weapons: [
     "dps",
+    "dps.air",
+    "dps.vehicle",
+    "dps.building",
+    "dps.troop",
     "dmg",
     "blast",
     "fireCd",
@@ -931,8 +973,26 @@ function enemyWeaponDps(w: WeaponSpec | undefined): number {
   return sustainedDps(w.dmg, w.fireCd, w.burst ?? 1, w.burstGap ?? 0);
 }
 
+/** Unmodified player weapon DPS (no dmgMul). */
 function playerWeaponDps(w: PlayerWpnSpec): number {
   return sustainedDps(w.dmg, w.fireCd, w.salvo?.count ?? 1, w.salvo?.interval ?? 0);
+}
+
+function playerClassMul(w: PlayerWpnSpec, cls: UnitClass): number {
+  return w.dmgMul?.[cls] ?? 1;
+}
+
+/** Per-class DPS values keyed as `prefix` / `prefix.air` / … Base key is unmodified. */
+function classDpsValues(
+  baseDps: number,
+  mulOf: (cls: UnitClass) => number,
+  prefix: string
+): Record<string, number> {
+  const out: Record<string, number> = { [prefix]: baseDps };
+  for (const cls of UNIT_CLASSES) {
+    out[`${prefix}.${cls}`] = baseDps * mulOf(cls);
+  }
+  return out;
 }
 
 /**
@@ -1110,12 +1170,28 @@ function buildBalanceCatalog(): BalancePoint[] {
   for (const c of allCrafts()) {
     const loadoutVals: Record<string, number> = {};
     let firepower = 0;
-    for (const id of c.sockets.map((s) => s.weapon)) {
-      const w = PLAYER_WPNS[id];
+    let primaryFirepower = 0;
+    let secondaryFirepower = 0;
+    const classFp: Record<UnitClass, number> = {
+      air: 0,
+      vehicle: 0,
+      building: 0,
+      troop: 0,
+    };
+    for (let i = 0; i < c.sockets.length; i++) {
+      const socket = c.sockets[i]!;
+      const w = PLAYER_WPNS[socket.weapon];
       if (!w) continue;
-      const dps = playerWeaponDps(w);
-      loadoutVals[`loadout.${id}`] = dps;
+      const streams = craftSocketFireStreams(c, i);
+      const dps = playerWeaponDps(w) * streams;
+      const key = `loadout.${socket.weapon}`;
+      loadoutVals[key] = (loadoutVals[key] ?? 0) + dps;
       firepower += dps;
+      if (craftSocketIsPrimary(socket)) primaryFirepower += dps;
+      else secondaryFirepower += dps;
+      for (const cls of UNIT_CLASSES) {
+        classFp[cls] += dps * playerClassMul(w, cls);
+      }
     }
     out.push({
       id: `craft:${c.kind}`,
@@ -1131,6 +1207,12 @@ function buildBalanceCatalog(): BalancePoint[] {
         strafeThrust: c.strafeThrust,
         verticalThrust: c.verticalThrust,
         firepower,
+        primaryFirepower,
+        secondaryFirepower,
+        "firepower.air": classFp.air,
+        "firepower.vehicle": classFp.vehicle,
+        "firepower.building": classFp.building,
+        "firepower.troop": classFp.troop,
         ...loadoutVals,
         yawRate: c.yawRate,
         radius: c.radius,
@@ -1145,6 +1227,7 @@ function buildBalanceCatalog(): BalancePoint[] {
     const kindGroup = tags[0] ?? "missile";
     const salvoN = w.salvo?.count ?? 1;
     const salvoGap = w.salvo?.interval ?? 0;
+    const baseDps = sustainedDps(w.dmg, w.fireCd, salvoN, salvoGap);
     out.push({
       id: `weapons:player:${w.id}`,
       label: w.name,
@@ -1153,7 +1236,7 @@ function buildBalanceCatalog(): BalancePoint[] {
       color: colorOf(kindGroup),
       tags,
       values: {
-        dps: sustainedDps(w.dmg, w.fireCd, salvoN, salvoGap),
+        ...classDpsValues(baseDps, (cls) => playerClassMul(w, cls), "dps"),
         dmg: w.dmg,
         blast: w.blast,
         fireCd: w.fireCd,
@@ -1172,6 +1255,7 @@ function buildBalanceCatalog(): BalancePoint[] {
     const w = p.w;
     const tags = weaponTypeTags(w.kind);
     const kindGroup = tags[0] ?? "missile";
+    const baseDps = sustainedDps(w.dmg, w.fireCd, w.burst ?? 1, w.burstGap ?? 0);
     out.push({
       id: `weapons:enemy:${p.id}`,
       label: p.label,
@@ -1180,7 +1264,8 @@ function buildBalanceCatalog(): BalancePoint[] {
       color: colorOf(kindGroup),
       tags,
       values: {
-        dps: sustainedDps(w.dmg, w.fireCd, w.burst ?? 1, w.burstGap ?? 0),
+        // Enemy weapons have no dmgMul — class DPS mirrors base.
+        ...classDpsValues(baseDps, () => 1, "dps"),
         dmg: w.dmg,
         blast: w.blast,
         fireCd: w.fireCd,
@@ -1201,10 +1286,10 @@ function buildBalanceCatalog(): BalancePoint[] {
     const bodyDps = enemyWeaponDps(w);
     let group = "other";
     if (sp.building) group = "building";
-    else if (sp.organic || sp.move === "inf" || sp.move === "flee") group = "troop";
-    else if (sp.move === "heli" || sp.move === "drone" || sp.flyZ != null) group = "aerial";
-    else if (sp.move === "tank" || sp.move === "vehicle" || sp.move === "boat") group = "vehicle";
-    else if (sp.move === "static") group = "building";
+    else if (sp.organic || sp.behavior === "attack_infantry" || sp.behavior === "flee_infantry") group = "troop";
+    else if ((sp.behavior === "orbit_attack_heli" || sp.behavior === "kite_attack_heli") || sp.behavior === "suicide_attack_heli" || sp.flyZ != null) group = "aerial";
+    else if (sp.behavior === "orbit_attack_vehicle" || sp.behavior === "flee_vehicle" || sp.behavior === "patrol_boat") group = "vehicle";
+    else if (sp.behavior === "static_hold") group = "building";
     out.push({
       id: `enemies:${kind}`,
       label: sp.label,

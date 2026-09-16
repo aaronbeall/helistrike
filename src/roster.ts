@@ -1,3 +1,4 @@
+import type { CamoKind } from "./camo";
 import { lookupSpriteMuzzles, lookupSpriteOrigin, mountOf, mountsOf } from "./spriteOrigin";
 
 export type UnitKind =
@@ -39,17 +40,26 @@ export type ShotLook = string;
 /** Projectile flight behavior (independent of art `look`). */
 export type ShotKind = "cannon" | "rocket" | "lock-on-missile" | "guided-missile" | "beam";
 
-export type MoveKind =
-  | "static"
-  | "tank"
-  | "vehicle"
-  | "boat"
-  | "flee"
-  | "inf"
-  | "heli"
-  | "drone";
+export type UnitBehavior =
+  | "orbit_attack_vehicle"
+  | "flee_vehicle"
+  | "flee_infantry"
+  | "attack_infantry"
+  | "orbit_attack_heli"
+  | "kite_attack_heli"
+  | "suicide_attack_heli"
+  | "patrol_boat"
+  | "static_hold";
 
 export type TrackKind = "tread" | "tire" | "dual" | "wide" | "mono";
+
+export interface CombatMood {
+  strikesBeforeFlee: number;
+  /** Flee duration range in seconds [lo, hi]. */
+  fleeDuration: [number, number];
+  /** While fleeing, switch to orbit driving (gunship) instead of kite flee. */
+  fleeAsOrbit?: boolean;
+}
 
 export interface DriveSpec {
   maxSpd: number;
@@ -161,9 +171,35 @@ export interface UnitSpec {
   hulk: string;
   debris: DebrisCat;
   rotOff: number;
-  move: MoveKind;
+  /** AI locomotion / engagement profile. */
+  behavior: UnitBehavior;
   /** Ground locomotion (tank / vehicle). Omitted for non-driving kinds. */
   drive?: DriveSpec;
+  /**
+   * Fire → kite → flee mood cycle (scout / gunship helis).
+   * Omit for always-orbit heavies.
+   */
+  combatMood?: CombatMood;
+  /** Strafe-turn hull while engaging (false for heavy heli). Default true for heli behaviors. */
+  strafeAim?: boolean;
+  /** Flee-vehicle awareness radius (motorcycle 1200; default 520). */
+  fleeAwareRange?: number;
+  /** Min forward speed required to yaw (motorcycle 24; default 7). */
+  minTurnSpd?: number;
+  /** Flee infantry run speed override (officer 36; non-organic default 90). */
+  fleeRunSpeed?: number;
+  /** Patrol boat yaw rate (ptboat 1.55; boat 0.85). */
+  boatYaw?: number;
+  /** Patrol boat cruise speed (ptboat 38; boat 22). */
+  boatSpeed?: number;
+  /** Rotor spin rad/s (drone 42; heli default 28). */
+  rotorSpinRate?: number;
+  /** Death blast scale mul (tank 1.25). */
+  wreckScale?: number;
+  /** Wheel debris draw scale range [lo, hi]. */
+  wheelDebrisScale?: [number, number];
+  /** Force this camo at spawn (lav_aa digital). */
+  forcedCamo?: CamoKind;
   weapon?: WeaponSpec;
   /**
    * Optional hull hardpoint ordnance (seeker missiles, etc.).
@@ -544,9 +580,10 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "enemy_tank_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
-    move: "tank",
+    behavior: "orbit_attack_vehicle",
     drive: { maxSpd: 32, accel: 16, brake: 22, turn: 0.7, track: "tread", trackGap: 15, trackScale: 1.05 },
     throwGuns: true,
+    wreckScale: 1.25,
     weapon: wpn("he", { fireCd: 2.05, range: 520}),
     guns: [gun("enemy_tank_gun", 0.78, mountOf("enemy_tank", "gun"), "enemy_tank_gun_hulk")],
     rotors: []
@@ -560,7 +597,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "enemy_troop_soldier_hulk",
     debris: "organic",
     rotOff: Math.PI / 2,
-    move: "inf",
+    behavior: "attack_infantry",
     organic: true,
     fixedAim: true,
     weapon: wpn("mg", { scale: 0.529 }),
@@ -577,9 +614,12 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "enemy_heli_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
-    move: "heli",
+    behavior: "orbit_attack_heli",
     aerial: true,
     noCrater: true,
+    strafeAim: true,
+    combatMood: { strikesBeforeFlee: 4, fleeDuration: [1.8, 2.4], fleeAsOrbit: true },
+    rotorSpinRate: 28,
     weapon: wpn("he", { fireCd: 1.4, range: 640, speed: 520, dmg: 3, blast: 8, burst: 3, burstGap: 0.13 }),
     secondary: {
       wpn: WPN.seeker,
@@ -611,10 +651,12 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "enemy_boat_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
-    move: "boat",
+    behavior: "patrol_boat",
     water: true,
     noCrater: true,
     throwGuns: true,
+    boatYaw: 0.85,
+    boatSpeed: 22,
     weapon: wpn("he", { fireCd: 1.15, range: 480}),
     guns: [gun("enemy_boat_gun", 0.74, mountOf("enemy_boat", "gun"))],
     rotors: []
@@ -629,7 +671,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "building_tower_hulk",
     debris: "struct",
     rotOff: Math.PI / 2,
-    move: "static",
+    behavior: "static_hold",
     building: true,
     throwGuns: true,
     spawnYaw: (5 * Math.PI) / 180,
@@ -661,7 +703,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "building_bunker_hulk",
     debris: "struct",
     rotOff: Math.PI / 2,
-    move: "static",
+    behavior: "static_hold",
     building: true,
     spawnYaw: (45 * Math.PI) / 180,
     guns: [],
@@ -678,7 +720,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "building_radar_hulk",
     debris: "struct",
     rotOff: Math.PI / 2,
-    move: "static",
+    behavior: "static_hold",
     building: true,
     spawnYaw: (5 * Math.PI) / 180,
     guns: [],
@@ -701,9 +743,10 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "enemy_pickup_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
-    move: "vehicle",
+    behavior: "flee_vehicle",
     drive: { maxSpd: 92, accel: 48, brake: 40, turn: 1.55, track: "tire", trackGap: 13, trackScale: 0.78 },
     wheels: 2,
+    wheelDebrisScale: [0.68, 0.82],
     guns: [],
     rotors: [],
     crew: { mounts: [mountOf("enemy_pickup", "troop")], mode: "snap", chance: 0.33 }
@@ -718,7 +761,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "enemy_truck_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
-    move: "vehicle",
+    behavior: "flee_vehicle",
     drive: { maxSpd: 68, accel: 28, brake: 26, turn: 0.85, track: "dual", trackGap: 15, trackScale: 0.95 },
     wheels: 2,
     guns: [],
@@ -734,7 +777,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "enemy_tanker_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
-    move: "vehicle",
+    behavior: "flee_vehicle",
     drive: { maxSpd: 52, accel: 18, brake: 22, turn: 0.62, track: "wide", trackGap: 16, trackScale: 1.12 },
     wheels: 2,
     guns: [],
@@ -749,10 +792,13 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "enemy_motorcycle_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
-    move: "vehicle",
+    behavior: "flee_vehicle",
     drive: { maxSpd: 138, accel: 72, brake: 48, turn: 2.35, track: "mono", trackGap: 16, trackScale: 0.7 },
     softBlood: true,
     wheels: 2,
+    fleeAwareRange: 1200,
+    minTurnSpd: 24,
+    wheelDebrisScale: [0.48, 0.58],
     guns: [],
     rotors: []
   },
@@ -766,7 +812,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "enemy_lav_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
-    move: "tank",
+    behavior: "orbit_attack_vehicle",
     drive: { maxSpd: 48, accel: 28, brake: 32, turn: 1.15, track: "tire", trackGap: 14, trackScale: 0.82 },
     throwGuns: true,
     wheels: 2,
@@ -784,10 +830,11 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "enemy_lav_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
-    move: "tank",
+    behavior: "orbit_attack_vehicle",
     drive: { maxSpd: 42, accel: 24, brake: 30, turn: 1.05, track: "tire", trackGap: 14, trackScale: 0.82 },
     throwGuns: true,
     wheels: 2,
+    forcedCamo: "digital",
     weapon: WPN.aa,
     guns: [
       {
@@ -807,7 +854,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "enemy_sam_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
-    move: "tank",
+    behavior: "orbit_attack_vehicle",
     drive: { maxSpd: 24, accel: 12, brake: 18, turn: 0.55, track: "dual", trackGap: 16, trackScale: 1 },
     throwGuns: true,
     weapon: wpn("seeker", {
@@ -830,10 +877,12 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "enemy_ptboat_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
-    move: "boat",
+    behavior: "patrol_boat",
     water: true,
     noCrater: true,
     throwGuns: true,
+    boatYaw: 1.55,
+    boatSpeed: 38,
     weapon: wpn("mg", { fireCd: 0.85, range: 420, speed: 560, dmg: 3, blast: 6, burst: 3, burstGap: 0.09 }),
     guns: [gun("enemy_ptboat_gun", 0.74, mountOf("enemy_ptboat", "gun"))],
     rotors: []
@@ -848,7 +897,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "enemy_battleship_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
-    move: "static",
+    behavior: "static_hold",
     water: true,
     noCrater: true,
     throwGuns: true,
@@ -880,7 +929,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "enemy_troop_rpg_hulk",
     debris: "organic",
     rotOff: Math.PI / 2,
-    move: "inf",
+    behavior: "attack_infantry",
     organic: true,
     fixedAim: true,
     weapon: {
@@ -907,7 +956,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "enemy_troop_gunner_hulk",
     debris: "organic",
     rotOff: Math.PI / 2,
-    move: "inf",
+    behavior: "attack_infantry",
     organic: true,
     fixedAim: true,
     weapon: wpn("mg", {
@@ -934,7 +983,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "enemy_troop_mounted_mg_hulk",
     debris: "organic",
     rotOff: Math.PI / 2,
-    move: "static",
+    behavior: "static_hold",
     organic: true,
     fixedAim: true,
     weapon: wpn("mg", {
@@ -961,7 +1010,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "enemy_troop_stinger_hulk",
     debris: "organic",
     rotOff: Math.PI / 2,
-    move: "inf",
+    behavior: "attack_infantry",
     organic: true,
     fixedAim: true,
     weapon: wpn("seeker", {
@@ -985,7 +1034,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "enemy_troop_mechanic_hulk",
     debris: "organic",
     rotOff: Math.PI / 2,
-    move: "flee",
+    behavior: "flee_infantry",
     organic: true,
     guns: [],
     rotors: []
@@ -999,9 +1048,10 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "enemy_troop_officer_hulk",
     debris: "organic",
     rotOff: Math.PI / 2,
-    move: "flee",
+    behavior: "flee_infantry",
     organic: true,
     hv: true,
+    fleeRunSpeed: 36,
     guns: [],
     rotors: []
   },
@@ -1015,7 +1065,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "building_barn_hulk",
     debris: "struct",
     rotOff: Math.PI / 2,
-    move: "static",
+    behavior: "static_hold",
     building: true,
     guns: [],
     rotors: []
@@ -1030,7 +1080,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "building_tent_hulk",
     debris: "struct",
     rotOff: Math.PI / 2,
-    move: "static",
+    behavior: "static_hold",
     building: true,
     guns: [],
     rotors: []
@@ -1045,7 +1095,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "building_fob_hulk",
     debris: "struct",
     rotOff: Math.PI / 2,
-    move: "static",
+    behavior: "static_hold",
     building: true,
     hv: true,
     spawnYaw: (20 * Math.PI) / 180,
@@ -1062,7 +1112,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "building_lookout_hulk",
     debris: "struct",
     rotOff: Math.PI / 2,
-    move: "static",
+    behavior: "static_hold",
     building: true,
     hv: true,
     spawnYaw: (5 * Math.PI) / 180,
@@ -1080,9 +1130,10 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "enemy_drone_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
-    move: "drone",
+    behavior: "suicide_attack_heli",
     aerial: true,
     noCrater: true,
+    rotorSpinRate: 42,
     guns: [],
     rotors: mountsOf("enemy_drone", "rotor").map((m) => ({
       tex: "enemy_drone_rotor",
@@ -1102,10 +1153,13 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "enemy_heli_small_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
-    move: "heli",
+    behavior: "kite_attack_heli",
     aerial: true,
     noCrater: true,
     fixedAim: true,
+    strafeAim: true,
+    combatMood: { strikesBeforeFlee: 3, fleeDuration: [2.6, 3.4] },
+    rotorSpinRate: 28,
     weapon: wpn("mg", {
       fireCd: 1.15,
       range: 700,
@@ -1141,10 +1195,12 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     hulk: "enemy_heli_heavy_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
-    move: "heli",
+    behavior: "orbit_attack_heli",
     aerial: true,
     noCrater: true,
     throwGuns: true,
+    strafeAim: false,
+    rotorSpinRate: 28,
     weapon: wpn("mg", {
       fireCd: 0.55,
       range: 700,
@@ -1251,12 +1307,29 @@ export function isWaterCraft(kind: UnitKind): boolean {
 }
 
 export function isInfantry(kind: UnitKind): boolean {
-  return UNIT_SPECS[kind].move === "inf" || UNIT_SPECS[kind].organic === true;
+  const b = UNIT_SPECS[kind].behavior;
+  return b === "attack_infantry" || b === "flee_infantry" || UNIT_SPECS[kind].organic === true;
 }
 
 export function isGroundVehicle(kind: UnitKind): boolean {
-  const m = UNIT_SPECS[kind].move;
-  return m === "tank" || m === "vehicle";
+  const b = UNIT_SPECS[kind].behavior;
+  return b === "orbit_attack_vehicle" || b === "flee_vehicle";
+}
+
+export function isHeliBehavior(b: UnitBehavior): boolean {
+  return (
+    b === "orbit_attack_heli" ||
+    b === "kite_attack_heli" ||
+    b === "suicide_attack_heli"
+  );
+}
+
+export function isAirBehavior(b: UnitBehavior): boolean {
+  return isHeliBehavior(b);
+}
+
+export function isInfantryBehavior(b: UnitBehavior): boolean {
+  return b === "attack_infantry" || b === "flee_infantry";
 }
 
 export function labelOf(kind: UnitKind): string {

@@ -13,7 +13,7 @@ import {
   type CraftComposite,
 } from "./craft";
 import { drawControlLegend } from "./menuChrome";
-import { pickRandomTip, tipContextFromSelection } from "./tips";
+import { pickRandomTip, tipKnownFromSelection } from "./tips";
 import { ensureExhaustGlow, extractBiomeTiles, FX_VARIANTS, spriteUvPos } from "./sprites";
 import { missionOf } from "./mission";
 import { generateWorldAsync, type WorldData } from "./world";
@@ -49,14 +49,7 @@ export class LoadScene extends Phaser.Scene {
     const craft = craftOf();
     this.rotorFlight = craftRotorFlightSpeed(craft);
     this.rotorSpd = this.rotorFlight * 0.12;
-    this.exhaustFlameMul =
-      craft.kind === "warthog"
-        ? 0.7
-        : craft.kind === "lightning_ii"
-          ? 0.72
-          : craft.kind === "prometheus"
-            ? 0.58
-            : 0.5;
+    this.exhaustFlameMul = craft.exhaustProfile?.flame ?? 0.5;
     const composite = craftComposite(craft);
     this.body = this.add
       .image(hx, this.heliY, composite.body.tex)
@@ -161,7 +154,7 @@ export class LoadScene extends Phaser.Scene {
     const barX = w / 2 - barW / 2;
     const barY = h * 0.6;
     const bar = this.add.graphics();
-    const tip = pickRandomTip(tipContextFromSelection()).text;
+    const tip = pickRandomTip(tipKnownFromSelection()).text;
     this.add
       .text(w / 2, h * 0.72, `TIP  ·  ${tip}`, {
         fontFamily: "Share Tech Mono, monospace",

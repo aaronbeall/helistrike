@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { craftIsGunship, craftOf, type CraftSpec } from "./craft";
+import { craftControlScheme, craftOf, type CraftSpec } from "./craft";
 import { allMissions } from "./mission";
 import { fbm } from "./noise";
 
@@ -66,7 +66,7 @@ export function createControlLegend(
   const controlW = panelW / 8;
   const x0 = -panelW / 2;
   const controlX = (i: number) => x0 + i * controlW + controlW / 2;
-  const gunship = craftIsGunship(craft);
+  const orbit = craftControlScheme(craft) === "orbit";
   objects.push(
     scene.add.rectangle(0, y, panelW, 72, 0x0b0a08, 0.82).setStrokeStyle(1, 0x6f6244, 0.7)
   );
@@ -111,7 +111,7 @@ export function createControlLegend(
   keycap(moveX - 22, iconY + 10, "A", 20, 18);
   keycap(moveX, iconY + 10, "S", 20, 18);
   keycap(moveX + 22, iconY + 10, "D", 20, 18);
-  label(0, gunship ? "W/S SPEED · A/D STEER" : "MOVE");
+  label(0, orbit ? "W/S SPEED · A/D STEER" : "MOVE");
   mouse(controlX(1), iconY, true);
   label(1, "AIM / FIRE");
   keycap(controlX(2) - 29, iconY, "SPACE", 52, 22);

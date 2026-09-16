@@ -105,6 +105,33 @@ export interface CraftBombDrop {
   loftMax?: number;
 }
 
+/**
+ * How the player steers the hull (orthogonal to flightModel dynamics).
+ * - aim: nose follows reticle (default helis / most VTOL)
+ * - plane: mouse aim + A/D circle offset; banked yaw / gun-brake / jet aim clamp
+ * - orbit: hold A/D yaw, W/S speed trim; mouse aims weapons only (AC-130)
+ */
+export type ControlScheme = "aim" | "plane" | "orbit";
+
+/** Authored exhaust plume for craft with nozzle FX. */
+export interface CraftExhaustProfile {
+  rate: number;
+  speed: number;
+  tint: number;
+  smoke: number;
+  sx: number;
+  sy: number;
+  life: number;
+  flame: number;
+  gap: number;
+  /** Degrees from warm exhaust art; 0 keeps source orange. */
+  flameHue?: number;
+  /** Dense ribbon particle counts (jets). */
+  ribbonDense?: boolean;
+  /** Glow oval follows hull pose instead of jet angle (Prometheus). */
+  glowFollowsHull?: boolean;
+}
+
 export interface CraftSpec {
   kind: CraftKind;
   name: string;
@@ -112,6 +139,14 @@ export interface CraftSpec {
   /** Short fantasy combat identity shown on the craft profile (hangar / help). */
   role: string;
   flightModel: "heli" | "vtol" | "plane";
+  /** Player hull-steer mapping; omit → aim. */
+  controlScheme?: ControlScheme;
+  /** Cannon muzzle impulse inherits craft velocity. */
+  cannonInherit?: boolean;
+  /** Chin/turret overlay draw scale (cobra/viper 0.42). */
+  gunOverlayScale?: number;
+  /** Exhaust nozzle plume; omit → no craft exhaust FX. */
+  exhaustProfile?: CraftExhaustProfile;
   /** Largest real-world plan-view envelope in meters; Apache baseline for fictional craft. */
   sizeM: number;
   /** Capacity multiplier for finite-ammo weapons. */
@@ -251,6 +286,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     rotorHulk: "craft_cobra_rotor_hulk",
     rotorScale: 1.24,
     rotOff: Math.PI / 2,
+    gunOverlayScale: 0.42,
     // Hot-rod classic: snappier than Apache/Viper, thinner skin.
     forwardThrust: 640, strafeThrust: 450, maxSpeed: 395, minSpeed: 0, yawRate: 3.45, yawAccel: 18.5, drag: 1.35,
     verticalThrust: 440, cruiseThrust: 46, cruiseAgl: 46, maxAgl: 118,
@@ -277,6 +313,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     rotor: "craft_viper_rotor",
     rotorHulk: "craft_viper_rotor_hulk",
     rotorScale: 1.24,
+    gunOverlayScale: 0.42,
     rotOff: Math.PI / 2,
     // Near-Cobra agility with more punch / armor; Hellfire + TOW.
     forwardThrust: 620, strafeThrust: 430, maxSpeed: 385, minSpeed: 0, yawRate: 3.3, yawAccel: 17, drag: 1.38,
@@ -486,6 +523,9 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     rotOff: Math.PI / 2,
     forwardThrust: 740, strafeThrust: 500, maxSpeed: 500, minSpeed: 0, yawRate: 3.35, yawAccel: 16, drag: 1.2,
     verticalThrust: 480, cruiseThrust: 48, cruiseAgl: 46, maxAgl: 118,
+    exhaustProfile: {
+      rate: 32, speed: 105, tint: 0x70d8ff, smoke: 0x485761, sx: 1.05, sy: 0.26, life: 1180, flame: 0.5, gap: 9, flameHue: 172,
+    },
     sockets: [
       {
         id: "chin_turret",
@@ -552,6 +592,8 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     fullName: "F-35B Lightning II",
     role: "Fast Attack",
     flightModel: "vtol",
+    controlScheme: "plane",
+    cannonInherit: true,
     sizeM: 15.7,
     ammoScale: 1.5,
     health: 165,
@@ -563,6 +605,10 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     rotOff: Math.PI / 2,
     forwardThrust: 1050, reverseThrust: 130, strafeThrust: 260, maxSpeed: 680, maxReverseSpeed: 65, minSpeed: 0, yawRate: 2.35, yawAccel: 10, drag: 1.15,
     verticalThrust: 380, cruiseThrust: 40, cruiseAgl: 210, maxAgl: 420,
+    exhaustProfile: {
+      rate: 56, speed: 160, tint: 0xbfeaff, smoke: 0x3b4145, sx: 1.22, sy: 0.3, life: 1320, flame: 0.72, gap: 6,
+      flameHue: 185, ribbonDense: true,
+    },
     sockets: [
       { id: "nose_gun", class: "fixed", controller: "pilot", weapon: "medium_gatling_cannon", points: "muzzle" },
       { id: "internal_bay_1", class: "hardpoint", controller: "pilot", weapon: "light_gps_missile", points: "hardpoint" },
@@ -585,6 +631,8 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     fullName: "A-10C Warthog",
     role: "Tank Buster",
     flightModel: "plane",
+    controlScheme: "plane",
+    cannonInherit: true,
     sizeM: 17.42,
     ammoScale: 1.3,
     health: 150,
@@ -595,6 +643,10 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     rotOff: Math.PI / 2,
     forwardThrust: 1200, strafeThrust: 0, maxSpeed: 760, minSpeed: 400, yawRate: 1.85, yawAccel: 8.2, drag: 0.75,
     verticalThrust: 180, cruiseThrust: 24, cruiseAgl: 280, maxAgl: 560,
+    exhaustProfile: {
+      rate: 52, speed: 145, tint: 0xff8a2c, smoke: 0x3d3935, sx: 1.35, sy: 0.34, life: 1420, flame: 0.7, gap: 7,
+      flameHue: 0, ribbonDense: true,
+    },
     sockets: [
       { id: "nose_gun", class: "fixed", controller: "pilot", weapon: "heavy_cannon", points: "muzzle" },
       { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "heavy_guided_missile", points: "hardpoint" },
@@ -622,6 +674,7 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     fullName: "AC-130 Gunship",
     role: "Loiter Gunship",
     flightModel: "plane",
+    controlScheme: "orbit",
     sizeM: 39.7,
     ammoScale: 2,
     health: 320,
@@ -693,6 +746,10 @@ export const CRAFTS: Record<CraftKind, CraftSpec> = {
     forwardThrust: 900, strafeThrust: 760, maxSpeed: 600, minSpeed: 0, yawRate: 4.5, yawAccel: 25, drag: 0.95,
     verticalThrust: 700, cruiseThrust: 65, cruiseAgl: 90, maxAgl: 240,
     liftClass: "heavy",
+    exhaustProfile: {
+      rate: 26, speed: 72, tint: 0xc86cff, smoke: 0x6b3a78, sx: 0.98, sy: 0.28, life: 1320, flame: 0.58, gap: 10,
+      flameHue: 248, glowFollowsHull: true,
+    },
     sockets: [
       { id: "belly_turret", class: "turret", controller: "pilot", weapon: "plasma_cannon", points: "gun", traverse: 260 },
       { id: "nose_rail_1", class: "fixed", controller: "pilot", weapon: "laser_rocket", points: "muzzle" },
@@ -721,23 +778,22 @@ export function craftOf(kind: CraftKind = selected): CraftSpec {
   return CRAFTS[kind];
 }
 
-/** Fixed-wing attack jets (Warthog / Lightning) — not the AC-130 gunship. */
-export function craftIsJet(c: CraftSpec | CraftKind): boolean {
-  const kind = typeof c === "string" ? c : c.kind;
-  return kind === "warthog" || kind === "lightning_ii";
+/** Player hull-steer scheme (orthogonal to flightModel). */
+export function craftControlScheme(c: CraftSpec | CraftKind): ControlScheme {
+  const spec = typeof c === "string" ? craftOf(c) : c;
+  return spec.controlScheme ?? "aim";
 }
 
-/** AC-130-style orbit bird — A/D hold-to-yaw, mouse aims guns only. */
-export function craftIsGunship(c: CraftSpec | CraftKind): boolean {
-  const kind = typeof c === "string" ? c : c.kind;
-  return kind === "gunship";
+/** Hull noses toward the reticle (helis / jets). Orbit scheme is false — keys yaw, mouse aims. */
+export function craftNoseFollowsAim(c: CraftSpec = craftOf()): boolean {
+  return craftControlScheme(c) !== "orbit";
 }
 
 /**
  * Altitude cloud look from cruise AGL (all craft).
  * Higher cruise → smaller / more distant parallax on screen.
  * sizeMul is world scale compensated by craftCameraScale so zoom-out
- * (gunship) doesn't double-shrink clouds vs helis.
+ * (orbit gunship) doesn't double-shrink clouds vs helis.
  */
 export function craftCloudParallax(c: CraftSpec | CraftKind): {
   sizeMul: number;
@@ -756,11 +812,6 @@ export function craftCloudParallax(c: CraftSpec | CraftKind): {
     alphaMul: 0.82 + t * 0.18,
     nearness: 1 - t,
   };
-}
-
-/** Hull noses toward the reticle (helis / jets). Gunship is false — keys yaw, mouse aims. */
-export function craftNoseFollowsAim(c: CraftSpec = craftOf()): boolean {
-  return !craftIsGunship(c);
 }
 
 const DEFAULT_BOMB_DROP: CraftBombDrop = {
@@ -944,7 +995,7 @@ export function craftRotorTiltMul(c: CraftSpec = craftOf()): number {
  * AC-130 wing props face forward — foreshorten so they read as tilted discs, not top-down pads.
  */
 export function craftRotorAlongScale(c: CraftSpec | CraftKind = craftOf()): number {
-  return craftIsGunship(c) ? 0.34 : 1;
+  return craftControlScheme(c) === "orbit" ? 0.34 : 1;
 }
 
 /**
@@ -1231,9 +1282,9 @@ export function craftPreviewExhaustScale(bodyScale: number): { x: number; y: num
 
 /** Per-craft exhaust glow tint for UI previews. */
 export function craftPreviewExhaustTint(kind: CraftKind | string): number {
-  if (kind === "prometheus") return 0xc86cff;
-  if (kind === "warthog") return 0xff8a2c;
-  if (kind === "lightning_ii") return 0xbfeaff;
+  if (typeof kind === "string" && kind in CRAFTS) {
+    return CRAFTS[kind as CraftKind].exhaustProfile?.tint ?? 0x70d8ff;
+  }
   return 0x70d8ff;
 }
 
@@ -1244,9 +1295,9 @@ export function craftPreviewExhaustTint(kind: CraftKind | string): number {
  * (`craftExhaustFlameSheet`) because ParticleEmitter has no preFX.
  */
 export function craftExhaustFlameHue(kind: CraftKind | string): number {
-  if (kind === "prometheus") return 248;
-  if (kind === "warthog") return 0;
-  if (kind === "lightning_ii") return 185;
+  if (typeof kind === "string" && kind in CRAFTS) {
+    return CRAFTS[kind as CraftKind].exhaustProfile?.flameHue ?? 172;
+  }
   return 172;
 }
 
@@ -1342,6 +1393,30 @@ export function craftSocketMultiplicity(c: CraftSpec, socketIndex: number): numb
     return craftSocketBarrelCount(c, socketIndex);
   }
   return 1;
+}
+
+/**
+ * How many concurrent fire streams a socket contributes to sustained DPS.
+ * Simultaneous multi-muzzle and automatic multi-barrel turrets count fully;
+ * alternate muzzles are one stream (tips cycle, same cadence).
+ */
+export function craftSocketFireStreams(c: CraftSpec, socketIndex: number): number {
+  const socket = c.sockets[socketIndex];
+  if (!socket) return 1;
+  if (socket.class === "fixed") {
+    const pts = craftSocketPoints(c, socket);
+    if (pts.length > 1 && socket.muzzleFire === "simultaneous") return pts.length;
+    return 1;
+  }
+  if (socket.class === "turret" && socket.controller === "automatic") {
+    return Math.max(1, craftSocketBarrelCount(c, socketIndex));
+  }
+  return 1;
+}
+
+/** Gun stations (chin / fixed / crew) vs hardpoint ordnance. */
+export function craftSocketIsPrimary(socket: CraftSocket): boolean {
+  return socket.class === "turret" || socket.class === "fixed";
 }
 
 const CREW_LOADOUT_SUFFIX: Record<CrewRole, string> = {

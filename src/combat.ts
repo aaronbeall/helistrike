@@ -71,6 +71,20 @@ export type WeaponGuidance =
       requiresLaser?: boolean;
       /** Keep near-ground; do not climb to chase aerials / pointer height. */
       groundHugging?: boolean;
+      /**
+       * XY radius (world) for full dive into the aim (default 45).
+       * Larger = starts committing altitude sooner.
+       */
+      diveInner?: number;
+      /** XY radius where dive begins (default 280). */
+      diveRange?: number;
+      /** Closeness curve exponent — higher = later dive (default 2.85). */
+      divePower?: number;
+      /**
+       * When no unit is under the reticle, cruise on a descending loft toward
+       * ground aim instead of holding player AGL (helps high gunship AG shots).
+       */
+      groundDive?: boolean;
       /** Draw a command wire even when not laser-gated. */
       wire?: boolean;
       /** Additive neon ribbon instead of exhaust / TOW wire. */
@@ -249,8 +263,8 @@ export interface PlayerWpnSpec {
     color: number;
     textColor: string;
   };
-  /** Multiplier applied to damage vs aerial units (direct + splash). */
-  airDmgMul?: number;
+  /** Per-class damage multipliers (direct + splash). Missing keys default to 1. */
+  dmgMul?: Partial<Record<UnitClass, number>>;
   /** After ignite, hold cruise speed with no further accel / drag ramp. */
   constantSpeed?: boolean;
   /** Socket classes this weapon may install into. */
@@ -377,7 +391,9 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     dmg: 360, blast: 155, life: 4.9, kind: "lock-on-missile", look: ordLook("laserGuided"), scale: 1, trailScale: 0.55,
     // Brief steep pop-up, then seek with soft dive (see lock_on flight + missileIgnite).
     guidance: lockOn(0.5, 160, RETICLE, 0.28), launch: motor(250, 500, 2.1), payload: HE, control: { mode: "lock_then_click" },
-    steering: { turnRate: 7.8, loft: 0.28 }, fits: FIT_HARDPOINT, notes: ["laser lock; pop-up then 3D home at turnRate"],
+    steering: { turnRate: 7.8, loft: 0.28 }, fits: FIT_HARDPOINT,
+    dmgMul: { vehicle: 1.25, building: 1.1, air: 0.55, troop: 0.7 },
+    notes: ["laser lock; pop-up then 3D home — AT fantasy"],
   },
   tv_missile: {
     id: "tv_missile", name: "SPIKE", fullName: "SPIKE MISSILE", designation: "SPIKE NLOS COMMAND MISSILE", ammo: 6, fireCd: 1.15, speed: 290,
@@ -397,14 +413,18 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     fits: FIT_HARDPOINT, notes: [
       "steer family with TOW — soft-lock + second-click commit instead of wire hold",
       "thermal seeker cam; linger holds thermal until camera returns",
+      "AT fantasy — hard on vehicles / buildings",
     ],
+    dmgMul: { vehicle: 1.25, building: 1.1, air: 0.55, troop: 0.7 },
   },
   minigun: {
     id: "minigun", name: "MINIGUN", fullName: "MINIGUN", designation: "M134 / GAU-17/A 7.62MM MINIGUN",
     ammo: 2600, fireCd: 0.03, speed: 1040, dmg: 5.8, blast: 9, life: 0.082,
     kind: "cannon", look: cannonLook("minigun"), mount: MOUNT_MINIGUN, tracer: TRACER_762, scale: 0.46,
     guidance: NONE, launch: MUZZLE, payload: KINETIC, control: HOLD,
-    fits: FIT_GUN, notes: ["same 7.62 as the M240 — volume only, zippy needles"],
+    fits: FIT_GUN,
+    dmgMul: { troop: 1.6, vehicle: 0.55, building: 0.35, air: 0.7 },
+    notes: ["same 7.62 as the M240 — shreds troops; soft vs armor"],
   },
   gatling: {
     id: "gatling", name: "GATLING", fullName: "20MM GATLING GUN", designation: "M197 20MM THREE-BARREL GATLING", ammo: 900, fireCd: 0.08, speed: 1200,
@@ -418,7 +438,9 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     dmg: 350, blast: 145, life: 6.1, kind: "guided-missile", look: ordLook("guided"), scale: 1, trailScale: 0.52,
     // Steer family with SPIKE: hold wire, no lock/commit/thermal (could add later).
     guidance: { mode: "steer", steerRate: 2.2, maxAngle: 0.75, wire: true }, launch: motor(215, 360, 2.4), payload: HE,
-    control: HOLD, steering: { turnRate: 2.2 }, fits: FIT_HARDPOINT, notes: ["continuous wire command; same steer family as SPIKE"],
+    control: HOLD, steering: { turnRate: 2.2 }, fits: FIT_HARDPOINT,
+    dmgMul: { vehicle: 1.25, building: 1.1, air: 0.55, troop: 0.7 },
+    notes: ["continuous wire command; same steer family as SPIKE — AT fantasy"],
   },
   sidewinder_missile: {
     id: "sidewinder_missile", name: "SIDEWINDER", fullName: "SIDEWINDER MISSILE (AIR-TO-AIR)", designation: "AIM-9X SIDEWINDER", ammo: 12, fireCd: 0.28, speed: 980,
@@ -432,20 +454,24 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     ),
     launch: railAccel(970), payload: HE, control: { mode: "lock_then_click" },
     steering: { turnRate: 3, loft: 0.12 }, fits: FIT_HARDPOINT,
-    airDmgMul: 2.15,
+    dmgMul: { air: 2.15, vehicle: 0.55, building: 0.35, troop: 0.4 },
     lockHud: { seeking: "HEAT", locked: "FOX-2", color: 0xff6622, textColor: "#ff8844" },
-    notes: ["WVR heat seeker — snap lock, air-biased punch; vehicles need nose heat"],
+    notes: ["WVR heat seeker — snap lock, air-class punch; soft vs armor / troops"],
   },
   machine_gun: {
     id: "machine_gun", name: "MACHINE GUN", fullName: "7.62MM MACHINE GUN", designation: "M240D 7.62MM MACHINE GUN", ammo: 3200, fireCd: 0.066, speed: 1040,
     dmg: 5.8, blast: 9, life: 0.075, kind: "cannon", look: cannonLook("machine_gun"), mount: MOUNT_MACHINE, tracer: TRACER_762, scale: 0.46,
     guidance: NONE, launch: MUZZLE, payload: KINETIC, control: HOLD,
-    fits: FIT_GUN, notes: ["crew or pilot M240; door/ramp/cabin role comes from the socket"],
+    fits: FIT_GUN,
+    dmgMul: { troop: 1.6, vehicle: 0.55, building: 0.35, air: 0.7 },
+    notes: ["crew or pilot M240; shreds troops — door/ramp/cabin role from the socket"],
   },
   heavy_bomb: {
     id: "heavy_bomb", name: "MOAB", fullName: "MASSIVE ORDNANCE AIR BLAST", designation: "GBU-43/B MASSIVE ORDNANCE AIR BLAST", ammo: 2, fireCd: 2.4, speed: 165,
     dmg: 980, blast: 400, life: 7.5, kind: "guided-missile", look: ordLook("bomb"), scale: 1.75, trailScale: 0.52,
-    guidance: NONE, launch: DROP, payload: HE, control: CLICK, gravity: GRAVITY, fits: FIT_HARDPOINT, notes: ["momentum-first drop; craft bombDrop tune caps corrective boost"],
+    guidance: NONE, launch: DROP, payload: HE, control: CLICK, gravity: GRAVITY, fits: FIT_HARDPOINT,
+    dmgMul: { building: 1.35, vehicle: 1.15, troop: 0.9, air: 0.25 },
+    notes: ["momentum-first drop; structure / armor fantasy"],
   },
   cluster_bomb: {
     id: "cluster_bomb", name: "ROCKEYE", fullName: "ROCKEYE CLUSTER BOMB", designation: "CBU-100 ROCKEYE II CLUSTER BOMB", ammo: 5, fireCd: 1.35, speed: 185,
@@ -482,7 +508,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     fits: ["hardpoint", "fixed"] as SocketClass[], notes: ["pylon .50 gatling — same slug as the HMG, short belt"],
   },
   concealed_cannon: {
-    id: "concealed_cannon", name: "LOW-RCS", fullName: "LOW-RCS CANNON", designation: "20MM LOW-RCS CANNON", ammo: 820, fireCd: 0.105, speed: 1080,
+    id: "concealed_cannon", name: "WHISPER", fullName: "20MM WHISPER CANNON", designation: "WPR-20 20MM WHISPER CANNON", ammo: 820, fireCd: 0.105, speed: 1080,
     dmg: 13.5, blast: 15, life: 0.1, kind: "cannon", look: cannonLook("concealed_cannon"), mount: MOUNT_MACHINE, tracer: { w: 52, h: 8, core: [220, 230, 240], mid: [140, 160, 180], rim: [70, 90, 110], glow: 0.22 }, scale: 0.6, silent: true,
     guidance: NONE, launch: MUZZLE, payload: { mode: "kinetic", penetration: 0.5 }, control: HOLD,
     fits: FIT_GUN, notes: ["suppressed report and low muzzle flash", "bonus damage vs stunned or smoke-blinded targets"],
@@ -499,7 +525,9 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     id: "stinger_missile", name: "STINGER", fullName: "STINGER MISSILE", designation: "FIM-92 STINGER STEALTH POD", ammo: 10, fireCd: 0.5, speed: 475,
     dmg: 168, blast: 85, life: 4.7, kind: "lock-on-missile", look: ordLook("missile"), scale: 0.6, trailScale: 0.55,
     guidance: lockOn(0.38, 185, signature(["air", "ground", "vehicle"], 1.05)), launch: motor(220, 550, 1.8), payload: HE, control: { mode: "lock_then_click" },
-    steering: { turnRate: 9.4 }, fits: FIT_HARDPOINT, notes: ["low-signature heat seeker"],
+    steering: { turnRate: 9.4 }, fits: FIT_HARDPOINT,
+    dmgMul: { air: 1.85, vehicle: 0.45, building: 0.3 },
+    notes: ["low-signature heat seeker — air punch, soft AG"],
   },
   railgun: {
     id: "railgun", name: "RAILGUN", fullName: "RAILGUN", designation: "RG-40 HYPERVELOCITY RAILGUN", ammo: 180, fireCd: 0.2, speed: 1850,
@@ -622,14 +650,15 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     dmg: 155, blast: 95, life: 4.8, kind: "guided-missile", look: ordLook("guided"), scale: 0.68, trailScale: 0.42,
     guidance: { mode: "waypoint", steerRate: 6.2, pointOnClick: true }, launch: motor(180, 560, 2.0), payload: HE,
     control: { mode: "designate_then_release" }, steering: { turnRate: 6.2 },
-    fits: FIT_HARDPOINT, notes: ["light GPS AG missile — tube kick then burn; softer than Griffin"],
+    fits: FIT_HARDPOINT, notes: ["light GPS AG missile — tube kick then burn; softer than JDAM"],
   },
   gps_bomb: {
     id: "gps_bomb", name: "JDAM", fullName: "JDAM GPS BOMB", designation: "GBU-31 JDAM GPS PRECISION-GUIDED BOMB", ammo: 8, fireCd: 0.95, speed: 205,
     dmg: 450, blast: 305, life: 7, kind: "guided-missile", look: ordLook("wingedBomb"), scale: 1.1, trailScale: 0.52,
     guidance: { mode: "waypoint", steerRate: 3.15, pointOnClick: true }, launch: DROP, payload: HE,
     control: { mode: "designate_then_release" }, steering: { turnRate: 3.15 }, gravity: GRAVITY,
-    fits: FIT_HARDPOINT, notes: ["clicked GPS point; steers hard while falling"],
+    dmgMul: { building: 1.35, vehicle: 1.15, troop: 0.9, air: 0.25 },
+    fits: FIT_HARDPOINT, notes: ["clicked GPS point; steers hard while falling — structure / armor"],
   },
   heavy_artillery: {
     id: "heavy_artillery", name: "HOWITZER", fullName: "HOWITZER ARTILLERY", designation: "105MM M102 HOWITZER ARTILLERY", ammo: 28, fireCd: 1.0, speed: 520,
@@ -651,11 +680,24 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     fits: FIT_GUN, notes: ["gunship 25mm hose — GAU-12/U, not the F-35 Equalizer"],
   },
   gps_missile: {
-    id: "gps_missile", name: "GRIFFIN", fullName: "GRIFFIN GPS GUIDED MISSILE", designation: "AGM-176 GRIFFIN GPS GUIDED MISSILE", ammo: 12, fireCd: 0.7, speed: 580,
-    dmg: 270, blast: 125, life: 5, kind: "guided-missile", look: ordLook("guided"), scale: 0.84, trailScale: 0.52,
-    guidance: { mode: "waypoint", steerRate: 5.8, pointOnClick: true }, launch: motor(240, 780, 2.5), payload: HE,
-    control: { mode: "designate_then_release" }, steering: { turnRate: 5.8 },
-    fits: FIT_HARDPOINT, notes: ["tube kick then hard burn to GPS aim point"],
+    id: "gps_missile", name: "GRIFFIN", fullName: "GRIFFIN GUIDED MISSILE", designation: "AGM-176 GRIFFIN COMMAND-GUIDED MISSILE", ammo: 12, fireCd: 0.7, speed: 340,
+    dmg: 240, blast: 110, life: 9.5, kind: "guided-missile", look: ordLook("guided"), scale: 0.84, trailScale: 0.52,
+    // Hold-to-steer (TOW family) — gunship AA/AG; early dive so high orbits still punch ground.
+    guidance: {
+      mode: "steer",
+      steerRate: 4.1,
+      maxAngle: 1.25,
+      wire: false,
+      diveInner: 90,
+      diveRange: 560,
+      divePower: 1.25,
+      groundDive: true,
+    },
+    launch: motor(140, 260, 3.2), payload: HE, control: HOLD,
+    steering: { turnRate: 4.1 },
+    dmgMul: { air: 1.9, vehicle: 0.7, building: 0.5 },
+    fits: FIT_HARDPOINT,
+    notes: ["command-guided; hold mouse to steer — slow loft, early dive onto ground / air"],
   },
   heavy_cannon: {
     id: "heavy_cannon", name: "AVENGER", fullName: "AVENGER GATLING GUN", designation: "30MM GAU-8/A AVENGER GATLING GUN", ammo: 1150, fireCd: 0.04, speed: 1580,
@@ -670,13 +712,16 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     id: "heavy_guided_missile", name: "MAVERICK", fullName: "MAVERICK MISSILE (AIR-TO-GROUND)", designation: "AGM-65 MAVERICK", ammo: 6, fireCd: 0.72, speed: 445,
     dmg: 420, blast: 170, life: 5.5, kind: "lock-on-missile", look: ordLook("laserGuided"), scale: 0.98, trailScale: 0.55,
     guidance: lockOn(0.62, 225, RETICLE_AG), launch: MUZZLE, payload: HE, control: { mode: "lock_then_click" },
-    steering: { turnRate: 6.8 }, fits: FIT_HARDPOINT, notes: ["AG laser lock — vehicle/building only; fire-and-forget"],
+    steering: { turnRate: 6.8 }, fits: FIT_HARDPOINT,
+    dmgMul: { vehicle: 1.35, building: 1.25, air: 0.35, troop: 0.5 },
+    notes: ["AG laser lock — vehicle/building punch; soft vs air / troops"],
   },
   bomb: {
     id: "bomb", name: "IRON BOMB", fullName: "IRON BOMB", designation: "MARK 82 GENERAL-PURPOSE BOMB", ammo: 10, fireCd: 0.72, speed: 220,
     dmg: 380, blast: 285, life: 6.5, kind: "guided-missile", look: ordLook("bomb"), scale: 1, trailScale: 0.52,
     guidance: NONE, launch: DROP, payload: HE, control: CLICK, gravity: GRAVITY,
-    fits: FIT_HARDPOINT, notes: ["aim-biased gravity bomb; momentum extends forward reach"],
+    dmgMul: { building: 1.35, vehicle: 1.15, troop: 0.9, air: 0.25 },
+    fits: FIT_HARDPOINT, notes: ["aim-biased gravity bomb — structure / armor fantasy"],
   },
   tesla_beam: {
     id: "tesla_beam", name: "TESLA COIL", fullName: "TESLA COIL", designation: "TESLA COIL ARC CANNON", ammo: 900, fireCd: 0.05, speed: 1,
@@ -696,7 +741,9 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     id: "mini_hellfire_missile", name: "MICRO-HELLFIRE", fullName: "MICRO-HELLFIRE MISSILE", designation: "MICRO-HELLFIRE MISSILE", ammo: 14, fireCd: 0.38, speed: 420,
     dmg: 270, blast: 110, life: 4.4, kind: "lock-on-missile", look: ordLook("laserGuided"), scale: 0.31, trailScale: 0.55,
     guidance: lockOn(0.32, 145), launch: motor(200, 520, 1.7), payload: HE, control: { mode: "lock_then_click" },
-    steering: { turnRate: 8.9 }, fits: FIT_HARDPOINT, notes: ["compact laser-guided fire-and-forget missile"],
+    steering: { turnRate: 8.9 }, fits: FIT_HARDPOINT,
+    dmgMul: { vehicle: 1.25, building: 1.1, air: 0.55, troop: 0.7 },
+    notes: ["compact laser-guided fire-and-forget — AT fantasy"],
   },
   mini_bomb: {
     id: "mini_bomb", name: "KINETIC SLUGS", fullName: "KINETIC SLUGS", designation: "KINETIC DROP SLUGS", ammo: 24, fireCd: 0.5, speed: 180,
@@ -820,8 +867,8 @@ export interface ShotBehavior {
   readonly blast: number;
   /** Trail puff scale vs projectile draw scale. */
   readonly trailScale?: number;
-  /** Aerial damage multiplier captured at launch. */
-  readonly airDmgMul?: number;
+  /** Per-class damage multipliers captured at launch. */
+  readonly dmgMul?: Partial<Record<UnitClass, number>>;
   /** Hold cruiseSpeed flat after motor ignite (no ramp). */
   readonly constantSpeed?: boolean;
 }
@@ -879,8 +926,10 @@ export interface SmokePuff {
   frame: number;
 }
 
+/** Target taxonomy for damage muls, heat seekers, and HUD classing. */
+export type UnitClass = "air" | "vehicle" | "building" | "troop";
 /** Heat-seeker preference ordering: air > vehicles > buildings > troops. */
-export type HeatClass = "air" | "vehicle" | "building" | "troop";
+export type HeatClass = UnitClass;
 
 export function heatClassScore(c: HeatClass): number {
   return c === "air" ? 3 : c === "vehicle" ? 2 : c === "building" ? 1 : 0;
@@ -905,7 +954,7 @@ export function shotBehaviorOf(spec: PlayerWpnSpec): ShotBehavior {
     dmg: spec.dmg,
     blast: spec.blast,
     trailScale: spec.trailScale,
-    airDmgMul: spec.airDmgMul,
+    dmgMul: spec.dmgMul,
     constantSpeed: spec.constantSpeed,
   };
 }
