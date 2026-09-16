@@ -740,6 +740,8 @@ export interface Unit {
   z: number;
   vx: number;
   vy: number;
+  /** Vertical speed for aerial AI (helis matching player AGL). */
+  vz?: number;
   angle: number;
   /** Smoothed `projectHeading` so 2.5D singularities can't flip the sprite. */
   drawRot?: number;

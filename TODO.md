@@ -157,3 +157,4 @@
   * Pinned Down -- shoot through 2+ enemies with a single railgun round
   * Thunder Run -- beat a mission without ever letting go of thrust
   * Knife Fight -- complete a mission with guns only (no missiles, rockets, bombs or flares)
+  * Can't Touch This -- dodge 100 locked on missiles

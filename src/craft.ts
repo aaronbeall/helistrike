@@ -733,10 +733,29 @@ export function craftIsGunship(c: CraftSpec | CraftKind): boolean {
   return kind === "gunship";
 }
 
-/** Fixed-wing birds get altitude cloud parallax in chase cam (Warthog / Lightning / Gunship). */
-export function craftHasCloudParallax(c: CraftSpec | CraftKind): boolean {
+/**
+ * Altitude cloud look from cruise AGL (all craft).
+ * Higher cruise → smaller / more distant parallax on screen.
+ * sizeMul is world scale compensated by craftCameraScale so zoom-out
+ * (gunship) doesn't double-shrink clouds vs helis.
+ */
+export function craftCloudParallax(c: CraftSpec | CraftKind): {
+  sizeMul: number;
+  alphaMul: number;
+  /** 0 = distant sky banks (low scroll), 1 = near-field (scroll toward 1). */
+  nearness: number;
+} {
   const spec = typeof c === "string" ? craftOf(c) : c;
-  return spec.flightModel === "plane";
+  const cruise = spec.cruiseAgl;
+  // ~heli 40 → gunship 320
+  const t = clamp((cruise - 40) / 280, 0, 1);
+  // Screen-relative size: heli a bit larger than gunship, not 2×+.
+  const screenMul = 0.48 - t * (0.48 - 0.38);
+  return {
+    sizeMul: screenMul / craftCameraScale(spec),
+    alphaMul: 0.82 + t * 0.18,
+    nearness: 1 - t,
+  };
 }
 
 /** Hull noses toward the reticle (helis / jets). Gunship is false — keys yaw, mouse aims. */
@@ -918,6 +937,14 @@ export function craftRotorPreviewSpinMs(c: CraftSpec = craftOf()): number {
  */
 export function craftRotorTiltMul(c: CraftSpec = craftOf()): number {
   return clamp(craftRotorInertia(c), 0.14, 1.35);
+}
+
+/**
+ * Along-fuselage scale for rotor/prop discs (local Y after hull heading).
+ * AC-130 wing props face forward — foreshorten so they read as tilted discs, not top-down pads.
+ */
+export function craftRotorAlongScale(c: CraftSpec | CraftKind = craftOf()): number {
+  return craftIsGunship(c) ? 0.34 : 1;
 }
 
 /**

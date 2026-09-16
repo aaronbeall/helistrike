@@ -90,10 +90,10 @@ export const PLAYER_ORDNANCE_SHOT_ART: readonly {
 
 /** Additive Photon lens-flare layers (black-keyed). Old `shot_photon` lives in `shots/_shelf/`. */
 export const PHOTON_FLARE_ART: readonly { key: string; file: string; size: number }[] = [
-  { key: "photon_glow", file: "sprites/shots/photon_glow.png", size: 52 },
-  { key: "photon_stream_h", file: "sprites/shots/photon_stream_h.png", size: 64 },
-  { key: "photon_stream_diag", file: "sprites/shots/photon_stream_diag.png", size: 64 },
-  { key: "photon_core", file: "sprites/shots/photon_core.png", size: 30 },
+  { key: "shot_photon_glow", file: "sprites/shots/photon_glow.png", size: 52 },
+  { key: "shot_photon_stream_h", file: "sprites/shots/photon_stream_h.png", size: 64 },
+  { key: "shot_photon_stream_diag", file: "sprites/shots/photon_stream_diag.png", size: 64 },
+  { key: "shot_photon_core", file: "sprites/shots/photon_core.png", size: 30 },
 ];
 
 /**
@@ -199,12 +199,12 @@ export const FX_SHEET_SIZE: Record<FxKind, number> = {
 /** Cells from src_blasts 2×2 grid → fx_blast_0..n-1. */
 export const FX_BLAST_CELLS = 4;
 
-/** Soft cloud banks for fixed-wing chase-cam parallax (Warthog / Lightning / Gunship). */
+/** Soft cloud banks for chase-cam parallax (all craft; scale/alpha/scroll from cruise AGL). Black/white alpha masks. */
 export const CLOUD_ART: readonly { key: string; file: string; size: number }[] = [
-  { key: "cloud_1", file: "sprites/clouds/cloud-1.png", size: 220 },
-  { key: "cloud_2", file: "sprites/clouds/cloud-2.png", size: 280 },
-  { key: "cloud_3", file: "sprites/clouds/cloud-3.png", size: 150 },
-  { key: "cloud_4", file: "sprites/clouds/cloud-4.png", size: 260 },
+  { key: "fx_cloud_1", file: "sprites/clouds/cloud-1.png", size: 520 },
+  { key: "fx_cloud_2", file: "sprites/clouds/cloud-2.png", size: 640 },
+  { key: "fx_cloud_3", file: "sprites/clouds/cloud-3.png", size: 420 },
+  { key: "fx_cloud_4", file: "sprites/clouds/cloud-4.png", size: 580 },
 ];
 
 export function preloadArt(scene: Phaser.Scene): void {
@@ -825,7 +825,8 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   for (const art of CLOUD_ART) {
     const srcKey = `src_${art.key}`;
     if (!textures.exists(srcKey)) continue;
-    put(textures, art.key, fit(keyImage(src(textures, srcKey), "magenta"), art.size));
+    // Pink → transparent, white luminance → alpha (same idea as smoke's black knockout).
+    put(textures, art.key, fit(bakeCloudArt(src(textures, srcKey)), art.size));
   }
 
   const shadowSrc = [
@@ -1133,12 +1134,12 @@ function putPhotonFlare(textures: Phaser.Textures.TextureManager): void {
     const img = src(textures, srcKey);
     let cell = fxKnockBlack(copyToCanvas(img, img.width, img.height));
     // Stream art is a fat spindle; collapse to a thin centerline so spokes emit from the core.
-    if (art.key === "photon_stream_h") cell = photonStreamCenterRay(cell, "h");
-    else if (art.key === "photon_stream_diag") cell = photonStreamCenterRay(cell, "diag");
+    if (art.key === "shot_photon_stream_h") cell = photonStreamCenterRay(cell, "h");
+    else if (art.key === "shot_photon_stream_diag") cell = photonStreamCenterRay(cell, "diag");
     put(textures, art.key, fit(trim(cell, 2), art.size));
   }
-  if (textures.exists("photon_core")) {
-    const img = textures.get("photon_core").getSourceImage() as CanvasImageSource;
+  if (textures.exists("shot_photon_core")) {
+    const img = textures.get("shot_photon_core").getSourceImage() as CanvasImageSource;
     const w = (img as HTMLCanvasElement).width || (img as HTMLImageElement).width;
     const h = (img as HTMLCanvasElement).height || (img as HTMLImageElement).height;
     put(textures, "shot_photon", copyToCanvas(img, w, h));
@@ -1376,8 +1377,89 @@ function copyToCanvas(img: CanvasImageSource, w: number, h: number): HTMLCanvasE
   return c;
 }
 
-function keyImage(img: HTMLImageElement, mode: "magenta" | "studio" | "edge"): HTMLCanvasElement {
+function keyImage(img: HTMLImageElement, mode: "magenta" | "studio" | "edge" | "chroma"): HTMLCanvasElement {
   return trim(keyPixels(img, mode));
+}
+
+/**
+ * Cloud PNGs are top-down black/white alpha masks (white = density, black = empty).
+ * Bake like smoke FX: luminance → alpha, RGB whitened.
+ */
+function bakeCloudArt(img: HTMLImageElement): HTMLCanvasElement {
+  const c = copyToCanvas(img, img.width, img.height);
+  const g = c.getContext("2d", { willReadFrequently: true })!;
+  const pix = g.getImageData(0, 0, c.width, c.height);
+  const d = pix.data;
+  const n = (d.length / 4) | 0;
+  const a0 = new Float32Array(n);
+
+  for (let i = 0; i < n; i++) {
+    const o = i * 4;
+    const r = d[o]!;
+    const gc = d[o + 1]!;
+    const b = d[o + 2]!;
+    const srcA = d[o + 3]! / 255;
+    // Prefer authored alpha if present; else white density on black.
+    const lum = (0.299 * r + 0.587 * gc + 0.114 * b) / 255;
+    const a = Math.pow(Math.max(0, lum), 1.15) * Math.max(srcA, 0.001);
+    a0[i] = a < 0.02 ? 0 : a;
+  }
+
+  const rad = Math.max(4, Math.round(Math.min(c.width, c.height) * 0.012));
+  const soft = boxBlurAlpha(a0, c.width, c.height, rad);
+
+  for (let i = 0; i < n; i++) {
+    const o = i * 4;
+    const a = Math.min(1, soft[i]! * 1.05);
+    if (a < 0.02) {
+      d[o] = 0;
+      d[o + 1] = 0;
+      d[o + 2] = 0;
+      d[o + 3] = 0;
+      continue;
+    }
+    d[o] = 255;
+    d[o + 1] = 255;
+    d[o + 2] = 255;
+    d[o + 3] = Math.round(a * 255);
+  }
+  g.putImageData(pix, 0, 0);
+  return trim(keepLargestOpaque(c));
+}
+
+/** Separable box blur on a float alpha buffer. */
+function boxBlurAlpha(src: Float32Array, w: number, h: number, radius: number): Float32Array {
+  const r = Math.max(1, radius);
+  const tmp = new Float32Array(src.length);
+  const out = new Float32Array(src.length);
+  const diam = r * 2 + 1;
+  for (let y = 0; y < h; y++) {
+    let sum = 0;
+    for (let x = -r; x <= r; x++) {
+      const xx = Math.max(0, Math.min(w - 1, x));
+      sum += src[y * w + xx]!;
+    }
+    for (let x = 0; x < w; x++) {
+      tmp[y * w + x] = sum / diam;
+      const leave = Math.max(0, Math.min(w - 1, x - r));
+      const enter = Math.max(0, Math.min(w - 1, x + r + 1));
+      sum += src[y * w + enter]! - src[y * w + leave]!;
+    }
+  }
+  for (let x = 0; x < w; x++) {
+    let sum = 0;
+    for (let y = -r; y <= r; y++) {
+      const yy = Math.max(0, Math.min(h - 1, y));
+      sum += tmp[yy * w + x]!;
+    }
+    for (let y = 0; y < h; y++) {
+      out[y * w + x] = sum / diam;
+      const leave = Math.max(0, Math.min(h - 1, y - r));
+      const enter = Math.max(0, Math.min(h - 1, y + r + 1));
+      sum += tmp[enter * w + x]! - tmp[leave * w + x]!;
+    }
+  }
+  return out;
 }
 
 /**
@@ -1547,7 +1629,7 @@ function clipRadarDish(c: HTMLCanvasElement): HTMLCanvasElement {
   return out;
 }
 
-function keyPixels(img: HTMLImageElement, mode: "magenta" | "studio" | "edge"): HTMLCanvasElement {
+function keyPixels(img: HTMLImageElement, mode: "magenta" | "studio" | "edge" | "chroma"): HTMLCanvasElement {
   const c = copyToCanvas(img, img.width, img.height);
   const g = c.getContext("2d", { willReadFrequently: true })!;
   const pix = g.getImageData(0, 0, c.width, c.height);
@@ -1559,6 +1641,8 @@ function keyPixels(img: HTMLImageElement, mode: "magenta" | "studio" | "edge"): 
   // Edge mode only removes background connected to the image border so purple
   // craft paint (Prometheus) is not punched out as chroma key.
   const edgeOnly = mode === "edge";
+  // Clouds / soft white mattes: key pink backdrop only — never studio-white rules.
+  const chromaOnly = mode === "chroma";
 
   const isKey = (i: number): boolean => {
     const o = i * 4;
@@ -1576,6 +1660,9 @@ function keyPixels(img: HTMLImageElement, mode: "magenta" | "studio" | "edge"): 
     }
     if (pair > 155 && chroma > 20) return true;
     if (r > 170 && b > 170 && gc < 205 && chroma > 16) return true;
+    // Cloud exports: dusty fuchsia (~210,2,158), not pure FF00FF — catch leftovers.
+    if (chromaOnly && gc < 95 && r > 150 && b > 95 && chroma > 35) return true;
+    if (chromaOnly) return false;
     const mx = Math.max(r, gc, b);
     const mn = Math.min(r, gc, b);
     if (mn > 200 && mx - mn < 32) return true;
@@ -1604,7 +1691,7 @@ function keyPixels(img: HTMLImageElement, mode: "magenta" | "studio" | "edge"): 
     push(0, y);
     push(w - 1, y);
   }
-  if (mode === "magenta") {
+  if (mode === "magenta" || mode === "chroma") {
     for (let i = 0; i < n; i++) {
       if (!bg[i] && isKey(i)) {
         bg[i] = 1;
@@ -1630,7 +1717,7 @@ function keyPixels(img: HTMLImageElement, mode: "magenta" | "studio" | "edge"): 
     d[o + 2] = 0;
     d[o + 3] = 0;
   }
-  if (!edgeOnly) {
+  if (!edgeOnly && !chromaOnly) {
     for (let i = 0; i < n; i++) {
       if (bg[i]) continue;
       const o = i * 4;
@@ -1647,6 +1734,8 @@ function keyPixels(img: HTMLImageElement, mode: "magenta" | "studio" | "edge"): 
     }
   }
   g.putImageData(pix, 0, 0);
+  // Cloud mattes: drop pink pepper noise so trim doesn't keep a full-frame dark box.
+  if (chromaOnly) return keepLargestOpaque(c);
   return c;
 }
 
@@ -1817,6 +1906,93 @@ function matteMagenta(src: HTMLCanvasElement): HTMLCanvasElement {
       }
       d[i * 4 + 3] = (s / c) * 255;
     }
+  }
+  g.putImageData(pix, 0, 0);
+  return src;
+}
+
+/**
+ * Keep only the largest alpha-connected blob. Drops chroma-key pepper that would
+ * otherwise expand trim() to a full-frame dark rectangle.
+ */
+function keepLargestOpaque(src: HTMLCanvasElement, alphaMin = 12): HTMLCanvasElement {
+  const g = src.getContext("2d", { willReadFrequently: true })!;
+  const pix = g.getImageData(0, 0, src.width, src.height);
+  const d = pix.data;
+  const w = src.width;
+  const h = src.height;
+  const n = w * h;
+  const seen = new Uint8Array(n);
+  const q = new Int32Array(n);
+  let bestStart = -1;
+  let bestSize = 0;
+  const flood = (start: number, markBest: boolean): number => {
+    let qh = 0;
+    let qt = 0;
+    q[qt++] = start;
+    seen[start] = 1;
+    let size = 0;
+    while (qh < qt) {
+      const i = q[qh++]!;
+      size++;
+      const x = i % w;
+      const y = (i / w) | 0;
+      const tryPush = (nx: number, ny: number) => {
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) return;
+        const ni = ny * w + nx;
+        if (seen[ni]) return;
+        if (d[ni * 4 + 3]! < alphaMin) return;
+        seen[ni] = 1;
+        q[qt++] = ni;
+      };
+      tryPush(x - 1, y);
+      tryPush(x + 1, y);
+      tryPush(x, y - 1);
+      tryPush(x, y + 1);
+    }
+    if (markBest && size > bestSize) {
+      bestSize = size;
+      bestStart = start;
+    }
+    return size;
+  };
+  for (let i = 0; i < n; i++) {
+    if (seen[i] || d[i * 4 + 3]! < alphaMin) continue;
+    flood(i, true);
+  }
+  if (bestStart < 0) return src;
+  seen.fill(0);
+  const keep = new Uint8Array(n);
+  let qh = 0;
+  let qt = 0;
+  q[qt++] = bestStart;
+  seen[bestStart] = 1;
+  keep[bestStart] = 1;
+  while (qh < qt) {
+    const i = q[qh++]!;
+    const x = i % w;
+    const y = (i / w) | 0;
+    const tryPush = (nx: number, ny: number) => {
+      if (nx < 0 || ny < 0 || nx >= w || ny >= h) return;
+      const ni = ny * w + nx;
+      if (seen[ni]) return;
+      if (d[ni * 4 + 3]! < alphaMin) return;
+      seen[ni] = 1;
+      keep[ni] = 1;
+      q[qt++] = ni;
+    };
+    tryPush(x - 1, y);
+    tryPush(x + 1, y);
+    tryPush(x, y - 1);
+    tryPush(x, y + 1);
+  }
+  for (let i = 0; i < n; i++) {
+    if (keep[i]) continue;
+    const o = i * 4;
+    d[o] = 0;
+    d[o + 1] = 0;
+    d[o + 2] = 0;
+    d[o + 3] = 0;
   }
   g.putImageData(pix, 0, 0);
   return src;
@@ -2303,3 +2479,26 @@ export function bakeShadows(textures: Phaser.Textures.TextureManager, key: strin
     put(textures, `${key}_sh${i}`, c, "generated");
   });
 }
+
+export function ensureExhaustGlow(textures: Phaser.Textures.TextureManager): void {
+  if (textures.exists("fx_exhaust_glow")) return;
+  const w = 48;
+  const h = 20;
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const g = c.getContext("2d", { willReadFrequently: true })!;
+  const grad = g.createRadialGradient(w * 0.5, h * 0.5, 0, w * 0.5, h * 0.5, w * 0.5);
+  grad.addColorStop(0, "rgba(255,255,255,1)");
+  grad.addColorStop(0.2, "rgba(255,255,255,0.92)");
+  grad.addColorStop(0.58, "rgba(255,255,255,0.34)");
+  grad.addColorStop(1, "rgba(255,255,255,0)");
+  g.save();
+  g.scale(1, h / w);
+  g.fillStyle = grad;
+  g.fillRect(0, 0, w, w);
+  g.restore();
+  textures.addCanvas("fx_exhaust_glow", c);
+  registerArt("fx_exhaust_glow", "generated");
+}
+

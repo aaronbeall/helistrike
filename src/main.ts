@@ -1,6 +1,9 @@
 import "./style.css";
 import Phaser from "phaser";
-import { BootScene, LoadScene, MenuScene, MissionScene } from "./scenes";
+import { BootScene } from "./bootScene";
+import { LoadScene } from "./loadScene";
+import { MenuScene } from "./menuScene";
+import { MissionScene } from "./scenes";
 import { RigsScene } from "./rigs";
 
 const config: Phaser.Types.Core.GameConfig = {

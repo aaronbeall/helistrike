@@ -1,6 +1,5 @@
 import Phaser from "phaser";
-import { bakeAll, bakeRosterArt } from "./bake";
-import { bakeCamo, camoForBiome, resolveSkin } from "./camo";
+import { camoForBiome, resolveSkin } from "./camo";
 import {
   debrisKeys,
   heightOf,
@@ -13,7 +12,6 @@ import {
   playerLoadoutFromSockets,
   SHOT_ORIGIN,
   SHOT_TAIL,
-  LOCK_ON_SEEK_DELAY,
   shotBehaviorOf,
   applyKineticCombatMix,
   payloadDustMul,
@@ -79,8 +77,8 @@ import {
   type Footprint,
 } from "./footprint";
 import { lookupSpriteMuzzles, lookupSpriteOrigin } from "./spriteOrigin";
-import { allCrafts, craftAgility, craftAimsWithTurret, craftBombDrop, craftCameraScale, craftComposite, craftCompositePartScale, craftCrewHudTag, craftExhaustFlameHue, craftExhaustFlameSheet, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftGunPreferDegrees, craftGunPreferOffset, craftGunSocketSlots, craftHardpointMounts, craftHasCloudParallax, craftIsGunship, craftIsJet, craftLoadoutLabel, craftLoadoutParts, craftOf, craftOrigin, craftPreviewExhaustScale, craftPreviewExhaustTint, craftPreviewFitScale, craftRotorFlightSpeed, craftRotorMounts, craftRotorPreviewSpinMs, craftRotorTiltMul, craftSocketBarrelCount, craftSocketMultiplicity, craftSocketPoints, craftSocketStartingAmmo, craftWingTipMounts, rotorDrawSpan, rotorMountsOf, rotorSpinSign, selectCraft, type CraftComposite, type CraftSpec } from "./craft";
-import { allMissions, missionOf, selectMission } from "./mission";
+import { allCrafts, craftAgility, craftAimsWithTurret, craftBombDrop, craftCameraScale, craftCloudParallax, craftComposite, craftCompositePartScale, craftCrewHudTag, craftExhaustFlameHue, craftExhaustFlameSheet, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftGunPreferDegrees, craftGunPreferOffset, craftGunSocketSlots, craftHardpointMounts, craftIsJet, craftLoadoutLabel, craftOf, craftOrigin, craftPreviewExhaustScale, craftPreviewExhaustTint, craftPreviewFitScale, craftRotorAlongScale, craftRotorFlightSpeed, craftRotorMounts, craftRotorPreviewSpinMs, craftRotorTiltMul, craftSocketBarrelCount, craftSocketMultiplicity, craftSocketPoints, craftSocketStartingAmmo, craftWingTipMounts, rotorDrawSpan, rotorMountsOf, rotorSpinSign, type CraftComposite } from "./craft";
+import { missionOf } from "./mission";
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
 import { rigsAnyOpen, installRigHotkeys } from "./rigs";
 import { applyEdgeLight, clearEdgeLight, ensureEdgeLightPipeline } from "./edgeLight";
@@ -89,12 +87,11 @@ import { setGlitchPipeline } from "./glitch";
 import { setWarpDistortPipeline } from "./warpDistort";
 import { setCloakFxPipeline } from "./cloakFx";
 import { createTerrain25D, type Terrain25D } from "./terrain25d";
-import { pickRandomTip, tipContextFromSelection, tipsForContext, type TacticalTip } from "./tips";
-import { fbm } from "./noise";
-import { preloadArt, prepareArt, extractBiomeTiles, bakeHeliHudWireTexture, heliHudWireUv, shadowAlpha, shadowKey, spriteUvPos, FX_SHEET_SIZE, FX_VARIANTS, registerArt, nameGameTexture, spritePivot, muzzleGlowKey, type HeliHudWireBake } from "./sprites";
+import { tipContextFromSelection, tipsForContext, type TacticalTip } from "./tips";
+import { extractBiomeTiles, bakeHeliHudWireTexture, heliHudWireUv, shadowAlpha, shadowKey, spriteUvPos, FX_SHEET_SIZE, FX_VARIANTS, registerArt, nameGameTexture, spritePivot, muzzleGlowKey, ensureExhaustGlow, type HeliHudWireBake } from "./sprites";
+import { createControlLegend } from "./menuChrome";
 import {
   generateWorld,
-  generateWorldAsync,
   worldFromGen,
   groundSlope,
   groundZ,
@@ -359,1174 +356,6 @@ type TextureAlphaBounds = {
 
 /** Scratch canvas for tinting blood dirt frames before multiply-stamping terrain. */
 let bloodStampScratch: HTMLCanvasElement | null = null;
-
-export class BootScene extends Phaser.Scene {
-  private bootSub!: Phaser.GameObjects.Text;
-  private bootBar!: Phaser.GameObjects.Graphics;
-  private bootBarW = 320;
-  private bootBarH = 8;
-  private bootBarX = 0;
-  private bootBarY = 0;
-
-  constructor() {
-    super("boot");
-  }
-
-  init(): void {
-    this.cameras.main.setBackgroundColor("#1c1812");
-    // Phaser canvas is up — drop the HTML shell so the in-game bar is visible.
-    hideHtmlBoot();
-  }
-
-  preload(): void {
-    const { width: w, height: h } = this.scale;
-    this.bootBarW = Math.min(320, w - 80);
-    this.bootBarX = w / 2 - this.bootBarW / 2;
-    this.bootBarY = h * 0.58;
-
-    this.add
-      .text(w / 2, h * 0.38, "HELISTRIKE", {
-        fontFamily: "Black Ops One, Impact, sans-serif",
-        fontSize: "64px",
-        color: "#e8b84a",
-        stroke: "#1c1812",
-        strokeThickness: 6,
-      })
-      .setOrigin(0.5);
-
-    this.bootSub = this.add
-      .text(w / 2, h * 0.5, "LOADING ASSETS  ·  0%", {
-        fontFamily: "Share Tech Mono, monospace",
-        fontSize: "14px",
-        color: "#8a8470",
-      })
-      .setOrigin(0.5);
-
-    this.bootBar = this.add.graphics();
-    this.drawBootBar(0);
-
-    this.load.on("progress", (v: number) => {
-      // Leave headroom for CPU bake after fetch.
-      this.drawBootBar(v * 0.72, `LOADING ASSETS  ·  ${Math.round(v * 100)}%`);
-    });
-
-    preloadArt(this);
-  }
-
-  async create(): Promise<void> {
-    const steps: { label: string; run: () => void; t: number }[] = [
-      { label: "BAKING BASE", t: 0.78, run: () => bakeAll(this.textures) },
-      {
-        label: "PREPARING ART",
-        t: 0.88,
-        run: () => {
-          try {
-            prepareArt(this.textures);
-          } catch {
-            /* keep baked placeholders */
-          }
-        },
-      },
-      { label: "ROSTER ART", t: 0.94, run: () => bakeRosterArt(this.textures) },
-      { label: "CAMO", t: 0.99, run: () => bakeCamo(this.textures) },
-    ];
-
-    for (const step of steps) {
-      this.drawBootBar(step.t, `${step.label}  ·  ${Math.round(step.t * 100)}%`);
-      await waitFrame();
-      step.run();
-      await waitFrame();
-    }
-
-    this.drawBootBar(1, "READY  ·  100%");
-    await waitFrame();
-    this.scene.start("menu");
-  }
-
-  private drawBootBar(t: number, label?: string): void {
-    const u = Phaser.Math.Clamp(t, 0, 1);
-    if (label) this.bootSub.setText(label);
-    const g = this.bootBar;
-    const { bootBarX: x, bootBarY: y, bootBarW: w, bootBarH: h } = this;
-    g.clear();
-    g.fillStyle(0x12100c, 1);
-    g.fillRect(x, y, w, h);
-    g.fillStyle(0xe8b84a, 1);
-    g.fillRect(x, y, w * u, h);
-    g.lineStyle(1, 0x3a3428, 1);
-    g.strokeRect(x - 0.5, y - 0.5, w + 1, h + 1);
-    g.lineStyle(1, 0x5c5344, 0.55);
-    for (let i = 1; i < 10; i++) {
-      const px = x + (w * i) / 10;
-      const long = i === 5;
-      g.lineBetween(px, y - (long ? 4 : 2), px, y + h + (long ? 4 : 2));
-    }
-  }
-}
-
-function waitFrame(): Promise<void> {
-  return new Promise((resolve) => {
-    requestAnimationFrame(() => resolve());
-  });
-}
-
-function hideHtmlBoot(): void {
-  const splash = document.getElementById("boot-splash");
-  if (!splash || splash.classList.contains("is-done")) return;
-  splash.classList.add("is-done");
-  window.setTimeout(() => splash.remove(), 400);
-}
-
-function ensureMissionPreviews(textures: Phaser.Textures.TextureManager): void {
-  const width = 160;
-  const height = 160;
-  const missions = allMissions();
-  for (let m = 0; m < missions.length; m++) {
-    const mission = missions[m]!;
-    const key = `menu_mission_preview_${mission.kind}`;
-    if (textures.exists(key)) continue;
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const g = canvas.getContext("2d", { willReadFrequently: true })!;
-    const img = g.createImageData(width, height);
-    const p = mission.profile;
-    const seed = 8101 + m * 977;
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const nx = x / width;
-        const ny = y / height;
-        const ridge = 1 - Math.abs(fbm(nx * 3.1 + 20, ny * 3.1, seed + 9, 3) * 2 - 1);
-        let h = fbm(nx * 6.2, ny * 6.2, seed, 4, 2.05, 0.52) * 0.72 + ridge * 0.28;
-        const radial = Math.pow(Math.hypot(nx - 0.5, ny - 0.5) * 1.15, 2);
-        h = 0.5 + (h - 0.5) * p.relief;
-        h -= radial * p.edgeFalloff;
-        h += p.landBias;
-        if (mission.kind === "river_run") {
-          const riverY = 0.48 + Math.sin(nx * 11 + 0.7) * 0.13;
-          if (Math.abs(ny - riverY) < 0.035) h = 0.27;
-        }
-        let color: [number, number, number];
-        if (h < 0.34) color = [31, 75, 86];
-        else if (h < 0.4) color = [174, 145, 87];
-        else if (h > 0.72) color = [180, 171, 145];
-        else if (h > 0.62) color = [91, 84, 66];
-        else color = [76, 105, 65];
-        const shade = 0.76 + fbm(nx * 18, ny * 18, seed + 41, 2) * 0.38;
-        const i = (y * width + x) * 4;
-        img.data[i] = color[0] * shade;
-        img.data[i + 1] = color[1] * shade;
-        img.data[i + 2] = color[2] * shade;
-        img.data[i + 3] = 255;
-      }
-    }
-    g.putImageData(img, 0, 0);
-    const vignette = g.createLinearGradient(0, 0, 0, height);
-    vignette.addColorStop(0, "rgba(0,0,0,0.08)");
-    vignette.addColorStop(1, "rgba(0,0,0,0.58)");
-    g.fillStyle = vignette;
-    g.fillRect(0, 0, width, height);
-    textures.addCanvas(key, canvas);
-  }
-}
-
-function createControlLegend(
-  scene: Phaser.Scene,
-  panelW: number,
-  y: number,
-  craft: CraftSpec = craftOf()
-): Phaser.GameObjects.GameObject[] {
-  const objects: Phaser.GameObjects.GameObject[] = [];
-  const controlW = panelW / 8;
-  const x0 = -panelW / 2;
-  const controlX = (i: number) => x0 + i * controlW + controlW / 2;
-  const gunship = craftIsGunship(craft);
-  objects.push(
-    scene.add.rectangle(0, y, panelW, 72, 0x0b0a08, 0.82).setStrokeStyle(1, 0x6f6244, 0.7)
-  );
-  const keycap = (x: number, py: number, label: string, keyW = 24, keyH = 20) => {
-    const g = scene.add.graphics();
-    g.fillStyle(0x18150f, 0.96).fillRoundedRect(x - keyW / 2, py - keyH / 2, keyW, keyH, 3);
-    g.lineStyle(1.4, 0xe8b84a, 0.9).strokeRoundedRect(x - keyW / 2, py - keyH / 2, keyW, keyH, 3);
-    objects.push(g);
-    objects.push(
-      scene.add
-        .text(x, py, label, {
-          fontFamily: "Share Tech Mono, monospace",
-          fontSize: keyW > 36 ? "9px" : "11px",
-          color: "#f2d579",
-        })
-        .setOrigin(0.5)
-    );
-  };
-  const mouse = (x: number, py: number, leftLit: boolean, wheelLit = false) => {
-    const g = scene.add.graphics();
-    if (leftLit) g.fillStyle(0xe8b84a, 0.48).fillRoundedRect(x - 12, py - 17, 12, 15, 3);
-    g.lineStyle(1.5, 0xe8b84a, 0.95).strokeRoundedRect(x - 12, py - 17, 24, 34, 9);
-    g.lineBetween(x, py - 16, x, py - 3);
-    g.lineBetween(x - 11, py - 2, x + 11, py - 2);
-    g.fillStyle(wheelLit ? 0xf2d579 : 0x6f6244, 1).fillRoundedRect(x - 2, py - 12, 4, 8, 2);
-    objects.push(g);
-  };
-  const label = (i: number, value: string) => {
-    objects.push(
-      scene.add
-        .text(controlX(i), y + 25, value, {
-          fontFamily: "Share Tech Mono, monospace",
-          fontSize: "9px",
-          color: "#d8d0ba",
-        })
-        .setOrigin(0.5)
-    );
-  };
-  const iconY = y - 6;
-  const moveX = controlX(0);
-  keycap(moveX, iconY - 10, "W", 20, 18);
-  keycap(moveX - 22, iconY + 10, "A", 20, 18);
-  keycap(moveX, iconY + 10, "S", 20, 18);
-  keycap(moveX + 22, iconY + 10, "D", 20, 18);
-  label(0, gunship ? "W/S SPEED · A/D STEER" : "MOVE");
-  mouse(controlX(1), iconY, true);
-  label(1, "AIM / FIRE");
-  keycap(controlX(2) - 29, iconY, "SPACE", 52, 22);
-  keycap(controlX(2) + 31, iconY, "SHIFT", 50, 22);
-  label(2, "POP-UP / NAP-OF-EARTH");
-  const weaponX = controlX(3);
-  for (let i = 0; i < 4; i++) keycap(weaponX - 42 + i * 20, iconY, String(i + 1), 16, 19);
-  mouse(weaponX + 46, iconY, false, true);
-  label(3, "SELECT WEAPON");
-  keycap(controlX(4), iconY, "E", 30, 26);
-  label(4, "COUNTERMEASURE");
-  keycap(controlX(5), iconY, "M", 30, 26);
-  label(5, "MAP");
-  keycap(controlX(6), iconY, "T", 30, 26);
-  label(6, "THERMAL VISION");
-  keycap(controlX(7), iconY, "H", 30, 26);
-  label(7, "HELP / TIPS");
-  return objects;
-}
-
-function drawControlLegend(scene: Phaser.Scene, width: number, y: number, craft?: CraftSpec): void {
-  const panelW = Math.min(1040, width - 64);
-  scene.add.container(width / 2, 0, createControlLegend(scene, panelW, y, craft ?? craftOf()));
-}
-
-export class MenuScene extends Phaser.Scene {
-  constructor() {
-    super("menu");
-  }
-
-  create(): void {
-    const { width: w, height: h } = this.scale;
-    this.cameras.main.setBackgroundColor("#1c1812");
-    this.input.setDefaultCursor("default");
-    ensureMissionPreviews(this.textures);
-    ensureExhaustGlow(this.textures);
-    if (this.textures.exists("menu_splash")) {
-      const bg = this.add.image(w / 2, h / 2, "menu_splash").setDepth(0);
-      const sx = w / bg.width;
-      const sy = h / bg.height;
-      bg.setScale(Math.max(sx, sy));
-      this.add
-        .rectangle(w / 2, h / 2, w, h, 0x0c0a08, 0.58)
-        .setDepth(1);
-    }
-    this.add
-      .text(w / 2, 54, "HELISTRIKE", {
-        fontFamily: "Black Ops One, Impact, sans-serif",
-        fontSize: "54px",
-        color: "#e8b84a",
-        stroke: "#1c1812",
-        strokeThickness: 5,
-      })
-      .setOrigin(0.5)
-      .setDepth(2);
-    const crafts = allCrafts();
-    const missions = allMissions();
-    let craftIndex = Math.max(0, crafts.findIndex((c) => c.kind === craftOf().kind));
-    let missionIndex = Math.max(0, missions.findIndex((m) => m.kind === missionOf().kind));
-    let row = 0;
-    let customParamIndex = 0;
-
-    const craftHeader = this.add
-      .text(w / 2, 111, "AIRFRAME", {
-        fontFamily: "Share Tech Mono, monospace",
-        fontSize: "13px",
-        color: "#e8b84a",
-        stroke: "#1c1812",
-        strokeThickness: 3,
-      })
-      .setOrigin(0.5)
-      .setDepth(2);
-    const missionHeader = this.add
-      .text(w / 2, 374, "OPERATION", {
-        fontFamily: "Share Tech Mono, monospace",
-        fontSize: "13px",
-        color: "#e8e0cc",
-        stroke: "#1c1812",
-        strokeThickness: 3,
-      })
-      .setOrigin(0.5)
-      .setDepth(2);
-
-    const craftW = 112;
-    const craftH = 108;
-    const craftCards = crafts.map((craft, i) => {
-      const x = w / 2;
-      const frame = this.add
-        .rectangle(x, 190, craftW, craftH, 0x0c0b09, 0.82)
-        .setStrokeStyle(1, 0x5d5544, 0.8)
-        .setDepth(2)
-        .setInteractive({ useHandCursor: true });
-      const art = this.add.image(x, 181, craft.body).setDepth(3);
-      // Fit the card box; never upscale past native 1:1 (keeps drones crisp).
-      const artScale = craftPreviewFitScale(art.width, art.height, 104, 82);
-      art.setScale(artScale);
-      const composite = craftComposite(craft);
-      const rotors = composite.rotors.map((part) => {
-        const rotor = this.add
-          .image(x, 181, part.tex)
-          .setOrigin(part.origin.x, part.origin.y)
-          .setDepth(4);
-        const sign = part.spinSign ?? -1;
-        this.tweens.add({
-          targets: rotor,
-          rotation: sign * Math.PI * 2,
-          duration: craftRotorPreviewSpinMs(craft),
-          repeat: -1,
-          ease: "Linear",
-        });
-        return rotor;
-      });
-      const exhaustMounts = craftExhaustMounts(craft);
-      const exhaustTint = craftPreviewExhaustTint(craft.kind);
-      const exhaustGlows = exhaustMounts.map((_, exhaustI) => {
-        const glow = this.add
-          .image(x, 181, "fx_exhaust_glow")
-          .setBlendMode(Phaser.BlendModes.ADD)
-          .setTint(exhaustTint)
-          .setDepth(8.5)
-          .setVisible(false);
-        this.tweens.add({
-          targets: glow,
-          alpha: { from: 0.5 + (exhaustI % 2) * 0.08, to: 0.96 },
-          duration: 780 + exhaustI * 90,
-          yoyo: true,
-          repeat: -1,
-          ease: "Sine.InOut",
-        });
-        return glow;
-      });
-      const label = this.add
-        .text(x, 229, craft.name.toUpperCase(), {
-          fontFamily: "Share Tech Mono, monospace",
-          fontSize: "11px",
-          color: "#cfc7b1",
-          align: "center",
-        })
-        .setOrigin(0.5)
-        .setDepth(5);
-      frame.on("pointerdown", () => {
-        row = 0;
-        craftIndex = i;
-        refreshSelection();
-      });
-      return {
-        frame,
-        art,
-        label,
-        artScale,
-        rotorParts: composite.rotors,
-        rotors,
-        exhaustMounts,
-        exhaustGlows,
-      };
-    });
-
-    const missionW = 134;
-    const missionH = 134;
-    const missionCards = missions.map((mission, i) => {
-      const x = w / 2;
-      const frame = this.add
-        .rectangle(x, 450, missionW, missionH, 0x0b0a08, 0.88)
-        .setStrokeStyle(1, 0x5d5544, 0.8)
-        .setDepth(2)
-        .setInteractive({ useHandCursor: true });
-      const art = this.add
-        .image(x, 450, `menu_mission_preview_${mission.kind}`)
-        .setDisplaySize(missionW - 8, missionH - 8)
-        .setDepth(3);
-      const artScaleX = art.scaleX;
-      const artScaleY = art.scaleY;
-      const strip = this.add.rectangle(x, 497, missionW - 8, 28, 0x090908, 0.88).setDepth(3);
-      const label = this.add
-        .text(x, 497, mission.label, {
-          fontFamily: "Share Tech Mono, monospace",
-          fontSize: "14px",
-          color: "#d8d0ba",
-        })
-        .setOrigin(0.5)
-        .setDepth(4);
-      frame.on("pointerdown", () => {
-        row = 1;
-        missionIndex = i;
-        refreshSelection();
-      });
-      return { frame, art, strip, label, artScaleX, artScaleY };
-    });
-
-    const carouselArrow = (x: number, y: number, dir: -1 | 1, targetRow: 0 | 1) => {
-      const arrow = this.add
-        .text(x, y, dir < 0 ? "‹" : "›", {
-          fontFamily: "Share Tech Mono, monospace",
-          fontSize: "42px",
-          color: "#e8b84a",
-          stroke: "#1c1812",
-          strokeThickness: 4,
-        })
-        .setOrigin(0.5)
-        .setDepth(8)
-        .setInteractive({ useHandCursor: true });
-      arrow.on("pointerdown", () => {
-        row = targetRow;
-        if (targetRow === 0) craftIndex = (craftIndex + dir + crafts.length) % crafts.length;
-        else missionIndex = (missionIndex + dir + missions.length) % missions.length;
-        refreshSelection();
-      });
-      return arrow;
-    };
-    carouselArrow(w / 2 - 112, 179, -1, 0);
-    carouselArrow(w / 2 + 112, 179, 1, 0);
-    carouselArrow(w / 2 - 112, 450, -1, 1);
-    carouselArrow(w / 2 + 112, 450, 1, 1);
-
-    const carouselDots = (count: number, y: number, targetRow: 0 | 1) =>
-      Array.from({ length: count }, (_, i) => {
-        const x = w / 2 + (i - (count - 1) / 2) * 14;
-        const dot = this.add
-          .circle(x, y, 3.5, 0x5d5544, 0.9)
-          .setStrokeStyle(1, 0x1c1812, 0.9)
-          .setDepth(8)
-          .setInteractive({ useHandCursor: true });
-        dot.on("pointerdown", () => {
-          row = targetRow;
-          if (targetRow === 0) craftIndex = i;
-          else missionIndex = i;
-          refreshSelection();
-        });
-        return dot;
-      });
-    const craftDots = carouselDots(crafts.length, 242, 0);
-    const missionDots = carouselDots(missions.length, 524, 1);
-
-    const statDefs = [
-      { label: "SPEED", max: Math.max(...crafts.map((craft) => craft.maxSpeed)), value: (craft: (typeof crafts)[number]) => craft.maxSpeed },
-      { label: "AGILITY", max: 1, value: (craft: (typeof crafts)[number]) => craftAgility(craft) },
-      { label: "SIZE", max: Math.max(...crafts.map((craft) => craft.sizeM)), value: (craft: (typeof crafts)[number]) => craft.sizeM },
-      { label: "ARMOR", max: Math.max(...crafts.map((craft) => craft.health)), value: (craft: (typeof crafts)[number]) => craft.health },
-    ];
-    const loadoutRow0 = 271;
-    const maxWeaponSlots = Math.max(4, ...crafts.map((c) => c.sockets.length));
-    const infoTop = 248;
-    const profileRows = statDefs.length + 1; // + ROLE
-    const infoBottom = Math.max(
-      loadoutRow0 + (maxWeaponSlots + 1) * 20 + 14,
-      271 + profileRows * 20 + 14
-    );
-    const infoH = infoBottom - infoTop;
-    const infoCy = (infoTop + infoBottom) / 2;
-    this.add
-      .rectangle(w / 2, infoCy, 700, infoH, 0x0b0a08, 0.76)
-      .setStrokeStyle(1, 0x554c39, 0.65)
-      .setDepth(2);
-    const infoRule = this.add.graphics().setDepth(3);
-    infoRule.lineStyle(1, 0x554c39, 0.7).lineBetween(w / 2 + 20, 256, w / 2 + 20, infoBottom - 8);
-    const statLabelX = w / 2 - 315;
-    const statBarX = w / 2 - 205;
-    this.add
-      .text(statLabelX, 253, "FLIGHT PROFILE", {
-        fontFamily: "Share Tech Mono, monospace",
-        fontSize: "9px",
-        color: "#aaa28f",
-        stroke: "#1c1812",
-        strokeThickness: 2,
-      })
-      .setDepth(3);
-    statDefs.forEach((stat, i) => {
-      this.add
-        .text(statLabelX, 271 + i * 20, stat.label, {
-          fontFamily: "Share Tech Mono, monospace",
-          fontSize: "10px",
-          color: "#d8d0ba",
-          stroke: "#1c1812",
-          strokeThickness: 2,
-        })
-        .setOrigin(0, 0.5)
-        .setDepth(3);
-    });
-    this.add
-      .text(statLabelX, 271 + statDefs.length * 20, "ROLE", {
-        fontFamily: "Share Tech Mono, monospace",
-        fontSize: "10px",
-        color: "#d8d0ba",
-        stroke: "#1c1812",
-        strokeThickness: 2,
-      })
-      .setOrigin(0, 0.5)
-      .setDepth(3);
-    const roleTxt = this.add
-      .text(statBarX, 271 + statDefs.length * 20, "", {
-        fontFamily: "Share Tech Mono, monospace",
-        fontSize: "10px",
-        color: "#f2d579",
-        stroke: "#1c1812",
-        strokeThickness: 2,
-      })
-      .setOrigin(0, 0.5)
-      .setDepth(3);
-    const statBars = this.add.graphics().setDepth(3);
-    const drawStatBars = (craft: (typeof crafts)[number]) => {
-      statBars.clear();
-      const segments = 8;
-      const segmentW = 11;
-      const segmentH = 6;
-      const segmentGap = 3;
-      statDefs.forEach((stat, statI) => {
-        const filled = Math.max(1, Math.round((stat.value(craft) / stat.max) * segments));
-        const y = 268 + statI * 20;
-        for (let segment = 0; segment < segments; segment++) {
-          const x = statBarX + segment * (segmentW + segmentGap);
-          statBars.fillStyle(segment < filled ? 0xe8b84a : 0x302b22, segment < filled ? 0.96 : 0.82);
-          statBars.fillRoundedRect(x, y, segmentW, segmentH, 2);
-          statBars.lineStyle(1, segment < filled ? 0xf2d579 : 0x5d5544, 0.7);
-          statBars.strokeRoundedRect(x, y, segmentW, segmentH, 2);
-        }
-      });
-    };
-
-    const weaponX = w / 2 + 50;
-    this.add
-      .text(weaponX, 253, "LOADOUT", {
-        fontFamily: "Share Tech Mono, monospace",
-        fontSize: "9px",
-        color: "#aaa28f",
-        stroke: "#1c1812",
-        strokeThickness: 2,
-      })
-      .setDepth(3);
-    this.add
-      .text(weaponX + 255, 253, "AMMO", {
-        fontFamily: "Share Tech Mono, monospace",
-        fontSize: "9px",
-        color: "#aaa28f",
-        stroke: "#1c1812",
-        strokeThickness: 2,
-      })
-      .setOrigin(1, 0)
-      .setDepth(3);
-    const maxLoadoutSlots = maxWeaponSlots;
-    const makeLoadoutRow = (y: number, alt: boolean) => {
-      const frame = this.add
-        .rectangle(weaponX + 128, y, 270, 17, alt ? 0x15120d : 0x1b1710, 0.78)
-        .setDepth(3);
-      const slot = this.add
-        .text(weaponX + 7, y, "", {
-          fontFamily: "Share Tech Mono, monospace",
-          fontSize: "10px",
-          color: "#e8b84a",
-          stroke: "#1c1812",
-          strokeThickness: 2,
-        })
-        .setOrigin(0.5)
-        .setDepth(4);
-      const name = this.add
-        .text(weaponX + 23, y, "", {
-          fontFamily: "Share Tech Mono, monospace",
-          fontSize: "9px",
-          color: "#d8d0ba",
-        })
-        .setOrigin(0, 0.5)
-        .setDepth(4);
-      const crew = this.add
-        .text(weaponX + 23, y, "", {
-          fontFamily: "Share Tech Mono, monospace",
-          fontSize: "9px",
-          color: "#7ad0ff",
-        })
-        .setOrigin(0, 0.5)
-        .setDepth(4)
-        .setVisible(false);
-      const ammo = this.add
-        .text(weaponX + 255, y, "", {
-          fontFamily: "Share Tech Mono, monospace",
-          fontSize: "10px",
-          color: "#f2d579",
-        })
-        .setOrigin(1, 0.5)
-        .setDepth(4);
-      return { frame, slot, name, crew, ammo };
-    };
-    const weaponRows = Array.from({ length: maxLoadoutSlots }, (_, i) =>
-      makeLoadoutRow(loadoutRow0 + i * 20, i % 2 === 1)
-    );
-    const cmRow = makeLoadoutRow(loadoutRow0 + maxLoadoutSlots * 20, maxLoadoutSlots % 2 === 1);
-
-    const detailTxt = this.add
-      .text(w / 2, 542, "", {
-        fontFamily: "Share Tech Mono, monospace",
-        fontSize: "11px",
-        color: "#d8d0ba",
-        align: "center",
-        lineSpacing: 3,
-        wordWrap: { width: Math.min(1120, w - 80) },
-        stroke: "#1c1812",
-        strokeThickness: 3,
-      })
-      .setOrigin(0.5)
-      .setDepth(2);
-
-    const customMission = missions.find((mission) => mission.kind === "custom")!;
-    const customProfile = customMission.profile;
-    const forceMixes = ["mixed", "naval", "heavy"] as const;
-    const customParams = [
-      {
-        label: "LAND",
-        value: () => customProfile.landBias.toFixed(2),
-        adjust: (dir: number) => {
-          customProfile.landBias = Phaser.Math.Clamp(customProfile.landBias + dir * 0.025, -0.2, 0.18);
-        },
-      },
-      {
-        label: "RELIEF",
-        value: () => customProfile.relief.toFixed(2),
-        adjust: (dir: number) => {
-          customProfile.relief = Phaser.Math.Clamp(customProfile.relief + dir * 0.1, 0.7, 1.6);
-        },
-      },
-      {
-        label: "COAST",
-        value: () => customProfile.edgeFalloff.toFixed(2),
-        adjust: (dir: number) => {
-          customProfile.edgeFalloff = Phaser.Math.Clamp(customProfile.edgeFalloff + dir * 0.05, 0.05, 0.55);
-        },
-      },
-      {
-        label: "RIVERS",
-        value: () => String(customProfile.riverTarget),
-        adjust: (dir: number) => {
-          customProfile.riverTarget = Phaser.Math.Clamp(customProfile.riverTarget + dir * 4, 0, 72);
-        },
-      },
-      {
-        label: "OBJECTIVES",
-        value: () => String(customProfile.objectiveCount),
-        adjust: (dir: number) => {
-          customProfile.objectiveCount = Phaser.Math.Clamp(customProfile.objectiveCount + dir, 2, 7);
-        },
-      },
-      {
-        label: "GARRISON",
-        value: () => customProfile.garrisonScale.toFixed(1),
-        adjust: (dir: number) => {
-          customProfile.garrisonScale = Phaser.Math.Clamp(customProfile.garrisonScale + dir * 0.1, 0.4, 1.8);
-        },
-      },
-      {
-        label: "PATROLS",
-        value: () => String(customProfile.patrolCount),
-        adjust: (dir: number) => {
-          customProfile.patrolCount = Phaser.Math.Clamp(customProfile.patrolCount + dir * 2, 8, 40);
-        },
-      },
-      {
-        label: "NAVAL",
-        value: () => customProfile.waterPatrolBias.toFixed(2),
-        adjust: (dir: number) => {
-          customProfile.waterPatrolBias = Phaser.Math.Clamp(customProfile.waterPatrolBias + dir * 0.25, 0.25, 3);
-        },
-      },
-      {
-        label: "FORCES",
-        value: () => customProfile.forceMix.toUpperCase(),
-        adjust: (dir: number) => {
-          const i = forceMixes.indexOf(customProfile.forceMix);
-          customProfile.forceMix = forceMixes[(i + dir + forceMixes.length) % forceMixes.length]!;
-          customProfile.waterPatrolBias =
-            customProfile.forceMix === "naval" ? 2.4 : customProfile.forceMix === "heavy" ? 0.35 : 1;
-        },
-      },
-    ];
-    const customParamCards = customParams.map((param, i) => {
-      const col = i % 5;
-      const line = (i / 5) | 0;
-      const x = w / 2 - 425 + col * 170 + 85;
-      const y = 564 + line * 27;
-      const frame = this.add.rectangle(x, y, 162, 23, 0x0b0a08, 0.86).setDepth(2);
-      const minus = this.add
-        .text(x - 66, y, "−", {
-          fontFamily: "Share Tech Mono, monospace",
-          fontSize: "16px",
-          color: "#e8b84a",
-        })
-        .setOrigin(0.5)
-        .setDepth(3)
-        .setInteractive({ useHandCursor: true });
-      const value = this.add
-        .text(x, y, "", {
-          fontFamily: "Share Tech Mono, monospace",
-          fontSize: "11px",
-          color: "#d8d0ba",
-        })
-        .setOrigin(0.5)
-        .setDepth(3);
-      const plus = this.add
-        .text(x + 66, y, "+", {
-          fontFamily: "Share Tech Mono, monospace",
-          fontSize: "16px",
-          color: "#e8b84a",
-        })
-        .setOrigin(0.5)
-        .setDepth(3)
-        .setInteractive({ useHandCursor: true });
-      minus.on("pointerdown", () => adjustCustomParam(i, -1));
-      plus.on("pointerdown", () => adjustCustomParam(i, 1));
-      value.setText(`${param.label}  ${param.value()}`);
-      return { frame, minus, value, plus };
-    });
-
-    function syncCustomParams(): void {
-      const visible = missions[missionIndex]!.kind === "custom";
-      customParamCards.forEach((card, i) => {
-        card.frame
-          .setVisible(visible)
-          .setStrokeStyle(i === customParamIndex && row === 2 ? 2 : 1, i === customParamIndex && row === 2 ? 0xe8b84a : 0x554c39, 0.9);
-        card.minus.setVisible(visible);
-        card.plus.setVisible(visible);
-        card.value.setVisible(visible).setText(`${customParams[i]!.label}  ${customParams[i]!.value()}`);
-      });
-    }
-
-    function adjustCustomParam(i: number, dir: number): void {
-      row = 2;
-      customParamIndex = i;
-      customParams[i]!.adjust(dir);
-      const key = "menu_mission_preview_custom";
-      const customIndex = missions.findIndex((mission) => mission.kind === "custom");
-      if (customIndex >= 0) missionCards[customIndex]!.art.setTexture("menu_mission_preview_river_run");
-      if (thisScene.textures.exists(key)) thisScene.textures.remove(key);
-      ensureMissionPreviews(thisScene.textures);
-      if (customIndex >= 0) missionCards[customIndex]!.art.setTexture(key);
-      refreshSelection();
-    }
-
-    const thisScene = this;
-    const refreshSelection = () => {
-      const craft = crafts[craftIndex]!;
-      const mission = missions[missionIndex]!;
-      if (row === 2 && mission.kind !== "custom") row = 1;
-      selectCraft(craft.kind);
-      selectMission(mission.kind);
-      craftHeader.setColor(row === 0 ? "#e8b84a" : "#8f8774");
-      missionHeader.setColor(row === 1 ? "#e8b84a" : "#8f8774");
-      craftCards.forEach((card, i) => {
-        const selected = i === craftIndex;
-        card.frame
-          .setVisible(selected)
-          .setPosition(w / 2, 179)
-          .setScale(1.05)
-          .setDepth(7)
-          .setFillStyle(0x241e10, 0.96)
-          .setStrokeStyle(row === 0 ? 3 : 2, 0xe8b84a, 1);
-        card.art
-          .setVisible(selected)
-          .setPosition(w / 2, 170)
-          .setScale(Math.min(1, card.artScale * 1.05))
-          .setDepth(8)
-          .setAlpha(1);
-        card.rotors.forEach((rotor, rotorI) => {
-          const part = card.rotorParts[rotorI]!;
-          const at = spriteUvPos(card.art, part.mount.x, part.mount.y);
-          rotor
-            .setVisible(selected)
-            .setPosition(at.x, at.y)
-            .setScale(craftCompositePartScale(part, rotor.width, card.art.scaleX))
-            .setDepth(9)
-            .setAlpha(1);
-        });
-        card.exhaustGlows.forEach((glow, exhaustI) => {
-          const mount = card.exhaustMounts[exhaustI]!;
-          const at = spriteUvPos(card.art, mount.x, mount.y);
-          const glowSc = craftPreviewExhaustScale(card.art.scaleX);
-          glow
-            .setVisible(selected)
-            .setPosition(at.x, at.y)
-            .setScale(glowSc.x, glowSc.y)
-            .setDepth(8.5);
-        });
-        card.label
-          .setVisible(selected)
-          .setPosition(w / 2, 220)
-          .setScale(1)
-          .setDepth(10)
-          .setColor("#f2d579");
-      });
-      craftDots.forEach((dot, i) =>
-        dot
-          .setFillStyle(i === craftIndex ? 0xe8b84a : 0x5d5544, i === craftIndex ? 1 : 0.9)
-          .setScale(i === craftIndex ? 1.45 : 1)
-      );
-      missionCards.forEach((card, i) => {
-        const selected = i === missionIndex;
-        card.frame
-          .setVisible(selected)
-          .setPosition(w / 2, 450)
-          .setScale(1)
-          .setDepth(7)
-          .setFillStyle(0x241e10, 0.96)
-          .setStrokeStyle(row === 1 ? 3 : 2, 0xe8b84a, 1);
-        card.art
-          .setVisible(selected)
-          .setPosition(w / 2, 450)
-          .setScale(card.artScaleX, card.artScaleY)
-          .setDepth(8)
-          .setAlpha(1);
-        card.strip
-          .setVisible(selected)
-          .setPosition(w / 2, 497)
-          .setScale(1)
-          .setDepth(8)
-          .setAlpha(0.94);
-        card.label
-          .setVisible(selected)
-          .setPosition(w / 2, 497)
-          .setScale(1)
-          .setDepth(9)
-          .setColor("#f2d579");
-      });
-      missionDots.forEach((dot, i) =>
-        dot
-          .setFillStyle(i === missionIndex ? 0xe8b84a : 0x5d5544, i === missionIndex ? 1 : 0.9)
-          .setScale(i === missionIndex ? 1.45 : 1)
-      );
-      const weapons = playerLoadoutFromSockets(craft.sockets);
-      drawStatBars(craft);
-      roleTxt.setText(craft.role.toUpperCase());
-      weaponRows.forEach((row, i) => {
-        const weapon = weapons[i];
-        const on = !!weapon;
-        row.frame.setVisible(on);
-        row.slot.setVisible(on);
-        row.name.setVisible(on);
-        row.crew.setVisible(on);
-        row.ammo.setVisible(on);
-        if (!weapon) return;
-        row.slot.setText(String(i + 1)).setColor("#e8b84a");
-        const parts = craftLoadoutParts(craft, i, weapon.fullName);
-        row.name.setText(parts.base);
-        if (parts.crew) {
-          row.crew
-            .setText(parts.crew)
-            .setVisible(true)
-            .setPosition(row.name.x + row.name.width, row.name.y);
-        } else {
-          row.crew.setText("").setVisible(false);
-        }
-        const capacity = craftSocketStartingAmmo(weapon.ammo, craft, i);
-        row.ammo.setText(capacity === Infinity ? "∞" : String(capacity));
-      });
-      const cm = COUNTERMEASURES[craftCountermeasure(craft.countermeasure)];
-      const cmY = loadoutRow0 + weapons.length * 20;
-      cmRow.frame.setVisible(true).setPosition(weaponX + 128, cmY);
-      cmRow.slot.setVisible(true).setPosition(weaponX + 7, cmY).setText("E").setColor("#7ad0ff");
-      cmRow.name.setVisible(true).setPosition(weaponX + 23, cmY).setText(cm.name).setColor("#c8d4e8");
-      cmRow.crew.setVisible(false).setText("");
-      cmRow.ammo.setVisible(true).setPosition(weaponX + 255, cmY).setText(countermeasureTimingLabel(cm)).setColor("#8ec8e8");
-      detailTxt.setText(`${mission.label}  ·  ${mission.briefing}`);
-      syncCustomParams();
-    };
-
-    const cycleSelection = (dir: number) => {
-      if (row === 0) craftIndex = (craftIndex + dir + crafts.length) % crafts.length;
-      else if (row === 1) missionIndex = (missionIndex + dir + missions.length) % missions.length;
-      else adjustCustomParam(customParamIndex, dir);
-      refreshSelection();
-    };
-    refreshSelection();
-
-    const go = this.add
-      .text(w / 2, 650, "[  DEPLOY  ]", {
-        fontFamily: "Share Tech Mono, monospace",
-        fontSize: "22px",
-        color: "#1c1812",
-        backgroundColor: "#e8b84a",
-        padding: { x: 18, y: 10 },
-      })
-      .setOrigin(0.5)
-      .setDepth(2)
-      .setInteractive({ useHandCursor: true });
-    go.on("pointerdown", () => this.scene.start("load"));
-    this.input.keyboard?.once("keydown-ENTER", () => this.scene.start("load"));
-    this.input.keyboard?.once("keydown-SPACE", () => this.scene.start("load"));
-
-    const selectUp = () => {
-      const rows = missions[missionIndex]!.kind === "custom" ? 3 : 2;
-      row = (row - 1 + rows) % rows;
-      refreshSelection();
-    };
-    const selectDown = () => {
-      const rows = missions[missionIndex]!.kind === "custom" ? 3 : 2;
-      row = (row + 1) % rows;
-      refreshSelection();
-    };
-    const selectLeft = () => cycleSelection(-1);
-    const selectRight = () => cycleSelection(1);
-    this.input.keyboard?.on("keydown-UP", selectUp);
-    this.input.keyboard?.on("keydown-DOWN", selectDown);
-    this.input.keyboard?.on("keydown-LEFT", selectLeft);
-    this.input.keyboard?.on("keydown-RIGHT", selectRight);
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      this.input.keyboard?.off("keydown-UP", selectUp);
-      this.input.keyboard?.off("keydown-DOWN", selectDown);
-      this.input.keyboard?.off("keydown-LEFT", selectLeft);
-      this.input.keyboard?.off("keydown-RIGHT", selectRight);
-    });
-    installRigHotkeys(this);
-  }
-}
-
-export class LoadScene extends Phaser.Scene {
-  private body!: Phaser.GameObjects.Image;
-  private rotors: Phaser.GameObjects.Image[] = [];
-  private rotorDiscs: Phaser.GameObjects.Image[] = [];
-  private rotorParts: CraftComposite["rotors"] = [];
-  private exhaustGlows: Phaser.GameObjects.Image[] = [];
-  private exhaustFlames: Phaser.GameObjects.Image[] = [];
-  private exhaustFlameHueFx: (Phaser.FX.ColorMatrix | undefined)[] = [];
-  private exhaustMounts: { x: number; y: number }[] = [];
-  private exhaustFlameMul = 0.78;
-  private exhaustHeat = 0;
-  private heliY = 0;
-  private rotorAng = 0;
-  private rotorSpd = 4;
-  private rotorFlight = 32;
-  private loadU = 0.02;
-
-  constructor() {
-    super("load");
-  }
-  create(): void {
-    // Craft preview reuses craft_* textures; chrome Text/Graphics get load_* names.
-    const { width: w, height: h } = this.scale;
-    this.cameras.main.setBackgroundColor("#1c1812");
-    this.input.setDefaultCursor("default");
-    ensureExhaustGlow(this.textures);
-    this.heliY = h * 0.34;
-    const hx = w / 2;
-    const zs = 0.925;
-    const craft = craftOf();
-    this.rotorFlight = craftRotorFlightSpeed(craft);
-    this.rotorSpd = this.rotorFlight * 0.12;
-    this.exhaustFlameMul =
-      craft.kind === "warthog"
-        ? 0.7
-        : craft.kind === "lightning_ii"
-          ? 0.72
-          : craft.kind === "prometheus"
-            ? 0.58
-            : 0.5;
-    const composite = craftComposite(craft);
-    this.body = this.add
-      .image(hx, this.heliY, composite.body.tex)
-      .setOrigin(composite.body.origin.x, composite.body.origin.y)
-      .setScale(zs);
-    this.add
-      .text(hx, this.heliY - this.body.displayHeight * composite.body.origin.y - 18, craft.fullName.toUpperCase(), {
-        fontFamily: "Share Tech Mono, monospace",
-        fontSize: "13px",
-        color: "#e8b84a",
-        stroke: "#1c1812",
-        strokeThickness: 3,
-      })
-      .setOrigin(0.5, 1);
-    this.rotorParts = composite.rotors;
-    this.rotors = this.rotorParts.map((part) => {
-      const at = spriteUvPos(this.body, part.mount.x, part.mount.y);
-      const rotor = this.add
-        .image(at.x, at.y, part.tex)
-        .setOrigin(part.origin.x, part.origin.y);
-      rotor.setScale(craftCompositePartScale(part, rotor.width, zs));
-      return rotor;
-    });
-    this.rotorDiscs = this.rotorParts.map((part, i) => {
-      const at = spriteUvPos(this.body, part.mount.x, part.mount.y);
-      const spinTex = part.spinTex;
-      return this.add
-        .image(at.x, at.y, spinTex && this.textures.exists(spinTex) ? spinTex : part.tex)
-        .setOrigin(part.origin.x, part.origin.y)
-        .setScale(craftCompositePartScale(part, this.rotors[i]?.width ?? 1, zs) * 1.04)
-        .setAlpha(0);
-    });
-    this.exhaustMounts = craftExhaustMounts(craft);
-    const exhaustTint = craftPreviewExhaustTint(craft.kind);
-    const flameHue = craftExhaustFlameHue(craft.kind);
-    this.exhaustGlows = this.exhaustMounts.map((mount, exhaustI) => {
-      const at = spriteUvPos(this.body, mount.x, mount.y);
-      const glowSc = craftPreviewExhaustScale(zs);
-      const glow = this.add
-        .image(at.x, at.y, "fx_exhaust_glow")
-        .setBlendMode(Phaser.BlendModes.ADD)
-        .setTint(exhaustTint)
-        .setScale(glowSc.x, glowSc.y)
-        .setDepth(this.body.depth + 0.5);
-      this.tweens.add({
-        targets: glow,
-        alpha: { from: 0.5 + (exhaustI % 2) * 0.08, to: 0.96 },
-        duration: 780 + exhaustI * 90,
-        yoyo: true,
-        repeat: -1,
-        ease: "Sine.InOut",
-      });
-      return glow;
-    });
-    this.exhaustFlames = this.exhaustMounts.map((mount) => {
-      const at = spriteUvPos(this.body, mount.x, mount.y);
-      return this.add
-        .image(at.x, at.y, "fx_exhaust")
-        .setOrigin(0, 0.5)
-        .setBlendMode(Phaser.BlendModes.ADD)
-        .setRotation(Math.PI / 2)
-        .setScale(0)
-        .setAlpha(0)
-        .setDepth(this.body.depth + 0.55);
-    });
-    this.exhaustFlameHueFx = this.exhaustFlames.map((flame) => {
-      const fx = flame.preFX?.addColorMatrix();
-      if (fx) fx.hue(flameHue);
-      return fx;
-    });
-    this.add
-      .text(w / 2, h * 0.48, "SURVEYING THEATER", {
-        fontFamily: "Share Tech Mono, monospace",
-        fontSize: "18px",
-        color: "#e8b84a",
-      })
-      .setOrigin(0.5);
-    const sub = this.add
-      .text(w / 2, h * 0.54, "procedural relief", {
-        fontFamily: "Share Tech Mono, monospace",
-        fontSize: "13px",
-        color: "#8a8470",
-      })
-      .setOrigin(0.5);
-    const barW = 320;
-    const barH = 8;
-    const barX = w / 2 - barW / 2;
-    const barY = h * 0.6;
-    const bar = this.add.graphics();
-    const tip = pickRandomTip(tipContextFromSelection()).text;
-    this.add
-      .text(w / 2, h * 0.72, `TIP  ·  ${tip}`, {
-        fontFamily: "Share Tech Mono, monospace",
-        fontSize: "14px",
-        color: "#c8c0a8",
-        align: "center",
-        wordWrap: { width: Math.min(520, w - 48) },
-      })
-      .setOrigin(0.5, 0);
-    drawControlLegend(this, w, h * 0.87);
-    const drawBar = (t: number, label: string) => {
-      const u = Phaser.Math.Clamp(t, 0, 1);
-      bar.clear();
-      bar.fillStyle(0x12100c, 1);
-      bar.fillRect(barX, barY, barW, barH);
-      bar.fillStyle(0xe8b84a, 1);
-      bar.fillRect(barX, barY, barW * u, barH);
-      bar.lineStyle(1, 0x3a3428, 1);
-      bar.strokeRect(barX - 0.5, barY - 0.5, barW + 1, barH + 1);
-      bar.lineStyle(1, 0x5c5344, 0.55);
-      for (let i = 1; i < 10; i++) {
-        const x = barX + (barW * i) / 10;
-        const long = i === 5;
-        bar.lineBetween(x, barY - (long ? 4 : 2), x, barY + barH + (long ? 4 : 2));
-      }
-      this.loadU = u;
-      sub.setText(`${label.toUpperCase()}  ·  ${Math.round(u * 100)}%`);
-    };
-    drawBar(0.02, "relief");
-    this.time.delayedCall(16, () => {
-      const seed = (Date.now() ^ (Math.random() * 1e9)) >>> 0;
-      const tiles = extractBiomeTiles(this.textures);
-      const mission = missionOf();
-      sub.setText(`${mission.label}  ·  RELIEF  ·  2%`);
-      const go = async (world: WorldData) => {
-        drawBar(1, "ready");
-        await waitFrame();
-        await waitFrame();
-        if (!this.scene.isActive()) return;
-        this.scene.start("mission", { world });
-      };
-      generateWorldAsync(seed, tiles, (t, label) => drawBar(t, label), mission.profile)
-        .then(go)
-        .catch((err) => {
-          // Never fall back to sync generateWorld on the main thread — that freezes the UI
-          // (Chrome "Page Unresponsive") exactly at whatever stage the worker died on.
-          console.error("[boot] world worker failed", err);
-          sub.setText("WORLD GEN FAILED  ·  SEE CONSOLE");
-          drawBar(this.loadU, "failed");
-        });
-    });
-  }
-
-  update(_t: number, dt: number): void {
-    const dts = dt / 1000;
-    const flight = this.rotorFlight;
-    const idle = flight * 0.12;
-    const targetSpd = idle + this.loadU * (flight * 1.06 - idle);
-    this.rotorSpd = Phaser.Math.Linear(this.rotorSpd, targetSpd, 1 - Math.pow(0.14, dts));
-    this.rotorAng += this.rotorSpd * dts;
-    // Lag load progress so nozzle heat ramps after rotors start spooling.
-    const heatTarget = Phaser.Math.Clamp(this.loadU * 1.08, 0, 1);
-    this.exhaustHeat = Phaser.Math.Linear(this.exhaustHeat, heatTarget, 1 - Math.pow(0.28, dts));
-    const heat = this.exhaustHeat;
-    const disc = Phaser.Math.Clamp((this.rotorSpd - flight * 0.3) / Math.max(1, flight * 0.7), 0, 1);
-    const bob = Math.sin(_t / 420) * 1.6;
-    this.body.y = this.heliY + bob;
-    this.rotors.forEach((rotor, i) => {
-      const part = this.rotorParts[i]!;
-      const at = spriteUvPos(this.body, part.mount.x, part.mount.y);
-      const sign = part.spinSign ?? -1;
-      rotor
-        .setPosition(at.x, at.y)
-        .setRotation(sign * this.rotorAng)
-        .setAlpha(1 - disc * 0.38);
-      this.rotorDiscs[i]
-        ?.setPosition(at.x, at.y)
-        .setRotation(sign * this.rotorAng + Math.PI / 8)
-        .setAlpha(disc * 0.32);
-    });
-    const frameStep = Math.floor(_t / 55);
-    const zs = this.body.scaleX;
-    const glowSc = craftPreviewExhaustScale(zs);
-    this.exhaustGlows.forEach((glow, exhaustI) => {
-      const mount = this.exhaustMounts[exhaustI]!;
-      const at = spriteUvPos(this.body, mount.x, mount.y);
-      glow.setPosition(at.x, at.y).setScale(glowSc.x, glowSc.y);
-    });
-    this.exhaustFlames.forEach((flame, i) => {
-      const mount = this.exhaustMounts[i]!;
-      const at = spriteUvPos(this.body, mount.x, mount.y);
-      const flicker = 0.9 + Math.sin(_t * 0.043 + i * 2.17) * 0.1;
-      const sc = this.exhaustFlameMul * zs * (0.18 + heat * 0.9);
-      flame
-        .setVisible(heat > 0.03)
-        .setFrame((frameStep + i) % FX_VARIANTS)
-        .setPosition(at.x, at.y)
-        .setRotation(Math.PI / 2)
-        .setScale(sc * flicker, sc * (1.04 - flicker * 0.12))
-        .setAlpha(heat * (0.45 + heat * 0.5) * flicker);
-    });
-  }
-}
 
 export class MissionScene extends Phaser.Scene {
   world!: WorldData;
@@ -4679,7 +3508,10 @@ export class MissionScene extends Phaser.Scene {
     if (h.phase === "dead") {
       this.unwrapTilt(this.body);
       this.body.setVisible(false);
-      for (const rotor of this.rotors) rotor.setVisible(false);
+      for (const rotor of this.rotors) {
+        this.unwrapTilt(rotor);
+        rotor.setVisible(false);
+      }
       for (const gun of this.guns) gun.setVisible(false);
       this.gun.setVisible(false);
       for (const glow of this.gunHeatGlows) glow.setVisible(false);
@@ -4836,8 +3668,12 @@ export class MissionScene extends Phaser.Scene {
     }
     const rotorParts = this.craftParts.rotors;
     if (!rotorParts.length) {
-      for (const rotor of this.rotors) rotor.setVisible(false);
+      for (const rotor of this.rotors) {
+        this.unwrapTilt(rotor);
+        rotor.setVisible(false);
+      }
     } else {
+      const along = craftRotorAlongScale(craft);
       this.rotors.forEach((rotor, i) => {
         const part = rotorParts[i]!;
         const spinKey = part.spinTex;
@@ -4850,15 +3686,34 @@ export class MissionScene extends Phaser.Scene {
           part.mount.x,
           part.mount.y
         );
-        rotor
-          .setPosition(
-            rotorAt.x + Math.cos(tiltRot) * rOffF - Math.sin(tiltRot) * rOffS,
-            rotorAt.y + Math.sin(tiltRot) * rOffF + Math.cos(tiltRot) * rOffS
-          )
-          .setRotation((part.spinSign ?? -1) * h.rotor)
-          .setScale(craftCompositePartScale(part, rotor.width, zs))
-          .setAlpha(1)
-          .setDepth(worldDepth(h.z, ZOff.rotor + i * 0.001, h.y));
+        const hubX = rotorAt.x + Math.cos(tiltRot) * rOffF - Math.sin(tiltRot) * rOffS;
+        const hubY = rotorAt.y + Math.sin(tiltRot) * rOffF + Math.cos(tiltRot) * rOffS;
+        const sc = craftCompositePartScale(part, rotor.width, zs);
+        const spin = (part.spinSign ?? -1) * h.rotor;
+        const depth = worldDepth(h.z, ZOff.rotor + i * 0.001, h.y);
+        if (along < 0.999) {
+          // Forward-facing props: squash along fuselage so discs read edge-on from above.
+          const wrap = this.ensureTiltWrap(rotor);
+          wrap
+            .setVisible(true)
+            .setPosition(hubX, hubY)
+            .setRotation(bodyRot)
+            .setScale(sc, sc * along)
+            .setDepth(depth);
+          rotor
+            .setPosition(0, 0)
+            .setRotation(spin)
+            .setScale(1)
+            .setAlpha(1);
+        } else {
+          this.unwrapTilt(rotor);
+          rotor
+            .setPosition(hubX, hubY)
+            .setRotation(spin)
+            .setScale(sc)
+            .setAlpha(1)
+            .setDepth(depth);
+        }
         clearEdgeLight(rotor);
         applyThermalHeat(rotor, this.thermalOn, 0.48);
       });
@@ -4869,7 +3724,11 @@ export class MissionScene extends Phaser.Scene {
     this.body.setAlpha(cloakA);
     this.shadow.setVisible(this.cloakT <= 0 && this.shadow.visible);
     this.shadow.setAlpha(this.cloakT > 0 ? 0 : this.shadow.alpha);
-    for (const rotor of this.rotors) rotor.setAlpha(cloakA);
+    for (const rotor of this.rotors) {
+      rotor.setAlpha(cloakA);
+      const wrap = rotor.getData("tiltWrap") as Phaser.GameObjects.Container | undefined;
+      if (wrap?.scene) wrap.setAlpha(cloakA);
+    }
     for (const gun of this.guns) gun.setAlpha(cloakA);
     const bodyDepth = worldDepth(h.z, ZOff.body, h.y);
     const bodyWrap = this.body.getData("tiltWrap") as Phaser.GameObjects.Container | undefined;
@@ -4888,11 +3747,16 @@ export class MissionScene extends Phaser.Scene {
 
   /** Parent the player hull in a tilt wrap (jet banking billboard). */
   ensureBodyTiltWrap(): Phaser.GameObjects.Container {
-    let wrap = this.body.getData("tiltWrap") as Phaser.GameObjects.Container | undefined;
+    return this.ensureTiltWrap(this.body);
+  }
+
+  /** Parent an image in a tilt wrap (jet bank / forward-facing prop foreshorten). */
+  ensureTiltWrap(part: Phaser.GameObjects.Image): Phaser.GameObjects.Container {
+    let wrap = part.getData("tiltWrap") as Phaser.GameObjects.Container | undefined;
     if (!wrap || !wrap.scene) {
       wrap = this.add.container(0, 0);
-      wrap.add(this.body);
-      this.body.setData("tiltWrap", wrap);
+      wrap.add(part);
+      part.setData("tiltWrap", wrap);
     }
     return wrap;
   }
@@ -8037,8 +6901,8 @@ export class MissionScene extends Phaser.Scene {
 
   /** Big additive light overlay for photonic detonations (Photon + Warp). */
   spawnPhotonBlastFlash(x: number, y: number, z: number, viewScale: number): void {
-    const key = this.textures.exists("photon_glow")
-      ? "photon_glow"
+    const key = this.textures.exists("shot_photon_glow")
+      ? "shot_photon_glow"
       : this.textures.exists("fx_tesla_glow")
         ? "fx_tesla_glow"
         : "fx_glow";
@@ -13809,8 +12673,30 @@ export class MissionScene extends Phaser.Scene {
         else this.driveOrbitHeli(u, dt, h, dist, dx, dy);
         if (u.dead) continue;
         const g = groundZ(this.world, u.x, u.y);
-        const cruise = g + CRUISE_AGL + 10 + Math.sin(this.time.now * 0.002 + u.id) * 6;
-        u.z = Phaser.Math.Linear(u.z, cruise, 1 - Math.pow(0.1, dt));
+        if (sp.move === "heli") {
+          // Slow climb/descend toward the player's AGL (terrain-relative).
+          const playerAgl = Math.max(LOW_AGL + 8, h.z - h.gndSmooth);
+          const bob = Math.sin(this.time.now * 0.002 + u.id) * 4;
+          const wantZ = g + playerAgl + bob;
+          const err = wantZ - u.z;
+          const thrust = Phaser.Math.Clamp(err * 0.9, -38, 38);
+          u.vz = (u.vz ?? 0) + thrust * dt;
+          u.vz *= Math.pow(0.32, dt);
+          u.vz = Phaser.Math.Clamp(u.vz, -52, 52);
+          u.z += u.vz * dt;
+          const minZ = g + LOW_AGL + 6;
+          const maxZ = g + Math.max(MAX_AGL, playerAgl + 24);
+          if (u.z < minZ) {
+            u.z = minZ;
+            if (u.vz < 0) u.vz *= 0.15;
+          } else if (u.z > maxZ) {
+            u.z = maxZ;
+            if (u.vz > 0) u.vz *= 0.15;
+          }
+        } else {
+          const cruise = g + CRUISE_AGL + 10 + Math.sin(this.time.now * 0.002 + u.id) * 6;
+          u.z = Phaser.Math.Linear(u.z, cruise, 1 - Math.pow(0.1, dt));
+        }
       } else {
         if (sp.move === "boat") this.driveBoat(u, dt);
         if (isGroundVehicle(u.kind)) {
@@ -14598,10 +13484,10 @@ export class MissionScene extends Phaser.Scene {
   syncPhotonFlares(): void {
     const layerN = MissionScene.PHOTON_FX_LAYERS;
     const have = {
-      glow: this.textures.exists("photon_glow"),
-      h: this.textures.exists("photon_stream_h"),
-      diag: this.textures.exists("photon_stream_diag"),
-      core: this.textures.exists("photon_core"),
+      glow: this.textures.exists("shot_photon_glow"),
+      h: this.textures.exists("shot_photon_stream_h"),
+      diag: this.textures.exists("shot_photon_stream_diag"),
+      core: this.textures.exists("shot_photon_core"),
     };
     if (!have.core) return;
 
@@ -14616,13 +13502,13 @@ export class MissionScene extends Phaser.Scene {
       const slot = this.photonFxG.getLength() % layerN;
       const tex =
         slot === 7
-          ? "photon_core"
+          ? "shot_photon_core"
           : slot === 0
-            ? "photon_glow"
+            ? "shot_photon_glow"
             : slot <= 3
-              ? "photon_stream_h"
-              : "photon_stream_diag";
-      const key = this.textures.exists(tex) ? tex : "photon_core";
+              ? "shot_photon_stream_h"
+              : "shot_photon_stream_diag";
+      const key = this.textures.exists(tex) ? tex : "shot_photon_core";
       this.photonFxG.add(
         this.add
           .image(0, 0, key)
@@ -14695,13 +13581,13 @@ export class MissionScene extends Phaser.Scene {
 
       // Soft bloom stays screen-aligned (never tracks missile heading).
       if (have.glow) {
-        place(glow, "photon_glow", 0, sc * 2.05 * flick, sc * 2.05 * flick, 0.5 * flick, -0.02);
+        place(glow, "shot_photon_glow", 0, sc * 2.05 * flick, sc * 2.05 * flick, 0.5 * flick, -0.02);
       }
       if (have.h) {
         // Long needles — bake already collapsed fat hubs; sy mostly follows the thin strip.
         place(
           streamH0,
-          "photon_stream_h",
+          "shot_photon_stream_h",
           viewAng + Math.sin(seed) * 0.06,
           sc * 3.6 * flick,
           sc * (0.95 + 0.2 * flick2),
@@ -14710,7 +13596,7 @@ export class MissionScene extends Phaser.Scene {
         );
         place(
           streamH1,
-          "photon_stream_h",
+          "shot_photon_stream_h",
           viewAng + 0.11 + Math.cos(seed * 1.3) * 0.05,
           sc * 2.9 * flick2,
           sc * (0.75 + 0.15 * flick),
@@ -14719,7 +13605,7 @@ export class MissionScene extends Phaser.Scene {
         );
         place(
           streamHx,
-          "photon_stream_h",
+          "shot_photon_stream_h",
           viewAng + Math.PI * 0.5 + Math.sin(seed * 0.7) * 0.08,
           sc * 3.1 * flick,
           sc * (0.7 + 0.15 * flick2),
@@ -14731,7 +13617,7 @@ export class MissionScene extends Phaser.Scene {
         // Diag art is already a thin diagonal needle after bake — keep scale near-uniform.
         place(
           streamD0,
-          "photon_stream_diag",
+          "shot_photon_stream_diag",
           viewAng + Math.cos(seed) * 0.07,
           sc * 2.9 * flick2,
           sc * 2.9 * flick2,
@@ -14740,7 +13626,7 @@ export class MissionScene extends Phaser.Scene {
         );
         place(
           streamD1,
-          "photon_stream_diag",
+          "shot_photon_stream_diag",
           viewAng + Math.PI * 0.5 + Math.sin(seed * 1.9) * 0.06,
           sc * 2.55 * flick,
           sc * 2.55 * flick,
@@ -14749,7 +13635,7 @@ export class MissionScene extends Phaser.Scene {
         );
         place(
           streamD2,
-          "photon_stream_diag",
+          "shot_photon_stream_diag",
           viewAng + 0.18 + Math.cos(seed * 0.5) * 0.09,
           sc * 2.2 * flick2,
           sc * 2.2 * flick2,
@@ -14758,7 +13644,7 @@ export class MissionScene extends Phaser.Scene {
         );
       }
       // Core never rotates — fixed screen orientation.
-      place(core, "photon_core", 0, sc * (1.05 + 0.1 * flick), sc * (1.05 + 0.1 * flick2), 0.95 + 0.05 * flick, 0.04);
+      place(core, "shot_photon_core", 0, sc * (1.05 + 0.1 * flick), sc * (1.05 + 0.1 * flick2), 0.95 + 0.05 * flick, 0.04);
     });
   }
 
@@ -16925,9 +15811,16 @@ export class MissionScene extends Phaser.Scene {
     this.helpCraftRotors.forEach((rotor, rotorI) => {
       const part = this.helpCraftRotorParts[rotorI]!;
       const at = spriteUvPos(this.helpCraftBody, part.mount.x, part.mount.y);
-      rotor
-        .setPosition(at.x, at.y)
-        .setScale(craftCompositePartScale(part, rotor.width, this.helpCraftBody.scaleX));
+      const sc = craftCompositePartScale(part, rotor.width, this.helpCraftBody.scaleX);
+      const along = craftRotorAlongScale(craft);
+      if (along < 0.999) {
+        const wrap = this.ensureTiltWrap(rotor);
+        wrap.setPosition(at.x, at.y).setScale(sc, sc * along).setVisible(true);
+        rotor.setPosition(0, 0).setScale(1).setVisible(true);
+      } else {
+        this.unwrapTilt(rotor);
+        rotor.setPosition(at.x, at.y).setScale(sc);
+      }
     });
     this.helpCraftExhaustGlows.forEach((glow, exhaustI) => {
       const mount = this.helpCraftExhaustMounts[exhaustI]!;
@@ -17993,6 +16886,9 @@ export class MissionScene extends Phaser.Scene {
     this.energyTrailGfx.cameraFilter = this.hudCam.id | this.fieldHudCam.id;
     this.hudSet.delete(this.refractorGfx);
     this.refractorGfx.cameraFilter = this.hudCam.id | this.fieldHudCam.id;
+    // Parallax clouds: main cam only, above craft (depth set at spawn).
+    const cloudFilter = this.hudCam.id | this.fieldHudCam.id;
+    for (const c of this.planeClouds) c.im.cameraFilter = cloudFilter;
     const markHudTree = (obj: Phaser.GameObjects.GameObject) => {
       this.bindHud(obj);
       const list = (obj as Phaser.GameObjects.Container).list;
@@ -18141,12 +17037,21 @@ export class MissionScene extends Phaser.Scene {
 
   createPlaneCloudParallax(): void {
     this.planeClouds = [];
-    const keys = ["cloud_1", "cloud_2", "cloud_3", "cloud_4"].filter((k) =>
+    const keys = ["fx_cloud_1", "fx_cloud_2", "fx_cloud_3", "fx_cloud_4"].filter((k) =>
       this.textures.exists(k)
     );
     if (!keys.length) return;
-    const show = craftHasCloudParallax(this.heli.spec);
-    const pad = 900;
+    const look = craftCloudParallax(this.heli.spec);
+    // Above craft / world / field HUD tracking; just under chrome HUD.
+    const cloudDepth = Layer.HUD - 40;
+    // High cruise: distant banks (low scroll). Low cruise: nearer (scroll pulled up).
+    // Keep scroll high enough that a random field still intersects the view.
+    const scrollOf = (far: number) =>
+      Phaser.Math.Linear(
+        Math.max(far, 0.22),
+        Phaser.Math.Clamp(far + 0.45, 0.5, 0.88),
+        look.nearness
+      );
     const layers: {
       n: number;
       scroll: number;
@@ -18154,26 +17059,58 @@ export class MissionScene extends Phaser.Scene {
       scale: [number, number];
       depth: number;
     }[] = [
-      { n: 16, scroll: 0.12, alpha: [0.16, 0.3], scale: [1.5, 2.6], depth: 42 },
-      { n: 14, scroll: 0.3, alpha: [0.26, 0.46], scale: [0.95, 1.75], depth: Layer.FIELD - 420 },
-      { n: 10, scroll: 0.5, alpha: [0.2, 0.38], scale: [0.55, 1.15], depth: Layer.FIELD - 180 },
+      {
+        n: 8,
+        scroll: scrollOf(0.22),
+        alpha: [0.34 * look.alphaMul, 0.55 * look.alphaMul],
+        scale: [0.85 * look.sizeMul, 1.45 * look.sizeMul],
+        depth: cloudDepth - 2,
+      },
+      {
+        n: 7,
+        scroll: scrollOf(0.34),
+        alpha: [0.4 * look.alphaMul, 0.62 * look.alphaMul],
+        scale: [0.65 * look.sizeMul, 1.15 * look.sizeMul],
+        depth: cloudDepth - 1,
+      },
+      {
+        n: 6,
+        scroll: scrollOf(0.48),
+        alpha: [0.36 * look.alphaMul, 0.58 * look.alphaMul],
+        scale: [0.5 * look.sizeMul, 0.95 * look.sizeMul],
+        depth: cloudDepth,
+      },
     ];
     let i = 0;
     for (const layer of layers) {
+      const sf = layer.scroll;
+      const hx = this.heli.x * sf;
+      const hy = this.heli.y * sf;
+      // A few bank centers per layer, clouds jittered tightly around each.
+      const clumpN = Math.max(2, Math.round(layer.n / 3));
+      const clumps: { cx: number; cy: number }[] = [];
+      for (let c = 0; c < clumpN; c++) {
+        clumps.push({
+          cx: hx + range(-1800, 1800),
+          cy: hy + range(-1800, 1800),
+        });
+      }
       for (let n = 0; n < layer.n; n++, i++) {
         const key = keys[i % keys.length]!;
-        const x = range(-pad, WORLD + pad);
-        const y = range(-pad, WORLD + pad);
+        const clump = clumps[n % clumps.length]!;
+        const x = clump.cx + range(-280, 280);
+        const y = clump.cy + range(-200, 200);
         const im = this.add.image(x, y, key);
         const sc = range(layer.scale[0], layer.scale[1]);
         const flip = Math.random() < 0.5 ? -1 : 1;
+        const stretchX = range(1.05, 1.4);
         im.setOrigin(0.5)
-          .setScrollFactor(layer.scroll)
+          .setScrollFactor(sf)
           .setDepth(layer.depth)
           .setAlpha(range(layer.alpha[0], layer.alpha[1]))
-          .setScale(sc * flip, sc)
-          .setRotation((Math.random() - 0.5) * 0.55)
-          .setVisible(show);
+          .setScale(sc * stretchX * flip, sc)
+          .setRotation((Math.random() - 0.5) * 0.35)
+          .setVisible(true);
         this.planeClouds.push({
           im,
           baseX: x,
@@ -18187,13 +17124,25 @@ export class MissionScene extends Phaser.Scene {
 
   syncPlaneCloudParallax(dt: number): void {
     if (!this.planeClouds.length) return;
-    const show =
-      craftHasCloudParallax(this.heli.spec) &&
-      this.mapBlend < 0.45 &&
-      this.heli.phase !== "dead";
+    const show = this.mapBlend < 0.45 && this.heli.phase !== "dead";
+    const cam = this.cameras.main;
+    const viewW = cam.width / Math.max(0.05, cam.zoom) + 1600;
+    const viewH = cam.height / Math.max(0.05, cam.zoom) + 1600;
     for (const c of this.planeClouds) {
       c.driftAng += dt * 0.04;
       const amp = c.driftSpd * 10;
+      // Keep banks wrapping through the parallax-visible window around the camera.
+      const sf = c.im.scrollFactorX;
+      const originX = cam.scrollX * sf;
+      const originY = cam.scrollY * sf;
+      const wrap = (v: number, lo: number, span: number) => {
+        if (span <= 1) return v;
+        let t = (v - lo) % span;
+        if (t < 0) t += span;
+        return lo + t;
+      };
+      c.baseX = wrap(c.baseX, originX - viewW * 0.5, viewW);
+      c.baseY = wrap(c.baseY, originY - viewH * 0.5, viewH);
       c.im.x = c.baseX + Math.cos(c.driftAng) * amp;
       c.im.y = c.baseY + Math.sin(c.driftAng * 0.73) * amp * 0.75;
       if (c.im.visible !== show) c.im.setVisible(show);
@@ -19435,27 +18384,6 @@ function ensureBlastRingGradient(textures: Phaser.Textures.TextureManager): void
   registerArt("fx_blast_ring", "generated");
 }
 
-function ensureExhaustGlow(textures: Phaser.Textures.TextureManager): void {
-  if (textures.exists("fx_exhaust_glow")) return;
-  const w = 48;
-  const h = 20;
-  const c = document.createElement("canvas");
-  c.width = w;
-  c.height = h;
-  const g = c.getContext("2d", { willReadFrequently: true })!;
-  const grad = g.createRadialGradient(w * 0.5, h * 0.5, 0, w * 0.5, h * 0.5, w * 0.5);
-  grad.addColorStop(0, "rgba(255,255,255,1)");
-  grad.addColorStop(0.2, "rgba(255,255,255,0.92)");
-  grad.addColorStop(0.58, "rgba(255,255,255,0.34)");
-  grad.addColorStop(1, "rgba(255,255,255,0)");
-  g.save();
-  g.scale(1, h / w);
-  g.fillStyle = grad;
-  g.fillRect(0, 0, w, w);
-  g.restore();
-  textures.addCanvas("fx_exhaust_glow", c);
-  registerArt("fx_exhaust_glow", "generated");
-}
 
 function ensureImpactGlow(textures: Phaser.Textures.TextureManager): void {
   if (textures.exists("fx_glow")) return;
