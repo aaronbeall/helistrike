@@ -5152,7 +5152,6 @@ export class MissionScene extends Phaser.Scene {
         fxInterval: spec.fireCd,
         loft: seekLoft,
         cruise: lockOn ? spec.speed : undefined,
-        guided: spec.guidance.mode === "steer" || undefined,
         // Tube kick-yaw only — AA rail stays on craft heading.
         yaw: lockOn && !accelRail ? side * (0.35 + Math.random() * 0.2) : undefined,
         energyTrail: guidanceHasEnergyTrail(g) ? [] : undefined,
@@ -5289,7 +5288,6 @@ export class MissionScene extends Phaser.Scene {
         fxInterval,
         loft: seekLoft,
         cruise: lockOn ? spec.speed : undefined,
-        guided: spec.guidance.mode === "steer" || undefined,
         tint:
           spec.payload.mode === "plasma_helix"
             ? 0x66eeff
@@ -5413,7 +5411,8 @@ export class MissionScene extends Phaser.Scene {
       look: spec.look,
       scale: spec.scale,
       fxInterval: spec.fireCd,
-      guided: continuousSteer || (g.mode === "steer_commit" && !st.terminal) || undefined,
+      // TOW / Spike / Griffin / Smoke / Warp — POV cam chase while under command.
+      povCam: continuousSteer || g.mode === "steer_commit" || undefined,
       motor: -launch.igniteDelay,
       cruise: spec.speed,
       loft,
@@ -7912,7 +7911,7 @@ export class MissionScene extends Phaser.Scene {
           s.vy = d.y * spd;
           s.vz = d.z * spd;
         }
-        if (lit && s.guided) {
+        if (lit && s.povCam) {
           const tgt = this.reticleUnit() ?? this.hoverAerial();
           const want = Math.atan2(ptr.y - s.y, ptr.x - s.x);
           const da = Phaser.Math.Angle.Wrap(want - s.angle);
@@ -7946,7 +7945,7 @@ export class MissionScene extends Phaser.Scene {
           const spd = Phaser.Math.Linear(Math.max(cur, 50), s.cruise, k);
           s.vx = Math.cos(s.angle) * spd;
           s.vy = Math.sin(s.angle) * spd;
-        } else if (s.guided) {
+        } else if (s.povCam) {
           const spd = 300;
           s.vx = Math.cos(s.angle) * spd;
           s.vy = Math.sin(s.angle) * spd;
@@ -8133,10 +8132,9 @@ export class MissionScene extends Phaser.Scene {
           (beh?.guidance.mode === "steer_commit" ||
             (!!s.wpnId && PLAYER_WPNS[s.wpnId]?.sensorView?.source === "seeker"));
         const lingerWire =
-          (s.guided || beh?.guidance.mode === "steer" || beh?.guidance.mode === "steer_commit") &&
+          (beh?.guidance.mode === "steer" || beh?.guidance.mode === "steer_commit") &&
           s.from === "player" &&
-          s.wire &&
-          !(beh?.guidance.mode === "steer" && beh.guidance.groundHugging);
+          s.wire;
         if (lingerSensor || lingerWire) {
           const view = lingerSensor && s.wpnId ? PLAYER_WPNS[s.wpnId]?.sensorView : undefined;
           let hold = lingerSensor ? 1.65 : 0.95;
@@ -8416,42 +8414,29 @@ export class MissionScene extends Phaser.Scene {
         s.angle += Phaser.Math.Clamp(d2, -rate * dt, rate * dt);
         const distPtr = Math.hypot(ptr.x - s.x, ptr.y - s.y);
         const gndAim = groundZ(this.world, ptr.x, ptr.y);
-        if (g.groundHugging) {
-          // Slight pitch of descent so further reticles land farther; never climb.
-          const rangeFactor = Phaser.Math.Clamp(distPtr / 520, 0.15, 1);
-          const wantZ = gndAim + 10 + rangeFactor * 28;
-          s.vz = Math.min(s.vz, (wantZ - s.z) * 2.4);
-          if (s.vz > -40) s.vz = Math.min(s.vz, -40 - rangeFactor * 80);
-          const gnd = groundZ(this.world, s.x, s.y) + 6;
-          if (s.z < gnd) {
-            s.z = gnd;
-            if (s.vz < 0) s.vz = 0;
-          }
-        } else {
-          // TOW / Griffin: yaw at steerRate; dive pitches altitude into the aim.
-          // Inner disk around the reticle = full dive (so a near miss still punches in).
-          const tgt = this.reticleUnit() ?? this.hoverAerial();
-          const gndHere = groundZ(this.world, s.x, s.y);
-          const playerAgl = Math.max(28, this.heli.z - this.heli.gndSmooth);
-          const impactZ = tgt ? tgt.z + heightOf(tgt.kind) * 0.3 : gndAim;
-          // High orbits: when impact is near ground, loft toward the aim instead of holding AGL.
-          const groundish = !tgt || !isAerial(tgt.kind);
-          const cruiseZ =
-            g.groundDive && groundish
-              ? gndHere +
-                Phaser.Math.Clamp(32 + distPtr * 0.11, 40, Math.min(playerAgl, 150))
-              : gndHere + playerAgl;
-          const diveInner = g.diveInner ?? 45;
-          const diveRange = g.diveRange ?? 280;
-          const divePower = g.divePower ?? 2.85;
-          const outside = Math.max(0, distPtr - diveInner);
-          const closeness = 1 - Phaser.Math.Clamp(outside / Math.max(1, diveRange - diveInner), 0, 1);
-          const dive = Math.pow(closeness, divePower);
-          const tz = Phaser.Math.Linear(cruiseZ, impactZ, dive);
-          // Extra pitch-in when diving onto ground so high launches still connect.
-          const zGain = 2.2 + dive * 9.5 + (g.groundDive && groundish ? dive * 4.5 : 0);
-          s.vz = (tz - s.z) * zGain;
-        }
+        // TOW / Griffin: yaw at steerRate; dive pitches altitude into the aim.
+        // Inner disk around the reticle = full dive (so a near miss still punches in).
+        const tgt = this.reticleUnit() ?? this.hoverAerial();
+        const gndHere = groundZ(this.world, s.x, s.y);
+        const playerAgl = Math.max(28, this.heli.z - this.heli.gndSmooth);
+        const impactZ = tgt ? tgt.z + heightOf(tgt.kind) * 0.3 : gndAim;
+        // High orbits: when impact is near ground, loft toward the aim instead of holding AGL.
+        const groundish = !tgt || !isAerial(tgt.kind);
+        const cruiseZ =
+          g.groundDive && groundish
+            ? gndHere +
+              Phaser.Math.Clamp(32 + distPtr * 0.11, 40, Math.min(playerAgl, 150))
+            : gndHere + playerAgl;
+        const diveInner = g.diveInner ?? 45;
+        const diveRange = g.diveRange ?? 280;
+        const divePower = g.divePower ?? 2.85;
+        const outside = Math.max(0, distPtr - diveInner);
+        const closeness = 1 - Phaser.Math.Clamp(outside / Math.max(1, diveRange - diveInner), 0, 1);
+        const dive = Math.pow(closeness, divePower);
+        const tz = Phaser.Math.Linear(cruiseZ, impactZ, dive);
+        // Extra pitch-in when diving onto ground so high launches still connect.
+        const zGain = 2.2 + dive * 9.5 + (g.groundDive && groundish ? dive * 4.5 : 0);
+        s.vz = (tz - s.z) * zGain;
         s.vx = Math.cos(s.angle) * spd;
         s.vy = Math.sin(s.angle) * spd;
         s.life = Math.max(s.life, 0.6);
@@ -8722,7 +8707,6 @@ export class MissionScene extends Phaser.Scene {
         s.loft = s.beh.steering.loft;
       } else if (
         s.beh?.guidance.mode === "steer" &&
-        !s.beh.guidance.groundHugging &&
         !s.beh.guidance.groundDive
       ) {
         s.vz += 120;
@@ -9433,7 +9417,7 @@ export class MissionScene extends Phaser.Scene {
     s.homePlayer = false;
     s.targetId = undefined;
     s.seekDisabled = true;
-    s.guided = false;
+    s.povCam = false;
     s.trailScale = 0;
     s.energyTrail = undefined;
     s.energyTrails = undefined;
@@ -12964,7 +12948,6 @@ export class MissionScene extends Phaser.Scene {
           blast: wpn.blast,
           dmg: wpn.dmg,
           look: wpn.look,
-          guided: false,
           homePlayer: home,
           motor: home ? -0.06 : undefined,
           cruise: home ? wpn.speed : undefined,
@@ -17421,9 +17404,8 @@ export class MissionScene extends Phaser.Scene {
     for (let i = this.shots.length - 1; i >= 0; i--) {
       const s = this.shots[i]!;
       if (s.from !== "player") continue;
-      if (s.kind === "rocket" && s.beh?.guidance.mode === "steer" && s.beh.guidance.groundHugging) continue;
-      // Wire/command under control (Spike keeps guided through terminal dash).
-      if (s.kind === "guided-missile" && s.guided) {
+      // POV-cam munitions (TOW / Spike / Griffin / Smoke / Warp).
+      if (s.povCam) {
         tow = s;
         break;
       }

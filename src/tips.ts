@@ -222,7 +222,7 @@ export const TACTICAL_TIPS: TacticalTip[] = [
   },
   {
     id: "wpn_micros",
-    text: "Micros gently steer toward the reticle and hug the ground — walk the pair into soft targets, not heavy armor.",
+    text: "Micros gently steer toward the reticle and arc into the ground — walk the pair into soft targets, not heavy armor.",
     context: { weapons: ["guided_rockets"] },
   },
   {

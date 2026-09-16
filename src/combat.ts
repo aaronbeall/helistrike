@@ -69,8 +69,6 @@ export type WeaponGuidance =
       steerRate: number;
       maxAngle: number;
       requiresLaser?: boolean;
-      /** Keep near-ground; do not climb to chase aerials / pointer height. */
-      groundHugging?: boolean;
       /**
        * XY radius (world) for full dive into the aim (default 45).
        * Larger = starts committing altitude sooner.
@@ -486,12 +484,11 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
       mode: "steer",
       steerRate: 0.55,
       maxAngle: 0.16,
-      groundHugging: true,
-      wire: true,
+      wire: false,
     },
     launch: MUZZLE, payload: HE, control: HOLD,
     steering: { turnRate: 0.55 }, salvo: { count: 2, interval: 0.08, spread: 0.08 },
-    fits: FIT_HARDPOINT, notes: ["slightly steers toward reticle; arcs into the ground; no camera chase"],
+    fits: FIT_HARDPOINT, notes: ["slightly steers toward reticle; muzzle arc into the ground; no pov cam"],
   },
   heavy_machine_gun: {
     id: "heavy_machine_gun", name: "HEAVY MACHINE GUN", fullName: ".50 CAL MACHINE GUN", designation: "M2HB .50 CAL MACHINE GUN", ammo: 900, fireCd: 0.105, speed: 860,
@@ -1079,7 +1076,11 @@ export interface Shot {
   targetId?: number;
   blast: number;
   dmg: number;
-  guided?: boolean;
+  /**
+   * Pull the play camera onto this shot while airborne (TOW / Spike / Griffin / …).
+   * Not “is guided” — bombs/GPS share kind `guided-missile` without this.
+   */
+  povCam?: boolean;
   homePlayer?: boolean;
   motor?: number;
   cruise?: number;
