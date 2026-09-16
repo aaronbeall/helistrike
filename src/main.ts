@@ -3,7 +3,7 @@ import Phaser from "phaser";
 import { BootScene } from "./bootScene";
 import { LoadScene } from "./loadScene";
 import { MenuScene } from "./menuScene";
-import { MissionScene } from "./scenes";
+import { MissionScene } from "./missionScene";
 import { RigsScene } from "./rigs";
 
 const config: Phaser.Types.Core.GameConfig = {

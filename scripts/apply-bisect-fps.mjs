@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Inject bottom-right FPS HUD into src/scenes.ts for bisect playtests.
+ * Inject bottom-right FPS HUD into src/missionScene.ts for bisect playtests.
  * Idempotent. Works with older MissionScene (no fxHud).
  */
 import fs from "node:fs";
@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const file = path.join(root, "src/scenes.ts");
+const file = path.join(root, "src/missionScene.ts");
 let s = fs.readFileSync(file, "utf8");
 
 if (s.includes("syncFpsHud()") && s.includes("fpsHud!:")) {
