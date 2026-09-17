@@ -4363,7 +4363,7 @@ export class MissionScene extends Phaser.Scene {
       this.drawSightLine(x0, y0, to.x, to.y, "cannon");
       return;
     }
-    const pylon = this.missilePylon();
+    const pylon = this.hardpointPylon();
     const origin = this.playerShotOrigin(pylon, h.angle, spec);
     const clip = this.playerSightAimWorld(origin.x, origin.y, origin.z, h.angle);
     if (!this.sightPastMuzzle(pylon, clip, h.weapon)) {
@@ -4411,7 +4411,7 @@ export class MissionScene extends Phaser.Scene {
     const spec = this.loadout[h.weapon]!;
     const g = this.sight;
     g.clear();
-    const pylon = this.missilePylon(h.weapon);
+    const pylon = this.hardpointPylon(h.weapon);
     const release = this.bombReleaseVelocity(spec, pylon.x, pylon.y, aim, 0, h.weapon);
     let x = pylon.x;
     let y = pylon.y;
@@ -4901,8 +4901,8 @@ export class MissionScene extends Phaser.Scene {
     return this.craftBodyMountWorldPos(mount);
   }
 
-  /** World position of the next missile hardpoint (alternates left/right by ammo). */
-  missilePylon(slot = this.heli.weapon): { x: number; y: number; side: number } {
+  /** World position of the next hardpoint emit tip (cycles by remaining ammo). */
+  hardpointPylon(slot = this.heli.weapon): { x: number; y: number; side: number } {
     const h = this.heli;
     const socket = h.spec.sockets[slot];
     const mounts =
@@ -5233,14 +5233,14 @@ export class MissionScene extends Phaser.Scene {
     const socket = h.spec.sockets[slot]!;
     const fixed = socket.class === "fixed";
     const rocketPod = specIsRocketPod(spec);
-    // Hardpoint muzzle = rail launch: leave the pylon at full thrust (no kick_motor coast).
+    // Hardpoint rail: leave the pylon (muzzle projectiles + non-bounce ray beams).
     const railMuzzle =
       !rocketPod &&
       socket.class === "hardpoint" &&
-      spec.launch.mode === "muzzle";
-    // Hydra pods keep pylon feel; guided muzzle rockets (Refractor) use the gun tip.
+      (spec.launch.mode === "muzzle" || spec.launch.mode === "beam");
+    // Hydra pods + hardpoint rails cycle pylons; hull-fixed tips use authored muzzles below.
     if (rocketPod || railMuzzle) {
-      const { x: px, y: py, side } = this.missilePylon(slot);
+      const { x: px, y: py, side } = this.hardpointPylon(slot);
       const jitter = spec.fire?.jitter ?? 0;
       const ang = h.angle + yawOff + (jitter ? (Math.random() - 0.5) * jitter : 0);
       const pitchJit = pitchOff + (jitter ? (Math.random() - 0.5) * jitter * 0.45 : 0);
@@ -5523,7 +5523,7 @@ specIsShellGun(spec)
     const h = this.heli;
     const launch = spec.launch;
     if (launch.mode !== "kick_motor") return;
-    const { x: px, y: py, side } = this.missilePylon(slot);
+    const { x: px, y: py, side } = this.hardpointPylon(slot);
     const ang = h.angle + yawOff;
     const kick = launch.kickSpeed;
     const inherit = launch.inheritMomentum;
@@ -5592,14 +5592,17 @@ specIsShellGun(spec)
     const launch = spec.launch;
     const range = launch.mode === "beam" ? launch.range : 780;
     const socket = h.spec.sockets[slot]!;
-    const fixed = socket.class === "fixed" || socket.class === "hardpoint";
     let tip: { x: number; y: number };
     let ang = h.angle + yawOff;
-    if (fixed) {
+    if (socket.class === "hardpoint") {
+      tip = this.hardpointPylon(slot);
+    } else if (socket.class === "fixed") {
       const authored = craftSocketPoints(h.spec, socket);
-      tip = authored[0]
-        ? this.craftBodyMountWorldPos(authored[0])
-        : this.missilePylon(slot);
+      const uv =
+        socket.muzzleFire === "alternate" && authored.length > 1
+          ? authored[this.playerGunSide++ % authored.length]
+          : authored[0];
+      tip = uv ? this.craftBodyMountWorldPos(uv) : this.hardpointPylon(slot);
     } else {
       const gunI = this.gunVisualIndexForSlot(slot, barrelIndex);
       tip = this.gunTip(gunI);
@@ -5988,7 +5991,7 @@ specIsShellGun(spec)
     const h = this.heli;
     const launch = spec.launch;
     if (launch.mode !== "drop") return;
-    const pylon = this.missilePylon(slot);
+    const pylon = this.hardpointPylon(slot);
     const aim =
       st.gx != null && st.gy != null ? { x: st.gx, y: st.gy } : ptr;
     const release = this.bombReleaseVelocity(spec, pylon.x, pylon.y, aim, yawOff, slot);
@@ -6414,7 +6417,7 @@ specIsShellGun(spec)
     if (!payloadIsRemote(spec.payload)) return;
     const remoteSpec = remoteSpecOf(spec.payload.remote!.kind);
     const h = this.heli;
-    const pylon = this.missilePylon(slot);
+    const pylon = this.hardpointPylon(slot);
     const ang = h.angle + yawOff;
     const cp = Math.cos(pitchOff);
     const sp = Math.sin(pitchOff);
@@ -6594,6 +6597,10 @@ specIsShellGun(spec)
     const h = this.heli;
     const socket = h.spec.sockets[slot];
     const z = h.z + ZOff.shot;
+    if (socket?.class === "hardpoint") {
+      const p = this.hardpointPylon(slot);
+      return { x: p.x, y: p.y, z };
+    }
     if (socket?.class === "fixed") {
       const authored = craftSocketPoints(h.spec, socket);
       if (authored[0]) {
