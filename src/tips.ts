@@ -162,7 +162,7 @@ export const TACTICAL_TIPS: TacticalTip[] = [
   },
   {
     id: "cm_cloak",
-    text: "Phase Cloak lets rounds pass through you, but you cannot shoot until it ends. Cancel early with E to save cooldown.",
+    text: "Phase Cloak lets rounds pass through you, but primary guns stay dark until it ends — hardpoints still fire. Cancel early with E to save cooldown.",
     context: { cms: ["phase_cloak"] },
   },
   {

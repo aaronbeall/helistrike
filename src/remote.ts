@@ -1,5 +1,3 @@
-import type { WeaponSensorView } from "./combat";
-
 /** Launched, player-controlled craft — Spectre today, reusable for other pods. */
 export type RemoteKind = "spectre";
 
@@ -21,7 +19,7 @@ export interface RemoteSpec {
   launchSpeed: number;
   look: string;
   scale: number;
-  sensorView?: WeaponSensorView;
+  thermal?: boolean;
 }
 
 export interface RemoteCraft {
@@ -60,7 +58,7 @@ export const REMOTE_CRAFTS: Record<RemoteKind, RemoteSpec> = {
     launchSpeed: 280,
     look: "craft_quad_drone",
     scale: 0.42,
-    sensorView: { mode: "thermal", source: "remote", palette: "full_spectrum" },
+    thermal: true,
   },
 };
 

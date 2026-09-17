@@ -308,7 +308,7 @@ function hashHue(id: string): number {
 }
 
 function cannonTracerOpts(spec: PlayerWpnSpec): Parameters<typeof drawTracerShape>[0] {
-  if (spec.tracer) return spec.tracer;
+  if (spec.art.tracer) return spec.art.tracer;
   const hue = hashHue(spec.id);
   const rgbAt = (h: number, s: number, l: number): TracerRgb => {
     const a = (h / 360) * 6;
@@ -341,8 +341,8 @@ function cannonTracerOpts(spec: PlayerWpnSpec): Parameters<typeof drawTracerShap
  */
 export function bakePlayerCannonLooks(textures: Phaser.Textures.TextureManager): void {
   for (const spec of Object.values(PLAYER_WPNS)) {
-    if (spec.kind !== "cannon" && spec.kind !== "beam") continue;
-    const key = String(spec.look);
+    if (!spec.art.tracer && spec.launch.mode !== "beam") continue;
+    const key = String(spec.art.look);
     if (textures.exists(key)) continue;
     add(textures, key, drawTracerShape(cannonTracerOpts(spec)));
     bakeShadows(textures, key);
@@ -651,8 +651,8 @@ function collectArtKeys(): string[] {
     keys.add(k);
   }
   for (const spec of Object.values(PLAYER_WPNS)) {
-    if (spec.kind === "cannon" || spec.kind === "beam") keys.add(String(spec.look));
-    if (spec.mount) keys.add(spec.mount);
+    if (spec.art.tracer || spec.launch.mode === "beam") keys.add(String(spec.art.look));
+    if (spec.art.mount) keys.add(spec.art.mount);
   }
   return [...keys];
 }

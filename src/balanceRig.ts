@@ -947,6 +947,16 @@ function colorOf(group: string): number {
 }
 
 /** F-cycle match keys. Most-specific type first (used for chart color). */
+
+function playerShotKind(w: PlayerWpnSpec): ShotKind {
+  if (w.launch.mode === "beam") return "beam";
+  if (w.launch.mode === "drop") return "guided-missile";
+  if (w.art.tracer || (w.launch.mode === "muzzle" && !w.guidance && !w.exhaust)) return "cannon";
+  if (w.exhaust?.kind === "particles" && w.exhaust.smoke === "rocket" && !w.guidance) return "rocket";
+  if (w.guidance?.targeting.mode === "lock_on") return "lock-on-missile";
+  return "guided-missile";
+}
+
 function weaponTypeTags(kind: ShotKind, launchMode?: string): string[] {
   if (launchMode === "drop") return ["bomb"];
   if (kind === "beam" || launchMode === "beam") return kind === "cannon" ? ["beam", "cannon"] : ["beam"];
@@ -975,7 +985,7 @@ function enemyWeaponDps(w: WeaponSpec | undefined): number {
 
 /** Unmodified player weapon DPS (no dmgMul). */
 function playerWeaponDps(w: PlayerWpnSpec): number {
-  return sustainedDps(w.dmg, w.fireCd, w.salvo?.count ?? 1, w.salvo?.interval ?? 0);
+  return sustainedDps(w.dmg, w.fireCd, w.fire?.salvo?.count ?? 1, w.fire?.salvo?.interval ?? 0);
 }
 
 function playerClassMul(w: PlayerWpnSpec, cls: UnitClass): number {
@@ -1223,10 +1233,10 @@ function buildBalanceCatalog(): BalancePoint[] {
   }
 
   for (const w of Object.values(PLAYER_WPNS)) {
-    const tags = weaponTypeTags(w.kind, w.launch?.mode);
+    const tags = weaponTypeTags(playerShotKind(w), w.launch.mode);
     const kindGroup = tags[0] ?? "missile";
-    const salvoN = w.salvo?.count ?? 1;
-    const salvoGap = w.salvo?.interval ?? 0;
+    const salvoN = w.fire?.salvo?.count ?? 1;
+    const salvoGap = w.fire?.salvo?.interval ?? 0;
     const baseDps = sustainedDps(w.dmg, w.fireCd, salvoN, salvoGap);
     out.push({
       id: `weapons:player:${w.id}`,
@@ -1244,8 +1254,8 @@ function buildBalanceCatalog(): BalancePoint[] {
         life: w.life,
         range: w.speed * w.life,
         ammo: w.ammo,
-        ...(w.salvo
-          ? { "salvo.count": w.salvo.count, "salvo.interval": w.salvo.interval }
+        ...(w.fire?.salvo
+          ? { "salvo.count": w.fire.salvo.count, "salvo.interval": w.fire.salvo.interval }
           : {}),
       },
     });

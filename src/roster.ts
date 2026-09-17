@@ -149,7 +149,7 @@ export const HULL_MOUNT_COLOR: Record<HullMountRole, number> = {
   rotor: 0x5ec8ff,
   dish: 0xe8b84a,
   troop: 0xd878ff,
-  hardpoint: 0xff8c42,
+  hardpoint: 0xffe066,
   exhaust: 0xb04aff,
   wingtip: 0xc8f0ff,
 };

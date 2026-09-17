@@ -569,6 +569,16 @@ export class CombatRig {
 }
 
 /** F-cycle match keys. Most-specific type first. */
+
+function playerShotKind(w: PlayerWpnSpec): ShotKind {
+  if (w.launch.mode === "beam") return "beam";
+  if (w.launch.mode === "drop") return "guided-missile";
+  if (w.art.tracer || (w.launch.mode === "muzzle" && !w.guidance && !w.exhaust)) return "cannon";
+  if (w.exhaust?.kind === "particles" && w.exhaust.smoke === "rocket" && !w.guidance) return "rocket";
+  if (w.guidance?.targeting.mode === "lock_on") return "lock-on-missile";
+  return "guided-missile";
+}
+
 function weaponTypeTags(kind: ShotKind, launchMode?: string): string[] {
   if (launchMode === "drop") return ["bomb"];
   if (kind === "beam" || launchMode === "beam") return kind === "cannon" ? ["beam", "cannon"] : ["beam"];
@@ -615,9 +625,9 @@ function playerEntries(): CombatEntry[] {
       cat: "player" as const,
       label: w.name,
       tag: "PLY",
-      tags: weaponTypeTags(w.kind, w.launch?.mode),
-      tex: w.look,
-      ...(w.mount ? { mountTex: w.mount } : {}),
+      tags: weaponTypeTags(playerShotKind(w), w.launch.mode),
+      tex: w.art.look,
+      ...(w.art.mount ? { mountTex: w.art.mount } : {}),
       rotOff: 0,
       stats: block.stats,
       info: block.info,
@@ -658,8 +668,8 @@ function formatPlayer(w: PlayerWpnSpec): { stats: string[]; info: string[] } {
     crafts.length ? `used by: ${crafts.join(" · ")}` : "used by: —",
     "source: combat.ts PLAYER_WPNS / SHOT_ORIGIN / SHOT_TAIL",
   ];
-  if (w.mount) {
-    info.push(`mount UVs: spriteOrigin.ts SPRITE_SPECS[${w.mount}] (edit in sprite rig)`);
+  if (w.art.mount) {
+    info.push(`mount UVs: spriteOrigin.ts SPRITE_SPECS[${w.art.mount}] (edit in sprite rig)`);
   }
   const trav = traverseForWeapon(w.id);
   if (trav != null) {
@@ -669,7 +679,7 @@ function formatPlayer(w: PlayerWpnSpec): { stats: string[]; info: string[] } {
   if (sockRange) {
     info.push(`range: ${sockRange} (from craft socket)`);
   }
-  if (w.kind === "lock-on-missile" || w.kind === "guided-missile") {
+  if (w.guidance != null) {
     info.push(
       `MISSILE_IGNITE ${MISSILE_IGNITE}`,
       `LOCK_ON_LOCK_T ${LOCK_ON_LOCK_T}`,
@@ -680,7 +690,7 @@ function formatPlayer(w: PlayerWpnSpec): { stats: string[]; info: string[] } {
     stats: [
       ...dumpRig(w, { skip: ["notes"] }),
       ...shotLayoutDump(),
-      ...(w.mount ? mountLayoutDump(w.mount) : []),
+      ...(w.art.mount ? mountLayoutDump(w.art.mount) : []),
     ],
     info,
   };

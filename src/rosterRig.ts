@@ -110,7 +110,7 @@ export class RosterRig {
   private idx = 0;
   private filter: Filter = "all";
   private zoom = 2;
-  /** Radius / height / mount / muzzle overlay markers. */
+  /** Mount / muzzle / traverse overlays (O). Footprint / radius / height always draw. */
   private showMarks = true;
   /** Assembled (mounted) vs parts laid out separately. */
   private composition: Composition = "assembled";
@@ -1069,21 +1069,30 @@ export class RosterRig {
       });
     }
 
-    if (!this.showMarks) return;
-
-    // Footprint in art space: facing = -rotOff so halfL aligns with nose-up sprites.
+    // Hull metrics always on — collision footprint / radius / height / leash.
+    // Facing = −rotOff so halfL aligns with nose-up sprites.
     const faceAng = -opts.rotOff;
     if (opts.kind) {
       const fp = footprintOf({ kind: opts.kind, x: cx, y: cy, angle: faceAng });
       if (fp.shape === "circle") {
-        strokeFootprint(g, { ...fp, r: fp.r * s }, 0x5ec8ff, 0.7);
+        strokeFootprint(g, { ...fp, r: fp.r * s }, 0x5ec8ff, 0.75);
       } else {
+        // Dim visual radius for comparison when an oriented hit box is authored.
+        g.lineStyle(1.1, 0x5ec8ff, 0.28);
+        g.strokeCircle(cx, cy, opts.radius * s);
         strokeFootprint(
           g,
           { ...fp, halfW: fp.halfW * s, halfL: fp.halfL * s },
-          0x5ec8ff,
-          0.85
+          0xffe066,
+          0.95
         );
+        // Nose tick along facing (halfL).
+        const nose = {
+          x: cx + Math.cos(faceAng) * fp.halfL * s,
+          y: cy + Math.sin(faceAng) * fp.halfL * s,
+        };
+        g.lineStyle(1.5, 0xffe066, 0.9);
+        g.lineBetween(cx, cy, nose.x, nose.y);
       }
     } else {
       g.lineStyle(1.5, 0x5ec8ff, 0.55);
@@ -1095,6 +1104,8 @@ export class RosterRig {
     }
     g.lineStyle(1.2, 0x6dbb4a, 0.55);
     g.lineBetween(cx, cy, cx, cy - opts.height * s);
+
+    if (!this.showMarks) return;
 
     if (opts.craft) this.drawCraftSocketTraverseArcs(opts.craft, opts.pivot, s);
 

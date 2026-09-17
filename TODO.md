@@ -173,13 +173,16 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 
 * Craft unlocks
 * Per-weapon kill totals
+* Per-craft objects completed
+* Enemy type kills (air, troop, attack vehicle, flee vehicle, building, boat)
 * All time total kills
+* Game completions (campaign, rogue, skirmish, difficulty setting)
 * Specials
   * Ride The Lightning -- kill a vehicle with tesla coil from directly above
-  * Search and destroy -- kill a vehicle beyond radar range with a guided missile (TOW, SPIKE)
+  * Search and destroy -- kill a vehicle beyond radar range with a guided missile (TOW, Spike NLOS, etc)
   * Coming in Hot -- kill 5+ enemies with a single sustained burst of gun fire, without stopping
   * You Can't Hide -- kill an enemy with lock-on missile without line of sight
-  * Death from Above -- kill 5+ enemies with single howitzer shot
+  * Death from Above -- kill 5+ enemies with a single howitzer shot
   * Brrrrrt -- kill 5+ enemies with Avenger cannon in a single sustained burst
   * Dark Knight Rises -- kill 5 enemies while blinded from the same smoke bomb
   * Lights Out -- kill 5 enemies who are stunned by the same EMP
@@ -187,3 +190,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
   * Thunder Run -- beat a mission without ever letting go of thrust
   * Knife Fight -- complete a mission with guns only (no missiles, rockets, bombs or flares)
   * Can't Touch This -- dodge 100 locked on missiles
+  * Silent Assassin -- kill an armored enemy with whisper cannons while they are blinded
+  * Never Saw it Coming -- sneak up and kill an enemy from close range using cover
+  * Armeggedon -- wipe out an entire garrison with a single bomb (MOAB, Rockeye, etc)
+  * Top Hat Double Tap -- kill a field officer with kinetic slugs

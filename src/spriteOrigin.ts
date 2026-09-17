@@ -103,8 +103,8 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
       ], "quad"),
       // Twin side-pod tips (paired simultaneous fire — alternating yaw-couples a tiny quad).
       ...pts("muzzle", [uv(0.30, 0.365), uv(0.70, 0.365)], "pod"),
-      // Tesla / belly emitter — centerline, slightly forward of the origin.
-      { role: "gun", x: 0.5, y: 0.46, id: "coil" },
+      // Center Tesla emit tip.
+      { role: "muzzle", x: 0.5, y: 0.5, id: "coil" },
       ...pts("hardpoint", [uv(0.24, 0.55), uv(0.76, 0.55)]),
     ],
   },

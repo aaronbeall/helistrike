@@ -17,8 +17,13 @@ import {
   payloadDustMul,
   payloadHeBlend,
   guidanceUsesLock,
-  guidanceHasEnergyTrail,
-  guidanceEnergyRibbons,
+  guidanceIsLockOn,
+  exhaustIsEnergy,
+  exhaustRibbons,
+  exhaustHue,
+  exhaustWarpMotes,
+  launchIsArcBeam,
+  launchIsRayBeam,
   ENERGY_TRAIL_NODE_LIFE,
   HELIX_TRAIL_NODE_LIFE,
   PLAYER_WPNS,
@@ -40,10 +45,101 @@ import {
   type LockAcquire,
   type Flare,
   type EnergyTrailNode,
-  type WeaponSensorView,
+  type WeaponLaunch,
+  type WeaponGravity,
+  type WeaponGuidance,
+  type WeaponPayload,
+  type ShotBehavior,
   heatClassScore,
   heatClassCategory,
 } from "./combat";
+
+/** Gravity from drop / lobbed muzzle launch. */
+function launchGravity(launch: WeaponLaunch | undefined): WeaponGravity | undefined {
+  if (!launch) return undefined;
+  if (launch.mode === "drop") return launch.gravity;
+  if (launch.mode === "muzzle") return launch.gravity;
+  return undefined;
+}
+
+function targetingMode(g: WeaponGuidance | undefined): WeaponGuidance["targeting"]["mode"] | undefined {
+  return g?.targeting.mode;
+}
+
+function payloadIsRemote(p: WeaponPayload | undefined): boolean {
+  return !!p?.remote;
+}
+
+function payloadIsCluster(p: WeaponPayload | undefined): boolean {
+  return !!p?.cluster;
+}
+
+function payloadIsSmoke(p: WeaponPayload | undefined): boolean {
+  return !!p?.smoke;
+}
+
+function payloadIsHelix(p: WeaponPayload | undefined): boolean {
+  return !!p?.helix;
+}
+
+/** HE explode path: authored detonate, or HE without needing kinetic pen. */
+function payloadIsHe(p: WeaponPayload | undefined): boolean {
+  return !!p?.detonate;
+}
+
+/** Gun kinetic / penetrator path (not beam). */
+function payloadIsKinetic(p: WeaponPayload | undefined, launch?: WeaponLaunch): boolean {
+  if (!p) return false;
+  if (p.penetration != null) return true;
+  if (launch?.mode === "beam") return false;
+  return (
+    !p.detonate &&
+    !p.cluster &&
+    !p.smoke &&
+    !p.remote &&
+    !p.warp &&
+    !p.helix &&
+    !p.stun
+  );
+}
+
+/** Shell-ejecting player guns. */
+function specIsShellGun(spec: PlayerWpnSpec): boolean {
+  if (spec.launch.mode !== "muzzle" || spec.guidance) return false;
+  const p = spec.payload;
+  if (payloadIsHelix(p) || p.remote || p.warp || p.cluster || p.smoke || p.stun) return false;
+  // Kinetic (incl. empty / no pen) or HE shell guns.
+  return payloadIsKinetic(p, spec.launch) || !!p.detonate;
+}
+
+/** Unguided Hydra-style rocket pod (muzzle + rocket smoke, no guidance). */
+function specIsRocketPod(spec: PlayerWpnSpec): boolean {
+  const ex = spec.exhaust;
+  return (
+    spec.launch.mode === "muzzle" &&
+    !spec.guidance &&
+    !!ex &&
+    ex.kind === "particles" &&
+    ex.smoke === "rocket"
+  );
+}
+
+function shotIsGunOrBeam(s: Shot): boolean {
+  if (s.beh) {
+    return (
+      s.beh.launch.mode === "beam" ||
+      (s.beh.launch.mode === "muzzle" && !s.beh.guidance && !s.beh.exhaust)
+    );
+  }
+  return !s.homePlayer && s.motor == null && !s.energyTrail && !s.energyTrails;
+}
+
+function shotFacesHeading(s: Shot): boolean {
+  if (s.beh?.art.face === "heading") return true;
+  if (s.beh?.art.face === "velocity") return false;
+  return !!(s.homePlayer || s.motor != null);
+}
+
 import { remoteSpecOf, type RemoteCraft } from "./remote";
 import {
   aimInStationArc,
@@ -77,7 +173,7 @@ import {
   type Footprint,
 } from "./footprint";
 import { lookupSpriteMuzzles, lookupSpriteOrigin } from "./spriteOrigin";
-import { allCrafts, craftAgility, craftAimsWithTurret, craftBombDrop, craftCameraScale, craftCloudParallax, craftComposite, craftCompositePartScale, craftCrewHudTag, craftExhaustFlameHue, craftExhaustFlameSheet, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftGunPreferDegrees, craftGunPreferOffset, craftGunSocketSlots, craftHardpointMounts, craftControlScheme, craftLoadoutLabel, craftOf, craftOrigin, craftPreviewExhaustScale, craftPreviewExhaustTint, craftPreviewFitScale, craftRotorAlongScale, craftRotorFlightSpeed, craftRotorMounts, craftRotorPreviewSpinMs, craftRotorTiltMul, craftSocketBarrelCount, craftSocketMultiplicity, craftSocketPoints, craftSocketStartingAmmo, craftWingTipMounts, rotorDrawSpan, rotorMountsOf, rotorSpinSign, type CraftComposite } from "./craft";
+import { allCrafts, craftAgility, craftAimsWithTurret, craftBombDrop, craftCameraScale, craftCloudParallax, craftComposite, craftCompositePartScale, craftCrewHudTag, craftExhaustFlameHue, craftExhaustFlameSheet, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftGunPreferDegrees, craftGunPreferOffset, craftGunSocketSlots, craftHardpointMounts, craftControlScheme, craftLoadoutLabel, craftOf, craftOrigin, craftPreviewExhaustScale, craftPreviewExhaustTint, craftPreviewFitScale, craftRotorAlongScale, craftRotorFlightSpeed, craftRotorMounts, craftRotorPreviewSpinMs, craftRotorTiltMul, craftSocketBarrelCount, craftSocketIsPrimary, craftSocketMultiplicity, craftSocketPoints, craftSocketStartingAmmo, craftWingTipMounts, rotorDrawSpan, rotorMountsOf, rotorSpinSign, type CraftComposite } from "./craft";
 import { missionOf } from "./mission";
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
 import { rigsAnyOpen, installRigHotkeys } from "./rigs";
@@ -135,8 +231,6 @@ const AUTO_GUN_ALIGN_TOL = 0.14;
 const AUTO_GUN_HEADING_WEIGHT = 900;
 /** Shift each barrel's acquire circle along prefer heading by this fraction of range. */
 const AUTO_GUN_RANGE_BIAS = 0.3;
-/** Whisper (concealed cannon) bonus vs stunned / smoke-blinded targets. */
-const WHISPER_DEBUFF_MUL = 1.5;
 type FxPolicy = {
   frameCap: number;
   activeCap: number;
@@ -208,7 +302,7 @@ function gunWorldRot(_tex: string, aim: number): number {
 /** Apache M230 cadence is the full-density reference for per-shot muzzle/impact particles. */
 const PROJECTILE_FX_BASE_INTERVAL = 0.07;
 const ENEMY_PROJECTILE_FX_MUL = 0.72;
-/** M230 chain gun — muzzle FX size reference (`spec.scale` / `blast`). */
+/** M230 chain gun — muzzle FX size reference (`spec.art.scale` / `blast`). */
 const MUZZLE_FX_REF_SCALE = 0.56;
 const MUZZLE_FX_REF_BLAST = 36;
 const TESLA_STREAMS = 3;
@@ -253,7 +347,7 @@ function caliberMmFromDesignation(designation: string): number | undefined {
 
 /** Player gun muzzle FX vs M230 — LMGs smaller, heavies a bit larger. */
 function playerMuzzleFxMul(spec: PlayerWpnSpec): number {
-  const byScale = Math.pow(spec.scale / MUZZLE_FX_REF_SCALE, 0.7);
+  const byScale = Math.pow(spec.art.scale / MUZZLE_FX_REF_SCALE, 0.7);
   const byBlast = Math.pow(Math.max(0.5, spec.blast) / MUZZLE_FX_REF_BLAST, 0.25);
   return Phaser.Math.Clamp(byScale * byBlast, 0.4, 1.35);
 }
@@ -411,7 +505,7 @@ export class MissionScene extends Phaser.Scene {
   thermalWreckMarks: ThermalWreckMark[] = [];
   smoke!: Phaser.GameObjects.Particles.ParticleEmitter;
   flame!: Phaser.GameObjects.Particles.ParticleEmitter;
-  playerFlame!: Phaser.GameObjects.Particles.ParticleEmitter;
+  hotFlame!: Phaser.GameObjects.Particles.ParticleEmitter;
   hurtSmoke!: Phaser.GameObjects.Particles.ParticleEmitter;
   playerHurtSmoke!: Phaser.GameObjects.Particles.ParticleEmitter;
   burn!: Phaser.GameObjects.Particles.ParticleEmitter;
@@ -632,7 +726,11 @@ export class MissionScene extends Phaser.Scene {
   /** Look offset when the current stinger started — ease from here, not from the player. */
   stingerCamFromX = 0;
   stingerCamFromY = 0;
-  /** Keep thermal/sensor palette during SPIKE/TOW impact linger after the shot is gone. */
+  /** Focus altitude when the stinger started — ease with look so 2.5D scale doesn't pop. */
+  stingerCamFromZ = 0;
+  /** Live blended focus Z while a stinger owns the cam. */
+  stingerFocusZ = 0;
+  /** Keep thermal/sensor palette during povCam impact linger after the shot is gone. */
   sensorLingerPalette: ThermalPalette | null = null;
   sensorLingerT = 0;
   /** Warp slow-mo held through impact-cam linger after the bomb is gone. */
@@ -660,7 +758,7 @@ export class MissionScene extends Phaser.Scene {
     driftAng: number;
     driftSpd: number;
   }[] = [];
-  towLookHold = 0;
+  povCamLookHold = 0;
   /** Wall-clock dt for this frame (warp missiles ignore sim slowmo). */
   frameWallDt = 0;
   /** Remote craft (Spectre) is under direct player flight control. */
@@ -708,8 +806,8 @@ export class MissionScene extends Phaser.Scene {
   empGlitchMax = 0;
   empBurstT = 0;
   empBurst: { x: number; y: number; z: number; radius: number } | null = null;
-  towLookX = 0;
-  towLookY = 0;
+  povCamLookX = 0;
+  povCamLookY = 0;
   /** Rising-edge pointer tracking for click / release weapon controls. */
   pointerWasDown = false;
   /** Latched GPS / designate aim point while holding designate_then_release. */
@@ -898,15 +996,17 @@ export class MissionScene extends Phaser.Scene {
     this.lookCamX = 0;
     this.lookCamY = 0;
     this.planeClouds = [];
-    this.towLookHold = 0;
-    this.towLookX = 0;
-    this.towLookY = 0;
+    this.povCamLookHold = 0;
+    this.povCamLookX = 0;
+    this.povCamLookY = 0;
     this.sensorLingerPalette = null;
     this.sensorLingerT = 0;
     this.warpLingerScale = null;
     this.stingerReleased = false;
     this.stingerCamFromX = 0;
     this.stingerCamFromY = 0;
+    this.stingerCamFromZ = 0;
+    this.stingerFocusZ = 0;
     this.playLastFrame = false;
     this.debugHit = false;
     this.debugBlast = false;
@@ -1903,7 +2003,7 @@ export class MissionScene extends Phaser.Scene {
         rotate: fxSpin,
       })
     );
-    this.playerFlame = this.poolFx("fire", () =>
+    this.hotFlame = this.poolFx("fire", () =>
       this.add.particles(0, 0, "fx_flame", {
         lifespan: { onEmit: () => 480 * this.trailFxLife },
         speed: { min: 8, max: 40 },
@@ -3013,7 +3113,7 @@ export class MissionScene extends Phaser.Scene {
     }
     // Warp bomb: keep world crawl through impact-cam linger (shot is already gone).
     if (this.warpLingerScale != null) {
-      if (this.towLookHold > 0) simScale = Math.min(simScale, this.warpLingerScale);
+      if (this.povCamLookHold > 0) simScale = Math.min(simScale, this.warpLingerScale);
       else this.warpLingerScale = null;
     }
     const dt = uiPause ? 0 : wallDt * simScale;
@@ -3571,15 +3671,15 @@ export class MissionScene extends Phaser.Scene {
       h.gunAngle = h.angle;
       h.syncStationAimToHull();
     } else if (h.phase === "flight" || h.phase === "ready" || h.phase === "spool") {
-      const teslaSpec = this.loadout[h.weapon];
-      const teslaAim =
-        teslaSpec?.id === "tesla_beam"
+      const arcSpec = this.loadout[h.weapon];
+      const arcAim =
+        launchIsArcBeam(arcSpec?.launch)
           ? this.pickTeslaTarget(
               this.teslaMuzzleOrigin(h.weapon),
               this.worldPointer()
             )
           : undefined;
-      const aim = this.reticleAimWorld(teslaAim ?? this.reticleUnit());
+      const aim = this.reticleAimWorld(arcAim ?? this.reticleUnit());
       const gunI = aimSlot != null ? this.gunVisualIndexForSlot(aimSlot) : 0;
       const from = this.guns[gunI]?.visible
         ? this.gunTip(gunI)
@@ -4213,15 +4313,25 @@ export class MissionScene extends Phaser.Scene {
     const h = this.heli;
     const aim = this.worldPointer();
     const spec = this.loadout[h.weapon]!;
-    const wpn = spec.kind;
     const bombDrop = spec.launch.mode === "drop";
-    const missile = wpn !== "cannon";
+    const square = spec.cam.reticle === "square";
+    // Former kind==="cannon": tracer muzzle guns (incl. plasma energy trail).
+    const gunSight =
+      spec.launch.mode !== "beam" &&
+      spec.launch.mode !== "drop" &&
+      !spec.guidance &&
+      (!!spec.art.tracer || (spec.launch.mode === "muzzle" && !spec.exhaust));
     this.reticle.setTexture(
-      !bombDrop && missile && this.textures.exists("mark_reticle_sq") ? "mark_reticle_sq" : "mark_reticle"
+      !bombDrop && square && this.textures.exists("mark_reticle_sq") ? "mark_reticle_sq" : "mark_reticle"
     );
-    this.drawReticleTally(p.x, p.y, missile ? (this.ammo[h.weapon] ?? 0) : 0, spec.ammo);
-    // Spectre *slot* and Tesla have no laser. Other slots keep theirs even while the camera is on the drone.
-    if (spec.payload.mode === "remote" || spec.id === "tesla_beam") {
+    const ammoLeft = this.ammo[h.weapon] ?? 0;
+    if (spec.launch.mode === "beam") {
+      this.drawReticleAmmoBar(p.x, p.y, ammoLeft, spec.ammo);
+    } else {
+      this.drawReticleTally(p.x, p.y, !gunSight ? ammoLeft : 0, spec.ammo);
+    }
+    // Remote slot and hold-arc beams have no laser. Other slots keep theirs even while the camera is on the drone.
+    if (payloadIsRemote(spec.payload) || launchIsArcBeam(spec.launch)) {
       this.sight.clear();
       this.sight.setVisible(false);
       return;
@@ -4232,7 +4342,7 @@ export class MissionScene extends Phaser.Scene {
       this.drawBombTrajectory(aim);
       return;
     }
-    if (!missile) {
+    if (gunSight) {
       const tip = this.cannonSightOrigin(h.weapon);
       const socket = h.spec.sockets[h.weapon];
       const aimAng =
@@ -4245,9 +4355,12 @@ export class MissionScene extends Phaser.Scene {
         this.sight.clear();
         return;
       }
+      // worldToScreen reuses a scratch — copy before the second call.
       const from = worldToScreen(tip.x, tip.y, h.z);
+      const x0 = from.x;
+      const y0 = from.y;
       const to = worldToScreen(clip.x, clip.y, clip.z);
-      this.drawSightLine(from.x, from.y, to.x, to.y, "cannon");
+      this.drawSightLine(x0, y0, to.x, to.y, "cannon");
       return;
     }
     const pylon = this.missilePylon();
@@ -4258,8 +4371,10 @@ export class MissionScene extends Phaser.Scene {
       return;
     }
     const from = worldToScreen(pylon.x, pylon.y, h.z);
+    const x0 = from.x;
+    const y0 = from.y;
     const to = worldToScreen(clip.x, clip.y, clip.z);
-    this.drawSightLine(from.x, from.y, to.x, to.y, "missile");
+    this.drawSightLine(x0, y0, to.x, to.y, "missile");
   }
 
   /** Laser / bomb path always sorts under the craft hull. */
@@ -4304,8 +4419,8 @@ export class MissionScene extends Phaser.Scene {
     let vx = release.vx;
     let vy = release.vy;
     let vz = release.vz;
-    const grav = spec.gravity?.acceleration ?? 210;
-    const term = spec.gravity?.terminalVelocity ?? 520;
+    const grav = launchGravity(spec.launch)?.acceleration ?? 210;
+    const term = launchGravity(spec.launch)?.terminalVelocity ?? 520;
     const step = 1 / 36;
     const pts: { x: number; y: number }[] = [];
     for (let i = 0; i < 140; i++) {
@@ -4318,10 +4433,10 @@ export class MissionScene extends Phaser.Scene {
       pts.push({ x: at.x, y: at.y });
       if (z <= gnd + 4) break;
       // Soft bias toward reticle for GPS bombs (path hint only).
-      if (spec.guidance.mode === "waypoint") {
+      if (targetingMode(spec.guidance) === "waypoint") {
         const want = Math.atan2(aim.y - y, aim.x - x);
         const da = Phaser.Math.Angle.Wrap(want - Math.atan2(vy, vx));
-        const rate = (spec.guidance.steerRate ?? 1.5) * step;
+        const rate = (spec.guidance?.flight.turnRate ?? 1.5) * step;
         const face = Math.atan2(vy, vx) + Phaser.Math.Clamp(da, -rate, rate);
         const horiz = Math.hypot(vx, vy);
         vx = Math.cos(face) * horiz;
@@ -4361,8 +4476,8 @@ export class MissionScene extends Phaser.Scene {
     const h = this.heli;
     const socket = slot != null ? h.spec.sockets[slot] : h.spec.sockets[h.weapon];
     const tune = craftBombDrop(h.spec, socket);
-    const grav = spec.gravity?.acceleration ?? 210;
-    const term = spec.gravity?.terminalVelocity ?? 520;
+    const grav = launchGravity(spec.launch)?.acceleration ?? 210;
+    const term = launchGravity(spec.launch)?.terminalVelocity ?? 520;
     const z0 = h.z + ZOff.shot;
     const gnd = groundZ(this.world, aim.x, aim.y);
     // Socket momentum: fraction of craft vel. Low (Chinook) → aim-led; high (Lightning) → carry.
@@ -4507,7 +4622,7 @@ export class MissionScene extends Phaser.Scene {
     spec: PlayerWpnSpec
   ): { x: number; y: number; z: number } {
     const z = this.heli.z + ZOff.shot;
-    const xy = this.shotSpawnXY(tip.x, tip.y, angle, z, spec.look, spec.scale ?? 1);
+    const xy = this.shotSpawnXY(tip.x, tip.y, angle, z, spec.art.look, spec.art.scale ?? 1);
     return { x: xy.x, y: xy.y, z };
   }
 
@@ -4636,6 +4751,44 @@ export class MissionScene extends Phaser.Scene {
         const tx = x + t * tickGap;
         g.lineBetween(tx, y, tx, y + tickH);
       }
+    }
+  }
+
+  /** Beam weapons: subtle circular reserve (drains clockwise from full). */
+  drawReticleAmmoBar(cx: number, cy: number, count: number, max: number): void {
+    const g = this.reticleMark;
+    g.clear();
+    if (!Number.isFinite(max) || max <= 0) {
+      g.setVisible(false);
+      return;
+    }
+    g.setVisible(true);
+    const frac = Phaser.Math.Clamp(
+      this.infAmmo || !Number.isFinite(count) ? 1 : count / max,
+      0,
+      1
+    );
+    // Top-right of the reticle mark, clear of the reticle ring.
+    const r = 7;
+    const ox = cx + 34;
+    const oy = cy - 34;
+    const start = -Math.PI / 2;
+    // Track
+    g.lineStyle(1.5, 0x000000, 0.4);
+    g.beginPath();
+    g.arc(ox, oy, r, 0, Math.PI * 2, false);
+    g.strokePath();
+    g.lineStyle(1.15, 0xe8b84a, 0.22);
+    g.beginPath();
+    g.arc(ox, oy, r, 0, Math.PI * 2, false);
+    g.strokePath();
+    // Remaining ammo arc (full ring → empty), clockwise from 12 o'clock.
+    if (frac > 0.002) {
+      const end = start + Math.PI * 2 * frac;
+      g.lineStyle(1.6, 0xe8b84a, 0.62);
+      g.beginPath();
+      g.arc(ox, oy, r, start, end, false);
+      g.strokePath();
     }
   }
 
@@ -4781,12 +4934,12 @@ export class MissionScene extends Phaser.Scene {
 
     this.tickPendingSalvos(dt, ptr);
     this.teslaLive = null;
-    if (this.loadout[h.weapon]?.id !== "tesla_beam") {
+    if (!launchIsArcBeam(this.loadout[h.weapon]?.launch)) {
       this.teslaHead = null;
       this.teslaLockId = undefined;
     }
 
-    if (h.phase === "flight" && this.canFire && this.cloakT <= 0 && !this.debugOpen && !this.editOpen && !this.helpOpen && !this.exitOpen) {
+    if (h.phase === "flight" && this.canFire && !this.debugOpen && !this.editOpen && !this.helpOpen && !this.exitOpen) {
       this.tickAutomaticStations(dt, ptr);
     }
 
@@ -4796,25 +4949,27 @@ export class MissionScene extends Phaser.Scene {
       this.pointerWasDown = down;
       return;
     }
-    if (this.cloakT > 0) {
-      this.pointerWasDown = down;
-      return;
-    }
 
     const slot = h.weapon;
     const spec = this.loadout[slot]!;
     const socket = h.spec.sockets[slot]!;
 
+    // Slot disabled (e.g. primary guns under cloak) — keep input latch, no fire.
+    if (this.weaponSlotDisabled(slot)) {
+      this.pointerWasDown = down;
+      return;
+    }
+
     // Crew-served automatic: when selected, player aims (syncHeliGfx) and fires
     // with the weapon's normal control mode. Unselected autos fire from tickAutomaticStations.
     if (socket.controller === "automatic") {
       let wantFire = false;
-      if (spec.control.mode === "hold" || spec.control.mode === "automatic") wantFire = down;
-      else if (spec.control.mode === "click" || spec.control.mode === "first_second_click") {
+      if (spec.control.mode === "hold_mouse_down") wantFire = down;
+      else if (spec.control.mode === "click" || spec.control.mode === "click_then_click_to_commit") {
         wantFire = pressed;
       } else if (spec.control.mode === "lock_then_click") {
         wantFire = (pressed || down) && !!h.lockTarget;
-      } else if (spec.control.mode === "designate_then_release") {
+      } else if (spec.control.mode === "click_to_set_target") {
         if (pressed) this.designateLatch = { x: ptr.x, y: ptr.y };
         if (down && this.designateLatch) this.designateLatch = { x: ptr.x, y: ptr.y };
         wantFire = released && !!this.designateLatch;
@@ -4837,7 +4992,7 @@ export class MissionScene extends Phaser.Scene {
     }
 
     // Designate latch: press captures aim, release fires.
-    if (spec.control.mode === "designate_then_release") {
+    if (spec.control.mode === "click_to_set_target") {
       if (pressed) this.designateLatch = { x: ptr.x, y: ptr.y };
       if (down && this.designateLatch) this.designateLatch = { x: ptr.x, y: ptr.y };
     } else if (pressed) {
@@ -4847,9 +5002,8 @@ export class MissionScene extends Phaser.Scene {
     // NLOS second click: commit terminal to lock or aim point; do not fire again.
     // Camera stays on the missile through the dash, then lingers on impact.
     if (
-      spec.control.mode === "first_second_click" &&
-      spec.guidance.mode === "steer_commit" &&
-      spec.guidance.terminalOnSecondClick &&
+      spec.control.mode === "click_then_click_to_commit" &&
+      targetingMode(spec.guidance) === "steer_commit" &&
       pressed
     ) {
       const active = this.shots.find(
@@ -4864,7 +5018,7 @@ export class MissionScene extends Phaser.Scene {
 
     // Remote: click detonates only while its slot is selected AND you're in its view.
     // Other weapons fire from the heli without leaving Spectre cam.
-    if (spec.payload.mode === "remote") {
+    if (payloadIsRemote(spec.payload)) {
       const live = this.activeRemote();
       if (live) {
         if (pressed) {
@@ -4877,19 +5031,19 @@ export class MissionScene extends Phaser.Scene {
     }
 
     let wantFire = false;
-    if (spec.control.mode === "hold" || spec.control.mode === "automatic") wantFire = down;
-    else if (spec.control.mode === "click" || spec.control.mode === "first_second_click") wantFire = pressed;
+    if (spec.control.mode === "hold_mouse_down") wantFire = down;
+    else if (spec.control.mode === "click" || spec.control.mode === "click_then_click_to_commit") wantFire = pressed;
     else if (spec.control.mode === "lock_then_click") wantFire = (pressed || down) && !!h.lockTarget;
-    else if (spec.control.mode === "designate_then_release") wantFire = released && !!this.designateLatch;
+    else if (spec.control.mode === "click_to_set_target") wantFire = released && !!this.designateLatch;
 
-    // Tesla is a barrel cannon: keep the arc live while held; spend on cadence.
-    if (spec.id === "tesla_beam" && spec.payload.mode === "beam") {
+    // Hold-arc beams: keep the stream live while held; spend on cadence.
+    if (launchIsArcBeam(spec.launch)) {
       if (down && this.hasAmmo(slot)) {
         const spend = h.fireCd <= 0;
         if (spend) {
           h.fireCd = spec.fireCd;
           this.spendAmmo(slot);
-          // Turret coils (Cyber Hawk) heat the overlay barrel; fixed belly coils skip.
+          // Turret coils heat the overlay barrel; fixed belly coils skip.
           if (socket.class !== "fixed") {
             this.pulseTurretGunHeat(this.gunVisualIndexForSlot(slot));
           }
@@ -4923,13 +5077,13 @@ export class MissionScene extends Phaser.Scene {
     }
 
     h.fireCd = spec.fireCd;
-    const salvoN = spec.salvo?.count ?? 1;
-    const interval = spec.salvo?.interval ?? 0;
-    const spread = spec.salvo?.spread ?? 0;
-    const cone = spec.salvo?.cone;
+    const salvoN = spec.fire?.salvo?.count ?? 1;
+    const interval = spec.fire?.salvo?.interval ?? 0;
+    const spread = spec.fire?.salvo?.spread ?? 0;
+    const cone = undefined;
     const gx = this.designateLatch?.x;
     const gy = this.designateLatch?.y;
-    if (spec.control.mode === "designate_then_release") this.designateLatch = null;
+    if (spec.control.mode === "click_to_set_target") this.designateLatch = null;
 
     if (cone != null && salvoN > 1) {
       for (let i = 0; i < salvoN; i++) {
@@ -4943,8 +5097,8 @@ export class MissionScene extends Phaser.Scene {
     }
 
     // Plasma Helix: quick burst with phase-rotated strands (not simultaneous).
-    if (spec.payload.mode === "plasma_helix" && salvoN > 1) {
-      const strands = Math.max(1, spec.payload.strands);
+    if (payloadIsHelix(spec.payload) && salvoN > 1) {
+      const strands = Math.max(1, spec.payload.helix?.strands ?? 1);
       for (let i = 0; i < salvoN; i++) {
         const phase = (i / strands) * Math.PI * 2;
         if (i === 0) {
@@ -4988,7 +5142,7 @@ export class MissionScene extends Phaser.Scene {
       p.t -= dt;
       if (p.t > 0) continue;
       this.pendingSalvos.splice(i, 1);
-      if (h.phase !== "flight" || !this.canFire || this.cloakT > 0) continue;
+      if (h.phase !== "flight" || !this.canFire || this.weaponSlotDisabled(p.slot)) continue;
       const spec = this.loadout[p.slot];
       if (!spec || spec.id !== p.wpnId || !this.hasAmmo(p.slot)) continue;
       const auto =
@@ -5015,11 +5169,11 @@ export class MissionScene extends Phaser.Scene {
     const h = this.heli;
     if (!this.hasAmmo(slot)) return;
     this.spendAmmo(slot);
-    if (spec.payload.mode === "remote") {
+    if (payloadIsRemote(spec.payload)) {
       this.launchRemote(spec, slot, yawOff, pitchOff);
       return;
     }
-    if (h.spec.cannonInherit && spec.kind === "cannon") {
+    if (h.spec.cannonInherit && specIsShellGun(spec)) {
       // Rate-normalized reverse thrust — gatling streams brake without stalling instantly.
       const kick = (9 + spec.dmg * 0.28) * Math.min(1.35, spec.fireCd / 0.04);
       h.applyGunRecoil(kick);
@@ -5029,12 +5183,12 @@ export class MissionScene extends Phaser.Scene {
       shotBehaviorOf(spec),
       this.cannonMixRound[spec.id] ?? 0
     );
-    if (spec.payload.mode === "kinetic" && spec.payload.heEvery != null) {
+    if (payloadIsKinetic(spec.payload, spec.launch) && spec.payload.he?.every != null) {
       this.cannonMixRound[spec.id] = (this.cannonMixRound[spec.id] ?? 0) + 1;
     }
     const beh = mixed.beh;
     const pierce = mixed.pierce;
-    const helixPayload = spec.payload.mode === "plasma_helix" ? spec.payload : null;
+    const helixPayload = payloadIsHelix(spec.payload) ? spec.payload.helix! : null;
     const phase = helixPhase ?? 0;
     const st: ShotState = {
       age: 0,
@@ -5055,8 +5209,8 @@ export class MissionScene extends Phaser.Scene {
       this.fireKickMotorShot(slot, spec, beh, st, yawOff, autoTarget);
     } else if (spec.launch.mode === "drop") {
       this.fireDropShot(slot, spec, beh, st, ptr, yawOff);
-    } else if (spec.launch.mode === "beam") {
-      if (spec.payload.mode === "beam" && spec.payload.reflect) {
+    } else if (launchIsRayBeam(spec.launch)) {
+      if (spec.payload.bounce) {
         this.fireRefractorBeam(slot, spec, ptr, yawOff, barrelIndex);
       } else {
         this.fireMuzzleShot(slot, spec, beh, st, ptr, yawOff, autoTarget, barrelIndex);
@@ -5078,7 +5232,7 @@ export class MissionScene extends Phaser.Scene {
     const h = this.heli;
     const socket = h.spec.sockets[slot]!;
     const fixed = socket.class === "fixed";
-    const rocketPod = spec.kind === "rocket" && spec.guidance.mode === "none";
+    const rocketPod = specIsRocketPod(spec);
     // Hardpoint muzzle = rail launch: leave the pylon at full thrust (no kick_motor coast).
     const railMuzzle =
       !rocketPod &&
@@ -5087,11 +5241,11 @@ export class MissionScene extends Phaser.Scene {
     // Hydra pods keep pylon feel; guided muzzle rockets (Refractor) use the gun tip.
     if (rocketPod || railMuzzle) {
       const { x: px, y: py, side } = this.missilePylon(slot);
-      const jitter = spec.jitter ?? 0;
+      const jitter = spec.fire?.jitter ?? 0;
       const ang = h.angle + yawOff + (jitter ? (Math.random() - 0.5) * jitter : 0);
       const pitchJit = pitchOff + (jitter ? (Math.random() - 0.5) * jitter * 0.45 : 0);
       const g = spec.guidance;
-      const lockOn = g.mode === "lock_on";
+      const lockOn = targetingMode(g) === "lock_on";
       const lockId =
         autoTarget?.id ?? (lockOn ? h.lockTarget?.id : undefined);
       const zTgt =
@@ -5125,9 +5279,8 @@ export class MissionScene extends Phaser.Scene {
         ? h.vy * inherit + Math.sin(ang) * ownSpd * cp
         : Math.sin(ang) * ownSpd * hFrac;
       const t = dist3 / Math.max(40, ownSpd);
-      const seekLoft = g.mode === "lock_on" ? g.seekDelay : undefined;
+      const seekLoft = g && guidanceIsLockOn(g) ? g.targeting.seekDelay : undefined;
       this.spawnShot({
-        kind: spec.kind,
         from: "player",
         id: nextId(),
         wpnId: spec.id,
@@ -5147,24 +5300,23 @@ export class MissionScene extends Phaser.Scene {
         targetId: lockId,
         blast: beh.blast,
         dmg: beh.dmg,
-        look: spec.look,
-        scale: spec.scale,
+        look: spec.art.look,
+        scale: spec.art.scale,
         fxInterval: spec.fireCd,
         loft: seekLoft,
         cruise: lockOn ? spec.speed : undefined,
         // Tube kick-yaw only — AA rail stays on craft heading.
         yaw: lockOn && !accelRail ? side * (0.35 + Math.random() * 0.2) : undefined,
-        energyTrail: guidanceHasEnergyTrail(g) ? [] : undefined,
+        energyTrail: exhaustIsEnergy(spec.exhaust) ? [] : undefined,
         energyTrails:
-          guidanceEnergyRibbons(g) > 1
-            ? Array.from({ length: guidanceEnergyRibbons(g) }, () => [] as EnergyTrailNode[])
+          exhaustRibbons(spec.exhaust) > 1
+            ? Array.from({ length: exhaustRibbons(spec.exhaust) }, () => [] as EnergyTrailNode[])
             : undefined,
-        warpTimeScale: spec.payload.mode === "warp" ? spec.payload.timeScale : undefined,
+        warpTimeScale: spec.payload.warp?.timeScale,
       });
       this.missileMuzzle(px, py, h.z, ang, projectileFxScale("player", spec.fireCd));
       if (
-        spec.kind === "cannon" &&
-        (spec.payload.mode === "kinetic" || spec.payload.mode === "he")
+specIsShellGun(spec)
       ) {
         this.spawnShellEject({
           x: px,
@@ -5172,7 +5324,7 @@ export class MissionScene extends Phaser.Scene {
           z: h.z - 12,
           barrelAng: ang,
           designation: spec.designation,
-          scale: spec.scale,
+          scale: spec.art.scale,
           dmg: spec.dmg,
           side,
           aerial: true,
@@ -5210,8 +5362,8 @@ export class MissionScene extends Phaser.Scene {
       ? h.angle
       : (h.stationAim[slot]?.[barrelIndex] ?? h.stationAim[slot]?.[0] ?? h.gunAngle);
     for (const muzzleUv of muzzleUvs) {
-      const spreadAmp = spec.jitter ?? (spec.silent ? 0.025 : 0.08);
-      const spread = spec.beam ? 0 : (Math.random() - 0.5) * spreadAmp;
+      const spreadAmp = spec.fire?.jitter ?? (!(spec.fire?.muzzleFlash ?? true) ? 0.025 : 0.08);
+      const spread = spec.launch.mode === "beam" ? 0 : (Math.random() - 0.5) * spreadAmp;
       const ang = stationAng + spread + yawOff + ((st.helixSide ?? 0) * 0.012);
       const tip = muzzleUv ? this.craftBodyMountWorldPos(muzzleUv) : this.gunTip(mountedGunI);
       const tipScr = worldToScreen(tip.x, tip.y, h.z);
@@ -5249,7 +5401,7 @@ export class MissionScene extends Phaser.Scene {
       const tz = clip.z;
       const beamRange = spec.launch.mode === "beam" ? spec.launch.range : undefined;
       const g = spec.guidance;
-      const lockOn = g.mode === "lock_on";
+      const lockOn = targetingMode(g) === "lock_on";
       const lockId =
         autoTarget?.id ??
         (lockOn ? h.lockTarget?.id : undefined);
@@ -5258,10 +5410,9 @@ export class MissionScene extends Phaser.Scene {
         : lockOn
           ? spec.life
           : t + 0.05;
-      const seekLoft = g.mode === "lock_on" ? g.seekDelay : undefined;
+      const seekLoft = g && guidanceIsLockOn(g) ? g.targeting.seekDelay : undefined;
       const muzzleVz = lockOn ? Math.max(28, spd * 0.08) : (tz - z0) / t;
       this.spawnShot({
-        kind: spec.kind,
         from: "player",
         id: nextId(),
         wpnId: spec.id,
@@ -5283,33 +5434,31 @@ export class MissionScene extends Phaser.Scene {
         targetId: lockId,
         blast: beh.blast,
         dmg: beh.dmg,
-        look: spec.look,
-        scale: spec.scale,
+        look: spec.art.look,
+        scale: spec.art.scale,
         fxInterval,
         loft: seekLoft,
         cruise: lockOn ? spec.speed : undefined,
         tint:
-          spec.payload.mode === "plasma_helix"
+          payloadIsHelix(spec.payload)
             ? 0x66eeff
-            : spec.look === "shot_photon" && spec.id === "warp_bomb"
-              ? 0xc86cff
-              : undefined,
+            : spec.art.tint,
         energyTrail:
-          guidanceHasEnergyTrail(g) || st.helixOff != null ? [] : undefined,
+          exhaustIsEnergy(spec.exhaust) || st.helixOff != null ? [] : undefined,
         energyTrails:
-          guidanceEnergyRibbons(g) > 1
-            ? Array.from({ length: guidanceEnergyRibbons(g) }, () => [] as EnergyTrailNode[])
+          exhaustRibbons(spec.exhaust) > 1
+            ? Array.from({ length: exhaustRibbons(spec.exhaust) }, () => [] as EnergyTrailNode[])
             : undefined,
-        warpTimeScale: spec.payload.mode === "warp" ? spec.payload.timeScale : undefined,
+        warpTimeScale: spec.payload.warp?.timeScale,
       });
       if (!fixed) this.pulseTurretGunHeat(mountedGunI);
-      if (spec.beam || spec.payload.mode === "beam") {
+      if (spec.launch.mode === "beam") {
         const beamEnd = worldToScreen(tx, ty, tz);
         const beam = this.add.graphics().setDepth(worldDepth(z0, ZOff.muzzle, tip.y));
         beam.lineStyle(5 * tipScale, 0x55ddff, 0.24).lineBetween(tipScreenX, tipScreenY, beamEnd.x, beamEnd.y);
         beam.lineStyle(1.5 * tipScale, 0xffffff, 0.95).lineBetween(tipScreenX, tipScreenY, beamEnd.x, beamEnd.y);
         this.tweens.add({ targets: beam, alpha: 0, duration: 110, onComplete: () => beam.destroy() });
-      } else if (!spec.silent) {
+      } else if (!!(spec.fire?.muzzleFlash ?? true)) {
         const muzzleMul = playerMuzzleFxMul(spec);
         const sparkMul = Phaser.Math.Linear(0.55, 1, Phaser.Math.Clamp((muzzleMul - 0.4) / 0.6, 0, 1));
         this.emitVisualBurst(tip.x, tip.y, h.z, {
@@ -5344,8 +5493,7 @@ export class MissionScene extends Phaser.Scene {
             });
         const ejectAt = muzzleUv ? tip : screenToWorldAtZ(mountedGun.x, mountedGun.y, h.z);
         if (
-          spec.kind === "cannon" &&
-          (spec.payload.mode === "kinetic" || spec.payload.mode === "he")
+specIsShellGun(spec)
         ) {
           this.spawnShellEject({
             x: ejectAt.x,
@@ -5353,7 +5501,7 @@ export class MissionScene extends Phaser.Scene {
             z: h.z - 12,
             barrelAng: ang,
             designation: spec.designation,
-            scale: spec.scale,
+            scale: spec.art.scale,
             dmg: spec.dmg,
             side,
             aerial: true,
@@ -5380,17 +5528,14 @@ export class MissionScene extends Phaser.Scene {
     const kick = launch.kickSpeed;
     const inherit = launch.inheritMomentum;
     const g = spec.guidance;
-    const continuousSteer = g.mode === "steer";
-    // Default ON for pointer missiles; set guidance.wire: false to opt out (SPIKE NLOS).
-    const wantsWire = continuousSteer && g.wire !== false;
+    const wantsWire = !!g?.wire;
     const lockId =
       autoTarget?.id ??
-      (g.mode === "lock_on" || g.mode === "steer_commit"
+      (targetingMode(g) === "lock_on" || targetingMode(g) === "steer_commit"
         ? h.lockTarget?.id
         : undefined);
-    const loft = spec.steering?.loft;
+    const loft = launch.softLoft;
     this.spawnShot({
-      kind: spec.kind,
       from: "player",
       id: nextId(),
       wpnId: spec.id,
@@ -5408,28 +5553,27 @@ export class MissionScene extends Phaser.Scene {
       targetId: lockId,
       blast: beh.blast,
       dmg: beh.dmg,
-      look: spec.look,
-      scale: spec.scale,
+      look: spec.art.look,
+      scale: spec.art.scale,
       fxInterval: spec.fireCd,
-      // TOW / Spike / Griffin / Smoke / Warp — POV cam chase while under command.
-      povCam: continuousSteer || g.mode === "steer_commit" || undefined,
+      // Live povCam chase while the munition is under command.
+      povCam: spec.cam.povCam || undefined,
       motor: -launch.igniteDelay,
       cruise: spec.speed,
       loft,
       yaw:
-        spec.id === "warp_bomb"
-          ? 0
-          : side *
-            (g.mode === "lock_on" ? 1.05 + Math.random() * 0.45 : 0.42 + Math.random() * 0.22),
+        side *
+          (launch.yawMul ??
+            (targetingMode(g) === "lock_on" ? 1.05 + Math.random() * 0.45 : 0.42 + Math.random() * 0.22)),
       wireSide: side,
       wire: wantsWire ? [] : undefined,
-      tint: spec.look === "shot_photon" && spec.id === "warp_bomb" ? 0xc86cff : undefined,
-      energyTrail: guidanceHasEnergyTrail(g) ? [] : undefined,
+      tint: spec.art.tint,
+      energyTrail: exhaustIsEnergy(spec.exhaust) || st.helixOff != null ? [] : undefined,
       energyTrails:
-        guidanceEnergyRibbons(g) > 1
-          ? Array.from({ length: guidanceEnergyRibbons(g) }, () => [] as EnergyTrailNode[])
+        exhaustRibbons(spec.exhaust) > 1
+          ? Array.from({ length: exhaustRibbons(spec.exhaust) }, () => [] as EnergyTrailNode[])
           : undefined,
-      warpTimeScale: spec.payload.mode === "warp" ? spec.payload.timeScale : undefined,
+      warpTimeScale: spec.payload.warp?.timeScale,
     });
     this.missileMuzzle(px, py, h.z, ang, projectileFxScale("player", spec.fireCd));
   }
@@ -5444,7 +5588,7 @@ export class MissionScene extends Phaser.Scene {
   ): void {
     const h = this.heli;
     const payload = spec.payload;
-    if (payload.mode !== "beam") return;
+    if (spec.launch.mode !== "beam") return;
     const launch = spec.launch;
     const range = launch.mode === "beam" ? launch.range : 780;
     const socket = h.spec.sockets[slot]!;
@@ -5471,9 +5615,9 @@ export class MissionScene extends Phaser.Scene {
     dy /= len;
     dz /= len;
     const aimDist = Math.min(range, len);
-    const bounces = payload.reflect ? payload.maxBounces ?? 3 : 0;
-    const splitAt = payload.splitAt;
-    const splitN = payload.splitCount ?? 0;
+    const bounces = payload.bounce ? payload.bounce.maxBounces ?? 3 : 0;
+    const splitAt = payload.split?.at;
+    const splitN = payload.split?.count ?? 0;
     const doSplit = splitAt != null && splitAt > 0 && splitAt < 1 && splitN >= 2;
 
     if (!doSplit) {
@@ -5849,7 +5993,6 @@ export class MissionScene extends Phaser.Scene {
       st.gx != null && st.gy != null ? { x: st.gx, y: st.gy } : ptr;
     const release = this.bombReleaseVelocity(spec, pylon.x, pylon.y, aim, yawOff, slot);
     this.spawnShot({
-      kind: spec.kind,
       from: "player",
       id: nextId(),
       wpnId: spec.id,
@@ -5866,10 +6009,10 @@ export class MissionScene extends Phaser.Scene {
       life: spec.life,
       blast: beh.blast,
       dmg: beh.dmg,
-      look: spec.look,
-      scale: spec.scale,
+      look: spec.art.look,
+      scale: spec.art.scale,
       fxInterval: spec.fireCd,
-      warpTimeScale: spec.payload.mode === "warp" ? spec.payload.timeScale : undefined,
+      warpTimeScale: spec.payload.warp?.timeScale,
     });
   }
 
@@ -5995,6 +6138,26 @@ export class MissionScene extends Phaser.Scene {
     return smokeVisionMul(smokeCoverAt(this.smokePuffs, x, y, pad));
   }
 
+  /**
+   * Enemy vision mul from smoke: cover is sampled at the player (smoke screen),
+   * with the unit's radius as pad — same proportions as if that unit stood on the heli.
+   */
+  enemySmokeVision(u: Unit): number {
+    const h = this.heli;
+    return this.smokeVisionAt(h.x, h.y, radius(u.kind));
+  }
+
+  /**
+   * Loadout slot cannot fire right now (HUD + fire gate).
+   * Reasons are additive — cloak blocks primary gun stations only.
+   */
+  weaponSlotDisabled(slot: number): boolean {
+    const socket = this.heli.spec.sockets[slot];
+    if (!socket) return true;
+    if (this.cloakT > 0 && craftSocketIsPrimary(socket)) return true;
+    return false;
+  }
+
   tickAutomaticStations(dt: number, _ptr: { x: number; y: number }): void {
     const h = this.heli;
     this.autoGunDbg = [];
@@ -6002,6 +6165,7 @@ export class MissionScene extends Phaser.Scene {
       const socket = h.spec.sockets[slot];
       const spec = this.loadout[slot]!;
       if (!socket || socket.controller !== "automatic") continue;
+      if (this.weaponSlotDisabled(slot)) continue;
       const barrels = h.stationAim[slot] ?? (h.stationAim[slot] = [h.angle]);
       const cds = this.stationFireCd[slot] ?? (this.stationFireCd[slot] = [0]);
       const crewTag = craftCrewHudTag(socket) ?? "CREW";
@@ -6111,9 +6275,9 @@ export class MissionScene extends Phaser.Scene {
         if (onCd) continue;
         if (!this.hasAmmo(slot)) continue;
         cds[b] = spec.fireCd;
-        const salvoN = spec.salvo?.count ?? 1;
-        const interval = spec.salvo?.interval ?? 0;
-        const spread = spec.salvo?.spread ?? 0;
+        const salvoN = spec.fire?.salvo?.count ?? 1;
+        const interval = spec.fire?.salvo?.interval ?? 0;
+        const spread = spec.fire?.salvo?.spread ?? 0;
         const yaw0 = salvoN > 1 ? (0 - (salvoN - 1) / 2) * spread : 0;
         this.firePlayerWeapon(slot, spec, { x: tgt.x, y: tgt.y }, yaw0, undefined, undefined, tgt, b);
         for (let i = 1; i < salvoN; i++) {
@@ -6204,7 +6368,7 @@ export class MissionScene extends Phaser.Scene {
     if (slot < 0 || slot >= this.loadout.length) return;
     this.heli.weapon = slot;
     const spec = this.loadout[slot];
-    if (spec?.payload.mode === "remote" && this.activeRemote()) this.enterRemoteView();
+    if (payloadIsRemote(spec?.payload) && this.activeRemote()) this.enterRemoteView();
   }
 
   enterRemoteView(): void {
@@ -6219,16 +6383,16 @@ export class MissionScene extends Phaser.Scene {
     this.applyThermalMode();
   }
 
-  /** Hold play-cam on an impact (SPIKE / TOW / Spectre), optionally keeping the sensor palette. */
+  /** Hold play-cam on an impact (any povCam / wire / warp linger), optionally keeping the sensor palette. */
   beginImpactCamLinger(
     x: number,
     y: number,
     opt?: { thermal?: ThermalPalette; hold?: number }
   ): void {
     const hold = opt?.hold ?? (opt?.thermal ? 1.65 : 0.95);
-    this.towLookX = x;
-    this.towLookY = y;
-    this.towLookHold = Math.max(this.towLookHold, hold);
+    this.povCamLookX = x;
+    this.povCamLookY = y;
+    this.povCamLookHold = Math.max(this.povCamLookHold, hold);
     if (opt?.thermal) {
       this.sensorLingerPalette = opt.thermal;
       this.sensorLingerT = Math.max(this.sensorLingerT, hold);
@@ -6237,8 +6401,8 @@ export class MissionScene extends Phaser.Scene {
 
   /** Wall-clock drain for impact linger — runs even while a stinger owns look. */
   tickImpactCamLinger(dt: number): void {
-    if (this.towLookHold > 0) {
-      this.towLookHold = Math.max(0, this.towLookHold - dt);
+    if (this.povCamLookHold > 0) {
+      this.povCamLookHold = Math.max(0, this.povCamLookHold - dt);
     }
     if (this.sensorLingerT > 0) {
       this.sensorLingerT = Math.max(0, this.sensorLingerT - dt);
@@ -6247,8 +6411,8 @@ export class MissionScene extends Phaser.Scene {
   }
 
   launchRemote(spec: PlayerWpnSpec, slot: number, yawOff: number, pitchOff = 0): void {
-    if (spec.payload.mode !== "remote") return;
-    const remoteSpec = remoteSpecOf(spec.payload.remote);
+    if (!payloadIsRemote(spec.payload)) return;
+    const remoteSpec = remoteSpecOf(spec.payload.remote!.kind);
     const h = this.heli;
     const pylon = this.missilePylon(slot);
     const ang = h.angle + yawOff;
@@ -6266,8 +6430,8 @@ export class MissionScene extends Phaser.Scene {
       vz: h.vz * 0.4 + kick * sp,
       angle: ang,
       health: remoteSpec.health,
-      life: spec.payload.duration,
-      lifeMax: spec.payload.duration,
+      life: spec.payload.remote!.duration,
+      lifeMax: spec.payload.remote!.duration,
       rotor: Math.random() * Math.PI * 2,
     });
     this.remoteView = true;
@@ -6352,7 +6516,8 @@ export class MissionScene extends Phaser.Scene {
       if (r.life <= 0) r.detonate = true;
       if (r.detonate) {
         this.beginImpactCamLinger(r.x, r.y, {
-          thermal: r.spec.sensorView ? this.sensorPaletteOf(r.spec.sensorView.palette) : undefined,
+          // Keep the craft sensor palette (Cyberhawk/Prometheus full-spectrum).
+          thermal: r.spec.thermal ? this.craftSensorPalette() : undefined,
           hold: 1.65,
         });
         this.explode(r.x, r.y, r.z, r.spec.detonateBlast, r.spec.detonateDmg, undefined, r.vx, r.vy, r.vz, false, "guided-missile", 1);
@@ -6553,7 +6718,7 @@ export class MissionScene extends Phaser.Scene {
       }
       this.teslaExposeT += dt;
       if (spend) this.hurt(best, spec.dmg, false);
-      if (spec.payload.mode === "beam" && spec.payload.stun) {
+      if (launchIsArcBeam(spec.launch) && spec.payload.stun) {
         const linger = Math.min(
           TESLA_STUN_MAX,
           spec.payload.stun + this.teslaExposeT * TESLA_STUN_EXPOSE_MUL
@@ -7448,10 +7613,7 @@ export class MissionScene extends Phaser.Scene {
    * Self-propelled missiles face thrust/guidance (`s.angle`); ballistic shots face travel.
    */
   shotDrawRotation(s: Shot, x = s.x, y = s.y, z = s.z): number {
-    const missile =
-      s.kind === "lock-on-missile" ||
-      s.kind === "guided-missile";
-    if (missile) return projectHeading(s.angle, x, y, z);
+    if (shotFacesHeading(s)) return projectHeading(s.angle, x, y, z);
     return Math.atan2(
       screenVelY(s.vy, s.vz, z, y),
       screenVelX(s.vx, s.vy, s.vz, x, y, z)
@@ -7819,7 +7981,7 @@ export class MissionScene extends Phaser.Scene {
       return true;
     }
     // lock_on missiles soft-clamp instead of hard expire (see updateShots).
-    if (s.kind === "lock-on-missile") return false;
+    if (s.homePlayer || s.motor != null) return false;
     return s.z > this.enemyShotCeilZ();
   }
 
@@ -7855,8 +8017,8 @@ export class MissionScene extends Phaser.Scene {
           this.updatePlayerShotFlight(s, beh, st, dt, ptr);
         } else {
         // --- Legacy enemy (and any untagged) flight ---
-        const lockOnHome = lit && !s.seekDisabled && s.kind === "lock-on-missile" && s.targetId != null;
-        const stingerHome = lit && !s.seekDisabled && s.homePlayer && s.kind === "lock-on-missile";
+        const lockOnHome = lit && !s.seekDisabled && s.targetId != null && !s.homePlayer;
+        const stingerHome = lit && !s.seekDisabled && !!s.homePlayer;
         if (lockOnHome) {
           const cur = Math.hypot(s.vx, s.vy, s.vz);
           const burn = s.motor ?? 0;
@@ -7926,7 +8088,7 @@ export class MissionScene extends Phaser.Scene {
           s.life = Math.max(s.life, 0.6);
         }
         if (s.motor != null && s.motor < 0) {
-          const drag = s.kind === "guided-missile" ? Math.pow(0.12, dt) : Math.pow(0.07, dt);
+          const drag = s.povCam || s.wire ? Math.pow(0.12, dt) : Math.pow(0.07, dt);
           s.vx *= drag;
           s.vy *= drag;
           s.vz *= Math.pow(0.22, dt);
@@ -7979,7 +8141,7 @@ export class MissionScene extends Phaser.Scene {
       s.x += s.vx * moveDt;
       s.y += s.vy * moveDt;
       s.z += s.vz * moveDt;
-      if (s.kind === "lock-on-missile" && s.from !== "player") {
+      if (s.homePlayer && s.from !== "player") {
         const ceil = this.enemyShotCeilZ(96);
         if (s.z > ceil) {
           s.z = ceil;
@@ -8007,7 +8169,7 @@ export class MissionScene extends Phaser.Scene {
         beh?.launch.mode === "kick_motor" && s.motor != null && s.motor < 0;
       const preIgnite =
         kickPre ||
-        ((s.kind === "lock-on-missile" || s.kind === "guided-missile") &&
+        ((s.homePlayer || s.povCam || s.wire || s.motor != null) &&
           s.from === "player" &&
           s.motor != null &&
           s.motor < 0 &&
@@ -8066,7 +8228,7 @@ export class MissionScene extends Phaser.Scene {
           if (hz > top + 2) continue;
           if (hz < u.z - 2) continue;
           // Kinetic pierce: whole points only (fractional pen like 0.55 is AP feel, not a free pass).
-          if (st && (st.pierce ?? 0) >= 1 && beh?.payload.mode === "kinetic") {
+          if (st && (st.pierce ?? 0) >= 1 && payloadIsKinetic(beh?.payload, beh?.launch)) {
             st.pierce! -= 1;
             st.hitIds = st.hitIds ?? [];
             st.hitIds.push(u.id);
@@ -8083,7 +8245,7 @@ export class MissionScene extends Phaser.Scene {
               s.vy,
               s.vz,
               true,
-              s.kind,
+              shotKindForExplode(s),
               projectileFxScale(s.from, s.fxInterval),
               s,
               true
@@ -8094,18 +8256,18 @@ export class MissionScene extends Phaser.Scene {
           victim = u;
           break;
         }
-        // Photon proximity fuse — safety net only (prefer real body impact).
+        // Proximity fuse — safety net only (prefer real body impact).
         // Arms when we have already passed the lock in XY while still above the hit box,
         // or when skimming inside a very tight 3D pocket.
         if (
           !hit &&
-          s.wpnId === "photon_missile" &&
           s.targetId != null &&
-          beh?.guidance.mode === "lock_on" &&
-          beh.guidance.proxFuse
+          beh?.guidance &&
+          guidanceIsLockOn(beh.guidance) &&
+          beh.guidance.targeting.proxFuse
         ) {
           const u = this.unitById(s.targetId);
-          const fuse = beh.guidance.proxFuse;
+          const fuse = beh.guidance.targeting.proxFuse;
           if (u && !u.dead) {
             const top = u.z + heightOf(u.kind);
             const aimZ = u.z + heightOf(u.kind) * 0.45;
@@ -8127,46 +8289,52 @@ export class MissionScene extends Phaser.Scene {
       }
       if (hit) {
         this.releaseEnergyTrail(s);
-        const lingerSensor =
-          s.from === "player" &&
-          (beh?.guidance.mode === "steer_commit" ||
-            (!!s.wpnId && PLAYER_WPNS[s.wpnId]?.sensorView?.source === "seeker"));
+        // Linger policy (hold lengths; cam.linger not authored yet):
+        // - thermal + povCam: long + keep sensor palette
+        // - wire: medium
+        // - other povCam: short
+        // - warp (timeScale): separate path below, hold stretched by timeScale
+        const lingerThermal =
+          s.from === "player" && !!beh?.cam.thermal && !!beh.cam.povCam;
         const lingerWire =
-          (beh?.guidance.mode === "steer" || beh?.guidance.mode === "steer_commit") &&
+          s.from === "player" && !!beh?.guidance?.wire && !!s.wire;
+        const lingerPov =
           s.from === "player" &&
-          s.wire;
-        if (lingerSensor || lingerWire) {
-          const view = lingerSensor && s.wpnId ? PLAYER_WPNS[s.wpnId]?.sensorView : undefined;
-          let hold = lingerSensor ? 1.65 : 0.95;
-          // Linger is wall-clock; stretch it under warp so the slow-mo blast can play out.
+          !!beh?.cam.povCam &&
+          !lingerThermal &&
+          !lingerWire &&
+          s.warpTimeScale == null;
+        if (lingerThermal || lingerWire || lingerPov) {
+          let hold = lingerThermal ? 1.65 : lingerWire ? 0.95 : 0.55;
           if (s.warpTimeScale != null) {
             hold = Math.min(8, hold / Math.max(0.08, s.warpTimeScale));
           }
           this.beginImpactCamLinger(s.x, s.y, {
-            thermal: view ? this.sensorPaletteOf(view.palette) : undefined,
+            thermal: lingerThermal ? this.craftSensorPalette() : undefined,
             hold,
           });
         }
         if (s.from === "player" && s.warpTimeScale != null) {
           this.warpLingerScale = s.warpTimeScale;
-          // Ensure linger runs even if steer_commit path didn't arm the cam hold.
-          if (this.towLookHold <= 0) {
+          // Ensure linger runs even if steer_commit / thermal / wire didn't arm the cam hold.
+          if (this.povCamLookHold <= 0) {
             this.beginImpactCamLinger(s.x, s.y, {
               hold: Math.min(8, 1.65 / Math.max(0.08, s.warpTimeScale)),
             });
           }
         }
         // Cluster open at impact
-        if (beh?.payload.mode === "cluster" && st && !st.bomblet && !st.opened) {
+        if (payloadIsCluster(beh?.payload) && st && !st.bomblet && !st.opened) {
           st.opened = true;
-          if (s.wpnId === "swarm_missile") {
-            this.spawnStarstreakBomblets(s, beh.payload.bomblets, beh.payload.spread);
+          const cl = beh!.payload.cluster!;
+          if (cl.break === "cone_hop") {
+            this.spawnStarstreakBomblets(s, cl.bomblets, cl.spread);
           } else {
-            this.spawnClusterBomblets(s, beh.payload.bomblets, beh.payload.spread);
+            this.spawnClusterBomblets(s, cl.bomblets, cl.spread);
           }
         }
-        if (beh?.payload.mode === "smoke") {
-          this.spawnSmokePuffs(s.x, s.y, s.z, beh.payload.radius, beh.payload.duration);
+        if (payloadIsSmoke(beh?.payload)) {
+          this.spawnSmokePuffs(s.x, s.y, s.z, beh!.payload.smoke!.radius, beh!.payload.smoke!.duration);
         }
         this.explode(
           s.x + helixDx,
@@ -8179,7 +8347,7 @@ export class MissionScene extends Phaser.Scene {
           s.vy,
           s.vz,
           !!victim || hitPlayer,
-          s.kind,
+          shotKindForExplode(s),
           projectileFxScale(s.from, s.fxInterval),
           s
         );
@@ -8198,7 +8366,7 @@ export class MissionScene extends Phaser.Scene {
       } else {
         this.emitShotTrail(s, x0, y0, z0);
       }
-      if (s.wpnId === "warp_bomb" && !s.deadfall) {
+      if (!s.deadfall && exhaustWarpMotes(s.beh?.exhaust)) {
         this.emitWarpTrailFx(s, x0, y0, z0);
       }
       shots[w++] = s;
@@ -8227,18 +8395,21 @@ export class MissionScene extends Phaser.Scene {
   ): void {
     const lit = s.motor == null || s.motor >= 0;
     const g = beh.guidance;
+    const tMode = targetingMode(g);
+    const flight = g?.flight;
+    const grav = launchGravity(beh.launch);
 
     // Gravity for drops and ballistic artillery shells
-    if (beh.gravity && (beh.launch.mode === "drop" || (beh.launch.mode === "muzzle" && !!beh.gravity))) {
-      s.vz += -beh.gravity.acceleration * dt;
-      if (beh.gravity.terminalVelocity != null && s.vz < -beh.gravity.terminalVelocity) {
-        s.vz = -beh.gravity.terminalVelocity;
+    if (grav && (beh.launch.mode === "drop" || (beh.launch.mode === "muzzle" && !!grav))) {
+      s.vz += -grav.acceleration * dt;
+      if (grav.terminalVelocity != null && s.vz < -grav.terminalVelocity) {
+        s.vz = -grav.terminalVelocity;
       }
     }
 
     // Pre-ignite drag / yaw — keep enough of craft+kick speed that soft-launch still reads as a throw.
     if (s.motor != null && s.motor < 0) {
-      const drag = Math.pow(g.mode === "steer" ? 0.28 : 0.42, dt);
+      const drag = Math.pow(tMode === "steer" ? 0.28 : 0.42, dt);
       s.vx *= drag;
       s.vy *= drag;
       s.vz *= Math.pow(0.35, dt);
@@ -8252,39 +8423,44 @@ export class MissionScene extends Phaser.Scene {
     }
 
     // lock_on: shared motor/rail ramp, then loft coast or 3D home.
-    if (g.mode === "lock_on" && lit) {
+    if (g && guidanceIsLockOn(g) && lit) {
+      const targeting = g.targeting;
       const seeking = (s.loft ?? 0) <= 0;
       const cur = Math.hypot(s.vx, s.vy, s.vz);
       const spd = motorizedSpeed(s, beh, dt);
+      const loftProfile = flight?.loft;
       if (seeking && s.targetId != null) {
         const u = this.unitById(s.targetId);
         const tx = u ? u.x : s.x + s.vx;
         const ty = u ? u.y : s.y + s.vy;
         const impactZ = u ? u.z + heightOf(u.kind) * 0.45 : groundZ(this.world, s.x, s.y);
-        // Photon: characteristic wide fly-off, then seek with Z held high and a long gradual descent.
-        if (s.wpnId === "photon_missile") {
+        // Photon-style loft: cruise AGL + dive from flight.loft (no weapon-id branch).
+        if (loftProfile && typeof loftProfile.cruise === "object" && "agl" in loftProfile.cruise) {
           const gnd = groundZ(this.world, s.x, s.y);
-          const peakAgl = 420;
+          const peakAgl = loftProfile.cruise.agl;
           const cruiseZ = gnd + peakAgl;
           const horiz = Math.hypot(tx - s.x, ty - s.y);
-          const diveRange = 780;
-          const dive = Math.pow(1 - Phaser.Math.Clamp(horiz / diveRange, 0, 1), 1.15);
+          const diveRange = loftProfile.dive.range;
+          const dive = Math.pow(
+            1 - Phaser.Math.Clamp(horiz / diveRange, 0, 1),
+            loftProfile.dive.power
+          );
           const holdZ = Math.max(s.z, cruiseZ);
           const wantZ = Phaser.Math.Linear(holdZ, impactZ, dive);
           const home = norm3(tx - s.x, ty - s.y, wantZ - s.z);
-          const prox = g.proxTurn;
+          const prox = targeting.proxTurn;
           const turnRate = prox
             ? Phaser.Math.Linear(
                 prox.near,
                 prox.far,
                 Phaser.Math.Clamp(horiz / Math.max(40, prox.nearDist), 0, 1)
               )
-            : (beh.steering?.turnRate ?? 18);
-          // Ease into the turn after the loft so the arc still reads as fly-off → come-back.
+            : (flight?.turnRate ?? 18);
           const turn = Phaser.Math.Linear(turnRate * 0.85, turnRate * 1.7, dive) * dt;
           flyMissile(s, home, turn, spd);
-          // Terrain clearance: stay well above ground until the terminal dive.
-          const minAgl = Phaser.Math.Linear(240, 22, dive);
+          const clearFar = loftProfile.clear?.far ?? 240;
+          const clearNear = loftProfile.clear?.near ?? 22;
+          const minAgl = Phaser.Math.Linear(clearFar, clearNear, dive);
           const floor = gnd + minAgl;
           if (s.z < floor) {
             s.z = floor;
@@ -8294,24 +8470,22 @@ export class MissionScene extends Phaser.Scene {
         }
         const home = norm3(tx - s.x, ty - s.y, impactZ - s.z);
         const dist = Math.hypot(tx - s.x, ty - s.y, impactZ - s.z);
-        const prox = g.proxTurn;
+        const prox = targeting.proxTurn;
         const turnRate = prox
           ? Phaser.Math.Linear(
               prox.near,
               prox.far,
               Phaser.Math.Clamp(dist / Math.max(40, prox.nearDist), 0, 1)
             )
-          : (beh.steering?.turnRate ?? 7.4);
+          : (flight?.turnRate ?? 7.4);
         flyMissile(s, home, turnRate * dt, spd);
       } else {
-        // Loft / no lock: keep accelerating along leave heading (craft nose).
-        // Photon loft is a pure fly-off — no early yaw-in (seek handles the come-back).
         s.vx = Math.cos(s.angle) * spd;
         s.vy = Math.sin(s.angle) * spd;
         if (cur > 1e-3) s.vz = (s.vz / cur) * spd;
-        if (s.wpnId === "photon_missile") {
+        if (loftProfile && typeof loftProfile.cruise === "object" && "agl" in loftProfile.cruise) {
           const gnd = groundZ(this.world, s.x, s.y);
-          const floor = gnd + 120;
+          const floor = gnd + (loftProfile.clear?.coast ?? 120);
           if (s.z < floor) {
             s.z = floor;
             if (s.vz < 80) s.vz = 120;
@@ -8326,12 +8500,14 @@ export class MissionScene extends Phaser.Scene {
       const cur = Math.hypot(s.vx, s.vy, s.vz);
       const spd = motorizedSpeed(s, beh, dt);
 
-      if (g.mode === "steer_commit") {
-        // Warp bombs move on wall-clock — steer with the same clock or they can't turn in timewarp.
+      if (g && tMode === "steer_commit") {
+        const targeting = g.targeting;
         const steerDt =
           s.warpTimeScale != null && this.frameWallDt > 0 ? this.frameWallDt : dt;
-        const breakR = g.breakLockRadius ?? 0;
-        // Soft lock while under control — never auto-terminal when second-click is required.
+        const breakR =
+          targeting.mode === "steer_commit" ? (targeting.breakLockRadius ?? 0) : 0;
+        const lockRadius =
+          targeting.mode === "steer_commit" ? targeting.lockRadius : 60;
         if (!st?.terminal && breakR > 0) {
           if (s.targetId != null) {
             const u = this.unitById(s.targetId);
@@ -8340,7 +8516,7 @@ export class MissionScene extends Phaser.Scene {
             }
           } else {
             let best: Unit | undefined;
-            let bd = g.lockRadius;
+            let bd = lockRadius;
             for (const u of this.units) {
               if (u.dead) continue;
               const d = Math.hypot(u.x - ptr.x, u.y - ptr.y);
@@ -8360,8 +8536,7 @@ export class MissionScene extends Phaser.Scene {
             ? u.z + heightOf(u.kind) * 0.35
             : groundZ(this.world, tx, ty);
           const home = norm3(tx - s.x, ty - s.y, tz - s.z);
-          const turn = (beh.steering?.terminalTurnRate ?? beh.steering?.turnRate ?? 8) * steerDt;
-          // Continual thrust into the terminal dive (past cruise).
+          const turn = (flight?.commitTurnRate ?? flight?.turnRate ?? 8) * steerDt;
           const launchAccel = beh.launch.acceleration;
           const burnT = beh.launch.burnTime;
           const burnAge = s.motor ?? 0;
@@ -8370,29 +8545,30 @@ export class MissionScene extends Phaser.Scene {
           const termSpd = Math.min(beh.cruiseSpeed * 1.7, cur + termAccel * steerDt);
           flyMissile(s, home, turn, termSpd, { slowThresh: 8 });
         } else {
-          // Soft lock: steer + dive at the unit; broken lock → mouse cruise. Click = terminal dash.
           const locked = s.targetId != null ? this.unitById(s.targetId) : undefined;
           const soft = !!(locked && !locked.dead);
           const aimX = soft ? locked!.x : ptr.x;
           const aimY = soft ? locked!.y : ptr.y;
           const want = Math.atan2(aimY - s.y, aimX - s.x);
           const da = Phaser.Math.Angle.Wrap(want - s.angle);
-          const rate = beh.steering?.turnRate ?? 3.4;
+          const rate = flight?.turnRate ?? 3.4;
           const gndHere = groundZ(this.world, s.x, s.y);
           const playerAgl = Math.max(28, this.heli.z - this.heli.gndSmooth);
           const cruiseZ = gndHere + playerAgl;
+          const dive = flight?.loft?.dive;
           if (soft) {
             const impactZ = locked!.z + heightOf(locked!.kind) * 0.45;
             const dist = Math.hypot(aimX - s.x, aimY - s.y);
-            const diveRange = 340;
-            const dive = Math.pow(1 - Phaser.Math.Clamp(dist / diveRange, 0, 1), 2.05);
-            const dropT = Phaser.Math.Clamp(dive * 1.5, 0, 1);
+            const diveRange = dive?.range ?? 340;
+            const divePower = dive?.power ?? 2.05;
+            const diveAmt = Math.pow(1 - Phaser.Math.Clamp(dist / diveRange, 0, 1), divePower);
+            const dropT = Phaser.Math.Clamp(diveAmt * 1.5, 0, 1);
             const wantZ = Phaser.Math.Linear(cruiseZ + 36, impactZ, dropT);
-            const turn = rate * (1.15 + dive * 2.4) * steerDt;
+            const turn = rate * (1.15 + diveAmt * 2.4) * steerDt;
             s.angle += Phaser.Math.Clamp(da, -turn, turn);
             s.vx = Math.cos(s.angle) * spd;
             s.vy = Math.sin(s.angle) * spd;
-            s.vz = (wantZ - s.z) * (1.45 + dive * 7.5);
+            s.vz = (wantZ - s.z) * (1.45 + diveAmt * 7.5);
             s.life = Math.max(s.life, 0.6);
           } else {
             s.angle += Phaser.Math.Clamp(da, -rate * steerDt, rate * steerDt);
@@ -8404,38 +8580,35 @@ export class MissionScene extends Phaser.Scene {
         return;
       }
 
-      if (g.mode === "steer") {
+      if (g && tMode === "steer") {
         const want = Math.atan2(ptr.y - s.y, ptr.x - s.x);
         const da = Phaser.Math.Angle.Wrap(want - s.angle);
-        const maxA = g.maxAngle;
-        const rate = g.steerRate;
+        const maxA = flight?.maxAngle ?? 0.75;
+        const rate = flight?.turnRate ?? 2.2;
         const clampedWant = s.angle + Phaser.Math.Clamp(da, -maxA, maxA);
         const d2 = Phaser.Math.Angle.Wrap(clampedWant - s.angle);
         s.angle += Phaser.Math.Clamp(d2, -rate * dt, rate * dt);
         const distPtr = Math.hypot(ptr.x - s.x, ptr.y - s.y);
         const gndAim = groundZ(this.world, ptr.x, ptr.y);
-        // TOW / Griffin: yaw at steerRate; dive pitches altitude into the aim.
-        // Inner disk around the reticle = full dive (so a near miss still punches in).
         const tgt = this.reticleUnit() ?? this.hoverAerial();
         const gndHere = groundZ(this.world, s.x, s.y);
         const playerAgl = Math.max(28, this.heli.z - this.heli.gndSmooth);
         const impactZ = tgt ? tgt.z + heightOf(tgt.kind) * 0.3 : gndAim;
-        // High orbits: when impact is near ground, loft toward the aim instead of holding AGL.
         const groundish = !tgt || !isAerial(tgt.kind);
+        const groundDive = flight?.loft?.cruise === "player_descend";
         const cruiseZ =
-          g.groundDive && groundish
+          groundDive && groundish
             ? gndHere +
               Phaser.Math.Clamp(32 + distPtr * 0.11, 40, Math.min(playerAgl, 150))
             : gndHere + playerAgl;
-        const diveInner = g.diveInner ?? 45;
-        const diveRange = g.diveRange ?? 280;
-        const divePower = g.divePower ?? 2.85;
+        const diveInner = flight?.loft?.dive.inner ?? 45;
+        const diveRange = flight?.loft?.dive.range ?? 280;
+        const divePower = flight?.loft?.dive.power ?? 2.85;
         const outside = Math.max(0, distPtr - diveInner);
         const closeness = 1 - Phaser.Math.Clamp(outside / Math.max(1, diveRange - diveInner), 0, 1);
         const dive = Math.pow(closeness, divePower);
         const tz = Phaser.Math.Linear(cruiseZ, impactZ, dive);
-        // Extra pitch-in when diving onto ground so high launches still connect.
-        const zGain = 2.2 + dive * 9.5 + (g.groundDive && groundish ? dive * 4.5 : 0);
+        const zGain = 2.2 + dive * 9.5 + (groundDive && groundish ? dive * 4.5 : 0);
         s.vz = (tz - s.z) * zGain;
         s.vx = Math.cos(s.angle) * spd;
         s.vy = Math.sin(s.angle) * spd;
@@ -8443,11 +8616,10 @@ export class MissionScene extends Phaser.Scene {
         return;
       }
 
-      if (g.mode === "waypoint" && st.gx != null && st.gy != null) {
-        // Powered GPS: home the latched aim point at ground level (not a hover spring).
+      if (tMode === "waypoint" && st.gx != null && st.gy != null) {
         const gndImpact = groundZ(this.world, st.gx, st.gy);
         const home = norm3(st.gx - s.x, st.gy - s.y, gndImpact - s.z);
-        const turn = (beh.steering?.turnRate ?? g.steerRate) * dt;
+        const turn = (flight?.turnRate ?? 1.5) * dt;
         flyMissile(s, home, turn, spd, { noseZ: -0.35, slowThresh: 8 });
         return;
       }
@@ -8457,12 +8629,12 @@ export class MissionScene extends Phaser.Scene {
       return;
     }
 
-    // Muzzle rockets with pointer (Refractor)
-    if (g.mode === "steer" && lit) {
+    // Muzzle rockets with pointer (Micros / guided rockets)
+    if (g && tMode === "steer" && lit) {
       const want = Math.atan2(ptr.y - s.y, ptr.x - s.x);
       const da = Phaser.Math.Angle.Wrap(want - s.angle);
-      const rate = g.steerRate;
-      const maxA = g.maxAngle;
+      const rate = flight?.turnRate ?? 0.55;
+      const maxA = flight?.maxAngle ?? 0.16;
       s.angle += Phaser.Math.Clamp(Phaser.Math.Clamp(da, -maxA, maxA), -rate * dt, rate * dt);
       const spd = Math.hypot(s.vx, s.vy) || beh.cruiseSpeed;
       s.vx = Math.cos(s.angle) * spd;
@@ -8470,10 +8642,11 @@ export class MissionScene extends Phaser.Scene {
     }
 
     // Waypoint steering while falling
-    if (g.mode === "waypoint" && st.gx != null && st.gy != null && beh.launch.mode === "drop") {
+    if (tMode === "waypoint" && st.gx != null && st.gy != null && beh.launch.mode === "drop") {
       const want = Math.atan2(st.gy - s.y, st.gx - s.x);
       const da = Phaser.Math.Angle.Wrap(want - s.angle);
-      s.angle += Phaser.Math.Clamp(da, -g.steerRate * dt, g.steerRate * dt);
+      const rate = flight?.turnRate ?? 1.5;
+      s.angle += Phaser.Math.Clamp(da, -rate * dt, rate * dt);
       const horiz = Math.hypot(s.vx, s.vy);
       const spd = Math.max(horiz, 40);
       s.vx = Math.cos(s.angle) * spd;
@@ -8487,8 +8660,8 @@ export class MissionScene extends Phaser.Scene {
    */
   spawnStarstreakBomblets(parent: Shot, count: number, spread: number): void {
     const beh = parent.beh;
-    if (!beh || beh.payload.mode !== "cluster") return;
-    const { bombletDmg, bombletBlast } = beh.payload;
+    if (!beh || !payloadIsCluster(beh.payload)) return;
+    const { bombletDmg, bombletBlast } = beh.payload.cluster!;
     const grav = 380;
     const term = 820;
     const ox = parent.x;
@@ -8535,16 +8708,21 @@ export class MissionScene extends Phaser.Scene {
         if (arc) {
           const a = arc.angle;
           this.spawnShot({
-            kind: "rocket",
             from: "player",
             wpnId: parent.wpnId,
             slot: parent.slot,
             beh: {
               ...beh,
-              payload: { mode: "he" },
-              guidance: { mode: "none" },
-              gravity: { acceleration: grav, terminalVelocity: term },
-              trailScale: 0,
+              payload: beh.payload.cluster?.bombletDetonate
+                ? { detonate: beh.payload.cluster.bombletDetonate }
+                : { detonate: { look: "fire" } },
+              guidance: undefined,
+              exhaust: undefined,
+              launch: {
+                mode: "muzzle",
+                inheritMomentum: 0,
+                gravity: { acceleration: grav, terminalVelocity: term },
+              },
             },
             st: { age: 0, launchAngle: a, bomblet: true, opened: true },
             x: ox + Math.cos(a) * 6,
@@ -8570,16 +8748,21 @@ export class MissionScene extends Phaser.Scene {
       const spd = spread * (0.7 + Math.random() * 0.9);
       const loft = 110 + Math.random() * 90;
       this.spawnShot({
-        kind: "rocket",
         from: "player",
         wpnId: parent.wpnId,
         slot: parent.slot,
         beh: {
           ...beh,
-          payload: { mode: "he" },
-          guidance: { mode: "none" },
-          gravity: { acceleration: grav, terminalVelocity: term },
-          trailScale: 0,
+          payload: beh.payload.cluster?.bombletDetonate
+            ? { detonate: beh.payload.cluster.bombletDetonate }
+            : { detonate: { look: "energy" } },
+          guidance: undefined,
+          exhaust: undefined,
+          launch: {
+            mode: "muzzle",
+            inheritMomentum: 0,
+            gravity: { acceleration: grav, terminalVelocity: term },
+          },
         },
         st: { age: 0, launchAngle: a, bomblet: true, opened: true },
         x: ox + Math.cos(a) * 6,
@@ -8644,7 +8827,7 @@ export class MissionScene extends Phaser.Scene {
   spawnClusterBomblets(parent: Shot, count: number, spread: number): void {
     const beh = parent.beh;
     if (!beh) return;
-    const cluster = beh.payload.mode === "cluster" ? beh.payload : undefined;
+    const cluster = beh.payload.cluster;
     const bombletDmg = cluster?.bombletDmg ?? parent.dmg * 0.22;
     const bombletBlast = cluster?.bombletBlast ?? parent.blast * 0.28;
     for (let i = 0; i < count; i++) {
@@ -8653,14 +8836,14 @@ export class MissionScene extends Phaser.Scene {
       const bx = parent.x + Math.cos(a) * r * 0.15;
       const by = parent.y + Math.sin(a) * r * 0.15;
       this.spawnShot({
-        kind: "rocket",
         from: "player",
         wpnId: parent.wpnId,
         slot: parent.slot,
         beh: {
           ...beh,
-          payload: { mode: "he" },
-          guidance: { mode: "none" },
+          payload: { detonate: { look: "fire" } },
+          guidance: undefined,
+          exhaust: undefined,
         },
         st: {
           age: 0,
@@ -8686,30 +8869,26 @@ export class MissionScene extends Phaser.Scene {
   }
 
   missileIgnite(s: Shot): void {
-    // Pitch loft is for lock_on seekers only — GPS/waypoint munitions must not inherit it
-    // (Griffin was kind lock-on-missile and rocketed past clip with leftover vz).
-    if (s.from === "player" && s.beh?.guidance.mode === "lock_on") {
-      // Hellfire-class: steep brief pop-up. Soft loft weapons use steering.loft only.
-      const hellfirePop =
-        s.wpnId === "hellfire_missile" || s.wpnId === "mini_hellfire_missile";
-      const photon = s.wpnId === "photon_missile";
-      const pitch = hellfirePop ? 1.15 : photon ? 1.08 : 0.92;
+    const beh = s.from === "player" ? s.beh : undefined;
+    const g = beh?.guidance;
+    const launch = beh?.launch;
+    if (s.from === "player" && g && guidanceIsLockOn(g)) {
+      const pitch =
+        launch?.mode === "kick_motor" && launch.pitch != null ? launch.pitch : 0.92;
+      const loftCap =
+        launch?.mode === "kick_motor" ? launch.loftCap : undefined;
       const spd = Math.max(Math.hypot(s.vx, s.vy), 90);
       s.vx = Math.cos(s.angle) * spd * Math.cos(pitch);
       s.vy = Math.sin(s.angle) * spd * Math.cos(pitch);
       s.vz = spd * Math.sin(pitch);
-      const seekDelay = s.beh.guidance.seekDelay;
-      s.loft = hellfirePop ? Math.min(seekDelay, 0.3) : seekDelay;
-    } else if (s.from === "player") {
-      // Soft loft only when authored; GPS/ground munitions should not leap skyward.
-      if (s.beh?.steering?.loft != null) {
+      const seekDelay = g.targeting.seekDelay;
+      s.loft = loftCap != null ? Math.min(seekDelay, loftCap) : seekDelay;
+    } else if (s.from === "player" && launch?.mode === "kick_motor") {
+      if (launch.softLoft != null) {
         s.vz += 180;
-        s.loft = s.beh.steering.loft;
-      } else if (
-        s.beh?.guidance.mode === "steer" &&
-        !s.beh.guidance.groundDive
-      ) {
-        s.vz += 120;
+        s.loft = launch.softLoft;
+      } else if (launch.leaveVz != null) {
+        s.vz += launch.leaveVz;
       }
     }
     const sc = shotTrailScale(s);
@@ -8739,20 +8918,13 @@ export class MissionScene extends Phaser.Scene {
 
   emitShotTrail(s: Shot, x0: number, y0: number, z0: number): void {
     if (s.deadfall) return;
-    if (s.kind === "cannon" || s.kind === "beam") return;
-    if (s.energyTrail || (s.beh && guidanceHasEnergyTrail(s.beh.guidance)) || s.energyTrails) return;
-    if ((s.trailScale ?? s.beh?.trailScale ?? 1) <= 0) return;
-    // Soft-launch coast: no exhaust until the motor timer hits ignition.
+    if (shotIsGunOrBeam(s)) return;
+    const exhaust = s.beh?.exhaust;
+    if (exhaustIsEnergy(exhaust) || s.energyTrail || s.energyTrails) return;
+    if (!exhaust || exhaust.kind !== "particles") return;
+    if ((exhaust.size ?? 1) <= 0) return;
     if (s.motor != null && s.motor < 0) return;
-    const isRocket = s.kind === "rocket";
     const small = troopMissileTrail(s);
-    const sidewinder = s.wpnId === "sidewinder_missile";
-    // Unguided player rockets + kinetic drop slugs: smoke plume, no flame ribbon.
-    const hydra =
-      s.from === "player" &&
-      ((isRocket && (s.beh?.guidance.mode === "none" || s.beh?.guidance == null)) ||
-        s.wpnId === "mini_bomb" ||
-        s.beh?.payload.mode === "kinetic");
     const sc = shotTrailScale(s);
     const t = range(0.2, 0.8);
     const x = x0 + (s.x - x0) * t;
@@ -8762,22 +8934,33 @@ export class MissionScene extends Phaser.Scene {
     const tail = this.shotUvScreenPos(s, SHOT_TAIL.x, SHOT_TAIL.y, x, y, z);
     const tx = tail.x;
     const ty = tail.y;
+    const fireEm =
+      exhaust.fire === "hotFlame" ? this.hotFlame : exhaust.fire === "burn" ? this.burn : null;
+    const smokeEm =
+      exhaust.smoke === "short"
+        ? this.shortTrailSmoke
+        : exhaust.smoke === "rocket"
+          ? this.rocketSmoke
+          : exhaust.smoke === "linger"
+            ? this.lingerSmoke
+            : null;
     this.withTrailFx(sc, () => {
-      if (sidewinder) {
-        // Distinct AA plume: bright short flame + cooler smoke ribbon.
-        const { fire, smoke } = this.pairFx(z, y, this.playerFlame, this.shortTrailSmoke);
+      if (exhaust.align === "heading") {
+        this.shotTrailAngle = projectHeading(s.angle, x, y, z);
+      }
+      if (fireEm && smokeEm && exhaust.fire === "hotFlame" && exhaust.smoke === "short") {
+        const { fire, smoke } = this.pairFx(z, y, this.hotFlame, this.shortTrailSmoke);
         const nf = this.fxEmitCount(0.95);
         const ns = this.fxEmitCount(0.7);
         if (nf) this.emitBudgeted("fire", fire, tx, ty, nf);
         if (ns) this.emitBudgeted("smoke", smoke, tx, ty, ns);
-      } else if (small) {
-        const { fire, smoke } = this.pairFx(z, y, this.burn, this.lingerSmoke);
+      } else if (small && fireEm && smokeEm) {
+        const { fire, smoke } = this.pairFx(z, y, fireEm, smokeEm);
         const nf = this.fxEmitCount(0.4);
         const ns = this.fxEmitCount(0.28);
         if (nf) this.emitBudgeted("fire", fire, tx, ty, nf);
         if (ns) this.emitBudgeted("smoke", smoke, tx, ty, ns);
-      } else if (hydra) {
-        this.shotTrailAngle = projectHeading(s.angle, x, y, z);
+      } else if (exhaust.smoke === "rocket" && !exhaust.fire) {
         const ns = this.fxEmitCount(1.2);
         if (ns) {
           this.emitBudgeted(
@@ -8788,16 +8971,20 @@ export class MissionScene extends Phaser.Scene {
             ns
           );
         }
-      } else if (isRocket) {
-        this.shotTrailAngle = projectHeading(s.angle, x, y, z);
-        const fire = this.fxAt(z, y, this.burn, ZOff.fire);
+      } else if (exhaust.smoke === "rocket" && exhaust.fire) {
+        const fire = this.fxAt(z, y, fireEm ?? this.burn, ZOff.fire);
         const smoke = this.fxAt(z, y, this.rocketSmoke, ZOff.smoke);
         const nf = this.fxEmitCount(0.42);
         const ns = this.fxEmitCount(0.7);
         if (nf) this.emitBudgeted("fire", fire, tx, ty, nf);
         if (ns) this.emitBudgeted("smoke", smoke, tx, ty, ns);
       } else {
-        const { fire, smoke } = this.pairFx(z, y, this.burn, this.lingerSmoke);
+        const { fire, smoke } = this.pairFx(
+          z,
+          y,
+          fireEm ?? this.burn,
+          smokeEm ?? this.lingerSmoke
+        );
         const nf = this.fxEmitCount(0.55);
         const ns = this.fxEmitCount(0.42);
         if (nf) this.emitBudgeted("fire", fire, tx, ty, nf);
@@ -8971,7 +9158,7 @@ export class MissionScene extends Phaser.Scene {
       s.energyTrails ??
       (s.energyTrail ? (s.energyTrails = [s.energyTrail], s.energyTrails) : null);
     if (!trails) {
-      if (s.beh && guidanceHasEnergyTrail(s.beh.guidance)) {
+      if (s.beh && exhaustIsEnergy(s.beh.exhaust)) {
         s.energyTrail = [];
         s.energyTrails = [s.energyTrail];
       } else return;
@@ -8983,16 +9170,21 @@ export class MissionScene extends Phaser.Scene {
         ? { x: -s.vx / spd, y: -s.vy / spd, z: -s.vz / spd }
         : { x: -Math.cos(s.angle), y: -Math.sin(s.angle), z: 0 };
     const n = list.length;
-    // Photon ribbons fan relative to bearing-to-target; others use shot heading.
+    // Multi-ribbon lock-on (Photon): fan relative to bearing-to-target; else shot heading.
     let aimAng = s.angle;
-    if (s.wpnId === "photon_missile" && s.targetId != null) {
+    if (
+      n > 1 &&
+      s.targetId != null &&
+      s.beh?.guidance &&
+      guidanceIsLockOn(s.beh.guidance)
+    ) {
       const u = this.unitById(s.targetId);
       if (u && !u.dead) aimAng = Math.atan2(u.y - s.y, u.x - s.x);
     }
     const px = -Math.sin(aimAng);
     const py = Math.cos(aimAng);
     const tail = this.shotTailWorldPos(s);
-    const hue = s.wpnId === "warp_bomb" ? ("magenta" as const) : undefined;
+    const hue = exhaustHue(s.beh?.exhaust);
     for (let i = 0; i < n; i++) {
       const trail = list[i]!;
       // Spread ribbons laterally so thick→thin braid reads as three streams.
@@ -9243,7 +9435,7 @@ export class MissionScene extends Phaser.Scene {
   /** Warp bomb / linger: edge refraction PostFX — detached when idle (no pass cost). */
   tickWarpDistortFx(): void {
     const cam = this.cameras.main;
-    let on = this.warpLingerScale != null && this.towLookHold > 0;
+    let on = this.warpLingerScale != null && this.povCamLookHold > 0;
     if (!on) {
       for (const s of this.shots) {
         if (s.from === "player" && s.warpTimeScale != null) {
@@ -9412,13 +9604,13 @@ export class MissionScene extends Phaser.Scene {
 
   deadfallShot(s: Shot): void {
     if (s.deadfall) return;
-    if (s.kind === "cannon" || s.kind === "beam") return;
+    if (shotIsGunOrBeam(s)) return;
     s.deadfall = true;
     s.homePlayer = false;
     s.targetId = undefined;
     s.seekDisabled = true;
     s.povCam = false;
-    s.trailScale = 0;
+    // exhaust silenced via energy/deadfall flags
     s.energyTrail = undefined;
     s.energyTrails = undefined;
     s.wire = undefined;
@@ -9512,7 +9704,7 @@ export class MissionScene extends Phaser.Scene {
     fxOnly = false
   ): void {
     const payload = shot?.beh?.payload;
-    if (payload?.mode === "smoke") {
+    if (payloadIsSmoke(payload)) {
       const at = worldToScreen(x, y, z);
       this.spawnImpactFlash(at.x, at.y, z, 0xf0e0a0, 16 * at.scale, 0.35, 55);
       this.emitVisualBurst(
@@ -9540,7 +9732,7 @@ export class MissionScene extends Phaser.Scene {
     // Kinetic / beam stay ballistic; everything else uses HE blast treatment.
     const he =
       payload != null
-        ? payload.mode !== "kinetic" && payload.mode !== "beam"
+        ? !payloadIsKinetic(payload, shot?.beh?.launch) && (shot?.beh?.launch.mode !== "beam")
         : kind !== "cannon" && kind !== "beam";
     const heBlend = he ? 0 : payloadHeBlend(payload);
     const dustMul = payloadDustMul(payload);
@@ -9661,12 +9853,13 @@ export class MissionScene extends Phaser.Scene {
     const impactY = impactAt.y;
     const impactScale = impactAt.scale;
     if (he || heBlend > 0.05) {
-      const photonic = shot?.wpnId === "photon_missile" || shot?.wpnId === "warp_bomb";
-      const energyHit = shot?.wpnId === "swarm_missile" || photonic;
+      const detLook = shot?.beh?.payload.detonate?.look ?? shot?.beh?.payload.cluster?.bombletDetonate?.look;
+      const photonic = detLook === "photonic";
+      const energyHit = detLook === "energy" || photonic;
       const bomblet = !!shot?.st?.bomblet;
       const blend = he ? 1 : heBlend;
       const dropHeBomb =
-        he && !bomblet && shot?.beh?.launch.mode === "drop" && shot.beh.payload.mode === "he";
+        he && !bomblet && shot?.beh?.launch.mode === "drop" && payloadIsHe(shot.beh.payload);
       if (photonic && !fxOnly) {
         this.emitPhotonImpactSparks(x, y, z, dx, dy, dz, blast);
       }
@@ -9778,17 +9971,18 @@ export class MissionScene extends Phaser.Scene {
     if (this.cloakT <= 0 && hd < blast * 0.55 && agl < 30) this.heli.damage(dmg * 0.25, dx, dy);
   }
 
-  /** Stunned (EMP/Tesla) or fully smoke-blinded. */
-  unitDebuffedForWhisper(u: Unit): boolean {
+  /** Stunned (EMP/Tesla) or fully smoke-blinded (player in thick smoke). */
+  unitIsCombatDebuffed(u: Unit): boolean {
     if (unitStunned(u)) return true;
-    return this.smokeVisionAt(u.x, u.y, radius(u.kind)) <= 0;
+    return this.enemySmokeVision(u) <= 0;
   }
 
-  /** Weapon-specific damage multipliers (Whisper, Sidewinder class bag, …). */
+  /** Weapon-specific damage multipliers (debuff mul, class bag, …). */
   weaponDamageMul(shot: Shot | undefined, u: Unit, dmg: number): number {
     let out = dmg;
-    if (shot?.wpnId === "concealed_cannon" && this.unitDebuffedForWhisper(u)) {
-      out *= WHISPER_DEBUFF_MUL;
+    const debuffMul = shot?.beh?.debuffDmgMul;
+    if (debuffMul != null && debuffMul !== 1 && this.unitIsCombatDebuffed(u)) {
+      out *= debuffMul;
     }
     const bag = shot?.beh?.dmgMul;
     if (bag) {
@@ -11818,8 +12012,8 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 
-  driveDrone(u: Unit, dt: number, h: Heli, dist: number, dx: number, dy: number): void {
-    if (dist < this.enemyAwareReach(1400) && h.phase === "flight") {
+  driveDrone(u: Unit, dt: number, h: Heli, dist: number, dx: number, dy: number, vision = 1): void {
+    if (vision > 0 && dist < this.enemyAwareReach(1400, vision) && h.phase === "flight") {
       const want = Math.atan2(dy, dx);
       const err = Math.abs(Phaser.Math.Angle.Wrap(want - u.angle));
       const turn = err > 1.0 ? 5.2 : err > 0.4 ? 3.8 : 2.8;
@@ -11868,7 +12062,7 @@ export class MissionScene extends Phaser.Scene {
     u.y += u.vy * dt;
   }
 
-  driveScoutHeli(u: Unit, dt: number, h: Heli, dist: number, dx: number, dy: number): void {
+  driveScoutHeli(u: Unit, dt: number, h: Heli, dist: number, dx: number, dy: number, vision = 1): void {
     u.moodT = (u.moodT ?? 0) - dt;
     if ((u.moodT ?? 0) <= 0 && u.aiMood === "flee") u.aiMood = undefined;
     const flee = u.aiMood === "flee";
@@ -11877,7 +12071,7 @@ export class MissionScene extends Phaser.Scene {
     const side = (u.id & 1) === 0 ? 1 : -1;
     const prefDist = 380;
 
-    if (dist < this.enemyAwareReach(1600) && h.phase === "flight") {
+    if (vision > 0 && dist < this.enemyAwareReach(1600, vision) && h.phase === "flight") {
       const fwdX = dx / (dist || 1);
       const fwdY = dy / (dist || 1);
       const latX = -fwdY * side;
@@ -11917,12 +12111,12 @@ export class MissionScene extends Phaser.Scene {
     u.aiTy = h.y;
   }
 
-  driveOrbitHeli(u: Unit, dt: number, h: Heli, dist: number, dx: number, dy: number): void {
+  driveOrbitHeli(u: Unit, dt: number, h: Heli, dist: number, dx: number, dy: number, vision = 1): void {
     // Always-orbit heavies omit combatMood; gunships cycle through combatMood.
     const heavy = !specOf(u.kind).combatMood;
     if (heavy) {
       // Heavy: always orbit and shoot, no kiting
-      if (dist < this.enemyAwareReach(1500) && h.phase === "flight") {
+      if (vision > 0 && dist < this.enemyAwareReach(1500, vision) && h.phase === "flight") {
         u.orbit += 0.2 * dt;
         const ring = 430;
         const ox = h.x + Math.cos(u.orbit) * ring;
@@ -11952,7 +12146,7 @@ export class MissionScene extends Phaser.Scene {
       const closeDist = 280;
       const orbitRing = 380;
 
-      if (dist < this.enemyAwareReach(1500) && h.phase === "flight") {
+      if (vision > 0 && dist < this.enemyAwareReach(1500, vision) && h.phase === "flight") {
         const fwdX = dx / (dist || 1);
         const fwdY = dy / (dist || 1);
         const latX = -fwdY * side;
@@ -12629,8 +12823,8 @@ export class MissionScene extends Phaser.Scene {
       const dx = h.x - u.x;
       const dy = h.y - u.y;
       const dist = Math.hypot(dx, dy);
-      // Cloak: complete sensor blackout — smoke can still exist, but units cannot locate the player.
-      const vision = this.cloakT > 0 ? 0 : this.smokeVisionAt(u.x, u.y, radius(u.kind));
+      // Cloak: complete sensor blackout. Smoke: blinds all enemies when the player is covered.
+      const vision = this.cloakT > 0 ? 0 : this.enemySmokeVision(u);
       if (this.cloakT > 0 && (u.aware || u.aiMood || u.aiTx != null)) {
         u.aware = false;
         u.aiMood = undefined;
@@ -12648,9 +12842,9 @@ export class MissionScene extends Phaser.Scene {
         sp.behavior === "kite_attack_heli" ||
         sp.behavior === "suicide_attack_heli"
       ) {
-        if (sp.behavior === "suicide_attack_heli") this.driveDrone(u, dt, h, dist, dx, dy);
-        else if (sp.behavior === "kite_attack_heli") this.driveScoutHeli(u, dt, h, dist, dx, dy);
-        else this.driveOrbitHeli(u, dt, h, dist, dx, dy);
+        if (sp.behavior === "suicide_attack_heli") this.driveDrone(u, dt, h, dist, dx, dy, vision);
+        else if (sp.behavior === "kite_attack_heli") this.driveScoutHeli(u, dt, h, dist, dx, dy, vision);
+        else this.driveOrbitHeli(u, dt, h, dist, dx, dy, vision);
         if (u.dead) continue;
         const g = groundZ(this.world, u.x, u.y);
         if ((sp.behavior === "orbit_attack_heli" || sp.behavior === "kite_attack_heli")) {
@@ -12935,7 +13129,6 @@ export class MissionScene extends Phaser.Scene {
         const leaveSpd = home ? Math.max(70, wpn.speed * 0.3) : wpn.speed;
         const flightT = Math.max(0.12, shotDist / (home ? wpn.speed * 0.72 : wpn.speed));
         this.spawnShot({
-          kind: wpn.kind,
           from: "enemy",
           x: muzzle.x,
           y: muzzle.y,
@@ -12952,7 +13145,7 @@ export class MissionScene extends Phaser.Scene {
           motor: home ? -0.06 : undefined,
           cruise: home ? wpn.speed : undefined,
           scale: wpn.scale,
-          trailScale: wpn.trailScale,
+          beh: enemyShotBeh(wpn),
           fxInterval,
         });
         if (wpn.kind === "cannon") {
@@ -13017,7 +13210,6 @@ export class MissionScene extends Phaser.Scene {
               const missileT = Math.max(0.45, Math.hypot(h.x - spawn.x, h.y - spawn.y) / (pw.speed * 0.72));
               const home = sec.homePlayer !== false;
               this.spawnShot({
-                kind: pw.kind,
                 from: "enemy",
                 x: px,
                 y: py,
@@ -13034,7 +13226,7 @@ export class MissionScene extends Phaser.Scene {
                 motor: sec.motor,
                 cruise: pw.speed,
                 scale: pw.scale * (sec.scale ?? 1),
-                trailScale: pw.trailScale,
+                beh: enemyShotBeh(pw),
                 fxInterval,
               });
               this.missileMuzzle(px, py, u.z, fireAng, projectileFxScale("enemy", fxInterval));
@@ -13450,7 +13642,7 @@ export class MissionScene extends Phaser.Scene {
       else if (st?.helixOff) im.setTint(0x66ff44);
       else im.clearTint();
       im.setBlendMode(tracer ? Phaser.BlendModes.ADD : Phaser.BlendModes.NORMAL);
-      applyThermalHeat(im, this.thermalOn, s.kind === "cannon" ? 0.9 : 1, s.tint);
+      applyThermalHeat(im, this.thermalOn, shotIsGunOrBeam(s) ? 0.9 : 1, s.tint);
       if (im.depth !== shotDepth) im.setDepth(shotDepth);
     });
   }
@@ -13796,14 +13988,15 @@ export class MissionScene extends Phaser.Scene {
 
     const spec = this.loadout[h.weapon]!;
     const g = spec.guidance;
-    // steer_commit soft-locks only while a missile is in flight.
-    if (g.mode !== "lock_on") {
+    // Pre-fire lock_on only (steer_commit soft-locks in flight).
+    if (!g || !guidanceIsLockOn(g)) {
       h.lockTarget = null;
       h.lockAcquire = null;
       return;
     }
+    const targeting = g.targeting;
 
-    const cats = g.acquire.categories;
+    const cats = targeting.acquire.categories;
     if (cats) {
       if (h.lockTarget) {
         const u = this.unitById(h.lockTarget.id);
@@ -13815,11 +14008,11 @@ export class MissionScene extends Phaser.Scene {
       }
     }
 
-    const lockTime = g.lockTime;
-    const lockRadius = g.lockRadius;
+    const lockTime = targeting.lockTime;
+    const lockRadius = targeting.lockRadius;
     const tgt =
-      g.acquire.policy === "signature"
-        ? this.signaturePickTarget(ptr.x, ptr.y, lockRadius, g.acquire)
+      targeting.acquire.policy === "signature"
+        ? this.signaturePickTarget(ptr.x, ptr.y, lockRadius, targeting.acquire)
         : this.reticlePickTarget(ptr.x, ptr.y, lockRadius, cats);
     if (!tgt || (h.lockTarget && tgt.id === h.lockTarget.id)) {
       h.lockAcquire = null;
@@ -13899,7 +14092,7 @@ export class MissionScene extends Phaser.Scene {
   }
 
   /** Heat-sized pips for signature (Stinger / Sidewinder) lock candidates. */
-  drawHeatSeekHud(g: Extract<PlayerWpnSpec["guidance"], { mode: "lock_on" }>): void {
+  drawHeatSeekHud(g: Extract<NonNullable<PlayerWpnSpec["guidance"]>["targeting"], { mode: "lock_on" }>): void {
     if (g.acquire.policy !== "signature") return;
     const gfx = this.lockGfx;
     const ptr = this.worldPointer();
@@ -14031,9 +14224,8 @@ export class MissionScene extends Phaser.Scene {
     for (const s of this.shots) {
       if (s.from !== "player" || s.targetId == null) continue;
       const guided =
-        s.kind === "lock-on-missile" ||
-        s.beh?.guidance.mode === "lock_on" ||
-        s.beh?.guidance.mode === "steer_commit";
+        shotFacesHeading(s) ||
+        (s.beh?.guidance != null && guidanceUsesLock(s.beh.guidance));
       if (!guided) continue;
       if (seen.has(s.targetId)) continue;
       const u = this.unitById(s.targetId);
@@ -14055,31 +14247,31 @@ export class MissionScene extends Phaser.Scene {
     this.lockInbdTxt.setVisible(false);
 
     const spec = this.loadout[h.weapon]!;
-    if (spec.id === "tesla_beam") {
+    if (launchIsArcBeam(spec.launch)) {
       this.updateTeslaLock(spec);
       this.drawGpsWaypointMarks();
       return;
     }
     const wpnGuidance = spec.guidance;
-    const lockGuided = guidanceUsesLock(wpnGuidance);
-    if (!lockGuided) {
+    if (!wpnGuidance || !guidanceUsesLock(wpnGuidance)) {
       if (!this.drawGpsWaypointMarks()) g.setVisible(false);
       return;
     }
+    const targeting = wpnGuidance.targeting;
 
-    if (wpnGuidance.mode === "steer_commit") {
-      this.updateNlosLock(wpnGuidance);
+    if (targeting.mode === "steer_commit") {
+      this.updateNlosLock(targeting);
       this.drawGpsWaypointMarks();
       return;
     }
 
-    const lockTime = wpnGuidance.lockTime;
+    const lockTime = targeting.lockTime;
     const inbound = this.inboundLockTargets();
     const locked = h.lockTarget ? this.unitById(h.lockTarget.id) : undefined;
     const seeking = h.lockAcquire ? this.unitById(h.lockAcquire.id) : undefined;
     const heatSeek =
-      wpnGuidance.mode === "lock_on" && wpnGuidance.acquire.policy === "signature";
-    const hud = spec.lockHud;
+      targeting.mode === "lock_on" && targeting.acquire.policy === "signature";
+    const hud = spec.cam.lockHud;
     const lockColor = hud?.color ?? 0xff3a22;
     const lockTextColor = hud?.textColor ?? "#ff3a22";
     if (!locked && !seeking && inbound.length === 0 && !heatSeek) {
@@ -14088,7 +14280,7 @@ export class MissionScene extends Phaser.Scene {
     }
 
     g.setVisible(true);
-    if (heatSeek) this.drawHeatSeekHud(wpnGuidance);
+    if (heatSeek && targeting.mode === "lock_on") this.drawHeatSeekHud(targeting);
     let lockDepth: number = Layer.FIELD;
     const inboundIds = new Set(inbound.map((u) => u.id));
     let inbdLabeled = false;
@@ -14164,7 +14356,7 @@ export class MissionScene extends Phaser.Scene {
     let labelI = 0;
     for (const s of this.shots) {
       if (s.from !== "player" || !s.st || s.st.bomblet) continue;
-      if (s.beh?.guidance.mode !== "waypoint") continue;
+      if (targetingMode(s.beh?.guidance) !== "waypoint") continue;
       const gx = s.st.gx;
       const gy = s.st.gy;
       if (gx == null || gy == null) continue;
@@ -14273,7 +14465,7 @@ export class MissionScene extends Phaser.Scene {
 
   /** Spike / NLOS: LOCK diamond only while missile flies + reticle near target; FIRE after commit. */
   updateNlosLock(
-    g: Extract<PlayerWpnSpec["guidance"], { mode: "steer_commit" }>
+    g: Extract<NonNullable<PlayerWpnSpec["guidance"]>["targeting"], { mode: "steer_commit" }>
   ): void {
     const gfx = this.lockGfx;
     const wpnId = this.loadout[this.heli.weapon]!.id;
@@ -14479,7 +14671,7 @@ export class MissionScene extends Phaser.Scene {
     return best;
   }
 
-  /** World point the play camera is looking at (heli, or TOW/SPIKE/stinger chase). */
+  /** World point the play camera is looking at (heli, povCam chase, or stinger). */
   camLookWorld(): { x: number; y: number; z: number } {
     const a = this.playerCamAnchor();
     return {
@@ -14487,7 +14679,7 @@ export class MissionScene extends Phaser.Scene {
       y: a.y + this.lookCamY,
       z:
         this.stingerT > 0 && this.stingerTarget?.z != null && !this.stingerReleased
-          ? this.stingerTarget.z
+          ? this.stingerFocusZ
           : a.z,
     };
   }
@@ -14716,7 +14908,7 @@ export class MissionScene extends Phaser.Scene {
     return (
       this.remoteView &&
       !!this.activeRemote() &&
-      this.loadout[this.heli.weapon]?.payload.mode === "remote"
+      payloadIsRemote(this.loadout[this.heli.weapon]?.payload)
     );
   }
 
@@ -14770,10 +14962,16 @@ export class MissionScene extends Phaser.Scene {
       const socket = h.spec.sockets[i];
       const auto = socket?.controller === "automatic";
       const gunner = auto && !sel;
+      const disabled = this.weaponSlotDisabled(i);
       const x = x0 + i * (slotW + gap);
 
-      // Slot chrome — gunner-manned autos get the blue crew treatment.
-      if (sel) {
+      // Slot chrome — disabled is a shared visual (cloak today; other gates later).
+      if (disabled) {
+        g.fillStyle(sel ? 0x1a1a1c : 0x0e0e10, sel ? 0.88 : 0.62);
+        g.fillRoundedRect(x, y, slotW, slotH, 3);
+        g.lineStyle(1.4, sel ? 0x5a5a62 : 0x3a3a42, sel ? 0.85 : 0.55);
+        g.strokeRoundedRect(x, y, slotW, slotH, 3);
+      } else if (sel) {
         g.fillStyle(empty ? 0xff3a2a : low ? 0xe89a3a : 0xe8b84a, 1);
         g.fillRoundedRect(x, y, slotW, slotH, 3);
       } else if (empty) {
@@ -14804,19 +15002,21 @@ export class MissionScene extends Phaser.Scene {
       // Ammo reserve bar
       const barX = x + barPad;
       const barW = slotW - barPad * 2;
-      g.fillStyle(sel ? 0x1c1812 : 0x000000, sel ? 0.28 : 0.4);
+      g.fillStyle(disabled ? 0x000000 : sel ? 0x1c1812 : 0x000000, disabled ? 0.45 : sel ? 0.28 : 0.4);
       g.fillRect(barX, barY, barW, barH);
       if (!empty) {
-        const fill = low
-          ? sel
-            ? 0x6a2a08
-            : 0xe89a3a
-          : sel
-            ? 0x1c1812
-            : gunner
-              ? 0x5eb4e8
-              : 0xc4a24a;
-        g.fillStyle(fill, sel ? 0.85 : 0.95);
+        const fill = disabled
+          ? 0x5a5a62
+          : low
+            ? sel
+              ? 0x6a2a08
+              : 0xe89a3a
+            : sel
+              ? 0x1c1812
+              : gunner
+                ? 0x5eb4e8
+                : 0xc4a24a;
+        g.fillStyle(fill, disabled ? 0.55 : sel ? 0.85 : 0.95);
         g.fillRect(barX, barY, Math.max(2, barW * frac), barH);
       }
 
@@ -14830,8 +15030,8 @@ export class MissionScene extends Phaser.Scene {
         : this.infAmmo || !Number.isFinite(a)
           ? "∞"
           : String(a | 0);
-      const liveRemote = wp.payload.mode === "remote" ? this.activeRemote() : undefined;
-      const liveMark = !!liveRemote && !this.remoteView;
+      const liveRemote = payloadIsRemote(wp.payload) ? this.activeRemote() : undefined;
+      const liveMark = !!liveRemote && !this.remoteView && !disabled;
       const mult = craftSocketMultiplicity(h.spec, i);
       const rawName = liveRemote
         ? this.remoteView
@@ -14847,7 +15047,11 @@ export class MissionScene extends Phaser.Scene {
       let ammoCol = "#e8d49a";
       let stroke = "#12100c";
       let strokeW = 3;
-      if (sel) {
+      if (disabled) {
+        keyCol = nameCol = ammoCol = sel ? "#8a8a92" : "#6a6a72";
+        stroke = "#0a0a0c";
+        strokeW = 2;
+      } else if (sel) {
         keyCol = nameCol = ammoCol = empty ? "#2a0808" : "#1c1812";
         stroke = empty ? "#2a0808" : "#1c1812";
         strokeW = 0;
@@ -14865,6 +15069,7 @@ export class MissionScene extends Phaser.Scene {
       // Spectre airborne in bird-cam: green LIVE stands out from the yellow loadout chrome.
       if (liveMark) nameCol = sel ? "#0a4020" : "#3dff88";
 
+      const textA = disabled ? (sel ? 0.55 : 0.4) : 1;
       row.key
         .setVisible(true)
         .setPosition(keyLp.x, keyLp.y)
@@ -14872,7 +15077,7 @@ export class MissionScene extends Phaser.Scene {
         .setColor(keyCol)
         .setStroke(stroke, strokeW)
         .setFontSize("12px")
-        .setAlpha(sel ? 0.7 : 0.85);
+        .setAlpha(disabled ? textA : sel ? 0.7 : 0.85);
 
       row.ammo
         .setVisible(true)
@@ -14880,8 +15085,8 @@ export class MissionScene extends Phaser.Scene {
         .setText(ammoS)
         .setColor(ammoCol)
         .setStroke(stroke, strokeW)
-        .setFontSize(low && !sel ? "13px" : "12px")
-        .setAlpha(1);
+        .setFontSize(low && !sel && !disabled ? "13px" : "12px")
+        .setAlpha(textA);
 
       // Name sits between key and ammo; truncate so it never spills the box.
       const nameMaxW = Math.max(
@@ -14900,7 +15105,7 @@ export class MissionScene extends Phaser.Scene {
         .setColor(nameCol)
         .setStroke(stroke, strokeW)
         .setFontSize("13px")
-        .setAlpha(liveBlink);
+        .setAlpha(disabled ? textA : liveBlink);
 
       if (auto) {
         const player = sel;
@@ -14912,9 +15117,9 @@ export class MissionScene extends Phaser.Scene {
           .setVisible(true)
           .setPosition(statusLp.x, statusLp.y)
           .setText(label)
-          .setColor(player ? "#e8b84a" : "#8ec8e8")
+          .setColor(disabled ? "#6a6a72" : player ? "#e8b84a" : "#8ec8e8")
           .setStroke("#12100c", 2)
-          .setAlpha(player ? 0.95 : 0.85)
+          .setAlpha(disabled ? 0.45 : player ? 0.95 : 0.85)
           .setFontSize("10px");
       } else {
         row.status.setVisible(false).setText("");
@@ -15921,23 +16126,24 @@ export class MissionScene extends Phaser.Scene {
     this.applyThermalMode();
   }
 
-  /** Map weapon sensor palette onto the runtime thermal pipeline. */
-  sensorPaletteOf(palette: "white_hot" | "black_hot" | "full_spectrum"): ThermalPalette {
-    if (palette === "full_spectrum") return "full_spectrum";
-    return "white_hot";
+  /** Craft-owned thermal look (sensor cams + T share this; linger must not override it). */
+  craftSensorPalette(): ThermalPalette {
+    return this.heli.spec.kind === "prometheus" || this.heli.spec.kind === "cyberhawk"
+      ? "full_spectrum"
+      : "white_hot";
   }
 
-  activeSensorView(): WeaponSensorView | undefined {
+  /** True when a remote or seeker cam wants thermal (palette always craft thermal). */
+  activeSensorThermal(): boolean {
     const remote = this.activeRemote();
-    if (remote?.spec.sensorView && this.remoteCamT > 0.2) return remote.spec.sensorView;
-    const sensor = this.activeSensorShot();
-    return sensor?.wpnId ? PLAYER_WPNS[sensor.wpnId]?.sensorView : undefined;
+    if (remote?.spec.thermal && this.remoteCamT > 0.2) return true;
+    return !!this.activeSensorShot();
   }
 
   /** Active Spike / Spectre / warp sensor projectile, preferring the selected weapon. */
   activeSensorShot(): Shot | undefined {
     const selected = this.loadout[this.heli.weapon];
-    if (selected?.sensorView) {
+    if (selected?.cam.thermal) {
       const mine = this.shots.find(
         (s) =>
           s.from === "player" &&
@@ -15950,23 +16156,19 @@ export class MissionScene extends Phaser.Scene {
     for (let i = this.shots.length - 1; i >= 0; i--) {
       const s = this.shots[i]!;
       if (s.from !== "player" || !s.wpnId || !s.st || s.st.bomblet) continue;
-      if (PLAYER_WPNS[s.wpnId]?.sensorView) return s;
+      if (PLAYER_WPNS[s.wpnId]?.cam.thermal) return s;
     }
     return undefined;
   }
 
   /** Enable/disable thermal from manual T and/or weapon sensorView. */
   applyThermalMode(): void {
-    const view = this.activeSensorView();
+    const sensorOn = this.activeSensorThermal();
     const lingerOn = this.sensorLingerT > 0 && this.sensorLingerPalette != null;
-    const want = this.thermalManual || !!view || lingerOn;
-    const palette: ThermalPalette = view
-      ? this.sensorPaletteOf(view.palette)
-      : lingerOn
-        ? this.sensorLingerPalette!
-        : this.heli.spec.kind === "prometheus" || this.heli.spec.kind === "cyberhawk"
-          ? "full_spectrum"
-          : "white_hot";
+    const want = this.thermalManual || sensorOn || lingerOn;
+    const palette: ThermalPalette = lingerOn
+      ? this.sensorLingerPalette!
+      : this.craftSensorPalette();
     if (want === this.thermalOn && (!want || this.thermalPalette === palette)) return;
 
     this.thermalOn = want;
@@ -17151,7 +17353,9 @@ export class MissionScene extends Phaser.Scene {
     const focusX = anchor.x + this.lookCamX;
     const focusY = anchor.y + this.lookCamY;
     const focusZ =
-      this.stingerT > 0 && this.stingerTarget?.z != null ? this.stingerTarget.z : anchor.z;
+      this.stingerT > 0 && this.stingerTarget?.z != null && !this.stingerReleased
+        ? this.stingerFocusZ
+        : anchor.z;
     setCamera25DFocus(focusX, focusY, focusZ);
     // Camera-space coordinates from getWorldPoint are stale after recentering,
     // even within the same game-loop frame.
@@ -17285,16 +17489,34 @@ export class MissionScene extends Phaser.Scene {
       const fullOy = this.stingerTarget.y - anchor.y;
       // If impact linger is still on (near) this site, don't ease back to the player mid-stinger.
       const lingerCovers =
-        this.towLookHold > 0 &&
-        Math.hypot(this.towLookX - this.stingerTarget.x, this.towLookY - this.stingerTarget.y) < 320;
+        this.povCamLookHold > 0 &&
+        Math.hypot(this.povCamLookX - this.stingerTarget.x, this.povCamLookY - this.stingerTarget.y) < 320;
       const leave = lingerCovers ? 1 : ease(this.stingerT / 0.85);
-      // Arrive from wherever we already were (TOW cam), not from zero/player.
+      // Arrive from wherever we already were (e.g. povCam chase), not from zero/player.
       let ox = Phaser.Math.Linear(this.stingerCamFromX, fullOx, arrive);
       let oy = Phaser.Math.Linear(this.stingerCamFromY, fullOy, arrive);
+      const targetZ = this.stingerTarget.z ?? anchor.z;
+      let focusZ = Phaser.Math.Linear(this.stingerCamFromZ, targetZ, arrive);
       if (leave < 1) {
-        ox *= leave;
-        oy *= leave;
+        // Default leave collapses toward heli (0,0). In Spectre view, ease back to the drone
+        // so we don't flash the bird before remoteCamT reclaims the look.
+        let restX = 0;
+        let restY = 0;
+        let restZ = anchor.z;
+        if (this.remoteView) {
+          const drone = this.activeRemote();
+          if (drone) {
+            const seek = this.remoteLookOffset(drone);
+            restX = seek.x;
+            restY = seek.y;
+            restZ = drone.z;
+          }
+        }
+        ox = Phaser.Math.Linear(restX, ox, leave);
+        oy = Phaser.Math.Linear(restY, oy, leave);
+        focusZ = Phaser.Math.Linear(restZ, focusZ, leave);
       }
+      this.stingerFocusZ = focusZ;
       const k = 1 - Math.exp(-5.5 * dt);
       this.lookCamX = Phaser.Math.Linear(this.lookCamX, ox, k);
       this.lookCamY = Phaser.Math.Linear(this.lookCamY, oy, k);
@@ -17324,8 +17546,7 @@ export class MissionScene extends Phaser.Scene {
     this.tickRemoteCamBlend(dt);
     const remote = this.activeRemote();
     const sensor = this.activeSensorShot();
-    const sensorView = sensor?.wpnId ? PLAYER_WPNS[sensor.wpnId]?.sensorView : undefined;
-    if (sensor && sensorView) {
+    if (sensor) {
       const hx = this.heli.x;
       const hy = this.heli.y;
       const p = this.pointerScreen();
@@ -17363,7 +17584,7 @@ export class MissionScene extends Phaser.Scene {
       const ox = Phaser.Math.Linear(aimOx, seekOx, handoff);
       const oy = Phaser.Math.Linear(aimOy, seekOy, handoff);
       const ahead = Math.hypot(sensor.x - (hx + this.lookCamX), sensor.y - (hy + this.lookCamY));
-      const baseRate = sensorView.source === "seeker" ? 3.6 : 4.2;
+      const baseRate = PLAYER_WPNS[sensor.wpnId ?? ""]?.cam.thermal ? 3.6 : 4.2;
       const rate = baseRate + Phaser.Math.Clamp(ahead / 220, 0, 1) * 2.8;
       const k = 1 - Math.exp(-rate * dt);
       this.lookCamX = Phaser.Math.Linear(this.lookCamX, ox, k);
@@ -17373,20 +17594,13 @@ export class MissionScene extends Phaser.Scene {
     }
     const p = this.pointerScreen();
     const pointerAtFocus = screenToWorldAtZ(p.x, p.y, this.heli.z);
-    const wpn = this.loadout[this.heli.weapon]!.kind;
-    let look =
-      wpn === "lock-on-missile"
-        ? { pull: 0.58, max: 220, rate: 5.6 }
-        : wpn === "rocket"
-          ? { pull: 0.42, max: 160, rate: 7.4 }
-          : wpn === "guided-missile"
-            ? { pull: 0.55, max: 210, rate: 6.5 }
-            : { pull: 0.2, max: 88, rate: 10 };
-    // Jets fly faster / higher — give hardpoint ordnance a longer aim lead (not Sidewinder).
+    const wpnSpec = this.loadout[this.heli.weapon]!;
+    let look = { ...wpnSpec.cam.look };
+    // Jets fly faster / higher — give hardpoint ordnance a longer aim lead (unless planeLookMul false).
     if (
       craftControlScheme(this.heli.spec) === "plane" &&
-      wpn !== "cannon" &&
-      this.loadout[this.heli.weapon]!.id !== "sidewinder_missile"
+      wpnSpec.cam.planeLookMul !== false &&
+      (wpnSpec.guidance != null || wpnSpec.launch.mode === "drop" || !!wpnSpec.exhaust)
     ) {
       look = { pull: look.pull * 1.22, max: look.max * 1.28, rate: look.rate };
     }
@@ -17400,27 +17614,27 @@ export class MissionScene extends Phaser.Scene {
       oy *= max / len;
     }
     let rate = look.rate;
-    let tow: Shot | undefined;
+    let pov: Shot | undefined;
     for (let i = this.shots.length - 1; i >= 0; i--) {
       const s = this.shots[i]!;
       if (s.from !== "player") continue;
-      // POV-cam munitions (TOW / Spike / Griffin / Smoke / Warp).
+      // Live shot with cam.povCam — ride it until impact linger takes over.
       if (s.povCam) {
-        tow = s;
+        pov = s;
         break;
       }
     }
-    if (tow) {
-      this.towLookX = tow.x;
-      this.towLookY = tow.y;
+    if (pov) {
+      this.povCamLookX = pov.x;
+      this.povCamLookY = pov.y;
       // Live follow — don't accumulate linger while the shot is still airborne.
-      this.towLookHold = 0;
-      ox += (tow.x - this.heli.x) * 0.82;
-      oy += (tow.y - this.heli.y) * 0.82;
+      this.povCamLookHold = 0;
+      ox += (pov.x - this.heli.x) * 0.82;
+      oy += (pov.y - this.heli.y) * 0.82;
       rate = 5.4;
-    } else if (this.towLookHold > 0) {
-      ox += (this.towLookX - this.heli.x) * 0.82;
-      oy += (this.towLookY - this.heli.y) * 0.82;
+    } else if (this.povCamLookHold > 0) {
+      ox += (this.povCamLookX - this.heli.x) * 0.82;
+      oy += (this.povCamLookY - this.heli.y) * 0.82;
       rate = 5.4;
     } else if (this.sensorLingerT <= 0) {
       this.sensorLingerPalette = null;
@@ -17567,7 +17781,7 @@ export class MissionScene extends Phaser.Scene {
       const x = unit ? unit.x : spec.x;
       const y = unit ? unit.y : spec.y;
       const dead = !unit || unit.dead;
-      const kind = spec.kind.toUpperCase();
+      const kind = String(spec.kind ?? "HV").toUpperCase();
       const status = dead
         ? "DESTROYED"
         : `ACTIVE  ${(Math.max(0, (unit.health / unit.max) * 100) | 0)}%`;
@@ -17844,7 +18058,7 @@ export class MissionScene extends Phaser.Scene {
         h.dmgSites.push({ ...uv, scale: range(0.42, 0.8) });
       }
       if (want) {
-        const { fire, smoke } = this.pairHurtFx(h.z, h.y, this.playerFlame, this.playerHurtSmoke);
+        const { fire, smoke } = this.pairHurtFx(h.z, h.y, this.hotFlame, this.playerHurtSmoke);
         for (const s of h.dmgSites) {
           const base = spriteUvPos(this.heliBodyDrawPose(), s.u, s.v);
           // Keep sparks on the damage pin — wide jitter reads as loose trail spray.
@@ -17929,9 +18143,11 @@ export class MissionScene extends Phaser.Scene {
     const style = job.style ?? "dramatic";
     this.stingerStyle = style;
     this.stingerReleased = false;
-    // Ease from current look (e.g. TOW already on the HV), never from the player.
+    // Ease from current look / focus altitude (e.g. gunship AGL), never snap 2.5D scale.
     this.stingerCamFromX = this.lookCamX;
     this.stingerCamFromY = this.lookCamY;
+    this.stingerCamFromZ = this.playerCamAnchor().z;
+    this.stingerFocusZ = this.stingerCamFromZ;
     const kids: Phaser.GameObjects.GameObject[] = [];
     if (style === "dramatic") {
       kids.push(this.add.rectangle(width / 2, height / 2, width, 92, 0x090908, 0.82));
@@ -18110,10 +18326,71 @@ function troopMissileTrail(s: Shot): boolean {
   return s.from === "enemy";
 }
 
+
+/** Legacy explode() kind tag for HE vs kinetic FX when payload is absent. */
+function shotKindForExplode(s: Shot): ShotKind {
+  if (shotIsGunOrBeam(s)) return s.beh?.launch.mode === "beam" ? "beam" : "cannon";
+  if (s.homePlayer || s.motor != null) return "lock-on-missile";
+  if (s.beh?.exhaust?.kind === "particles" && s.beh.exhaust.smoke === "rocket") return "rocket";
+  if (s.povCam || s.wire) return "guided-missile";
+  return "rocket";
+}
+
+/** Minimal behavior snapshot so enemy trails / gravity read the new exhaust model. */
+function enemyShotBeh(wpn: {
+  look: ShotLook;
+  scale: number;
+  trailScale?: number;
+  kind: ShotKind;
+  speed: number;
+  dmg: number;
+  blast: number;
+}): ShotBehavior | undefined {
+  const rocket = wpn.kind === "rocket" || (wpn.trailScale != null && wpn.kind !== "cannon");
+  const seek = wpn.kind === "lock-on-missile";
+  if (!rocket && !seek && wpn.trailScale == null) {
+    // Guns: no exhaust — shotIsGunOrBeam uses !exhaust
+    return {
+      art: { look: wpn.look, scale: wpn.scale, face: "velocity" },
+      cam: { reticle: "round", look: { pull: 0.2, max: 88, rate: 10 } },
+      control: { mode: "click" },
+      launch: { mode: "muzzle", inheritMomentum: 0 },
+      payload: wpn.kind === "cannon" ? { penetration: 1 } : { detonate: { look: "fire" } },
+      cruiseSpeed: wpn.speed,
+      dmg: wpn.dmg,
+      blast: wpn.blast,
+    };
+  }
+  return {
+    art: { look: wpn.look, scale: wpn.scale, face: seek || rocket ? "heading" : "velocity" },
+    cam: { reticle: "round", look: { pull: 0.2, max: 88, rate: 10 } },
+    control: { mode: "click" },
+    launch: { mode: "muzzle", inheritMomentum: 0 },
+    payload: { detonate: { look: "fire" } },
+    exhaust:
+      wpn.trailScale != null
+        ? {
+            kind: "particles",
+            size: wpn.trailScale,
+            fire: "burn",
+            smoke: wpn.kind === "rocket" ? "rocket" : "linger",
+            ...(wpn.kind === "rocket" ? { align: "heading" as const } : {}),
+          }
+        : seek
+          ? { kind: "particles", size: 0.55, fire: "burn", smoke: "linger" }
+          : undefined,
+    cruiseSpeed: wpn.speed,
+    dmg: wpn.dmg,
+    blast: wpn.blast,
+  };
+}
+
 function shotTrailScale(s: Shot): number {
   const vis = s.scale ?? 1;
-  const ts = s.beh?.trailScale ?? s.trailScale;
-  return ts != null ? vis * ts : vis;
+  const ex = s.beh?.exhaust;
+  if (!ex || exhaustIsEnergy(ex)) return 0;
+  if (ex.kind === "particles") return vis * (ex.size ?? 1);
+  return vis;
 }
 
 function jitterDisk(x: number, y: number, r: number): { x: number; y: number } {
@@ -18266,7 +18543,7 @@ function norm3(x: number, y: number, z: number): { x: number; y: number; z: numb
 /** Shared rail / kick-motor cruise ramp for powered player missiles. */
 function motorizedSpeed(s: Shot, beh: NonNullable<Shot["beh"]>, dt: number): number {
   const cur = Math.hypot(s.vx, s.vy, s.vz);
-  if (beh.constantSpeed) {
+  if (beh.launch.mode === "kick_motor" && beh.launch.acceleration === 0) {
     s.cruise = beh.cruiseSpeed;
     return beh.cruiseSpeed;
   }
