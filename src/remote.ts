@@ -131,8 +131,13 @@ export interface RemoteSpec {
     /** Soft leash — if broken, host heads back to innerRadius. */
     outerRadius: number;
   };
-  /** Stop near mouse while autonomous (HOUND always tracks pointer). */
+  /** Idle park radius at the mouse while autonomous (HOUND orbits hostiles instead). */
   mouseStopRange?: number;
+  /**
+   * Max standoff from the reticle while autonomous. Beyond this, HOUND drives
+   * back to the mouse even with a live target (turret still engages).
+   */
+  mouseLeashRange?: number;
   /**
    * While piloting this POV remote, the host hull yaws toward it (no follow thrust).
    * Used by Raptor / Leviathan — separate from HOUND FOLLOW|HOLD leash.
@@ -187,6 +192,7 @@ type RemoteDef = {
   escortRange?: number;
   hostEscort?: RemoteSpec["hostEscort"];
   mouseStopRange?: number;
+  mouseLeashRange?: number;
   hostFace?: boolean;
   rotOff?: number;
 };
@@ -391,6 +397,7 @@ function mergeRemoteDef(def: RemoteDef): RemoteSpec {
     escortRange: def.escortRange,
     hostEscort: def.hostEscort,
     mouseStopRange: def.mouseStopRange,
+    mouseLeashRange: def.mouseLeashRange,
     hostFace: def.hostFace,
     craftLook: def.craftLook,
     rotOff: def.rotOff ?? hull.rotOff,
@@ -482,6 +489,7 @@ const REMOTE_DEFS: Record<RemoteKind, RemoteDef> = {
     engageRange: 320,
     orbitRange: 95,
     mouseStopRange: 48,
+    mouseLeashRange: 200,
     hostEscort: { innerRadius: 140, outerRadius: 260 },
   },
 };

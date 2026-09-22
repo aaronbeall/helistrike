@@ -268,6 +268,8 @@ export type WeaponLaunch =
       burnTime?: number;
       /** Leave speed when `acceleration` is set (default 10 for rails). */
       leaveSpeed?: number;
+      /** Extra upward leave impulse (Banshee loft). */
+      leaveVz?: number;
       gravity?: WeaponGravity;
     }
   | {
@@ -337,7 +339,7 @@ const LOOK_LOCK = { pull: 0.58, max: 220, rate: 5.6 } as const;
 const LOOK_ROCKET = { pull: 0.42, max: 160, rate: 7.4 } as const;
 const LOOK_GUIDED = { pull: 0.55, max: 210, rate: 6.5 } as const;
 const LOOK_GUN = { pull: 0.2, max: 88, rate: 10 } as const;
-/** Lobbed howitzer — longer lead than Starstreak, short of a theater pull-out. */
+/** Lobbed howitzer — longer lead than Starscream, short of a theater pull-out. */
 const LOOK_ARTILLERY = { pull: 0.58, max: 260, rate: 5.2 } as const;
 const DIVE_TOW = { range: 280, power: 2.85, inner: 45 } as const;
 const DIVE_GRIFFIN = { range: 560, power: 1.25, inner: 90 } as const;
@@ -369,6 +371,7 @@ const MOUNT_RAILGUN = "gun_railgun";
 const MOUNT_PLASMA = "gun_plasma";
 const MOUNT_TESLA = "gun_tesla";
 const MOUNT_PILOT = "gun_pilot";
+const MOUNT_GRENADE = "gun_grenade_launcher";
 
 export type TracerRgb = [number, number, number];
 
@@ -485,6 +488,7 @@ const particleTrail = (
     contrail?: boolean;
     align?: "heading";
     density?: number;
+    emitUv?: { x: number; y: number };
   } = {}
 ): ExhaustTrail => ({
   kind: "particles",
@@ -765,7 +769,7 @@ const PLAYER_WPNS_DEFS = {
     fits: FIT_GUN, notes: ["hypervelocity penetrator; deliberate automatic fire"],
   },
   swarm_missile: {
-    id: "swarm_missile", name: "STARSTREAK", fullName: "STARSTREAK MISSILE", designation: "STARSTREAK HVM GUIDED DARTS", ammo: 92, fireCd: 0.095, speed: 920,
+    id: "swarm_missile", name: "STARSCREAM", fullName: "STARSCREAM MISSILE", designation: "STARSCREAM HVM GUIDED DARTS", ammo: 92, fireCd: 0.095, speed: 920,
     dmg: 99, blast: 105, life: 4.2,
     art: ordArt("miniRocket", 0.4, "heading"),
     exhaust: energyTrail({ ribbons: 1, hue: "cyan" }),
@@ -783,6 +787,46 @@ const PLAYER_WPNS_DEFS = {
     },
     fits: FIT_HARDPOINT,
     notes: ["rapid jittered darts; neon ribbon; energy bomblets arc onto cone targets"],
+  },
+  /** Starscream-family hose without cluster — loft pop then dive onto reticle. */
+  banshee: {
+    id: "banshee", name: "BANSHEE", fullName: "BANSHEE MISSILE", designation: "BANSHEE HVM LOFT DARTS", ammo: 148, fireCd: 0.095, speed: 780,
+    dmg: 99, blast: 105, life: 5.2,
+    art: ordArt("miniRocket", 0.4, "heading"),
+    exhaust: energyTrail({ ribbons: 1, hue: "cyan" }),
+    cam: { ...CAM_ROCKET, sight: "mouse" }, fire: { muzzleFlash: true, jitter: 0.42 },
+    control: HOLD,
+    // Strong vertical leave — flight holds the climb, then pitches over hard.
+    launch: { mode: "muzzle", inheritMomentum: 0.12, leaveVz: 520 },
+    guidance: steerGuidance(3.2, 1.15, undefined),
+    payload: { detonate: { look: "energy" } },
+    fits: FIT_HARDPOINT,
+    notes: ["neon ribbon; pops straight up, then crashes onto the reticle; no bomblet burst"],
+  },
+  grenade_launcher: {
+    id: "grenade_launcher",
+    name: "GRENADE",
+    fullName: "GRENADE LAUNCHER",
+    designation: "M32A1 40MM MULTIPLE GRENADE LAUNCHER",
+    ammo: 42,
+    fireCd: 0.24,
+    speed: 260,
+    // Very light rocket: soft HE, small splash (Hydra is 115/150).
+    dmg: 68,
+    blast: 88,
+    life: 5.2,
+    art: { look: ordLook("miniRocket"), scale: 0.52, face: "velocity", mount: MOUNT_GRENADE },
+    exhaust: particleTrail(0.38, { density: 0.5, contrail: true }),
+    cam: CAM_DROP,
+    fire: { muzzleFlash: true, jitter: 0.12 },
+    control: HOLD,
+    launch: DROP,
+    payload: HE_FIRE,
+    fits: FIT_GUN,
+    notes: [
+      "six-shot revolving cylinder — iron-bomb arc with heavy throw boost",
+      "40mm HE; white contrail; light splash vs soft targets",
+    ],
   },
   attack_drone: {
     id: "attack_drone", name: "SPECTRE", fullName: "SPECTRE DRONE", designation: "SPECTRE REMOTE ATTACK DRONE", ammo: 3, fireCd: 3, speed: 280,
@@ -843,7 +887,8 @@ const PLAYER_WPNS_DEFS = {
     blast: 95,
     life: 18,
     art: { look: "enemy_drone", scale: 0.55, face: "heading" },
-    cam: { reticle: "square", look: LOOK_GUIDED, povCam: true, sight: "mouse" },
+    exhaust: particleTrail(0.28, { smoke: "linger", density: 0.42 }),
+    cam: { reticle: "square", look: LOOK_GUIDED, povCam: true, thermal: true, sight: "mouse" },
     control: CLICK,
     launch: { mode: "muzzle", inheritMomentum: 0.15 },
     guidance: steerGuidance(6.2, 1.4, {
@@ -858,7 +903,7 @@ const PLAYER_WPNS_DEFS = {
     fits: FIT_GUN.concat("hardpoint" as SocketClass),
     notes: [
       "alternating ground skimmers from the hull ports",
-      "ride the seeker cam — crawl to the mouse, dash onto nearby hostiles and detonate",
+      "thermal seeker cam — crawl to the mouse, dash onto nearby hostiles and detonate",
     ],
   },
   plasma_cannon: {
@@ -963,7 +1008,7 @@ const PLAYER_WPNS_DEFS = {
     dmg: 420, blast: 210, life: 2.8,
     // Fatter than MG tracers, not a floating brick — call-strike shell trail behind.
     art: gunArt("heavy_artillery", 0.98, { w: 70, h: 11, core: [255, 250, 230], mid: [255, 170, 50], rim: [180, 70, 20], blunt: 0.72, glow: 0.42 }, MOUNT_ARTILLERY),
-    exhaust: { ...particleTrail(0.55, { density: 0.85, contrail: true }), emitUv: { x: 0.08, y: 0.5 } },
+    exhaust: particleTrail(0.55, { density: 0.85, contrail: true, emitUv: { x: 0.08, y: 0.5 } }),
     cam: CAM_ARTILLERY, fire: FIRE_GUN, control: CLICK,
     // Heavier g → higher muzzle loft for the same aim (more visible lob).
     launch: { mode: "muzzle", inheritMomentum: 0.4, gravity: { acceleration: 310, terminalVelocity: 980 } },
@@ -1024,12 +1069,7 @@ const PLAYER_WPNS_DEFS = {
     id: "bomb", name: "IRON BOMB", fullName: "IRON BOMB", designation: "MARK 82 GENERAL-PURPOSE BOMB", ammo: 10, fireCd: 0.72, speed: 220,
     dmg: 380, blast: 200, life: 6.5,
     art: ordArt("bomb", 0.85, "velocity"),
-    exhaust: particleTrail(0.5, { smoke: "short", density: 0.52 }),
-    cam: CAM_DROP, control: CLICK, launch: DROP, payload: HE_FIRE,
-    dmgMul: { building: 1.35, vehicle: 1.15, troop: 0.9, air: 0.25 },
-    fits: FIT_HARDPOINT, notes: ["gravity bomb — weak aim correction vs JDAM; structure / armor fantasy"],
-  },
-  tesla_beam: {
+    exhaust: particleTrail(0.42, { density: 0.45, contrail: true }),
     id: "tesla_beam", name: "TESLA COIL", fullName: "TESLA COIL", designation: "TESLA COIL ARC CANNON", ammo: 900, fireCd: 0.05, speed: 1,
     dmg: 9, blast: 0, life: 0.05,
     art: gunArt("tesla_beam", 0.62, { w: 80, h: 10, core: [230, 255, 255], mid: [80, 240, 255], rim: [20, 120, 255], glow: 0.85 }, MOUNT_TESLA),
@@ -1510,7 +1550,7 @@ export interface EnergyTrailNode {
   life: number;
   /** Fade reference life; defaults to ENERGY_TRAIL_NODE_LIFE. */
   max?: number;
-  /** Ribbon color set; defaults cyan (Starstreak / Photon). */
+  /** Ribbon color set; defaults cyan (Starscream / Photon). */
   hue?: EnergyTrailHue;
 }
 
@@ -1557,7 +1597,7 @@ export interface Shot {
   wire?: { x: number; y: number; z: number }[];
   wireSide?: number;
   wireTrim?: number;
-  /** Additive neon ribbon nodes (Starstreak). Offsets wander so the path ripples. */
+  /** Additive neon ribbon nodes (Starscream). Offsets wander so the path ripples. */
   energyTrail?: EnergyTrailNode[];
   /** Parallel energy ribbons (Photon). When set, preferred over `energyTrail`. */
   energyTrails?: EnergyTrailNode[][];

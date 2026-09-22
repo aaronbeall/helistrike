@@ -108,6 +108,7 @@ export const PLAYER_GUN_MOUNT_ART: readonly { key: string; size: number; procedu
   { key: "gun_minigun", size: 40 },
   { key: "gun_machine", size: 38 },
   { key: "gun_artillery", size: 56 },
+  { key: "gun_grenade_launcher", size: 58 },
   { key: "gun_railgun", size: 52 },
   { key: "gun_plasma", size: 50 },
   { key: "gun_tesla", size: 48 },

@@ -640,7 +640,7 @@ export class MissionScene extends Phaser.Scene {
   bigBoomSparkBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
   /** Big boom dirt streaks — long travel needles that keep size while they fall. */
   bigBoomDirtBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
-  /** Cyan blur streaks for Starstreak breaks. */
+  /** Cyan blur streaks for Starscream breaks. */
   energyStreakBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
   /** Tesla impact needles — omnidirectional, high-drag, frozen heading. */
   teslaSparkBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
@@ -5444,7 +5444,7 @@ designatorSightOrigins(slot = this.heli.weapon): { x: number; y: number }[] {
     const spec = this.loadout[h.weapon]!;
     const g = this.sight;
     g.clear();
-    const pylon = this.hardpointPylon(h.weapon);
+    const pylon = this.dropShotOrigin(h.weapon);
     const release = this.bombReleaseVelocity(spec, pylon.x, pylon.y, aim, 0, h.weapon);
     this.strokeBombTrajectoryPath(
       pylon.x,
@@ -5568,13 +5568,20 @@ designatorSightOrigins(slot = this.heli.weapon): { x: number; y: number }[] {
   ): { vx: number; vy: number; vz: number; angle: number } {
     const h = this.heli;
     const socket = slot != null ? h.spec.sockets[slot] : h.spec.sockets[h.weapon];
+    // Turret / fixed gun drops must leave along the barrel XY heading — arc solver
+    // only varies loft / along-track speed, not free 2D throw toward the reticle.
+    const barrelHeading =
+      socket?.class === "turret" || socket?.class === "fixed"
+        ? (h.stationAim[slot ?? h.weapon]?.[0] ?? h.gunAngle) + yawOff
+        : undefined;
     return this.bombReleaseFrom(spec, ox, oy, aim, yawOff, {
       vx: h.vx,
       vy: h.vy,
       vz: h.vz,
       z0: h.z + ZOff.shot,
-      angle: h.angle,
+      angle: barrelHeading ?? h.angle,
       tune: craftBombDrop(h.spec, socket),
+      barrelHeading,
     });
   }
 
@@ -5592,18 +5599,33 @@ designatorSightOrigins(slot = this.heli.weapon): { x: number; y: number }[] {
       z0: number;
       angle: number;
       tune: CraftBombDrop;
+      /** When set (gun-mounted lob), boost only along this world heading. */
+      barrelHeading?: number;
     }
   ): { vx: number; vy: number; vz: number; angle: number } {
     const grav = launchGravity(spec.launch)?.acceleration ?? 210;
     const term = launchGravity(spec.launch)?.terminalVelocity ?? 520;
     const { tune } = kin;
-    const gnd = groundZ(this.world, aim.x, aim.y);
     const baseVx = kin.vx * tune.momentum;
     const baseVy = kin.vy * tune.momentum;
-    const wantDx = aim.x - ox;
-    const wantDy = aim.y - oy;
+    const barrel = kin.barrelHeading;
+    const bc = barrel != null ? Math.cos(barrel) : 0;
+    const bs = barrel != null ? Math.sin(barrel) : 0;
+    // Gun lob: aim is projected onto the barrel ray (range only); free drop keeps full XY.
+    let wantDx = aim.x - ox;
+    let wantDy = aim.y - oy;
+    if (barrel != null) {
+      const along = Math.max(12, wantDx * bc + wantDy * bs);
+      wantDx = bc * along;
+      wantDy = bs * along;
+    }
+    const landAimX = ox + wantDx;
+    const landAimY = oy + wantDy;
+    const gnd = groundZ(this.world, landAimX, landAimY);
     const aimAng =
-      Math.hypot(wantDx, wantDy) > 1e-3 ? Math.atan2(wantDy, wantDx) : kin.angle + yawOff;
+      Math.hypot(wantDx, wantDy) > 1e-3
+        ? Math.atan2(wantDy, wantDx)
+        : kin.angle + yawOff;
 
     const loftLo = tune.loft;
     const loftHi = Math.max(loftLo, tune.loftMax ?? loftLo);
@@ -5623,17 +5645,27 @@ designatorSightOrigins(slot = this.heli.weapon): { x: number; y: number }[] {
       const wantVy = wantDy / fallT;
       let bx = wantVx - baseVx;
       let by = wantVy - baseVy;
-      const bMag = Math.hypot(bx, by);
-      if (bMag > tune.maxBoost && bMag > 1e-6) {
-        const s = tune.maxBoost / bMag;
-        bx *= s;
-        by *= s;
+      if (barrel != null) {
+        // Impulse only along the barrel — never invent a sideways throw.
+        let boost = bx * bc + by * bs;
+        // Same as free drop: never brake along-track.
+        if (boost < 0) boost = 0;
+        if (boost > tune.maxBoost) boost = tune.maxBoost;
+        bx = bc * boost;
+        by = bs * boost;
+      } else {
+        const bMag = Math.hypot(bx, by);
+        if (bMag > tune.maxBoost && bMag > 1e-6) {
+          const s = tune.maxBoost / bMag;
+          bx *= s;
+          by *= s;
+        }
       }
       const vx = baseVx + bx;
       const vy = baseVy + by;
       const landX = ox + vx * fallT;
       const landY = oy + vy * fallT;
-      const miss = Math.hypot(landX - aim.x, landY - aim.y);
+      const miss = Math.hypot(landX - landAimX, landY - landAimY);
       if (
         !best ||
         miss < best.miss - 5 ||
@@ -5649,7 +5681,12 @@ designatorSightOrigins(slot = this.heli.weapon): { x: number; y: number }[] {
       vx: pick.vx,
       vy: pick.vy,
       vz: pick.vz,
-      angle: Math.hypot(pick.vx, pick.vy) > 1e-3 ? Math.atan2(pick.vy, pick.vx) : aimAng,
+      angle:
+        barrel != null
+          ? barrel
+          : Math.hypot(pick.vx, pick.vy) > 1e-3
+            ? Math.atan2(pick.vy, pick.vx)
+            : aimAng,
     };
   }
 
@@ -6265,6 +6302,22 @@ craftBodyMountWorldPos(mount: { x: number; y: number }): { x: number; y: number 
     const mount = mounts[index] ?? mounts[0]!;
     const side = mount.x < craftOrigin(h.spec).x ? -1 : 1;
     return { ...this.hardpointWorldPos(mount), side };
+  }
+
+  /**
+   * Drop / lob leave tip — hardpoint pylons cycle by ammo; turret guns leave from
+   * the barrel tip (grenade launcher on Leviathan).
+   */
+  dropShotOrigin(
+    slot = this.heli.weapon,
+    afterSpend = false
+  ): { x: number; y: number; side: number } {
+    const socket = this.heli.spec.sockets[slot];
+    if (socket?.class === "turret" || socket?.class === "fixed") {
+      const tip = this.gunTip(this.gunVisualIndexForSlot(slot));
+      return { x: tip.x, y: tip.y, side: 0 };
+    }
+    return this.hardpointPylon(slot, afterSpend);
   }
 
   handleFire(dt: number): void {
@@ -6996,6 +7049,8 @@ craftBodyMountWorldPos(mount: { x: number; y: number }): { x: number; y: number 
         this.reticleUnit();
       const inherit = spec.launch.mode === "muzzle" ? spec.launch.inheritMomentum : 0.35;
       const accelMuzzle = spec.launch.mode === "muzzle" && spec.launch.acceleration != null;
+      const loftVz =
+        spec.launch.mode === "muzzle" && spec.launch.leaveVz != null ? spec.launch.leaveVz : 0;
       // Soft leave when accelerating (rail / Hydra); catalog speed for ballistics aim.
       const leaveSpd = accelMuzzle
         ? (spec.launch.mode === "muzzle" ? (spec.launch.leaveSpeed ?? 10) : 10)
@@ -7017,12 +7072,14 @@ craftBodyMountWorldPos(mount: { x: number; y: number }): { x: number; y: number 
       const dz = clip.z - origin.z;
       const dist3 = Math.max(8, Math.hypot(dx, dy, dz));
       const hFrac = Math.hypot(dx, dy) / dist3;
+      // Loft leave: nearly vertical so the climb reads before pitch-over.
+      const hScale = loftVz > 0 ? 0.1 : 1;
       const hvx = lockOn
         ? h.vx * inherit + Math.cos(ang) * leaveSpd * cp
-        : Math.cos(ang) * leaveSpd * hFrac;
+        : Math.cos(ang) * leaveSpd * hFrac * hScale + h.vx * inherit * (loftVz > 0 ? 1 : 0);
       const hvy = lockOn
         ? h.vy * inherit + Math.sin(ang) * leaveSpd * cp
-        : Math.sin(ang) * leaveSpd * hFrac;
+        : Math.sin(ang) * leaveSpd * hFrac * hScale + h.vy * inherit * (loftVz > 0 ? 1 : 0);
       const seekLoft = g && guidanceIsLockOn(g) ? g.targeting.seekDelay : undefined;
       const z0 = h.z + ZOff.shot;
       const grav = !lockOn ? launchGravity(spec.launch) : undefined;
@@ -7061,9 +7118,10 @@ craftBodyMountWorldPos(mount: { x: number; y: number }): { x: number; y: number 
         z: z0,
         vx: hvx,
         vy: hvy,
-        vz: leaveVz,
+        vz: loftVz > 0 ? loftVz + h.vz * inherit : leaveVz,
         angle: ang,
-        life: accelMuzzle ? spec.life : aimVel.life,
+        // Loft leave ignores ballistic aim-life (near reticle → tiny life → instant boom).
+        life: loftVz > 0 || accelMuzzle || !!spec.cam.povCam ? spec.life : aimVel.life,
         targetId: lockId,
         blast: beh.blast,
         dmg: beh.dmg,
@@ -7074,6 +7132,8 @@ craftBodyMountWorldPos(mount: { x: number; y: number }): { x: number; y: number 
         cruise: lockOn || accelMuzzle ? spec.speed : undefined,
         // Tube kick-yaw only — AA rail / boost rockets stay on leave heading.
         yaw: lockOn && !accelMuzzle ? side * (0.35 + Math.random() * 0.2) : undefined,
+        // Muzzle seekers (Spider) also ride cam.povCam — kick_motor already copied this.
+        povCam: spec.cam.povCam || undefined,
         energyTrail: exhaustIsEnergy(spec.exhaust) ? [] : undefined,
         energyTrails:
           exhaustRibbons(spec.exhaust) > 1
@@ -7143,6 +7203,8 @@ specIsShellGun(spec)
           ? spec.launch.inheritMomentum
           : 0.2
         : 0.35;
+    const loftVz =
+      spec.launch.mode === "muzzle" && spec.launch.leaveVz != null ? spec.launch.leaveVz : 0;
     const planeish = h.spec.flightModel === "plane" || h.spec.flightModel === "vtol";
     // Plane/VTOL get a bump, but authored 1.0 (jet nose guns) stays full along-rail carry.
     const inherit = planeish ? Math.min(1, baseInherit + 0.28) : baseInherit;
@@ -7185,8 +7247,9 @@ specIsShellGun(spec)
         inherit !== 0
           ? (h.vx * dirx + h.vy * diry + h.vz * dirz) * inherit
           : 0;
-      const hvx = Math.cos(ang) * spd * hFrac + dirx * along;
-      const hvy = Math.sin(ang) * spd * hFrac + diry * along;
+      const hScale = loftVz > 0 ? 0.1 : 1;
+      const hvx = Math.cos(ang) * spd * hFrac * hScale + dirx * along;
+      const hvy = Math.sin(ang) * spd * hFrac * hScale + diry * along;
       const tx = clip.x;
       const ty = clip.y;
       const tz = clip.z;
@@ -7228,9 +7291,14 @@ specIsShellGun(spec)
         z: z0,
         vx: hvx,
         vy: hvy,
-        vz: aimVel.vz,
+        vz: loftVz > 0 ? loftVz + h.vz * inherit : aimVel.vz,
         angle: ang,
-        life: beamRange != null ? beamRange / spd : aimVel.life,
+        life:
+          beamRange != null
+            ? beamRange / spd
+            : loftVz > 0 || !!spec.cam.povCam
+              ? spec.life
+              : aimVel.life,
         targetId: lockId,
         blast: beh.blast,
         dmg: beh.dmg,
@@ -7243,6 +7311,7 @@ specIsShellGun(spec)
           payloadIsHelix(spec.payload)
             ? 0x66eeff
             : spec.art.tint,
+        povCam: spec.cam.povCam || undefined,
         energyTrail:
           exhaustIsEnergy(spec.exhaust) || st.helixOff != null ? [] : undefined,
         energyTrails:
@@ -7792,7 +7861,7 @@ specIsShellGun(spec)
     const h = this.heli;
     const launch = spec.launch;
     if (launch.mode !== "drop") return;
-    const pylon = this.hardpointPylon(slot, true);
+    const pylon = this.dropShotOrigin(slot, true);
     const aim =
       st.gx != null && st.gy != null ? { x: st.gx, y: st.gy } : ptr;
     const release = this.bombReleaseVelocity(spec, pylon.x, pylon.y, aim, yawOff, slot);
@@ -7838,6 +7907,12 @@ specIsShellGun(spec)
       fxInterval: spec.fireCd,
       warpTimeScale: spec.payload.warp?.timeScale,
     });
+    const socket = h.spec.sockets[slot];
+    if (socket?.class === "turret" && (spec.fire?.muzzleFlash ?? true)) {
+      const gunI = this.gunVisualIndexForSlot(slot);
+      this.pulseTurretGunHeat(gunI);
+      this.missileMuzzle(pylon.x, pylon.y, h.z, release.angle, projectileFxScale("player", spec.fireCd));
+    }
   }
 
   /** Whitened sheet for vision-blocking chemical clouds (vs graded fx_smoke for dust/trails). */
@@ -9415,12 +9490,18 @@ specIsShellGun(spec)
     return false;
   }
 
-  /** HOUND autonomous: hull tracks mouse; turret acquires/shoots hostiles in range. */
+  /**
+   * HOUND autonomous: orbit/shoot hostiles near the reticle; if leashed too far
+   * from the mouse, drive back while the turret keeps firing.
+   */
   tickHoundAi(drone: RemoteCraft, dt: number): void {
     const spec = drone.spec;
     const ptr = this.worldPointer();
     const engage = spec.engageRange ?? 320;
     const stopR = spec.mouseStopRange ?? 48;
+    const leashR = spec.mouseLeashRange ?? 200;
+    const strafeR = spec.orbitRange ?? 95;
+    const toMouse = Math.hypot(ptr.x - drone.x, ptr.y - drone.y);
 
     let target = drone.aiTargetId != null ? this.unitById(drone.aiTargetId) : undefined;
     if (!target || target.dead || Math.hypot(target.x - drone.x, target.y - drone.y) > engage) {
@@ -9441,9 +9522,9 @@ specIsShellGun(spec)
     const gunAim = target
       ? { x: target.x, y: target.y }
       : { x: ptr.x, y: ptr.y };
+    const hull = craftOf(drone.spec.craftLook);
     if (target) {
       const aimWant = Math.atan2(target.y - drone.y, target.x - drone.x);
-      const hull = craftOf(drone.spec.craftLook);
       if (craftAimsWithTurret(hull)) {
         drone.gunAngle = Phaser.Math.Angle.RotateTo(
           drone.gunAngle ?? drone.angle,
@@ -9459,7 +9540,6 @@ specIsShellGun(spec)
       }
     } else {
       const idleWant = Math.atan2(ptr.y - drone.y, ptr.x - drone.x);
-      const hull = craftOf(drone.spec.craftLook);
       if (craftAimsWithTurret(hull)) {
         drone.gunAngle = Phaser.Math.Angle.RotateTo(
           drone.gunAngle ?? drone.angle,
@@ -9471,10 +9551,24 @@ specIsShellGun(spec)
       }
     }
 
-    // Always drive toward the pointer — park when close enough (same orbit stick as piloted).
-    const toMouse = Math.hypot(ptr.x - drone.x, ptr.y - drone.y);
-    const want = Math.atan2(ptr.y - drone.y, ptr.x - drone.x);
-    const throttle = toMouse < stopR ? 0 : toMouse < stopR * 1.6 ? 0.35 : 0.7;
+    let want: number;
+    let throttle: number;
+    // Orbit only while still near the reticle; past the leash, return to mouse.
+    if (target && toMouse <= leashR) {
+      drone.orbit = (drone.orbit ?? 0) + dt * 1.05;
+      const lead = (drone.orbit ?? 0) + drone.id * 0.7;
+      const tx = target.x + Math.cos(lead) * strafeR;
+      const ty = target.y + Math.sin(lead) * strafeR;
+      const pathWant = Math.atan2(ty - drone.y, tx - drone.x);
+      const aimWant = Math.atan2(target.y - drone.y, target.x - drone.x);
+      const blend = Phaser.Math.Angle.Wrap(aimWant - pathWant);
+      want = pathWant + Phaser.Math.Clamp(blend, -0.85, 0.85);
+      const near = Math.hypot(tx - drone.x, ty - drone.y);
+      throttle = near < 36 ? 0.35 : 0.75;
+    } else {
+      want = Math.atan2(ptr.y - drone.y, ptr.x - drone.x);
+      throttle = toMouse < stopR ? 0 : toMouse < stopR * 1.6 ? 0.35 : 0.7;
+    }
     const { stick, aim } = this.remoteAiStickAim(drone, want, throttle);
     this.driveRemoteCraft(drone, dt, stick, aim, {
       syncGun: false,
@@ -13346,16 +13440,56 @@ specIsShellGun(spec)
       return;
     }
 
-    // Muzzle rockets with pointer (Micros / guided rockets)
+    // Muzzle rockets with pointer (Micros / Starscream / Banshee)
     if (g && tMode === "steer" && lit) {
-      const want = Math.atan2(ptr.y - s.y, ptr.x - s.x);
-      const da = Phaser.Math.Angle.Wrap(want - s.angle);
       const rate = flight?.turnRate ?? 0.55;
       const maxA = flight?.maxAngle ?? 0.16;
-      s.angle += Phaser.Math.Clamp(Phaser.Math.Clamp(da, -maxA, maxA), -rate * dt, rate * dt);
-      const spd = Math.hypot(s.vx, s.vy) || beh.cruiseSpeed;
-      s.vx = Math.cos(s.angle) * spd;
-      s.vy = Math.sin(s.angle) * spd;
+      const loftLeave =
+        beh.launch.mode === "muzzle" &&
+        beh.launch.leaveVz != null &&
+        beh.launch.leaveVz > 0;
+      if (loftLeave) {
+        // Two-beat loft: climb hard (visible up), then pitch over and crash onto reticle.
+        const age = st.age ?? 0;
+        const loftHold = 0.72;
+        const leaveUp =
+          beh.launch.mode === "muzzle" && beh.launch.leaveVz != null
+            ? beh.launch.leaveVz
+            : 480;
+        const tgt = this.reticleUnit();
+        const impactZ = tgt
+          ? tgt.z + heightOf(tgt.kind) * 0.35
+          : groundZ(this.world, ptr.x, ptr.y) + 10;
+        if (age < loftHold) {
+          // Hold the climb — only soft yaw toward the reticle, keep vz up.
+          const want = Math.atan2(ptr.y - s.y, ptr.x - s.x);
+          const da = Phaser.Math.Angle.Wrap(want - s.angle);
+          s.angle += Phaser.Math.Clamp(da, -rate * 0.28 * dt, rate * 0.28 * dt);
+          const hSpd = Math.min(beh.cruiseSpeed * 0.2, 140 + age * 90);
+          s.vx = Math.cos(s.angle) * hSpd;
+          s.vy = Math.sin(s.angle) * hSpd;
+          // Bleed climb slowly so the pop stays readable the whole hold.
+          const climbFloor = leaveUp * Phaser.Math.Linear(0.95, 0.45, age / loftHold);
+          s.vz = Math.max(climbFloor, s.vz - 55 * dt);
+        } else {
+          // Pitch-over dive onto aim — full turn authority.
+          const dive = Phaser.Math.Clamp((age - loftHold) / 0.55, 0, 1);
+          const ease = dive * dive * (3 - 2 * dive);
+          const home = norm3(ptr.x - s.x, ptr.y - s.y, impactZ - s.z);
+          const spd3 = Math.max(
+            Math.hypot(s.vx, s.vy, s.vz),
+            beh.cruiseSpeed * 0.65
+          );
+          flyMissile(s, home, rate * (1.15 + ease * 1.1) * dt, spd3);
+        }
+      } else {
+        const want = Math.atan2(ptr.y - s.y, ptr.x - s.x);
+        const da = Phaser.Math.Angle.Wrap(want - s.angle);
+        s.angle += Phaser.Math.Clamp(Phaser.Math.Clamp(da, -maxA, maxA), -rate * dt, rate * dt);
+        const spd = Math.hypot(s.vx, s.vy) || beh.cruiseSpeed;
+        s.vx = Math.cos(s.angle) * spd;
+        s.vy = Math.sin(s.angle) * spd;
+      }
     }
 
     // Waypoint steering while falling
@@ -13391,7 +13525,7 @@ specIsShellGun(spec)
   }
 
   /**
-   * Starstreak break: prefer a ballistic hop onto a living unit inside the
+   * Starscream break: prefer a ballistic hop onto a living unit inside the
    * forward launch cone; otherwise keep the old random spray.
    */
   spawnStarstreakBomblets(parent: Shot, count: number, spread: number): void {
@@ -14131,8 +14265,8 @@ specIsShellGun(spec)
 
   drawEnergyRibbon(g: Phaser.GameObjects.Graphics, pts: EnergyTrailNode[], widthMul = 1): number {
     const n = pts.length;
-    if (n < 2) return Number.POSITIVE_INFINITY;
-    let depth = Number.POSITIVE_INFINITY;
+    if (n < 2) return Number.NEGATIVE_INFINITY;
+    let depth = Number.NEGATIVE_INFINITY;
     let maxLife = 0;
     const raw: { x: number; y: number }[] = [];
     const ages: number[] = [];
@@ -14141,7 +14275,7 @@ specIsShellGun(spec)
       const p = pts[i]!;
       const ref = p.max ?? ENERGY_TRAIL_NODE_LIFE;
       maxLife = Math.max(maxLife, p.life / ref);
-      depth = Math.min(depth, worldDepth(p.z, ZOff.shot - 0.6, p.y));
+      depth = Math.max(depth, worldDepth(p.z, ZOff.shot - 0.6, p.y));
       const at = worldToScreen(p.x, p.y, p.z);
       raw.push({ x: at.x, y: at.y });
       ages.push(Phaser.Math.Clamp(1 - p.life / ref, 0, 1));
@@ -14224,11 +14358,11 @@ specIsShellGun(spec)
         const pts = trails[i]!;
         if (pts.length < 2) continue;
         const widthMul = n <= 1 ? 1 : Phaser.Math.Linear(1.35, 0.55, i / Math.max(1, n - 1));
-        depth = Math.min(depth, this.drawEnergyRibbon(g, pts, widthMul));
+        depth = Math.max(depth, this.drawEnergyRibbon(g, pts, widthMul));
       }
     }
     for (const pts of this.energyLinger) {
-      depth = Math.min(depth, this.drawEnergyRibbon(g, pts));
+      depth = Math.max(depth, this.drawEnergyRibbon(g, pts));
     }
     g.setDepth(depth);
   }

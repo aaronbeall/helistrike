@@ -86,6 +86,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
   gun_minigun: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.05 }] },
   gun_machine: { origin: uv(0.425, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.06 }] },
   gun_artillery: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.04 }] },
+  gun_grenade_launcher: { origin: uv(0.5, 0.72), points: [{ role: "muzzle", x: 0.5, y: 0.04 }] },
   gun_railgun: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.04 }] },
   gun_plasma: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.05 }] },
   gun_tesla: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.05 }] },
@@ -237,6 +238,8 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
   craft_airship: {
     origin: uv(0.5, 0.52),
     points: [
+      // Top-center grenade turret (composited overlay).
+      { role: "gun", x: 0.5, y: 0.36, id: "grenade" },
       // Deck .50 turrets (composited overlays).
       { role: "gun", x: 0.357, y: 0.179, id: "bow_l" },
       { role: "gun", x: 0.638, y: 0.179, id: "bow_r" },
@@ -249,7 +252,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
       { role: "rotor", x: 0.07, y: 0.537, scale: 0.85, id: "nacelle_l_aft" },
       { role: "rotor", x: 0.926, y: 0.538, scale: 0.85, id: "nacelle_r_aft" },
       { role: "rotor", x: 0.498, y: 0.99, scale: 0.75, id: "stern" },
-      // Starstreak tube grid (L/R columns, forward → aft).
+      // Starscream tube grid (L/R columns, forward → aft).
       { role: "hardpoint", x: 0.235, y: 0.697, id: "star_l0" },
       { role: "hardpoint", x: 0.761, y: 0.697, id: "star_r0" },
       { role: "hardpoint", x: 0.271, y: 0.71, id: "star_l1" },

@@ -819,6 +819,18 @@ const CRAFTS_DEFS = {
       glowFollowsHull: true,
     },
     sockets: [
+      // Top-center revolving grenade lob — pilot turret, iron-bomb arc.
+      {
+        id: "grenade_turret",
+        class: "turret",
+        controller: "pilot",
+        weapon: "grenade_launcher",
+        points: [{ id: "grenade" }],
+        traverse: 240,
+        gunLayer: "above",
+        gunScale: 1.05,
+        bombDrop: { momentum: 0.2, maxBoost: 290, loft: 150, loftMax: 270 },
+      },
       // Four deck .50s — one HUD slot; each barrel aims/fires independently.
       {
         id: "deck_fifties",
@@ -837,10 +849,10 @@ const CRAFTS_DEFS = {
         crew: "door",
       },
       {
-        id: "starstreak_racks",
+        id: "banshee_racks",
         class: "hardpoint",
         controller: "pilot",
-        weapon: "swarm_missile",
+        weapon: "banshee",
         points: [
           { id: "star_l0" },
           { id: "star_r0" },
@@ -1117,11 +1129,11 @@ const CRAFTS_DEFS = {
         muzzleFire: "alternate",
       },
       {
-        id: "photon_rack",
+        id: "banshee_rack",
         class: "hardpoint",
         controller: "pilot",
-        weapon: "photon_missile",
-        points: [{ id: "wing_l" }],
+        weapon: "banshee",
+        points: [{ id: "wing_l" }, { id: "wing_r" }],
       },
     ],
     // Whip on the rail cupola — wobbles with hull + turret yaw.

@@ -223,7 +223,7 @@ export const TACTICAL_TIPS: TacticalTip[] = [
   },
   {
     id: "wpn_spider_drone",
-    text: "Spider Drones ride a seeker cam — crawl toward the mouse, get near a hostile, and they dash onto it and detonate.",
+    text: "Spider Drones force thermal seeker cam — crawl toward the mouse, get near a hostile, and they dash onto it and detonate.",
     context: { weapons: ["spider_drone"] },
   },
   {
@@ -247,9 +247,19 @@ export const TACTICAL_TIPS: TacticalTip[] = [
     context: { weapons: ["guided_rockets"] },
   },
   {
-    id: "wpn_starstreak",
-    text: "Starstreak is a jittered dart hose — walk the neon stream onto a target and let the bomblets finish the spray.",
+    id: "wpn_starscream",
+    text: "Starscream is a jittered dart hose — walk the neon stream onto a target and let the bomblets finish the spray.",
     context: { weapons: ["swarm_missile"] },
+  },
+  {
+    id: "wpn_banshee",
+    text: "Banshee pops straight up on a neon ribbon, then pitches over and crashes onto the reticle — deeper belt, no bomblets.",
+    context: { weapons: ["banshee"] },
+  },
+  {
+    id: "wpn_grenade",
+    text: "Grenade launcher lobs 40mm on an iron-bomb arc — heavy throw boost, light HE splash. Lead the fall like a howitzer.",
+    context: { weapons: ["grenade_launcher"] },
   },
   {
     id: "wpn_plasma",
