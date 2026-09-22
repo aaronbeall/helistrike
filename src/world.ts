@@ -435,19 +435,18 @@ export function projectX(x: number, y: number, z: number): number {
 
 /**
  * World → Phaser draw space. Sim/collision stay in world; sprites/FX use this.
- * Pass `out` (or reuse the returned scratch) in hot paths — the default return
- * is a shared mutable object and must not be stored across calls.
+ * Pass `out` to reuse a buffer in hot paths; otherwise returns a fresh object
+ * (never a shared scratch — callers often keep results across later projections).
  */
-const _scr: ScreenPos = { x: 0, y: 0, scale: 1 };
-
-export function worldToScreen(x: number, y: number, z: number, out: ScreenPos = _scr): ScreenPos {
+export function worldToScreen(x: number, y: number, z: number, out?: ScreenPos): ScreenPos {
+  const target = out ?? { x: 0, y: 0, scale: 1 };
   const scale = zScale(z, y);
   const ry = y - Camera25D.eyeY;
   const rz = z - Camera25D.eyeZ;
-  out.x = Camera25D.focusX + (x - Camera25D.focusX) * scale;
-  out.y = Camera25D.focusY + (ry * Camera25D.downY + rz * Camera25D.downZ) * scale;
-  out.scale = scale;
-  return out;
+  target.x = Camera25D.focusX + (x - Camera25D.focusX) * scale;
+  target.y = Camera25D.focusY + (ry * Camera25D.downY + rz * Camera25D.downZ) * scale;
+  target.scale = scale;
+  return target;
 }
 
 /** Inverse of `worldToScreen` for a known absolute Z.
@@ -601,28 +600,29 @@ export function castZ(world: WorldData, x: number, y: number, z: number): number
 }
 
 export type ShadowHit = { x: number; y: number; z: number; cast: number };
-const _shadowHit: ShadowHit = { x: 0, y: 0, z: 0, cast: 0 };
 
 /**
  * Intersect a directional sun ray with the heightfield. The light direction is
  * expressed in world units, so camera pitch/zoom never leak into shadow offset.
+ * Pass `out` to reuse a buffer; otherwise returns a fresh object.
  */
 export function castShadowToGround(
   world: WorldData,
   x: number,
   y: number,
   z: number,
-  out: ShadowHit = _shadowHit
+  out?: ShadowHit
 ): ShadowHit {
+  const target = out ?? { x: 0, y: 0, z: 0, cast: 0 };
   const lightX = 0.24;
   const lightY = 0.58;
   const sourceGround = groundZ(world, x, y);
   if (z <= sourceGround + 0.25) {
-    out.x = x;
-    out.y = y;
-    out.z = sourceGround;
-    out.cast = 0;
-    return out;
+    target.x = x;
+    target.y = y;
+    target.z = sourceGround;
+    target.cast = 0;
+    return target;
   }
   const rayEnd = Math.max(0, z);
   const horizontalLength = Math.hypot(lightX, lightY) * rayEnd;
@@ -651,11 +651,11 @@ export function castShadowToGround(
   const cast = (lo + hi) * 0.5;
   const rx = x + lightX * cast;
   const ry = y + lightY * cast;
-  out.x = rx;
-  out.y = ry;
-  out.z = z - cast;
-  out.cast = cast;
-  return out;
+  target.x = rx;
+  target.y = ry;
+  target.z = z - cast;
+  target.cast = cast;
+  return target;
 }
 
 export function groundSlope(world: WorldData, x: number, y: number): { dx: number; dy: number } {

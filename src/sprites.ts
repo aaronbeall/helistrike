@@ -994,15 +994,6 @@ export function shadowKey(base: string, z: number): string {
   return `${bare}_sh${lvl}`;
 }
 
-const _shadowOff = { x: 0, y: 0 };
-
-/** Shadow screen offset — default `out` is shared scratch (do not store across calls). */
-export function shadowOff(z: number, out: { x: number; y: number } = _shadowOff): { x: number; y: number } {
-  out.x = z * 0.24;
-  out.y = z * 0.58;
-  return out;
-}
-
 export function shadowAlpha(z: number): number {
   const a = 0.52 - z * 0.0009;
   return a < 0.4 ? 0.4 : a > 0.52 ? 0.52 : a;

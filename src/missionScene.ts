@@ -5195,10 +5195,8 @@ export class MissionScene extends Phaser.Scene {
         const clip = this.playerSightAimWorld(origin.x, origin.y, origin.z, aimAng);
         if (this.sightPastMuzzle(origin, clip, h.weapon, { x: live.x, y: live.y })) {
           const from = worldToScreen(origin.x, origin.y, origin.z);
-          const x0 = from.x;
-          const y0 = from.y;
           const to = worldToScreen(clip.x, clip.y, clip.z);
-          this.drawSightLine(x0, y0, to.x, to.y, "cannon", false, clip);
+          this.drawSightLine(from.x, from.y, to.x, to.y, "cannon", false, clip);
         }
         this.sight.setDepth(worldDepth(muzzle.z, ZOff.shot + 2, live.y));
         return;
@@ -5258,12 +5256,10 @@ export class MissionScene extends Phaser.Scene {
         const clip = this.playerSightAimWorld(origin.x, origin.y, origin.z, aimAng);
         if (!this.sightPastMuzzle(origin, clip, remSlot, pivot)) continue;
         const from = worldToScreen(origin.x, origin.y, origin.z);
-        const x0 = from.x;
-        const y0 = from.y;
         const to = worldToScreen(clip.x, clip.y, clip.z);
         this.drawSightLine(
-          x0,
-          y0,
+          from.x,
+          from.y,
           to.x,
           to.y,
           remGunSight ? "cannon" : "missile",
@@ -5306,12 +5302,9 @@ export class MissionScene extends Phaser.Scene {
         const origin = this.playerShotOrigin(tip, aimAng, spec, h.weapon);
         const clip = this.playerSightAimWorld(origin.x, origin.y, origin.z, aimAng);
         if (!this.sightPastMuzzle(origin, clip, h.weapon)) continue;
-        // worldToScreen reuses a scratch — copy before the second call.
         const from = worldToScreen(origin.x, origin.y, origin.z);
-        const x0 = from.x;
-        const y0 = from.y;
         const to = worldToScreen(clip.x, clip.y, clip.z);
-        this.drawSightLine(x0, y0, to.x, to.y, "cannon", false, clip);
+        this.drawSightLine(from.x, from.y, to.x, to.y, "cannon", false, clip);
         drew = true;
       }
       if (!drew) this.sight.clear();
@@ -5325,10 +5318,8 @@ export class MissionScene extends Phaser.Scene {
       return;
     }
     const from = worldToScreen(origin.x, origin.y, origin.z);
-    const x0 = from.x;
-    const y0 = from.y;
     const to = worldToScreen(clip.x, clip.y, clip.z);
-    this.drawSightLine(x0, y0, to.x, to.y, "missile", true, clip);
+    this.drawSightLine(from.x, from.y, to.x, to.y, "missile", true, clip);
   }
 
   /**
@@ -5345,10 +5336,8 @@ export class MissionScene extends Phaser.Scene {
       const clip = this.sightTerrainHitWorld(tip.x, tip.y, z, tgt.x, tgt.y, tgt.z);
       if (!this.sightPastMuzzle(tip, clip, slot)) continue;
       const from = worldToScreen(tip.x, tip.y, z);
-      const x0 = from.x;
-      const y0 = from.y;
       const to = worldToScreen(clip.x, clip.y, clip.z);
-      this.drawSightLine(x0, y0, to.x, to.y, "missile", false, clip);
+      this.drawSightLine(from.x, from.y, to.x, to.y, "missile", false, clip);
       drew = true;
     }
     if (!drew) this.sight.clear();
@@ -7127,8 +7116,6 @@ specIsShellGun(spec)
       const muzzleUv = tipRef.kind === "body" ? tipRef.uv : undefined;
       const gunMuzzleI = tipRef.kind === "gun" ? tipRef.muzzleI : undefined;
       const tipScr = worldToScreen(tip.x, tip.y, this.playerMuzzleZ(slot));
-      const tipScreenX = tipScr.x;
-      const tipScreenY = tipScr.y;
       const tipScale = tipScr.scale;
       const z0 = this.playerMuzzleZ(slot);
       const origin = this.playerShotOrigin(tip, ang, spec, slot);
@@ -7225,8 +7212,8 @@ specIsShellGun(spec)
         const beam = this.add
           .graphics()
           .setDepth(worldDepth(z0, this.playerMuzzleDepthOff(slot), tip.y));
-        beam.lineStyle(5 * tipScale, 0x55ddff, 0.24).lineBetween(tipScreenX, tipScreenY, beamEnd.x, beamEnd.y);
-        beam.lineStyle(1.5 * tipScale, 0xffffff, 0.95).lineBetween(tipScreenX, tipScreenY, beamEnd.x, beamEnd.y);
+        beam.lineStyle(5 * tipScale, 0x55ddff, 0.24).lineBetween(tipScr.x, tipScr.y, beamEnd.x, beamEnd.y);
+        beam.lineStyle(1.5 * tipScale, 0xffffff, 0.95).lineBetween(tipScr.x, tipScr.y, beamEnd.x, beamEnd.y);
         this.tweens.add({ targets: beam, alpha: 0, duration: 110, onComplete: () => beam.destroy() });
       } else if (!!(spec.fire?.muzzleFlash ?? true)) {
         const muzzleMul = playerMuzzleFxMul(spec);
@@ -7731,13 +7718,8 @@ specIsShellGun(spec)
     let depth = Number.POSITIVE_INFINITY;
     for (const b of this.refractorBeams) {
       const fade = Phaser.Math.Clamp(b.life / b.max, 0, 1);
-      // worldToScreen reuses a scratch — copy endpoints before the second call.
       const s0 = worldToScreen(b.x0, b.y0, b.z0);
-      const x0 = s0.x;
-      const y0 = s0.y;
       const s1 = worldToScreen(b.x1, b.y1, b.z1);
-      const x1 = s1.x;
-      const y1 = s1.y;
       depth = Math.min(
         depth,
         worldDepth(b.z0, ZOff.shot, b.y0),
@@ -7745,11 +7727,11 @@ specIsShellGun(spec)
       );
       const w = Math.max(2.2, b.width * (0.35 + 0.65 * fade));
       g.lineStyle(w * 2.1, b.color, 0.28 * fade);
-      g.lineBetween(x0, y0, x1, y1);
+      g.lineBetween(s0.x, s0.y, s1.x, s1.y);
       g.lineStyle(w * 1.15, 0xe8b0ff, 0.55 * fade);
-      g.lineBetween(x0, y0, x1, y1);
+      g.lineBetween(s0.x, s0.y, s1.x, s1.y);
       g.lineStyle(Math.max(1.4, w * 0.42), 0xfff8ff, 0.95 * fade);
-      g.lineBetween(x0, y0, x1, y1);
+      g.lineBetween(s0.x, s0.y, s1.x, s1.y);
     }
     if (Number.isFinite(depth)) g.setDepth(depth);
   }
@@ -20795,10 +20777,10 @@ specIsShellGun(spec)
       } catch {
         tip = { x: h.x, y: h.y };
       }
-      const tipScr = { ...worldToScreen(tip.x, tip.y, h.z) };
+      const tipScr = worldToScreen(tip.x, tip.y, h.z);
       const range = dbg.range;
       // Per-barrel acquire ring (mount + heading bias).
-      const originScr = { ...worldToScreen(dbg.originX, dbg.originY, h.z) };
+      const originScr = worldToScreen(dbg.originX, dbg.originY, h.z);
       this.aiGfx.lineStyle(1.1, FRIENDLY, 0.22);
       this.aiGfx.strokeCircle(originScr.x, originScr.y, range * originScr.scale);
       // Traverse fire arc (same aimInStationArc rules as targeting).
@@ -20813,13 +20795,11 @@ specIsShellGun(spec)
           FRIENDLY
         );
       }
-      const aimEnd = {
-        ...worldToScreen(
-          tip.x + Math.cos(dbg.aim) * range,
-          tip.y + Math.sin(dbg.aim) * range,
-          h.z
-        ),
-      };
+      const aimEnd = worldToScreen(
+        tip.x + Math.cos(dbg.aim) * range,
+        tip.y + Math.sin(dbg.aim) * range,
+        h.z
+      );
       this.aiGfx.lineStyle(1.6, FRIENDLY, 0.9);
       this.aiGfx.lineBetween(tipScr.x, tipScr.y, aimEnd.x, aimEnd.y);
       this.aiGfx.fillStyle(FRIENDLY, 0.95);
@@ -20828,20 +20808,18 @@ specIsShellGun(spec)
       if (dbg.targetId != null) {
         const tgt = this.units.find((u) => !u.dead && u.id === dbg.targetId);
         if (tgt) {
-          const tScr = { ...worldToScreen(tgt.x, tgt.y, tgt.z) };
+          const tScr = worldToScreen(tgt.x, tgt.y, tgt.z);
           this.aiGfx.lineStyle(1.2, FRIENDLY, 0.85);
           this.aiGfx.lineBetween(tipScr.x, tipScr.y, tScr.x, tScr.y);
           this.aiGfx.fillStyle(FRIENDLY, 0.95);
           this.aiGfx.fillCircle(tScr.x, tScr.y, 3.2);
         }
       } else if (dbg.want != null) {
-        const wantEnd = {
-          ...worldToScreen(
-            tip.x + Math.cos(dbg.want) * range,
-            tip.y + Math.sin(dbg.want) * range,
-            h.z
-          ),
-        };
+        const wantEnd = worldToScreen(
+          tip.x + Math.cos(dbg.want) * range,
+          tip.y + Math.sin(dbg.want) * range,
+          h.z
+        );
         this.aiGfx.lineStyle(1, FRIENDLY, 0.45);
         this.aiGfx.lineBetween(tipScr.x, tipScr.y, wantEnd.x, wantEnd.y);
       }
@@ -20932,7 +20910,7 @@ specIsShellGun(spec)
       rim.push({ x: p.x, y: p.y });
     }
     if (rim.length < 2) return;
-    const origin = { ...worldToScreen(ox, oy, oz) };
+    const origin = worldToScreen(ox, oy, oz);
     this.aiGfx.fillStyle(color, 0.1);
     this.aiGfx.lineStyle(1.5, color, 0.75);
     this.aiGfx.beginPath();
