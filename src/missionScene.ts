@@ -828,6 +828,8 @@ export class MissionScene extends Phaser.Scene {
   mapLabel!: Phaser.GameObjects.Text;
   mapHvLabels: Phaser.GameObjects.Text[] = [];
   hvArrowLabels: Phaser.GameObjects.Text[] = [];
+  /** Yellow edge cue back to host while piloting a remote POV. */
+  parentArrowLabel!: Phaser.GameObjects.Text;
   miniGfx!: Phaser.GameObjects.Graphics;
   miniBg!: Phaser.GameObjects.Graphics;
   miniTerrain!: Phaser.GameObjects.Image;
@@ -3083,6 +3085,19 @@ export class MissionScene extends Phaser.Scene {
         .setLineSpacing(-1)
         .setVisible(false)
     );
+    this.parentArrowLabel = this.add
+      .text(0, 0, "", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "11px",
+        color: "#ffe08a",
+        align: "center",
+      })
+      .setOrigin(0.5, 0.5)
+      .setScrollFactor(0)
+      .setDepth(Layer.HUD + 3)
+      .setStroke("#12100c", 4)
+      .setLineSpacing(-1)
+      .setVisible(false);
     this.mapGfx = this.add.graphics().setDepth(Layer.FIELD);
     this.mapHvLabels = [];
     this.debugGfx = this.add.graphics().setDepth(Layer.FIELD).setVisible(false);
@@ -5935,12 +5950,21 @@ designatorSightOrigins(slot = this.heli.weapon): { x: number; y: number }[] {
       for (let i = 0; i < segs; i++) {
         const t0 = i / segs;
         const t1 = (i + 1) / segs;
-        // Fade in toward the tip (near-zero at the muzzle) — same curve for red & green.
-        const t = t1 * t1;
-        if (missile || thermal) {
-          g.lineStyle(thermal ? 2.8 : 2.4, glow, Math.min(1, t * 0.32 * aMul));
+        // Normal: quadratic fade (dead zone near muzzle). Thermal: linear so it
+        // fades out all the way to the origin instead of vanishing early.
+        const t = thermal ? t1 : t1 * t1;
+        if (thermal) {
+          // Same stroke widths as missile, hotter alphas + faint halo.
+          g.lineStyle(4.6, glow, Math.min(1, t * 0.16 * aMul));
           g.lineBetween(x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1);
-          g.lineStyle(thermal ? 1.5 : 1.15, line, Math.min(1, t * 0.55 * aMul));
+          g.lineStyle(2.4, glow, Math.min(1, t * 0.48 * aMul));
+          g.lineBetween(x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1);
+          g.lineStyle(1.15, line, Math.min(1, t * 0.82 * aMul));
+          g.lineBetween(x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1);
+        } else if (missile) {
+          g.lineStyle(2.4, glow, Math.min(1, t * 0.32 * aMul));
+          g.lineBetween(x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1);
+          g.lineStyle(1.15, line, Math.min(1, t * 0.55 * aMul));
           g.lineBetween(x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1);
         } else {
           g.lineStyle(1, line, t * 0.42);
@@ -20423,6 +20447,7 @@ specIsShellGun(spec)
     this.hvGfx.clear();
     if (this.mapBlend > 0.12) {
       for (const t of this.hvArrowLabels) t.setVisible(false);
+      this.parentArrowLabel?.setVisible(false);
       return;
     }
     const cam = this.cameras.main;
@@ -20497,6 +20522,66 @@ specIsShellGun(spec)
         .setAlpha(0.95);
     }
     for (let i = used; i < this.hvArrowLabels.length; i++) this.hvArrowLabels[i]!.setVisible(false);
+    this.drawParentCraftArrow(pad);
+  }
+
+  /**
+   * While in remote POV (HOUND / Spectre / Raptor), yellow edge cue toward the
+   * parent craft when it is off-screen — same layout as HV arrows, friendly color.
+   */
+  drawParentCraftArrow(pad = 40): void {
+    const label = this.parentArrowLabel;
+    if (!label) return;
+    if (!this.remoteView || !this.activeRemote()) {
+      label.setVisible(false);
+      return;
+    }
+    const host = this.heli;
+    const { sx, sy } = this.worldToHudScreen(host.x, host.y, host.z);
+    const w = this.scale.width;
+    const h = this.scale.height;
+    const on = sx > pad && sx < w - pad && sy > pad && sy < h - pad;
+    if (on) {
+      label.setVisible(false);
+      return;
+    }
+    const look = this.camLookWorld();
+    const camHud = this.worldToHudScreen(look.x, look.y, look.z);
+    const ang = Math.atan2(sy - camHud.sy, sx - camHud.sx);
+    const ax = Phaser.Math.Clamp(sx, pad, w - pad);
+    const ay = Phaser.Math.Clamp(sy, pad, h - pad);
+    const g = this.hvGfx;
+    g.save();
+    g.translateCanvas(ax, ay);
+    g.rotateCanvas(ang);
+    g.fillStyle(0x12100c, 0.62);
+    g.fillTriangle(15, 0, -10, -10, -10, 10);
+    g.fillStyle(0xe8b84a, 0.96);
+    g.fillTriangle(12, 0, -8, -7.5, -8, 7.5);
+    g.lineStyle(1.6, 0xfff0a8, 0.95);
+    g.strokeTriangle(12, 0, -8, -7.5, -8, 7.5);
+    g.restore();
+
+    const inset = 26;
+    let lx = Phaser.Math.Clamp(ax - Math.cos(ang) * inset, 52, w - 52);
+    let ly = Phaser.Math.Clamp(ay - Math.sin(ang) * inset, 22, h - 22);
+    const miniDx = lx - (18 + 88);
+    const miniDy = ly - (h - 18 - 88);
+    if (Math.hypot(miniDx, miniDy) < 108) {
+      const n = Math.hypot(miniDx, miniDy) || 1;
+      lx = 18 + 88 + (miniDx / n) * 112;
+      ly = h - 18 - 88 + (miniDy / n) * 112;
+    }
+    const dist = Math.hypot(host.x - look.x, host.y - look.y) | 0;
+    const name = (host.spec.name ?? "HOST").toUpperCase();
+    const lp = this.hudLocal(lx, ly);
+    label
+      .setVisible(true)
+      .setText(`${name}\n${dist}m`)
+      .setPosition(lp.x, lp.y)
+      .setOrigin(0.5 + Math.cos(ang) * 0.42, 0.5 + Math.sin(ang) * 0.38)
+      .setColor("#ffe08a")
+      .setAlpha(0.95);
   }
 
   drawDebugHits(): void {
@@ -22229,6 +22314,7 @@ specIsShellGun(spec)
       this.cmHudTime,
       this.hvGfx,
       ...this.hvArrowLabels,
+      this.parentArrowLabel,
       this.lockArrowGfx,
       this.lockHudTxt,
       this.lockInbdHudTxt,
