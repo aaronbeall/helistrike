@@ -6444,7 +6444,7 @@ craftBodyMountWorldPos(mount: { x: number; y: number }): { x: number; y: number 
       return;
     }
     // Skiff bay CD is shared with auto-scramble (may lag behind h.fireCd after weapon switch).
-    if (spec.payload?.remote?.kind === "wingman") {
+    if (spec.payload?.remote && remoteSpecOf(spec.payload.remote.kind).recallWithQ) {
       const skiffCd = this.stationFireCd[slot]?.[0] ?? 0;
       if (skiffCd > 0) {
         this.pointerWasDown = down;
@@ -6466,8 +6466,8 @@ craftBodyMountWorldPos(mount: { x: number; y: number }): { x: number; y: number 
     }
 
     h.fireCd = craftSocketFireCd(spec.fireCd, h.spec, slot);
-    // Share Skiff bay CD with auto-launch so manual + scramble don't stack.
-    if (spec.payload?.remote?.kind === "wingman") {
+    // Share recall-with-Q bay CD with auto-launch so manual + scramble don't stack.
+    if (spec.payload?.remote && remoteSpecOf(spec.payload.remote.kind).recallWithQ) {
       const cds =
         this.stationFireCd[slot] ??
         (this.stationFireCd[slot] = Array.from(
@@ -8665,11 +8665,11 @@ specIsShellGun(spec)
     return d < this.remoteDockRange(drone);
   }
 
-  /** Q from bird-cam — send every live Skiff home to dock. */
+  /** Q from bird-cam — send every live recallWithQ remote home to dock. */
   recallWingmen(): void {
     let any = false;
     for (const r of this.remotes) {
-      if (r.detonate || r.dock || r.spec.kind !== "wingman") continue;
+      if (r.detonate || r.dock || !r.spec.recallWithQ) continue;
       r.dock = true;
       any = true;
     }
@@ -9083,7 +9083,8 @@ specIsShellGun(spec)
       this.tickHoundAi(drone, dt);
       return;
     }
-    if (drone.spec.kind === "wingman" || drone.spec.kind === "fighter") {
+    // Sensor-net air AI (Skiff boom-pass / Raptor strafe) — not Spectre orbit.
+    if (drone.spec.sensorNet && !drone.spec.ground) {
       this.tickWingmanAi(drone, dt);
       return;
     }
@@ -9127,18 +9128,23 @@ specIsShellGun(spec)
     }
   }
 
-  /** Host a wingman orbits — live Raptor if any, else the airship/heli. */
+  /** Host a wingman orbits — prefer a live sensor-net remote that isn't orbit-preferring (Raptor), else the airship/heli. */
   wingmanOrbitHost(drone: RemoteCraft): { x: number; y: number; z: number; radius: number } {
-    if (drone.spec.kind === "wingman") {
-      const raptor = this.remotes.find(
-        (r) => r !== drone && !r.detonate && !r.dock && r.spec.kind === "fighter"
+    if (drone.spec.orbitPreferRemote) {
+      const prefer = this.remotes.find(
+        (r) =>
+          r !== drone &&
+          !r.detonate &&
+          !r.dock &&
+          r.spec.sensorNet &&
+          !r.spec.orbitPreferRemote
       );
-      if (raptor) {
+      if (prefer) {
         return {
-          x: raptor.x,
-          y: raptor.y,
-          z: raptor.z,
-          radius: raptor.spec.radius,
+          x: prefer.x,
+          y: prefer.y,
+          z: prefer.z,
+          radius: prefer.spec.radius,
         };
       }
     }
@@ -9146,14 +9152,12 @@ specIsShellGun(spec)
     return { x: h.x, y: h.y, z: h.z, radius: h.spec.radius };
   }
 
-  /** Friendly sensor net: heli + live Skiffs + Raptor. */
+  /** Friendly sensor net: heli + live remotes flagged `sensorNet`. */
   remoteFriendlySensors(): { x: number; y: number }[] {
     const out: { x: number; y: number }[] = [{ x: this.heli.x, y: this.heli.y }];
     for (const r of this.remotes) {
-      if (r.detonate || r.dock) continue;
-      if (r.spec.kind === "wingman" || r.spec.kind === "fighter") {
-        out.push({ x: r.x, y: r.y });
-      }
+      if (r.detonate || r.dock || !r.spec.sensorNet) continue;
+      out.push({ x: r.x, y: r.y });
     }
     return out;
   }
@@ -9175,20 +9179,23 @@ specIsShellGun(spec)
     if (h.phase !== "flight" || !this.canFire) return;
     let slot = -1;
     for (let i = 0; i < this.loadout.length; i++) {
-      if (this.loadout[i]?.payload?.remote?.kind === "wingman") {
+      const remote = this.loadout[i]?.payload?.remote;
+      if (remote && remoteSpecOf(remote.kind).recallWithQ) {
         slot = i;
         break;
       }
     }
     if (slot < 0 || this.weaponSlotDisabled(slot) || !this.hasAmmo(slot)) return;
     const spec = this.loadout[slot]!;
+    const remoteKind = spec.payload!.remote!.kind;
+    const remoteFlags = remoteSpecOf(remoteKind);
     const n = craftSocketBarrelCount(h.spec, slot);
     const cds =
       this.stationFireCd[slot] ??
       (this.stationFireCd[slot] = Array.from({ length: n }, () => 0));
     if ((cds[0] ?? 0) > 0) return;
 
-    const aware = remoteSpecOf("wingman").awareRange ?? 560;
+    const aware = remoteFlags.awareRange ?? 560;
     let threat = false;
     for (const u of this.units) {
       if (u.dead) continue;
@@ -9247,7 +9254,7 @@ specIsShellGun(spec)
     }
 
     drone.orbit = (drone.orbit ?? 0) + dt * (target ? 1.05 : 0.85);
-    if (target && spec.kind === "wingman") {
+    if (target && spec.attackPass) {
       this.tickSkiffAttackPass(drone, dt, target);
     } else if (target) {
       const lead = (drone.orbit ?? 0) + drone.id * 0.7;
@@ -9355,14 +9362,15 @@ specIsShellGun(spec)
     return Math.max(v.width, v.height) * 0.52 + 80;
   }
 
-  /** Host bay world pos for skiff / fighter dock approach. */
+  /** Host bay world pos for dockable remotes — socket whose weapon launches this kind. */
   remoteDockBayPos(drone: RemoteCraft): { x: number; y: number; z: number } {
     const h = this.heli;
-    const wantWpn =
-      drone.spec.kind === "fighter" ? "fighter_pod" : drone.spec.kind === "wingman" ? "wingman_drone" : undefined;
-    const socket = wantWpn
-      ? h.spec.sockets.find((s) => s.weapon === wantWpn)
-      : h.spec.sockets.find((s) => s.id.includes("bay") || s.id.includes("skiff"));
+    const socket =
+      h.spec.sockets.find((s) => {
+        const w = PLAYER_WPNS[s.weapon as WpnId];
+        return w?.payload?.remote?.kind === drone.spec.kind;
+      }) ??
+      h.spec.sockets.find((s) => s.id.includes("bay") || s.id.includes("skiff"));
     if (socket) {
       const pts = craftSocketPoints(h.spec, socket);
       if (pts[0]) {
@@ -20382,7 +20390,7 @@ specIsShellGun(spec)
           .setStroke("#12100c", 2)
           .setAlpha(disabled ? 0.45 : player ? 0.95 : 0.85)
           .setFontSize("10px");
-      } else if (liveMark && liveRemote?.spec.kind === "wingman") {
+      } else if (liveMark && liveRemote?.spec.recallWithQ) {
         const statusLp = this.hudLocal(x + slotW / 2, y + slotH + 3);
         row.status
           .setVisible(true)

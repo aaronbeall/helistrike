@@ -60,6 +60,20 @@ export interface RemoteSpec {
   /** Ground-hugging AGV — clamps to terrain. */
   ground?: boolean;
   /**
+   * Fixed-gun boom-pass AI (Skiff): line up → fire → overshoot → turn.
+   * Without this, sensor-net air AI uses a strafe ring (Raptor).
+   */
+  attackPass?: boolean;
+  /** Counts as a friendly sensor node for shared awareness. */
+  sensorNet?: boolean;
+  /**
+   * Idle orbit prefers another live sensor-net remote that is not itself
+   * orbit-preferring (Skiffs → Raptor), else the host craft.
+   */
+  orbitPreferRemote?: boolean;
+  /** Bird-cam Q recalls every live remote with this flag (Skiff scramble home). */
+  recallWithQ?: boolean;
+  /**
    * POV remotes with their own weapon HUD (HOUND / Raptor).
    * From craft hull when `pilotable`, unless overridden.
    */
@@ -172,6 +186,10 @@ type RemoteDef = {
   pilotable?: boolean;
   dockable?: boolean;
   ground?: boolean;
+  attackPass?: boolean;
+  sensorNet?: boolean;
+  orbitPreferRemote?: boolean;
+  recallWithQ?: boolean;
   sockets?: CraftSocket[];
   ammoScale?: number;
   gun?: WpnId;
@@ -387,6 +405,10 @@ function mergeRemoteDef(def: RemoteDef): RemoteSpec {
     pilotable: def.pilotable,
     dockable: def.dockable,
     ground: def.ground,
+    attackPass: def.attackPass,
+    sensorNet: def.sensorNet,
+    orbitPreferRemote: def.orbitPreferRemote,
+    recallWithQ: def.recallWithQ,
     sockets,
     ammoScale: def.ammoScale ?? hull.ammoScale,
     // Gun overlay is turret-only; fixed hull muzzles fire from body UVs (see remoteFireTips).
@@ -444,6 +466,10 @@ const REMOTE_DEFS: Record<RemoteKind, RemoteDef> = {
     look: "craft_skiff",
     ai: true,
     dockable: true,
+    attackPass: true,
+    sensorNet: true,
+    orbitPreferRemote: true,
+    recallWithQ: true,
     gun: "machine_gun",
     maxSpeed: 380,
     thrust: 520,
@@ -465,6 +491,7 @@ const REMOTE_DEFS: Record<RemoteKind, RemoteDef> = {
     ai: true,
     pilotable: true,
     dockable: true,
+    sensorNet: true,
     hostFace: true,
     engageRange: 520,
     orbitRange: 160,
