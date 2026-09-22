@@ -808,8 +808,8 @@ export class MissionScene extends Phaser.Scene {
   private perfCopyKeyAt = -Infinity;
   hud!: Phaser.GameObjects.Text;
   liftPrompt!: Phaser.GameObjects.Text;
-  spectrePrompt!: Phaser.GameObjects.Text;
-  spectreArmedTxt!: Phaser.GameObjects.Text;
+  remotePrompt!: Phaser.GameObjects.Text;
+  remoteArmedTxt!: Phaser.GameObjects.Text;
   hvHud!: Phaser.GameObjects.Text;
   hvRows: Phaser.GameObjects.Text[] = [];
   wpnHud!: Phaser.GameObjects.Text;
@@ -2903,7 +2903,7 @@ export class MissionScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(Layer.HUD + 8)
       .setVisible(false);
-    this.spectrePrompt = this.add
+    this.remotePrompt = this.add
       .text(this.scale.width / 2, this.scale.height - 96, "Q / RMB  EXIT VIEW", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "13px",
@@ -2915,7 +2915,7 @@ export class MissionScene extends Phaser.Scene {
       .setDepth(Layer.HUD + 8)
       .setStroke("#12100c", 4)
       .setVisible(false);
-    this.spectreArmedTxt = this.add
+    this.remoteArmedTxt = this.add
       .text(0, 0, "ARMED", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "12px",
@@ -3791,8 +3791,8 @@ export class MissionScene extends Phaser.Scene {
       this.energyTrailGfx.clear();
       this.refractorGfx.clear();
       this.cmGfx.clear();
-      this.spectrePrompt?.setVisible(false);
-      this.spectreArmedTxt?.setVisible(false);
+      this.remotePrompt?.setVisible(false);
+      this.remoteArmedTxt?.setVisible(false);
       return;
     }
     this.syncPlayView();
@@ -20098,7 +20098,7 @@ specIsShellGun(spec)
       `ALT ${castZ(this.world, h.x, h.y, h.z) | 0}   ELV ${elv}   SPD ${Math.hypot(h.vx, h.vy) | 0}   TIME ${this.liveSimScale.toFixed(2)}×\n${phase}\nWPN ${w.name}  ${ammoS}${overLine}`
     );
     this.syncLiftPrompt();
-    this.syncSpectrePrompt();
+    this.syncRemotePrompt();
 
     const lines = this.world.hv.map((spec) => this.hvLine(spec));
     const left = lines.filter((l) => !l.done).length;
@@ -20253,7 +20253,7 @@ specIsShellGun(spec)
     this.liftPrompt.setAlpha(blink);
   }
 
-  spectreDetonateArmed(): boolean {
+  remoteDetonateArmed(): boolean {
     const remote = this.selectedSlotRemote();
     return (
       this.remoteView &&
@@ -20264,17 +20264,17 @@ specIsShellGun(spec)
     );
   }
 
-  syncSpectrePrompt(slotTop?: number): void {
+  syncRemotePrompt(slotTop?: number): void {
     const show =
       !this.mapView &&
       !this.over &&
       !!this.pilotingRemote() &&
       !this.povHudRemote();
-    this.spectrePrompt.setVisible(show);
+    this.remotePrompt.setVisible(show);
     if (!show) return;
-    const armed = this.spectreDetonateArmed();
+    const armed = this.remoteDetonateArmed();
     const gun = !!this.pilotingRemote()?.spec.gun;
-    this.spectrePrompt.setText(
+    this.remotePrompt.setText(
       gun
         ? "HOLD LMB  FIRE\n1–N / Q  RELEASE"
         : armed
@@ -20283,9 +20283,9 @@ specIsShellGun(spec)
     );
     const y = slotTop != null ? slotTop - (armed || gun ? 32 : 18) : this.scale.height - 96;
     const lp = this.hudLocal(this.scale.width / 2, y);
-    this.spectrePrompt.setPosition(lp.x, lp.y);
+    this.remotePrompt.setPosition(lp.x, lp.y);
     const blink = 0.72 + 0.28 * (0.5 + 0.5 * Math.sin(this.time.now * 0.006));
-    this.spectrePrompt.setAlpha(blink);
+    this.remotePrompt.setAlpha(blink);
   }
 
   drawWeaponHud(): void {
@@ -20608,7 +20608,7 @@ specIsShellGun(spec)
     } else {
       this.drawCountermeasureHud(y + slotH + crewPad + 2);
     }
-    this.syncSpectrePrompt(y);
+    this.syncRemotePrompt(y);
     // Hide unused rows if loadout shrank (shouldn't normally).
     for (let i = n; i < this.wpnHudSlots.length; i++) {
       const row = this.wpnHudSlots[i]!;
@@ -22650,7 +22650,7 @@ specIsShellGun(spec)
       this.fpsHud,
       this.perfHud,
       this.liftPrompt,
-      this.spectrePrompt,
+      this.remotePrompt,
       this.hvHud,
       ...this.hvRows,
       this.playerHud,
@@ -22685,7 +22685,7 @@ specIsShellGun(spec)
     this.hudSet.delete(this.sight);
     this.sight.cameraFilter = this.hudCam.id | this.fieldHudCam.id;
     // World-anchored tracking HUD: lock boxes, unit HP — not thermalized.
-    for (const go of [this.lockGfx, this.lockTxt, this.lockInbdTxt, this.hpGfx, this.spectreArmedTxt]) {
+    for (const go of [this.lockGfx, this.lockTxt, this.lockInbdTxt, this.hpGfx, this.remoteArmedTxt]) {
       this.bindFieldHud(go);
     }
     // TOW wire / Tesla / Refractor / energy ribbons stay on the main cam (world depth).
@@ -23582,7 +23582,7 @@ specIsShellGun(spec)
   setHudVisible(on: boolean): void {
     this.hud.setVisible(on);
     this.liftPrompt.setVisible(on && this.heli.phase === "ready");
-    this.spectrePrompt.setVisible(on && !!this.pilotingRemote() && !this.povHudRemote());
+    this.remotePrompt.setVisible(on && !!this.pilotingRemote() && !this.povHudRemote());
     this.hvHud.setVisible(on);
     for (const t of this.hvRows) t.setVisible(on);
     this.wpnHud.setVisible(on);
@@ -23612,7 +23612,7 @@ specIsShellGun(spec)
     this.hudRoot.setVisible(on);
     if (this.editRoot) this.editRoot.setVisible(this.editOpen && (on || this.mapBlend > 0.12));
     this.hpGfx.setVisible(on);
-    if (!on) this.spectreArmedTxt?.setVisible(false);
+    if (!on) this.remoteArmedTxt?.setVisible(false);
     if (on) {
       this.reticle.setVisible(true);
       this.reticleMark.setVisible(true);
@@ -23787,15 +23787,15 @@ specIsShellGun(spec)
         g.fillRect(sx, sy, segW, innerH);
       }
     }
-    const armed = this.spectreDetonateArmed();
+    const armed = this.remoteDetonateArmed();
     const drone = armed ? this.activeRemote() : undefined;
     if (!drone || !cameraPointVisible(drone.z, drone.y) || this.mapView || this.over) {
-      this.spectreArmedTxt.setVisible(false);
+      this.remoteArmedTxt.setVisible(false);
     } else {
       const at = worldToScreen(drone.x, drone.y, drone.z);
       const zs = at.scale;
       const blink = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(this.time.now * 0.014));
-      this.spectreArmedTxt
+      this.remoteArmedTxt
         .setVisible(true)
         .setText("ARMED")
         .setPosition(at.x, at.y - drone.spec.height * zs - 34 * zs)

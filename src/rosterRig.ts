@@ -111,7 +111,7 @@ type RosterEntry =
   | { cat: "remote"; kind: RemoteKind };
 
 /**
- * Lazy debug browser for CRAFTS + REMOTE_CRAFTS + SPECS — list, live preview
+ * Lazy debug browser for CRAFTS + remotes (`remoteSpecOf`) + SPECS — list, live preview
  * (hull + parts), and a stats dump from the real craft / remote / unit sources.
  */
 export class RosterRig {

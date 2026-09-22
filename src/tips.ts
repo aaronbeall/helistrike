@@ -233,7 +233,7 @@ export const TACTICAL_TIPS: TacticalTip[] = [
   },
   {
     id: "wpn_skiff",
-    text: "Skiffs auto-launch from the Leviathan when enemies enter awareness (cooldown between launches, max 8). They orbit wide, strafe targets spotted by the airship / Skiffs / Raptor, and Q recalls them all to dock.",
+    text: "Skiffs auto-launch from the Leviathan when enemies enter awareness (cooldown between launches, max 6). They orbit wide, strafe targets spotted by the airship / Skiffs / Raptor, and Q recalls them all to dock.",
     context: { weapons: ["wingman_drone"] },
   },
   {

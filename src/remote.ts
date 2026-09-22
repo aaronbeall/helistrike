@@ -7,6 +7,7 @@
  */
 import {
   craftOf,
+  craftSocketStartingAmmo,
   rotorDrawSpan,
   rotorSpinSign,
   type CraftCompositePart,
@@ -271,19 +272,22 @@ export function remoteHasPovHud(spec: RemoteSpec): boolean {
   return !!spec.sockets?.length;
 }
 
-/** Socket capacity — mirrors craft `ammoScale` × socket `ammoMul`. */
+/** Socket capacity — same barrel × ammoMul rules as `craftSocketStartingAmmo`. */
 export function remoteSocketStartingAmmo(
   baseAmmo: number,
   spec: RemoteSpec,
   socketIndex: number
 ): number {
-  const scale = spec.ammoScale ?? 1;
-  const base = Number.isFinite(baseAmmo)
-    ? Math.max(1, Math.round(baseAmmo * scale))
-    : Infinity;
-  if (!Number.isFinite(base)) return base;
-  const sockMul = spec.sockets?.[socketIndex]?.ammoMul ?? 1;
-  return Math.max(1, Math.round(base * sockMul));
+  const hull = remoteHull(spec);
+  return craftSocketStartingAmmo(
+    baseAmmo,
+    {
+      ...hull,
+      ammoScale: spec.ammoScale ?? hull.ammoScale,
+      sockets: spec.sockets ?? hull.sockets,
+    },
+    socketIndex
+  );
 }
 
 /** Build / refresh live loadout + ammo from authored sockets. */
@@ -500,9 +504,6 @@ const RESOLVED: Record<RemoteKind, RemoteSpec> = {
   fighter: mergeRemoteDef(REMOTE_DEFS.fighter),
   agv: mergeRemoteDef(REMOTE_DEFS.agv),
 };
-
-/** @deprecated Use remoteSpecOf — kept for rosterRig source labels. */
-export const REMOTE_CRAFTS: Record<RemoteKind, RemoteSpec> = RESOLVED;
 
 export function remoteSpecOf(kind: RemoteKind): RemoteSpec {
   return RESOLVED[kind];

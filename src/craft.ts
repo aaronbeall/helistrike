@@ -872,8 +872,8 @@ const CRAFTS_DEFS = {
         controller: "pilot",
         weapon: "wingman_drone",
         points: [{ id: "skiff" }],
-        // Catalog ammo 8 × airship ammoScale 2.4 → cap the bay at 8 Skiffs.
-        ammoMul: 8 / Math.round(8 * 2.4),
+        // Catalog ammo × airship ammoScale 2.4 → cap the bay at 6 Skiffs.
+        ammoMul: 6 / Math.round(6 * 2.4),
       },
       {
         id: "fighter_bay",
@@ -969,7 +969,7 @@ const CRAFTS_DEFS = {
     enemySeekerMul: 0.72,
   },
   // Steampunk fighter pod — same plane scheme as biplane; launched from Leviathan.
-  // Not hangar-selectable — remote roster owns lifecycle (`REMOTE_CRAFTS.fighter`).
+  // Not hangar-selectable — remote roster owns lifecycle (`remoteSpecOf("fighter")`).
   raptor: {
     kind: "raptor",
     name: "Raptor",
@@ -1142,7 +1142,7 @@ const CRAFTS_DEFS = {
     sensorPalette: "full_spectrum",
   },
   // Dropship AGV pod — dirt-locked tank drive; same Heli path as other remotes.
-  // Not hangar-selectable — remote roster owns lifecycle (`REMOTE_CRAFTS.agv`).
+  // Not hangar-selectable — remote roster owns lifecycle (`remoteSpecOf("agv")`).
   hound: {
     kind: "hound",
     name: "Hound",

@@ -843,13 +843,13 @@ const PLAYER_WPNS_DEFS = {
     fits: FIT_HARDPOINT, notes: ["launches as a separate controllable craft", "Q / RMB drop camera without detonating", "select Spectre slot to return view", "click Spectre in its view to detonate"],
   },
   wingman_drone: {
-    id: "wingman_drone", name: "SKIFF", fullName: "SKIFF WINGMAN", designation: "AUTONOMOUS WINGMAN SKIFF", ammo: 8, fireCd: 0.85, speed: 200,
+    id: "wingman_drone", name: "SKIFF", fullName: "SKIFF WINGMAN", designation: "AUTONOMOUS WINGMAN SKIFF", ammo: 6, fireCd: 0.85, speed: 200,
     dmg: 40, blast: 48, life: 90,
     art: ordArt("guided", 0.5, "velocity"),
     cam: CAM_GUIDED, control: CLICK, launch: { mode: "muzzle", inheritMomentum: 0.7 },
     payload: { remote: { kind: "wingman", duration: 90 } },
     fits: FIT_HARDPOINT, notes: [
-      "AI wingmen — auto-launch on contact (LIVE ×N, max 8); Q recalls all to dock",
+      "AI wingmen — auto-launch on contact (LIVE ×N, max 6); Q recalls all to dock",
       "fixed nose guns: line up, fire, overshoot, turn for another pass",
       "shared awareness with airship / Raptor",
     ],
@@ -1075,6 +1075,11 @@ const PLAYER_WPNS_DEFS = {
     dmg: 380, blast: 200, life: 6.5,
     art: ordArt("bomb", 0.85, "velocity"),
     exhaust: particleTrail(0.42, { density: 0.45, contrail: true }),
+    cam: CAM_DROP, control: CLICK, launch: DROP, payload: HE_FIRE,
+    dmgMul: { building: 1.35, vehicle: 1.15, troop: 0.9, air: 0.25 },
+    fits: FIT_HARDPOINT, notes: ["gravity bomb — weak aim correction vs JDAM; structure / armor fantasy"],
+  },
+  tesla_beam: {
     id: "tesla_beam", name: "TESLA COIL", fullName: "TESLA COIL", designation: "TESLA COIL ARC CANNON", ammo: 900, fireCd: 0.05, speed: 1,
     dmg: 9, blast: 0, life: 0.05,
     art: gunArt("tesla_beam", 0.62, { w: 80, h: 10, core: [230, 255, 255], mid: [80, 240, 255], rim: [20, 120, 255], glow: 0.85 }, MOUNT_TESLA),
