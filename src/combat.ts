@@ -191,6 +191,11 @@ export type WeaponPayload = {
     shellSpeed?: number;
     /** Keep flare FX until this many shells have impacted (default 3). */
     flareUntilHits?: number;
+    /**
+     * Optional host craft weapon whose ammo bank pays for the barrage
+     * (e.g. HOUND artillery strike → dropship howitzer).
+     */
+    hostWeapon?: HostFireWeaponId;
   };
   /**
    * POV remote spot — one click fires `weapon` from the host craft mount
@@ -1151,6 +1156,7 @@ const PLAYER_WPNS_DEFS = {
         shellLook: ordLook("artilleryShell"),
         shellSpeed: 420,
         flareUntilHits: 3,
+        hostWeapon: "heavy_artillery",
       },
     },
     fits: FIT_GUN,

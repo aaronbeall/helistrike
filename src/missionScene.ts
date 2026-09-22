@@ -8514,8 +8514,7 @@ specIsShellGun(spec)
   /** Catalog weapon id whose host ammo a POV remote slot spends, if any. */
   remoteHostAmmoWeapon(wp: PlayerWpnSpec): WpnId | undefined {
     if (payloadIsHostFire(wp.payload)) return wp.payload!.hostFire!.weapon;
-    // HOUND artillery observer — barrage is the dropship howitzer.
-    if (payloadIsCallStrike(wp.payload)) return "heavy_artillery";
+    if (payloadIsCallStrike(wp.payload)) return wp.payload!.callStrike!.hostWeapon;
     return undefined;
   }
 
@@ -13036,7 +13035,7 @@ specIsShellGun(spec)
               y: h.y,
               z: Math.max(h.z + 140, 420),
             };
-            hostWeapon = "heavy_artillery";
+            hostWeapon = cs.hostWeapon;
           }
           this.armCallStrike(s.x, s.y, s.z, cs, spawnFrom, hostWeapon);
         }
