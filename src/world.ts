@@ -450,39 +450,40 @@ export function worldToScreen(x: number, y: number, z: number, out: ScreenPos = 
   return out;
 }
 
-/** Inverse of `worldToScreen` for a known absolute Z. */
-const _unproj = { x: 0, y: 0, z: 0 };
-
+/** Inverse of `worldToScreen` for a known absolute Z.
+ * Pass `out` to write into a reusable buffer; otherwise returns a fresh object
+ * (never a shared scratch — callers often keep the result across later unprojects).
+ */
 export function screenToWorldAtZ(
   sx: number,
   sy: number,
   z: number,
-  out: { x: number; y: number; z: number } = _unproj
+  out?: { x: number; y: number; z: number }
 ): { x: number; y: number; z: number } {
+  const target = out ?? { x: 0, y: 0, z: 0 };
   const dx = (sx - Camera25D.focusX) / Camera25D.focal;
   const dy = (sy - Camera25D.focusY) / Camera25D.focal;
   const rayX = dx;
   const rayY = Camera25D.forwardY + dy * Camera25D.downY;
   const rayZ = Camera25D.forwardZ + dy * Camera25D.downZ;
   const t = (z - Camera25D.eyeZ) / rayZ;
-  out.x = Camera25D.focusX + rayX * t;
-  out.y = Camera25D.eyeY + rayY * t;
-  out.z = z;
-  return out;
+  target.x = Camera25D.focusX + rayX * t;
+  target.y = Camera25D.eyeY + rayY * t;
+  target.z = z;
+  return target;
 }
 
 /**
  * Unproject Phaser coords onto the height-map surface (iterated ground Z).
- * Use for cursor / reticle terrain aim. Default `out` is shared scratch.
+ * Use for cursor / reticle terrain aim. Pass `out` for a reusable buffer.
  */
-const _ground = { x: 0, y: 0, z: 0 };
-
 export function screenToWorldOnGround(
   world: WorldData,
   sx: number,
   sy: number,
-  out: { x: number; y: number; z: number } = _ground
+  out?: { x: number; y: number; z: number }
 ): { x: number; y: number; z: number } {
+  const target = out ?? { x: 0, y: 0, z: 0 };
   const dx = (sx - Camera25D.focusX) / Camera25D.focal;
   const dy = (sy - Camera25D.focusY) / Camera25D.focal;
   const rayX = dx;
@@ -515,10 +516,10 @@ export function screenToWorldOnGround(
     else hi = t;
   }
   const t = (lo + hi) * 0.5;
-  out.x = Camera25D.focusX + rayX * t;
-  out.y = Camera25D.eyeY + rayY * t;
-  out.z = Camera25D.eyeZ + rayZ * t;
-  return out;
+  target.x = Camera25D.focusX + rayX * t;
+  target.y = Camera25D.eyeY + rayY * t;
+  target.z = Camera25D.eyeZ + rayZ * t;
+  return target;
 }
 
 /** Screen-space velocity Y: analytic derivative of the chase projection. */

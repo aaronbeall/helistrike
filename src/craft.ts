@@ -1203,7 +1203,7 @@ const CRAFTS_DEFS = {
       {
         id: "howitzer_turret",
         class: "turret",
-        controller: "pilot",
+        controller: "automatic",
         weapon: "heavy_artillery",
         points: [{ id: "howitzer" }],
         traverse: 200,

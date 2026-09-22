@@ -1114,7 +1114,7 @@ const PLAYER_WPNS_DEFS = {
   },
   remote_howitzer: {
     id: "remote_howitzer",
-    name: "HOWITZER",
+    name: "REMOTE HOWITZER",
     fullName: "DROPSHIP HOWITZER SPOT",
     designation: "REMOTE 105MM HOWITZER FIRE MISSION",
     ammo: 12,

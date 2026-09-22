@@ -147,7 +147,7 @@ function specIsRocketPod(spec: PlayerWpnSpec): boolean {
   );
 }
 
-/** One laser between multi-barrel ports (host chin duals + remote nose guns). */
+/** One laser at the average of multi-barrel / multi-gun emit tips. */
 function collapseSightTips<T extends { x: number; y: number }>(tips: T[]): T[] {
   if (tips.length <= 1) return tips;
   let sx = 0;
@@ -156,17 +156,26 @@ function collapseSightTips<T extends { x: number; y: number }>(tips: T[]): T[] {
     sx += t.x;
     sy += t.y;
   }
+  const n = tips.length;
   const head = tips[0]!;
-  return [{ ...head, x: sx / tips.length, y: sy / tips.length }];
+  return [{ ...head, x: sx / n, y: sy / n }];
 }
 
 /**
- * Next hardpoint index from remaining ammo — host pylons + remote racks.
- * Same formula whether ammo was just spent (fire) or not (sight).
+ * Hardpoint pylon phase from ammo count.
+ * Fire spends first then indexes with remaining (`afterSpend`);
+ * sight uses loaded count so the laser matches the *next* shot, not the last.
  */
-function hardpointAmmoIndex(ammo: number, mountCount: number): number {
+function hardpointAmmoIndex(
+  ammo: number,
+  mountCount: number,
+  afterSpend = false
+): number {
   if (mountCount <= 1) return 0;
-  return ((ammo - 1) % mountCount + mountCount) % mountCount;
+  // After spend with remaining R: (R - 1) % n
+  // Before spend with loaded A: same pylon as fire will use → (A - 2) % n
+  const phase = afterSpend ? ammo - 1 : ammo - 2;
+  return ((phase % mountCount) + mountCount) % mountCount;
 }
 
 /** Plane hardpoint / drop look-ahead boost (host + remote POV). */
@@ -1011,6 +1020,11 @@ export class MissionScene extends Phaser.Scene {
      * at the mark instead of a synthetic off-map shell.
      */
     hostWeapon?: string;
+    /** Host-walk aim oscillator (seconds). */
+    wobbleT?: number;
+    /** Live slew/fire point — wobbles around the mark for host howitzer walks. */
+    aimX?: number;
+    aimY?: number;
   }[] = [];
   nextCallStrikeMarkId = 1;
   /** Pooled ETA labels for live call-strike flares. */
@@ -4375,8 +4389,28 @@ export class MissionScene extends Phaser.Scene {
       const from = this.guns[gunI]?.visible
         ? this.gunTip(gunI)
         : screenToWorldAtZ(aimMount.x, aimMount.y + bob, h.z);
-      const want = Math.atan2(aim.y - from.y, aim.x - from.x);
-      this.slewCraftTurretStations(h, want, dt, h.weapon);
+      let want = Math.atan2(aim.y - from.y, aim.x - from.x);
+      // Spotting / call-strike: drive the host howitzer station (may be automatic).
+      const spotSlot = this.hostSpotSlewSlot();
+      const hostWalk = this.callStrikeMarks.find(
+        (m) => m.hostWeapon && m.roundsLeft > 0
+      );
+      if (spotSlot >= 0) {
+        const howGunI = this.gunVisualIndexForSlot(spotSlot);
+        const howFrom =
+          howGunI >= 0 && this.guns[howGunI]?.visible
+            ? this.gunTip(howGunI)
+            : from;
+        if (hostWalk) {
+          want = Math.atan2(
+            (hostWalk.aimY ?? hostWalk.y) - howFrom.y,
+            (hostWalk.aimX ?? hostWalk.x) - howFrom.x
+          );
+        } else {
+          want = Math.atan2(aim.y - howFrom.y, aim.x - howFrom.x);
+        }
+      }
+      this.slewCraftTurretStations(h, want, dt, spotSlot >= 0 ? spotSlot : h.weapon);
       if (aimSlot != null) h.gunAngle = h.stationAim[aimSlot]?.[0] ?? want;
     }
     this.guns.forEach((gun, i) => {
@@ -5310,33 +5344,33 @@ export class MissionScene extends Phaser.Scene {
    * only (fixed→body muzzles, turret→gun tips, hardpoint→that socket's mounts).
    * Does not fall back to other wing pylons.
    */
-  designatorSightOrigins(slot = this.heli.weapon): { x: number; y: number }[] {
-    const h = this.heli;
-    const socket = h.spec.sockets[slot];
-    let tips: { x: number; y: number }[] = [];
-    if (socket?.class === "turret") {
-      const gunI = this.gunVisualIndexForSlot(slot);
+designatorSightOrigins(slot = this.heli.weapon): { x: number; y: number }[] {
+  const h = this.heli;
+  const socket = h.spec.sockets[slot];
+  let tips: { x: number; y: number }[] = [];
+  if (socket?.class === "turret") {
+    const barrelN = Math.max(1, craftSocketBarrelCount(h.spec, slot));
+    for (let b = 0; b < barrelN; b++) {
+      const gunI = this.gunVisualIndexForSlot(slot, b);
       const gun = this.guns[gunI] ?? this.gun;
-      if (gun?.visible) {
-        const muzzles = lookupSpriteMuzzles(gun.texture.key);
-        tips =
-          muzzles.length > 1
-            ? muzzles.map((_, i) => this.gunTip(gunI, i))
-            : [this.gunTip(gunI)];
-      }
-    } else if (socket) {
-      // fixed → muzzle UVs; hardpoint → this socket's stores only (not every rack).
-      const mounts = craftSocketPoints(h.spec, socket);
-      if (mounts.length) tips = mounts.map((m) => this.craftBodyMountWorldPos(m));
+      if (!gun?.visible) continue;
+      const muzzles = lookupSpriteMuzzles(gun.texture.key);
+      if (!muzzles.length) continue;
+      for (let i = 0; i < muzzles.length; i++) tips.push(this.gunTip(gunI, i));
     }
-    if (!tips.length) {
-      const bodyMuzzles = craftFixedMuzzles(h.spec);
-      if (bodyMuzzles.length) tips = bodyMuzzles.map((m) => this.craftBodyMountWorldPos(m));
-      else tips = [{ x: h.x, y: h.y }];
-    }
-    // One beam between multi-muzzle ports (same as chin duals / remotes).
-    return collapseSightTips(tips);
+  } else if (socket) {
+    // fixed → muzzle UVs; hardpoint → this socket's stores only (not every rack).
+    const mounts = craftSocketPoints(h.spec, socket);
+    if (mounts.length) tips = mounts.map((m) => this.craftBodyMountWorldPos(m));
   }
+  if (!tips.length) {
+    const bodyMuzzles = craftFixedMuzzles(h.spec);
+    if (bodyMuzzles.length) tips = bodyMuzzles.map((m) => this.craftBodyMountWorldPos(m));
+    else tips = [{ x: h.x, y: h.y }];
+  }
+  // One beam at the average multi-muzzle / multi-gun tip.
+  return collapseSightTips(tips);
+}
 
   /** Laser sorts under the hull for chin guns; above for roof mounts. */
   syncSightDepth(slot = this.heli.weapon): void {
@@ -6109,51 +6143,52 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 
-  /**
-   * Laser-sight emit points for the selected cannon slot.
-   * Multi-muzzle guns collapse to one beam between barrels (shared with remotes).
-   */
-  cannonSightOrigins(slot = this.heli.weapon): { x: number; y: number }[] {
-    const h = this.heli;
-    const socket = h.spec.sockets[slot];
-    let tips: { x: number; y: number }[] = [];
-    if (socket?.class === "fixed") {
-      const muzzles = craftSocketPoints(h.spec, socket);
-      if (muzzles.length) tips = muzzles.map((m) => this.craftBodyMountWorldPos(m));
-    } else if (socket?.class === "turret") {
-      const gunI = this.gunVisualIndexForSlot(slot);
+/**
+ * Laser-sight emit points for the selected cannon slot.
+ * Multi-muzzle / multi-gun stations collapse to one beam at the average tip.
+ */
+cannonSightOrigins(slot = this.heli.weapon): { x: number; y: number }[] {
+  const h = this.heli;
+  const socket = h.spec.sockets[slot];
+  let tips: { x: number; y: number }[] = [];
+  if (socket?.class === "fixed") {
+    const muzzles = craftSocketPoints(h.spec, socket);
+    if (muzzles.length) tips = muzzles.map((m) => this.craftBodyMountWorldPos(m));
+  } else if (socket?.class === "turret") {
+    const barrelN = Math.max(1, craftSocketBarrelCount(h.spec, slot));
+    for (let b = 0; b < barrelN; b++) {
+      const gunI = this.gunVisualIndexForSlot(slot, b);
       const gun = this.guns[gunI] ?? this.gun;
-      if (gun?.visible) {
-        const muzzles = lookupSpriteMuzzles(gun.texture.key);
-        tips =
-          muzzles.length > 1
-            ? muzzles.map((_, i) => this.gunTip(gunI, i))
-            : [this.gunTip(gunI)];
-      }
+      if (!gun?.visible) continue;
+      const muzzles = lookupSpriteMuzzles(gun.texture.key);
+      if (!muzzles.length) continue;
+      for (let i = 0; i < muzzles.length; i++) tips.push(this.gunTip(gunI, i));
     }
-    if (!tips.length) {
-      const bodyMuzzles = craftFixedMuzzles(h.spec);
-      if (bodyMuzzles.length) tips = bodyMuzzles.map((m) => this.craftBodyMountWorldPos(m));
-      else tips = [this.gunTip(this.gunVisualIndexForSlot(slot))];
-    }
-    return collapseSightTips(tips);
   }
+  if (!tips.length) {
+    const bodyMuzzles = craftFixedMuzzles(h.spec);
+    if (bodyMuzzles.length) tips = bodyMuzzles.map((m) => this.craftBodyMountWorldPos(m));
+    else tips = [this.gunTip(this.gunVisualIndexForSlot(slot))];
+  }
+  return collapseSightTips(tips);
+}
 
   /** @deprecated Prefer cannonSightOrigins — kept for single-tip call sites. */
   cannonSightOrigin(slot = this.heli.weapon): { x: number; y: number } {
     return this.cannonSightOrigins(slot)[0] ?? { x: this.heli.x, y: this.heli.y };
   }
 
-  /** World position of an authored mount UV on the active craft body (live draw pose). */
-  craftBodyMountWorldPos(mount: { x: number; y: number }): { x: number; y: number } {
-    const h = this.heli;
-    if (this.body?.visible) {
-      const pose = this.heliBodyDrawPose();
-      const scr = spriteUvPos(pose, mount.x, mount.y);
-      // Mid-hull projection plane for XY only — shot leave Z is playerMuzzleZ.
-      const z = h.z + h.spec.height * 0.55;
-      return screenToWorldAtZ(scr.x, scr.y, z);
-    }
+/** World position of an authored mount UV on the active craft body (live draw pose). */
+craftBodyMountWorldPos(mount: { x: number; y: number }): { x: number; y: number } {
+  const h = this.heli;
+  if (this.body?.visible) {
+    const pose = this.heliBodyDrawPose();
+    const scr = spriteUvPos(pose, mount.x, mount.y);
+    // Mid-hull projection plane for XY only — shot leave Z is playerMuzzleZ.
+    const z = h.z + h.spec.height * 0.55;
+    const at = screenToWorldAtZ(scr.x, scr.y, z);
+    return { x: at.x, y: at.y };
+  }
     // Pre-sync fallback: rotate UV offset around craft origin in world space.
     const craft = h.spec;
     const pivot = craftOrigin(craft);
@@ -6175,7 +6210,11 @@ export class MissionScene extends Phaser.Scene {
   }
 
   /** World position of the next hardpoint emit tip (cycles by remaining ammo). */
-  hardpointPylon(slot = this.heli.weapon): { x: number; y: number; side: number } {
+  hardpointPylon(
+    slot = this.heli.weapon,
+    /** True when called after `spendAmmo` (fire); false for laser sight (next shot). */
+    afterSpend = false
+  ): { x: number; y: number; side: number } {
     const h = this.heli;
     const socket = h.spec.sockets[slot];
     const mounts =
@@ -6183,7 +6222,7 @@ export class MissionScene extends Phaser.Scene {
         ? craftSocketPoints(h.spec, socket)
         : craftHardpointMounts(h.spec);
     const ammo = this.ammo[slot] ?? 0;
-    const index = hardpointAmmoIndex(ammo, mounts.length);
+    const index = hardpointAmmoIndex(ammo, mounts.length, afterSpend);
     const mount = mounts[index] ?? mounts[0]!;
     const side = mount.x < craftOrigin(h.spec).x ? -1 : 1;
     return { ...this.hardpointWorldPos(mount), side };
@@ -6243,6 +6282,11 @@ export class MissionScene extends Phaser.Scene {
     // Crew-served automatic: when selected, player aims (syncHeliGfx) and fires
     // with the weapon's normal control mode. Unselected autos fire from tickAutomaticStations.
     if (socket.controller === "automatic") {
+      // Call-strike walk owns this station — no manual howitzer during barrage.
+      if (this.hostWeaponStrikeActive(spec.id)) {
+        this.pointerWasDown = down;
+        return;
+      }
       let wantFire = false;
       if (spec.control.mode === "hold_mouse_down") wantFire = down;
       else if (spec.control.mode === "click" || spec.control.mode === "click_then_click_to_commit") {
@@ -6504,7 +6548,28 @@ export class MissionScene extends Phaser.Scene {
       flareUntilHits: Math.max(1, spec.flareUntilHits ?? 3),
       firstImpactEta,
       hostWeapon,
+      wobbleT: 0,
+      aimX: x,
+      aimY: y,
     });
+  }
+
+  /** Back-and-forth walk aim around a host call-strike mark (slew + fire point). */
+  tickHostCallStrikeAim(
+    m: (typeof this.callStrikeMarks)[number],
+    dt: number
+  ): void {
+    m.wobbleT = (m.wobbleT ?? 0) + dt;
+    const t = m.wobbleT;
+    // Slow rotating axis; primary sin back-forth + lighter lateral sway.
+    const axis = t * 0.41;
+    const amp = m.jitter * (0.5 + 0.45 * (0.5 + 0.5 * Math.sin(t * 0.85)));
+    const along = Math.sin(t * 2.15) * amp;
+    const side = Math.sin(t * 0.73 + 1.1) * amp * 0.32;
+    const ca = Math.cos(axis);
+    const sa = Math.sin(axis);
+    m.aimX = m.x + ca * along - sa * side;
+    m.aimY = m.y + sa * along + ca * side;
   }
 
   tickCallStrikeMarks(dt: number): void {
@@ -6576,31 +6641,36 @@ export class MissionScene extends Phaser.Scene {
 
       if (m.delayT > 0) {
         m.delayT -= dt;
+        if (m.hostWeapon) this.tickHostCallStrikeAim(m, dt);
         this.callStrikeMarks[w++] = m;
+        continue;
+      }
+
+      if (m.hostWeapon) {
+        // Real howitzer walk: shared station CD, wobble aim, one shell per ready cycle.
+        this.tickHostCallStrikeAim(m, dt);
+        const aim = { x: m.aimX ?? m.x, y: m.aimY ?? m.y };
+        if (this.hostStationFireReady(m.hostWeapon) && this.hostStationAlignedTo(m.hostWeapon, aim)) {
+          const ok = this.fireHostWeaponAt(m.hostWeapon, aim, { fromStrike: true });
+          if (!ok) {
+            // Dry / missing mount — end the walk. CD-not-ready is handled above.
+            m.roundsLeft = 0;
+          } else {
+            m.roundsLeft--;
+          }
+        }
+        if (m.roundsLeft > 0) this.callStrikeMarks[w++] = m;
         continue;
       }
 
       m.intervalT -= dt;
       while (m.intervalT <= 0 && m.roundsLeft > 0) {
-        if (m.hostWeapon) {
-          const hit = jitterDisk(m.x, m.y, m.jitter);
-          const ok = this.fireHostWeaponAt(m.hostWeapon, hit);
-          if (!ok) {
-            // Out of host ammo / no mount — end the walk.
-            m.roundsLeft = 0;
-            break;
-          }
-        } else {
-          this.spawnCallStrikeShell(m);
-        }
+        this.spawnCallStrikeShell(m);
         m.roundsLeft--;
         m.intervalT += m.interval;
       }
-      // Host walk: drop the mark once the barrage is done firing.
       // Off-map: keep until authored rounds AND flare-until-hits are satisfied.
-      if (m.hostWeapon) {
-        if (m.roundsLeft > 0) this.callStrikeMarks[w++] = m;
-      } else if (m.roundsLeft > 0 || m.hitsLanded < m.flareUntilHits) {
+      if (m.roundsLeft > 0 || m.hitsLanded < m.flareUntilHits) {
         this.callStrikeMarks[w++] = m;
       }
     }
@@ -6853,7 +6923,7 @@ export class MissionScene extends Phaser.Scene {
       (spec.launch.mode === "muzzle" || spec.launch.mode === "beam");
     // Hydra pods + hardpoint rails cycle pylons; hull-fixed tips use authored muzzles below.
     if (rocketPod || railMuzzle) {
-      const { x: px, y: py, side } = this.hardpointPylon(slot);
+      const { x: px, y: py, side } = this.hardpointPylon(slot, true);
       const jitter = spec.fire?.jitter ?? 0;
       const ang = h.angle + yawOff + (jitter ? (Math.random() - 0.5) * jitter : 0);
       this.applyPlayerShellRecoil(slot, spec, h.angle + yawOff);
@@ -7203,7 +7273,7 @@ specIsShellGun(spec)
     const h = this.heli;
     const launch = spec.launch;
     if (launch.mode !== "kick_motor") return;
-    const { x: px, y: py, side } = this.hardpointPylon(slot);
+    const { x: px, y: py, side } = this.hardpointPylon(slot, true);
     const ang = h.angle + yawOff;
     const kick = launch.kickSpeed;
     const inherit = launch.inheritMomentum;
@@ -7275,14 +7345,14 @@ specIsShellGun(spec)
     let tip: { x: number; y: number };
     let ang = h.angle + yawOff;
     if (socket.class === "hardpoint") {
-      tip = this.hardpointPylon(slot);
+      tip = this.hardpointPylon(slot, true);
     } else if (socket.class === "fixed") {
       const authored = craftSocketPoints(h.spec, socket);
       const uv =
         socket.muzzleFire === "alternate" && authored.length > 1
           ? authored[this.playerGunSide++ % authored.length]
           : authored[0];
-      tip = uv ? this.craftBodyMountWorldPos(uv) : this.hardpointPylon(slot);
+      tip = uv ? this.craftBodyMountWorldPos(uv) : this.hardpointPylon(slot, true);
     } else {
       const gunI = this.gunVisualIndexForSlot(slot, barrelIndex);
       tip = this.gunTip(gunI);
@@ -7671,7 +7741,7 @@ specIsShellGun(spec)
     const h = this.heli;
     const launch = spec.launch;
     if (launch.mode !== "drop") return;
-    const pylon = this.hardpointPylon(slot);
+    const pylon = this.hardpointPylon(slot, true);
     const aim =
       st.gx != null && st.gy != null ? { x: st.gx, y: st.gy } : ptr;
     const release = this.bombReleaseVelocity(spec, pylon.x, pylon.y, aim, yawOff, slot);
@@ -8052,7 +8122,9 @@ specIsShellGun(spec)
         });
       };
       // Player owns this station while selected — manual hold-fire in handleFire.
-      if (h.weapon === slot) {
+      // Remote spot / call-strike also owns the host howitzer (slewed in syncHeliGfx).
+      const spotOwned = this.hostSpotSlewSlot() === slot;
+      if (h.weapon === slot || spotOwned) {
         for (let b = 0; b < barrels.length; b++) {
           const prefer = this.autoGunPreferHeading(slot, b);
           const origin = this.autoGunAcquireOrigin(slot, b, prefer, acquire);
@@ -8060,7 +8132,7 @@ specIsShellGun(spec)
             aim: barrels[b] ?? h.gunAngle,
             want: barrels[b] ?? h.gunAngle,
             targetId: null,
-            state: `${crewTag}${barrels.length > 1 ? ` ${b + 1}` : ""} MANUAL`,
+            state: `${crewTag}${barrels.length > 1 ? ` ${b + 1}` : ""} ${spotOwned ? "SPOT" : "MANUAL"}`,
           });
         }
         continue;
@@ -8321,6 +8393,69 @@ specIsShellGun(spec)
     return undefined;
   }
 
+  /**
+   * Host gun slot currently owned by remote spotting / call-strike walk.
+   * Automatic stations skip AI and slew toward reticle/mark while this is set.
+   */
+  hostSpotSlewSlot(): number {
+    const hostWalk = this.callStrikeMarks.find(
+      (m) => m.hostWeapon && m.roundsLeft > 0
+    );
+    if (hostWalk?.hostWeapon) {
+      const slot = this.hostWeaponSlot(hostWalk.hostWeapon);
+      if (slot >= 0) return slot;
+    }
+    const rem = this.povHudRemote();
+    if (rem && !rem.airborne) {
+      const wp = rem.loadout?.[rem.weapon ?? 0];
+      const hostId = wp ? this.remoteHostAmmoWeapon(wp) : undefined;
+      if (hostId) {
+        const slot = this.hostWeaponSlot(hostId);
+        if (slot >= 0) return slot;
+      }
+    }
+    return -1;
+  }
+
+  /** True while a host-weapon call-strike barrage still has rounds left. */
+  hostWeaponStrikeActive(wpnId?: string): boolean {
+    return this.callStrikeMarks.some(
+      (m) =>
+        !!m.hostWeapon &&
+        m.roundsLeft > 0 &&
+        (wpnId == null || m.hostWeapon === wpnId)
+    );
+  }
+
+  ensureStationFireCd(slot: number): number[] {
+    const n = Math.max(1, craftSocketBarrelCount(this.heli.spec, slot));
+    const cds =
+      this.stationFireCd[slot] ??
+      (this.stationFireCd[slot] = Array.from({ length: n }, () => 0));
+    while (cds.length < n) cds.push(0);
+    return cds;
+  }
+
+  hostStationFireReady(wpnId: string): boolean {
+    const slot = this.hostWeaponSlot(wpnId);
+    if (slot < 0) return false;
+    return (this.ensureStationFireCd(slot)[0] ?? 0) <= 0;
+  }
+
+  /** Barrel close enough to aim point for a host strike / spot shot. */
+  hostStationAlignedTo(wpnId: string, aim: { x: number; y: number }): boolean {
+    const slot = this.hostWeaponSlot(wpnId);
+    if (slot < 0) return false;
+    const gunI = this.gunVisualIndexForSlot(slot);
+    const tip =
+      gunI >= 0 && this.guns[gunI]?.visible
+        ? this.gunTip(gunI)
+        : { x: this.heli.x, y: this.heli.y };
+    const want = Math.atan2(aim.y - tip.y, aim.x - tip.x);
+    const ang = this.heli.stationAim[slot]?.[0] ?? this.heli.gunAngle;
+    return Math.abs(Phaser.Math.Angle.Wrap(want - ang)) <= AUTO_GUN_ALIGN_TOL * 1.6;
+  }
+
   hostWeaponSlot(wpnId: string): number {
     let slot = this.loadout.findIndex((w) => w.id === wpnId);
     if (slot < 0) slot = this.heli.spec.sockets.findIndex((s) => s.weapon === wpnId);
@@ -8504,7 +8639,10 @@ specIsShellGun(spec)
    * Spoofs stick + aim into the normal heli controller (no custom locomotion):
    * - `hostFace`: yaw toward the remote (orbit hosts use A/D; plane hosts aim-turn).
    * - `hostEscort` Hold parks; Follow aims at the leash target, turns first, then thrusts.
-   * Turrets still track the mouse in syncHeliGfx.
+   * - Hold + howitzer under remote direction (spot / strike select, or active barrage):
+   *   yaw toward the mouse — same for remote howitzer and artillery strike.
+   *   Follow keeps leash rules (face/crawl to remote).
+   * Turrets still track the mouse / mark in syncHeliGfx.
    */
   hostEscortDrive(pilot: RemoteCraft | undefined):
     | {
@@ -8521,35 +8659,33 @@ specIsShellGun(spec)
     }
     const h = this.heli;
     const zero = { up: false, down: false, left: false, right: false };
+    // Spot howitzer, artillery strike, or an active host barrage — all direct the howitzer.
+    const faceAim = this.hostSpotSlewSlot() >= 0;
 
     // Face-only (Raptor): keep cruising, yaw the hull toward the pilot.
     if (pilot.spec.hostFace) {
-      const want = Math.atan2(pilot.y - h.y, pilot.x - h.x);
-      const err = Phaser.Math.Angle.Wrap(want - h.angle);
-      const dead = 0.07;
-      if (craftControlScheme(h.spec) === "orbit") {
-        return {
-          stick: {
-            up: false,
-            down: false,
-            left: err < -dead,
-            right: err > dead,
-          },
-          aimX: pilot.x,
-          aimY: pilot.y,
-          brake: false,
-        };
-      }
-      return { stick: zero, aimX: pilot.x, aimY: pilot.y, brake: true };
+      return this.hostFacePointStick(pilot.x, pilot.y, zero, false);
     }
 
-    if (!pilot.spec.hostEscort) return undefined;
+    if (!pilot.spec.hostEscort) {
+      // No escort profile — Hold-equivalent: face reticle while directing howitzer.
+      if (faceAim) {
+        const ptr = this.worldPointer();
+        return this.hostFacePointStick(ptr.x, ptr.y, zero, true);
+      }
+      return undefined;
+    }
 
     // Hold heading by aiming ahead of the nose (turrets use worldPointer separately).
     const parkAimX = h.x + Math.cos(h.angle) * 80;
     const parkAimY = h.y + Math.sin(h.angle) * 80;
     if (this.hostEscortMode === "hold") {
       this.hostEscortSeeking = false;
+      // Directing howitzer in Hold: yaw toward mouse (Follow wins when toggled).
+      if (faceAim) {
+        const ptr = this.worldPointer();
+        return this.hostFacePointStick(ptr.x, ptr.y, zero, true);
+      }
       return { stick: zero, aimX: parkAimX, aimY: parkAimY, brake: true };
     }
 
@@ -8562,11 +8698,8 @@ specIsShellGun(spec)
     }
 
     // Always face the Hound in follow — even while parked inside the leash.
-    const aimX = pilot.x;
-    const aimY = pilot.y;
-
     if (!this.hostEscortSeeking) {
-      return { stick: zero, aimX, aimY, brake: true };
+      return this.hostFacePointStick(pilot.x, pilot.y, zero, true);
     }
 
     // Catch-up: turn toward the inner ring, thrust only once the nose is close enough.
@@ -8588,6 +8721,41 @@ specIsShellGun(spec)
       // Follow crawl — well under player full-throttle max.
       speedCap: aligned ? h.spec.maxSpeed * 0.42 : undefined,
     };
+  }
+
+  /**
+   * Spoof stick/aim so the host yaws toward a world point via normal heli.update turn rules.
+   * Orbit → A/D hold-to-turn; aim/plane → nose tracks aim point.
+   */
+  hostFacePointStick(
+    aimX: number,
+    aimY: number,
+    zero: { up: boolean; down: boolean; left: boolean; right: boolean },
+    brake: boolean
+  ): {
+    stick: { up: boolean; down: boolean; left: boolean; right: boolean };
+    aimX: number;
+    aimY: number;
+    brake: boolean;
+  } {
+    const h = this.heli;
+    const want = Math.atan2(aimY - h.y, aimX - h.x);
+    const err = Phaser.Math.Angle.Wrap(want - h.angle);
+    const dead = 0.07;
+    if (craftControlScheme(h.spec) === "orbit") {
+      return {
+        stick: {
+          up: false,
+          down: false,
+          left: err < -dead,
+          right: err > dead,
+        },
+        aimX,
+        aimY,
+        brake,
+      };
+    }
+    return { stick: zero, aimX, aimY, brake };
   }
 
   /** Extra stop for hold / inside-leash / turn-to-align so the dropship doesn't drift. */
@@ -8646,7 +8814,7 @@ specIsShellGun(spec)
     if (!payloadIsRemote(spec.payload)) return;
     const remoteSpec = remoteSpecOf(spec.payload.remote!.kind);
     const h = this.heli;
-    const pylon = at ?? this.hardpointPylon(slot);
+    const pylon = at ?? this.hardpointPylon(slot, true);
     // HOUND: leave the rear ramp facing aft, at ship altitude, then fall to dirt.
     const reverseDrop = remoteSpec.ground && remoteSpec.pilotable;
     const ang = reverseDrop ? h.angle + Math.PI + yawOff : h.angle + yawOff;
@@ -9805,14 +9973,23 @@ specIsShellGun(spec)
 
     const hostWpn = this.remoteHostAmmoWeapon(spec);
     if (hostWpn) {
+      // Barrage owns the howitzer — no spot fire or new strike until it finishes.
+      if (this.hostWeaponStrikeActive(hostWpn)) return;
       const hostLeft = this.hostWeaponAmmoLeft(hostWpn);
       if (hostLeft == null) return;
       if (!this.infAmmo && Number.isFinite(hostLeft) && hostLeft <= 0) return;
-      const hostSpec = PLAYER_WPNS[hostWpn as WpnId];
-      drone.fireCd = hostSpec?.fireCd ?? spec.fireCd;
-      // Host ammo spent in fireHostWeaponAt / call-strike walk — not the remote pool.
-      this.fireRemoteLoadoutWeapon(drone, slot, spec, ptr);
-      return;
+
+      // Spot howitzer: real station fire + shared CD (not the flare / call-strike path).
+      if (payloadIsHostFire(spec.payload)) {
+        if (!this.hostStationFireReady(hostWpn)) return;
+        const ok = this.fireHostWeaponAt(hostWpn, ptr);
+        if (ok) {
+          const hostSpec = PLAYER_WPNS[hostWpn as WpnId];
+          drone.fireCd = hostSpec?.fireCd ?? spec.fireCd;
+        }
+        return;
+      }
+      // Call-strike: spend remote flare ammo below; howitzer bank must still have shells.
     }
 
     if (!this.infAmmo && Number.isFinite(ammo[slot]!) && ammo[slot]! <= 0) return;
@@ -9823,93 +10000,26 @@ specIsShellGun(spec)
   }
 
   /**
-   * POV spot fire — lob one shell from a host craft weapon mount onto aim.
-   * Spends the host ammo bank. Returns false if missing mount / empty.
+   * Trigger a real host station fire (same path as the player aiming that gun).
+   * Uses shared `stationFireCd` so strike / remote / crew cannot overlapping-fire.
+   * Does not forge station aim — barrel angle / traverse from normal slew apply.
+   * `ptr` is the ballistic aim point (reticle / call-strike wobble).
    */
-  fireHostWeaponAt(wpnId: string, ptr: { x: number; y: number }): boolean {
+  fireHostWeaponAt(
+    wpnId: string,
+    ptr: { x: number; y: number },
+    opts?: { fromStrike?: boolean }
+  ): boolean {
     const hostSpec = PLAYER_WPNS[wpnId as WpnId];
     if (!hostSpec) return false;
-    const h = this.heli;
     const slot = this.hostWeaponSlot(wpnId);
     if (slot < 0) return false;
-    const socket = h.spec.sockets[slot];
-    if (!socket) return false;
-    if (!this.infAmmo && Number.isFinite(this.ammo[slot]!) && this.ammo[slot]! <= 0) {
-      return false;
-    }
-
-    const aimAng = Math.atan2(ptr.y - h.y, ptr.x - h.x);
-    const barrels = h.stationAim[slot] ?? (h.stationAim[slot] = [aimAng]);
-    barrels[0] = aimAng;
-    h.gunAngle = aimAng;
-
-    const gunI = this.gunVisualIndexForSlot(slot);
-    const tip = this.gunTip(gunI);
-    const origin = this.playerShotOrigin(tip, aimAng, hostSpec, slot);
-    const clip = this.playerSightAimWorld(origin.x, origin.y, origin.z, aimAng, undefined, ptr);
-    const dx = clip.x - origin.x;
-    const dy = clip.y - origin.y;
-    const dz = clip.z - origin.z;
-    const dist3 = Math.max(8, Math.hypot(dx, dy, dz));
-    const hFrac = Math.hypot(dx, dy) / dist3;
-    const spd = hostSpec.speed;
-    const inherit =
-      hostSpec.launch.mode === "muzzle" ? hostSpec.launch.inheritMomentum : 0.4;
-    const grav = launchGravity(hostSpec.launch);
-    const aimVel = this.muzzleAimVelocity({
-      dx,
-      dy,
-      dz,
-      z0: origin.z,
-      tz: clip.z,
-      spd,
-      vx: Math.cos(aimAng) * spd * hFrac,
-      vy: Math.sin(aimAng) * spd * hFrac,
-      grav,
-    });
-    const beh = shotBehaviorOf(hostSpec);
-    this.spawnShot({
-      from: "player",
-      id: nextId(),
-      wpnId: wpnIdOf(hostSpec),
-      slot,
-      beh,
-      st: { age: 0, launchAngle: aimAng },
-      x: origin.x,
-      y: origin.y,
-      z: origin.z,
-      vx: Math.cos(aimAng) * spd * hFrac + h.vx * inherit,
-      vy: Math.sin(aimAng) * spd * hFrac + h.vy * inherit,
-      vz: aimVel.vz,
-      angle: aimAng,
-      life: aimVel.life,
-      blast: beh.blast,
-      dmg: beh.dmg,
-      look: hostSpec.art.look,
-      scale: hostSpec.art.scale,
-      fxInterval: hostSpec.fireCd,
-      energyTrail: exhaustIsEnergy(hostSpec.exhaust) ? [] : undefined,
-    });
-
-    if (!this.infAmmo && Number.isFinite(this.ammo[slot]!)) this.ammo[slot]!--;
-
-    if ((h.spec.cannonInherit || socket.recoil) && specIsShellGun(hostSpec)) {
-      const kick = (9 + hostSpec.dmg * 0.28) * Math.min(1.35, hostSpec.fireCd / 0.04);
-      h.applyGunRecoil(kick, aimAng);
-    }
-    this.pulseTurretGunHeat(gunI);
-    if (hostSpec.fire?.muzzleFlash ?? true) {
-      const muzzleMul = playerMuzzleFxMul(hostSpec);
-      this.showMuzzle({
-        life: 0.12,
-        ang: aimAng,
-        scaleMul: 0.95 * muzzleMul * range(0.9, 1.12),
-        slot,
-        gunI,
-      });
-      const at = worldToScreen(origin.x, origin.y, origin.z);
-      this.spawnMuzzleLight(at.x, at.y, origin.z, 22 * at.scale);
-    }
+    if (!opts?.fromStrike && this.hostWeaponStrikeActive(wpnId)) return false;
+    if (!this.hasAmmo(slot)) return false;
+    const cds = this.ensureStationFireCd(slot);
+    if ((cds[0] ?? 0) > 0) return false;
+    cds[0] = craftSocketFireCd(hostSpec.fireCd, this.heli.spec, slot);
+    this.firePlayerWeapon(slot, hostSpec, ptr);
     return true;
   }
 
@@ -10372,13 +10482,14 @@ specIsShellGun(spec)
     mount: { x: number; y: number }
   ): { x: number; y: number } {
     const bodyIm = this.remoteBodyImage(drone);
-    if (bodyIm?.visible) {
-      const pose = this.remoteBodyDrawPose(bodyIm);
-      const scr = spriteUvPos(pose, mount.x, mount.y);
-      // Same mid-hull plane as craftBodyMountWorldPos — leave Z is remoteMuzzleZ.
-      const z = drone.z + drone.spec.height * 0.55;
-      return screenToWorldAtZ(scr.x, scr.y, z);
-    }
+  if (bodyIm?.visible) {
+    const pose = this.remoteBodyDrawPose(bodyIm);
+    const scr = spriteUvPos(pose, mount.x, mount.y);
+    // Same mid-hull plane as craftBodyMountWorldPos — leave Z is remoteMuzzleZ.
+    const z = drone.z + drone.spec.height * 0.55;
+    const at = screenToWorldAtZ(scr.x, scr.y, z);
+    return { x: at.x, y: at.y };
+  }
     // Pre-sync fallback: rotate UV offset around craft origin in world space.
     const key = drone.spec.look;
     const pivot = lookupSpriteOrigin(key) ?? { x: 0.5, y: 0.5 };
@@ -10423,8 +10534,8 @@ specIsShellGun(spec)
       if (authored.length) {
         let uvs = authored;
         if (socket.class === "hardpoint") {
-          // Match host: remaining-ammo phase (caller may have already spent).
-          uvs = [authored[hardpointAmmoIndex(drone.ammo?.[slot] ?? 0, authored.length)]!];
+          // Match host: ammo already spent in handlePovRemoteFire.
+          uvs = [authored[hardpointAmmoIndex(drone.ammo?.[slot] ?? 0, authored.length, true)]!];
         } else if (socket.muzzleFire === "simultaneous") {
           uvs = authored;
         } else if (socket.muzzleFire === "alternate") {
