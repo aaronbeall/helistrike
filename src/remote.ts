@@ -134,12 +134,9 @@ export interface RemoteSpec {
    * Used by Raptor / Leviathan — separate from HOUND FOLLOW|HOLD leash.
    */
   hostFace?: boolean;
-  /**
-   * CraftKind hull for flight / sockets / silhouette.
-   * Omit → legacy thin remote drive (fields must be fully authored).
-   */
-  craftLook?: CraftKind;
-  /** Nose-up art offset when `craftLook` is omitted. */
+  /** CraftKind hull for flight / sockets / silhouette. */
+  craftLook: CraftKind;
+  /** Nose-up art offset override (defaults from hull). */
   rotOff?: number;
 }
 
@@ -155,7 +152,7 @@ type RemoteDef = {
   detonateBlast: number;
   launchSpeed: number;
   scale: number;
-  craftLook?: CraftKind;
+  craftLook: CraftKind;
   /** Override hull body art (e.g. Skiff skin on biplane flight). */
   look?: string;
   health?: number;
@@ -358,30 +355,29 @@ function controlFromHull(hull: CraftSpec): RemoteControl {
 }
 
 function mergeRemoteDef(def: RemoteDef): RemoteSpec {
-  const hull = def.craftLook ? craftOf(def.craftLook) : undefined;
-  const control =
-    def.control ?? (hull ? controlFromHull(hull) : undefined);
+  const hull = craftOf(def.craftLook);
+  const control = def.control ?? controlFromHull(hull);
   // POV loadout: pilotable remotes inherit hull sockets unless overridden.
   const sockets =
-    def.sockets ?? (def.pilotable && hull ? hull.sockets : undefined);
+    def.sockets ?? (def.pilotable ? hull.sockets : undefined);
   const turret = sockets?.find((s) => s.class === "turret");
   return {
     kind: def.kind,
     name: def.name,
-    health: def.health ?? hull?.health ?? 40,
-    radius: def.radius ?? hull?.radius ?? 10,
-    height: def.height ?? hull?.height ?? 6,
-    maxSpeed: def.maxSpeed ?? hull?.maxSpeed ?? 280,
-    thrust: def.thrust ?? hull?.forwardThrust ?? 400,
-    strafe: def.strafe ?? hull?.strafeThrust ?? 0,
-    yawRate: def.yawRate ?? hull?.yawRate ?? 2.5,
-    climbRate: def.climbRate ?? hull?.verticalThrust ?? 200,
-    cruiseAgl: def.cruiseAgl ?? hull?.cruiseAgl ?? 40,
+    health: def.health ?? hull.health,
+    radius: def.radius ?? hull.radius,
+    height: def.height ?? hull.height,
+    maxSpeed: def.maxSpeed ?? hull.maxSpeed,
+    thrust: def.thrust ?? hull.forwardThrust,
+    strafe: def.strafe ?? hull.strafeThrust,
+    yawRate: def.yawRate ?? hull.yawRate,
+    climbRate: def.climbRate ?? hull.verticalThrust,
+    cruiseAgl: def.cruiseAgl ?? hull.cruiseAgl,
     life: def.life,
     detonateDmg: def.detonateDmg,
     detonateBlast: def.detonateBlast,
     launchSpeed: def.launchSpeed,
-    look: def.look ?? hull?.body ?? "craft_quad_drone",
+    look: def.look ?? hull.body,
     scale: def.scale,
     thermal: def.thermal,
     ai: def.ai,
@@ -389,16 +385,16 @@ function mergeRemoteDef(def: RemoteDef): RemoteSpec {
     dockable: def.dockable,
     ground: def.ground,
     sockets,
-    ammoScale: def.ammoScale ?? hull?.ammoScale,
+    ammoScale: def.ammoScale ?? hull.ammoScale,
     // Gun overlay is turret-only; fixed hull muzzles fire from body UVs (see remoteFireTips).
     gun: def.gun ?? turret?.weapon,
     gunTex: def.gunTex ?? turret?.gunTex,
     gunScale: def.gunScale ?? turret?.gunScale,
     control,
-    minSpeed: def.minSpeed ?? hull?.minSpeed,
-    track: def.track ?? hull?.track,
-    trackGap: def.trackGap ?? hull?.trackGap,
-    trackScale: def.trackScale ?? hull?.trackScale,
+    minSpeed: def.minSpeed ?? hull.minSpeed,
+    track: def.track ?? hull.track,
+    trackGap: def.trackGap ?? hull.trackGap,
+    trackScale: def.trackScale ?? hull.trackScale,
     exhaustSmoke: def.exhaustSmoke,
     antenna: def.antenna,
     engageRange: def.engageRange,
@@ -409,7 +405,7 @@ function mergeRemoteDef(def: RemoteDef): RemoteSpec {
     mouseStopRange: def.mouseStopRange,
     hostFace: def.hostFace,
     craftLook: def.craftLook,
-    rotOff: def.rotOff ?? hull?.rotOff,
+    rotOff: def.rotOff ?? hull.rotOff,
   };
 }
 

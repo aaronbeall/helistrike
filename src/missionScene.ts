@@ -914,8 +914,8 @@ export class MissionScene extends Phaser.Scene {
   povCamLookHold = 0;
   /** Wall-clock dt for this frame (warp missiles ignore sim slowmo). */
   frameWallDt = 0;
-  /** Remote craft (Spectre) is under direct player flight control. */
-  spectrePilot = false;
+  /** Player is actively flying a remote (WASD owned by remote, not host). */
+  remotePilotActive = false;
   /** Camera + WASD are on the live remote (independent of which weapon is selected). */
   remoteView = false;
   /**
@@ -3786,9 +3786,9 @@ export class MissionScene extends Phaser.Scene {
         const aim = this.worldPointer();
         const pilot = this.pilotingRemote();
         // POV remotes (HOUND): after Q exit the slot stays selected but bird flight returns.
-        this.spectrePilot =
+        this.remotePilotActive =
           !!pilot && (this.remoteView || !remoteHasPovHud(pilot.spec));
-        if (this.spectrePilot && pilot && !pilot.airborne) this.tickRemotePilot(pilot, dt, aim);
+        if (this.remotePilotActive && pilot && !pilot.airborne) this.tickRemotePilot(pilot, dt, aim);
         else {
           const parked = this.activeRemote();
           if (parked && !parked.spec.ai && !parked.airborne) this.tickRemoteIdle(parked, dt);
@@ -3800,7 +3800,7 @@ export class MissionScene extends Phaser.Scene {
             dt,
             this.world,
             escort?.stick ??
-              (this.spectrePilot
+              (this.remotePilotActive
                 ? { up: false, down: false, left: false, right: false }
                 : {
                     up: this.keyW.isDown,
@@ -3858,9 +3858,9 @@ export class MissionScene extends Phaser.Scene {
         const aim = this.worldPointer();
         const pilot = this.pilotingRemote();
         // POV remotes (HOUND): after Q exit the slot stays selected but bird flight returns.
-        this.spectrePilot =
+        this.remotePilotActive =
           !!pilot && (this.remoteView || !remoteHasPovHud(pilot.spec));
-        if (this.spectrePilot && pilot && !pilot.airborne) this.tickRemotePilot(pilot, dt, aim);
+        if (this.remotePilotActive && pilot && !pilot.airborne) this.tickRemotePilot(pilot, dt, aim);
         else {
           const parked = this.activeRemote();
           if (parked && !parked.spec.ai && !parked.airborne) this.tickRemoteIdle(parked, dt);
@@ -3872,7 +3872,7 @@ export class MissionScene extends Phaser.Scene {
             dt,
             this.world,
             escort?.stick ??
-              (this.spectrePilot
+              (this.remotePilotActive
                 ? { up: false, down: false, left: false, right: false }
                 : {
                     up: this.keyW.isDown,
@@ -8860,46 +8860,14 @@ specIsShellGun(spec)
     }
   }
 
+  /**
+   * Player-driven remote kinematics. All remotes are craft-backed (`craftLook`);
+   * drive through the same Heli.update path as a selected player craft.
+   * Lifecycle (HUD / cam / battery / dock) stays on the remote wrapper.
+   */
   tickRemotePilot(drone: RemoteCraft, dt: number, aim: { x: number; y: number }): void {
-    const spec = drone.spec;
-    // Craft-backed remotes: same Heli.update path as a selected player craft.
-    // Lifecycle (HUD / cam / battery / dock) stays on the remote wrapper.
-    if (spec.craftLook) {
-      this.tickRemoteCraftPilot(drone, dt, aim);
-      return;
-    }
-    // Legacy remotes without a CraftKind (HOUND until it gets one).
-    if (spec.control === "orbit" || spec.ground) {
-      const turn = (this.keyD.isDown ? 1 : 0) + (this.keyA.isDown ? -1 : 0);
-      drone.angle += turn * spec.yawRate * dt;
-      const fwd = (this.keyW.isDown ? 1 : 0) + (this.keyS.isDown ? -1 : 0);
-      this.driveRemoteAlongHeading(drone, fwd * spec.thrust, dt, 0.12);
-      drone.gunAngle = Math.atan2(aim.y - drone.y, aim.x - drone.x);
-    } else {
-      const want = Math.atan2(aim.y - drone.y, aim.x - drone.x);
-      drone.angle = this.steerUnitAngle(drone.angle, want, spec.yawRate, dt);
-      const fwd = (this.keyW.isDown ? 1 : 0) + (this.keyS.isDown ? -1 : 0);
-      const str = (this.keyD.isDown ? 1 : 0) + (this.keyA.isDown ? -1 : 0);
-      if (spec.strafe > 0 && str !== 0) {
-        const ca = Math.cos(drone.angle);
-        const sa = Math.sin(drone.angle);
-        drone.vx += (ca * fwd * spec.thrust - sa * str * spec.strafe) * dt;
-        drone.vy += (sa * fwd * spec.thrust + ca * str * spec.strafe) * dt;
-        drone.vx *= Math.pow(0.12, dt);
-        drone.vy *= Math.pow(0.12, dt);
-        const spd = Math.hypot(drone.vx, drone.vy);
-        if (spd > spec.maxSpeed) {
-          drone.vx *= spec.maxSpeed / spd;
-          drone.vy *= spec.maxSpeed / spd;
-        }
-      } else {
-        this.driveRemoteAlongHeading(drone, fwd * spec.thrust, dt, 0.12);
-      }
-      drone.gunAngle = want;
-    }
-    if (spec.dockable) {
-      if (this.remoteNearHost(drone) && (this.keyE.isDown || drone.life < 10)) drone.dock = true;
-    }
+    if (!drone.spec.craftLook) return;
+    this.tickRemoteCraftPilot(drone, dt, aim);
   }
 
   /** Shadow Heli for a craft-backed remote — created once, kinematics synced each frame. */
