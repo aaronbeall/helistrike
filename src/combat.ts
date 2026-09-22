@@ -533,7 +533,8 @@ const PLAYER_WPNS_DEFS = {
   },
   rocket: {
     id: "rocket", name: "HYDRA", fullName: "HYDRA ROCKET PODS", designation: "HYDRA 70 ROCKET PODS", ammo: 38, fireCd: 0.22, speed: 620,
-    dmg: 258, blast: 150, life: 3.4,
+    // Soft targets only: still one-shots pickup (70) / truck (84); ripple rate was overkill at 258.
+    dmg: 115, blast: 150, life: 3.4,
     art: ordArt("rocket", 1, "velocity"),
     exhaust: particleTrail(0.72, {
       fire: "burn",
