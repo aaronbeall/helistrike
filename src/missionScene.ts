@@ -5786,16 +5786,32 @@ export class MissionScene extends Phaser.Scene {
   }
 
   /**
-   * World Z for player muzzle leave.
+   * World Z for muzzle leave (host + remotes share this).
    * Chin / under-body guns sit slightly below the hull (`ZOff.shot`);
-   * top-mounted turrets (`gunLayer: "above"`) leave from the roof (AGL + height).
+   * top-mounted turrets (`gunLayer: "above"`) leave from the roof (baseZ + height).
    */
+  craftMuzzleLeaveZ(
+    baseZ: number,
+    height: number,
+    gunLayer?: "below" | "above"
+  ): number {
+    return gunLayer === "above" ? baseZ + height : baseZ + ZOff.shot;
+  }
+
+  /** World Z for player muzzle leave. */
   playerMuzzleZ(slot = this.heli.weapon): number {
     const h = this.heli;
-    if (h.spec.sockets[slot]?.gunLayer === "above") {
-      return h.z + h.spec.height;
-    }
-    return h.z + ZOff.shot;
+    return this.craftMuzzleLeaveZ(h.z, h.spec.height, h.spec.sockets[slot]?.gunLayer);
+  }
+
+  /** World Z for remote muzzle leave — same gunLayer rules as the host craft. */
+  remoteMuzzleZ(drone: RemoteCraft, slot?: number): number {
+    const sockets = drone.spec.sockets;
+    const sock =
+      slot != null
+        ? sockets?.[slot]
+        : sockets?.find((s) => s.class === "turret") ?? sockets?.[0];
+    return this.craftMuzzleLeaveZ(drone.z, drone.spec.height, sock?.gunLayer);
   }
 
   /** Painter offset for muzzle flash / spark / beam so top mounts sort above the hull. */
@@ -6134,6 +6150,7 @@ export class MissionScene extends Phaser.Scene {
     if (this.body?.visible) {
       const pose = this.heliBodyDrawPose();
       const scr = spriteUvPos(pose, mount.x, mount.y);
+      // Mid-hull projection plane for XY only — shot leave Z is playerMuzzleZ.
       const z = h.z + h.spec.height * 0.55;
       return screenToWorldAtZ(scr.x, scr.y, z);
     }
@@ -7702,15 +7719,21 @@ specIsShellGun(spec)
     });
   }
 
+  /** Whitened sheet for vision-blocking chemical clouds (vs graded fx_smoke for dust/trails). */
+  visionSmokeTex(): string {
+    return this.textures.exists("fx_smoke_tint") ? "fx_smoke_tint" : "fx_smoke";
+  }
+
   acquireSmokePuffSprite(frame: number): Phaser.GameObjects.Image {
+    const key = this.visionSmokeTex();
     const idle = (this.smokePuffG.getChildren() as Phaser.GameObjects.Image[]).find(
       (im) => !im.visible && !this.smokePuffs.some((p) => p.spr === im)
     );
     if (idle) {
-      idle.setTexture("fx_smoke", frame);
+      idle.setTexture(key, frame);
       return idle;
     }
-    const spr = this.add.image(0, 0, "fx_smoke", frame).setOrigin(0.5).setVisible(false);
+    const spr = this.add.image(0, 0, key, frame).setOrigin(0.5).setVisible(false);
     this.smokePuffG.add(spr);
     return spr;
   }
@@ -7725,7 +7748,8 @@ specIsShellGun(spec)
     puffR: { min: number; max: number } = { min: 80, max: 118 }
   ): void {
     const n = 36;
-    const tints = [0xd8d4cc, 0xc4c0b8, 0xe0dcd4, 0xb0aca4];
+    // Cool white/gray chemical cloud (not warm beige dust).
+    const tints = [0xf2f2f2, 0xe4e4e4, 0xd6d6d6, 0xc8c8c8];
     const gnd = groundZ(this.world, x, y);
     const z0 = Math.max(z, gnd + 10);
     for (let i = 0; i < n; i++) {
@@ -7814,8 +7838,9 @@ specIsShellGun(spec)
       const at = worldToScreen(s.x, s.y, s.z);
       const zs = at.scale;
       const visualR = s.radius * bloom;
-      if (im.texture.key !== "fx_smoke" || im.frame.name !== String(s.frame)) {
-        im.setTexture("fx_smoke", s.frame);
+      const key = this.visionSmokeTex();
+      if (im.texture.key !== key || im.frame.name !== String(s.frame)) {
+        im.setTexture(key, s.frame);
       }
       im.setVisible(true);
       im.setPosition(at.x, at.y);
@@ -7825,7 +7850,8 @@ specIsShellGun(spec)
       // No heat-fill: that stamps solid cold. 2% alpha keeps a ghost of the puff.
       im.clearTint();
       if (!this.thermalOn) im.setTint(s.tint);
-      im.setAlpha((this.thermalOn ? 0.02 : 0.62) * fade);
+      // Dense white/gray chemical screen — higher than dust/exhaust smoke.
+      im.setAlpha((this.thermalOn ? 0.02 : 0.84) * fade);
     }
   }
 
@@ -9623,10 +9649,10 @@ specIsShellGun(spec)
         : (() => {
             const bodyMuzzles = lookupSpritePoints(drone.spec.look, "muzzle");
             if (bodyMuzzles.length > 1) {
-              const z = drone.z + drone.spec.height * 0.55;
+              const leaveZ = this.remoteMuzzleZ(drone);
               return bodyMuzzles.map((uv) => {
                 const p = this.remoteBodyMountWorldPos(drone, uv);
-                return { x: p.x, y: p.y, z };
+                return { x: p.x, y: p.y, z: leaveZ };
               });
             }
             return [this.remoteGunMuzzle(drone)];
@@ -9963,7 +9989,7 @@ specIsShellGun(spec)
       const jitter = (Math.random() - 0.5) * (spec.fire?.jitter ?? 0.04);
       const ang = fireAng + jitter;
       const spd = spec.speed;
-      const origin = this.playerShotOrigin(muzzle, ang, spec, slot);
+      const origin = this.playerShotOrigin(muzzle, ang, spec);
       const mx = origin.x;
       const my = origin.y;
       const mz = origin.z;
@@ -10337,7 +10363,10 @@ specIsShellGun(spec)
     if (drew) g.setDepth(depth);
   }
 
-  /** World XY of an authored UV on the remote's rendered hull (look sprite). */
+  /**
+   * World XY of an authored UV on the remote's rendered hull (look sprite).
+   * Projection plane matches host `craftBodyMountWorldPos` (mid-hull).
+   */
   remoteBodyMountWorldPos(
     drone: RemoteCraft,
     mount: { x: number; y: number }
@@ -10346,6 +10375,7 @@ specIsShellGun(spec)
     if (bodyIm?.visible) {
       const pose = this.remoteBodyDrawPose(bodyIm);
       const scr = spriteUvPos(pose, mount.x, mount.y);
+      // Same mid-hull plane as craftBodyMountWorldPos — leave Z is remoteMuzzleZ.
       const z = drone.z + drone.spec.height * 0.55;
       return screenToWorldAtZ(scr.x, scr.y, z);
     }
@@ -10380,12 +10410,13 @@ specIsShellGun(spec)
   /**
    * Fire origins for a remote socket — simultaneous / alternate body muzzles,
    * hardpoint ammo-phase (same as host `hardpointPylon`), or turret tips.
+   * Leave Z matches host `playerMuzzleZ` (gunLayer); turret XY plane matches `gunTip` (base Z).
    */
   remoteFireTips(
     drone: RemoteCraft,
     slot: number
   ): { x: number; y: number; z: number }[] {
-    const z = drone.z + drone.spec.height * 0.55;
+    const leaveZ = this.remoteMuzzleZ(drone, slot);
     const socket = drone.spec.sockets?.[slot];
     if (socket && (socket.class === "fixed" || socket.class === "hardpoint")) {
       const authored = this.remoteSocketPoints(drone, socket);
@@ -10403,7 +10434,7 @@ specIsShellGun(spec)
         }
         return uvs.map((uv) => {
           const p = this.remoteBodyMountWorldPos(drone, uv);
-          return { x: p.x, y: p.y, z };
+          return { x: p.x, y: p.y, z: leaveZ };
         });
       }
     }
@@ -10414,22 +10445,24 @@ specIsShellGun(spec)
         const pose = this.remoteBodyDrawPose(bodyIm);
         this.poseRemoteGun(drone, pose, bodyIm.texture.key, gunIm);
         const tips = lookupSpriteMuzzles(gunIm.texture.key);
+        // Match host gunTip: unproject at hull base Z, stamp leave Z separately.
+        const planeZ = drone.z;
         if (tips.length > 1 && socket.muzzleFire === "simultaneous") {
           return tips.map((tipUv) => {
             const scr = spriteUvPos(gunIm, tipUv.x, tipUv.y);
-            const at = screenToWorldAtZ(scr.x, scr.y, z);
-            return { x: at.x, y: at.y, z };
+            const at = screenToWorldAtZ(scr.x, scr.y, planeZ);
+            return { x: at.x, y: at.y, z: leaveZ };
           });
         }
         if (tips.length > 1 && socket.muzzleFire === "alternate") {
           const tipUv = tips[this.playerGunSide++ % tips.length]!;
           const scr = spriteUvPos(gunIm, tipUv.x, tipUv.y);
-          const at = screenToWorldAtZ(scr.x, scr.y, z);
-          return [{ x: at.x, y: at.y, z }];
+          const at = screenToWorldAtZ(scr.x, scr.y, planeZ);
+          return [{ x: at.x, y: at.y, z: leaveZ }];
         }
       }
     }
-    return [this.remoteGunMuzzle(drone)];
+    return [this.remoteGunMuzzle(drone, slot)];
   }
 
   /**
@@ -10440,7 +10473,7 @@ specIsShellGun(spec)
     drone: RemoteCraft,
     slot: number
   ): { x: number; y: number; z: number }[] {
-    const z = drone.z + drone.spec.height * 0.55;
+    const leaveZ = this.remoteMuzzleZ(drone, slot);
     const socket = drone.spec.sockets?.[slot];
     if (socket && (socket.class === "fixed" || socket.class === "hardpoint")) {
       const authored = this.remoteSocketPoints(drone, socket);
@@ -10452,7 +10485,7 @@ specIsShellGun(spec)
         // fixed (incl. simultaneous duals): all ports, then collapse like cannonSightOrigins
         const tips = uvs.map((uv) => {
           const p = this.remoteBodyMountWorldPos(drone, uv);
-          return { x: p.x, y: p.y, z };
+          return { x: p.x, y: p.y, z: leaveZ };
         });
         return collapseSightTips(tips);
       }
@@ -10465,21 +10498,22 @@ specIsShellGun(spec)
         this.poseRemoteGun(drone, pose, bodyIm.texture.key, gunIm);
         const muzzles = lookupSpriteMuzzles(gunIm.texture.key);
         if (muzzles.length) {
+          const planeZ = drone.z;
           const tips = muzzles.map((tipUv) => {
             const scr = spriteUvPos(gunIm, tipUv.x, tipUv.y);
-            const at = screenToWorldAtZ(scr.x, scr.y, z);
-            return { x: at.x, y: at.y, z };
+            const at = screenToWorldAtZ(scr.x, scr.y, planeZ);
+            return { x: at.x, y: at.y, z: leaveZ };
           });
           return collapseSightTips(tips);
         }
       }
     }
-    return [this.remoteGunMuzzle(drone)];
+    return [this.remoteGunMuzzle(drone, slot)];
   }
 
   /** Barrel tip for a remote gun — matches the overlay muzzle UV (not a hull-radius offset). */
-  remoteGunMuzzle(drone: RemoteCraft): { x: number; y: number; z: number } {
-    const z = drone.z + drone.spec.height * 0.55;
+  remoteGunMuzzle(drone: RemoteCraft, slot?: number): { x: number; y: number; z: number } {
+    const leaveZ = this.remoteMuzzleZ(drone, slot);
     const gunAng = drone.gunAngle ?? drone.angle;
     const gunIm = this.remoteGunImage(drone);
     const bodyIm = this.remoteBodyImage(drone);
@@ -10488,22 +10522,23 @@ specIsShellGun(spec)
       this.poseRemoteGun(drone, pose, bodyIm.texture.key, gunIm);
       const tips = lookupSpriteMuzzles(gunIm.texture.key);
       const tipUv = tips[0] ?? { x: 0.5, y: 0.05 };
+      // Match host gunTip: unproject at hull base Z.
       const scr = spriteUvPos(gunIm, tipUv.x, tipUv.y);
-      const at = screenToWorldAtZ(scr.x, scr.y, z);
-      return { x: at.x, y: at.y, z };
+      const at = screenToWorldAtZ(scr.x, scr.y, drone.z);
+      return { x: at.x, y: at.y, z: leaveZ };
     }
     // Body muzzle fallback when there is no gun overlay (Raptor fixed nose guns).
     const bodyMuzzles = lookupSpritePoints(drone.spec.look, "muzzle");
     if (bodyMuzzles.length) {
       const p = this.remoteBodyMountWorldPos(drone, bodyMuzzles[0]!);
-      return { x: p.x, y: p.y, z };
+      return { x: p.x, y: p.y, z: leaveZ };
     }
     // Fallback before the first sprite sync: hub + short barrel reach.
     const reach = drone.spec.radius * 0.7;
     return {
       x: drone.x + Math.cos(gunAng) * reach,
       y: drone.y + Math.sin(gunAng) * reach,
-      z,
+      z: leaveZ,
     };
   }
 
