@@ -5912,7 +5912,13 @@ designatorSightOrigins(slot = this.heli.weapon): { x: number; y: number }[] {
       slot != null
         ? sockets?.[slot]
         : sockets?.find((s) => s.class === "turret") ?? sockets?.[0];
-    return this.craftMuzzleLeaveZ(drone.z, drone.spec.height, sock?.gunLayer);
+    let z = this.craftMuzzleLeaveZ(drone.z, drone.spec.height, sock?.gunLayer);
+    // Dirt-locked AGVs skim the heightmap — lift leave so tracers clear micro-relief
+    // that a heli chin gun never meets (same aim-at-ground dive, much less clearance).
+    if (drone.spec.ground) {
+      z += Math.max(6, drone.spec.height * 0.45);
+    }
+    return z;
   }
 
   /** Painter offset for muzzle flash / spark / beam so top mounts sort above the hull. */

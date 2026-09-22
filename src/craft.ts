@@ -1156,7 +1156,8 @@ const CRAFTS_DEFS = {
     ammoScale: 0.85,
     health: 140,
     radius: 14,
-    height: 8,
+    // Tall enough that roof-turret leave clears dirt ripples (was 8 → skim kills).
+    height: 14,
     body: "craft_hound",
     hulk: "craft_hound",
     gunOverlayScale: 0.88,
@@ -1168,7 +1169,7 @@ const CRAFTS_DEFS = {
     rotOff: Math.PI / 2,
     // Orbit yaw + forward thrust; dirt-hugger (pad AGL enforced by remote snap).
     forwardThrust: 300, reverseThrust: 220, strafeThrust: 0, maxSpeed: 130, maxReverseSpeed: 70, minSpeed: 0, yawRate: 2.4, yawAccel: 12, drag: 1.85,
-    verticalThrust: 200, cruiseThrust: 40, cruiseAgl: 2.8, maxAgl: 14,
+    verticalThrust: 200, cruiseThrust: 40, cruiseAgl: 3.5, maxAgl: 14,
     sockets: [
       {
         id: "turret",
