@@ -223,7 +223,7 @@ export const TACTICAL_TIPS: TacticalTip[] = [
   },
   {
     id: "wpn_spider_drone",
-    text: "Spider Drones crawl toward the mouse — get them near a hostile and they dash onto it and detonate.",
+    text: "Spider Drones ride a seeker cam — crawl toward the mouse, get near a hostile, and they dash onto it and detonate.",
     context: { weapons: ["spider_drone"] },
   },
   {
@@ -233,7 +233,7 @@ export const TACTICAL_TIPS: TacticalTip[] = [
   },
   {
     id: "wpn_skiff",
-    text: "Skiffs are Leviathan’s AI wingmen — launch several (LIVE ×N). They orbit wide, strafe enemies spotted by the airship / Skiffs / Raptor, and Q recalls them all to dock.",
+    text: "Skiffs auto-launch from the Leviathan when enemies enter awareness (cooldown between launches, max 8). They orbit wide, strafe targets spotted by the airship / Skiffs / Raptor, and Q recalls them all to dock.",
     context: { weapons: ["wingman_drone"] },
   },
   {

@@ -583,6 +583,24 @@ export class MissionScene extends Phaser.Scene {
   lockGfx!: Phaser.GameObjects.Graphics;
   towWireGfx!: Phaser.GameObjects.Graphics;
   remoteAntennaGfx!: Phaser.GameObjects.Graphics;
+  /**
+   * Player craft whip tip (Wraith cupola, …). Same spring as remote antennas;
+   * base tracks the gun overlay so hull + turret motion both whip it.
+   */
+  heliAntenna?: {
+    x: number;
+    y: number;
+    z: number;
+    vx: number;
+    vy: number;
+    vz: number;
+    bx: number;
+    by: number;
+    bz: number;
+    bvx: number;
+    bvy: number;
+    angle: number;
+  };
   teslaGfx!: Phaser.GameObjects.Graphics;
   energyTrailGfx!: Phaser.GameObjects.Graphics;
   /** Neon ribbons that keep fading after the dart is gone. */
@@ -1238,6 +1256,7 @@ export class MissionScene extends Phaser.Scene {
     this.remotes = [];
     this.remotePilotCraft.clear();
     this.remoteCraftDriven.clear();
+    this.heliAntenna = undefined;
     this.remoteView = false;
     this.remoteCamT = 0;
     this.hostEscortMode = "hold";
@@ -4566,6 +4585,7 @@ export class MissionScene extends Phaser.Scene {
       if (wrap?.scene) wrap.setAlpha(cloakA);
     }
     for (const gun of this.guns) gun.setAlpha(cloakA);
+    if (this.heli.spec.antenna) this.tickHeliAntenna(dt);
     const bodyDepth = worldDepth(h.z, ZOff.body, h.y);
     const bodyWrap = this.body.getData("tiltWrap") as Phaser.GameObjects.Container | undefined;
     if (bodyWrap?.scene) {
@@ -6270,6 +6290,7 @@ craftBodyMountWorldPos(mount: { x: number; y: number }): { x: number; y: number 
 
     if (h.phase === "flight" && this.canFire && !this.debugOpen && !this.editOpen && !this.helpOpen && !this.exitOpen) {
       this.tickAutomaticStations(dt, ptr);
+      this.tickAutoSkiffLaunch();
     }
 
     this.tickLockOn(dt, ptr);
@@ -6422,6 +6443,14 @@ craftBodyMountWorldPos(mount: { x: number; y: number }): { x: number; y: number 
       this.pointerWasDown = down;
       return;
     }
+    // Skiff bay CD is shared with auto-scramble (may lag behind h.fireCd after weapon switch).
+    if (spec.payload?.remote?.kind === "wingman") {
+      const skiffCd = this.stationFireCd[slot]?.[0] ?? 0;
+      if (skiffCd > 0) {
+        this.pointerWasDown = down;
+        return;
+      }
+    }
 
     const hullAim =
       socket.class === "fixed" || socket.class === "hardpoint";
@@ -6437,6 +6466,16 @@ craftBodyMountWorldPos(mount: { x: number; y: number }): { x: number; y: number 
     }
 
     h.fireCd = craftSocketFireCd(spec.fireCd, h.spec, slot);
+    // Share Skiff bay CD with auto-launch so manual + scramble don't stack.
+    if (spec.payload?.remote?.kind === "wingman") {
+      const cds =
+        this.stationFireCd[slot] ??
+        (this.stationFireCd[slot] = Array.from(
+          { length: craftSocketBarrelCount(h.spec, slot) },
+          () => 0
+        ));
+      cds[0] = h.fireCd;
+    }
     const salvoN = spec.fire?.salvo?.count ?? 1;
     const interval = spec.fire?.salvo?.interval ?? 0;
     const spread = spec.fire?.salvo?.spread ?? 0;
@@ -9128,6 +9167,45 @@ specIsShellGun(spec)
   }
 
   /**
+   * Scramble Skiffs from the bay when any hostile enters the friendly awareness net.
+   * Obeys hangar ammo + the Skiff slot fire cooldown (shared with manual launch).
+   */
+  tickAutoSkiffLaunch(): void {
+    const h = this.heli;
+    if (h.phase !== "flight" || !this.canFire) return;
+    let slot = -1;
+    for (let i = 0; i < this.loadout.length; i++) {
+      if (this.loadout[i]?.payload?.remote?.kind === "wingman") {
+        slot = i;
+        break;
+      }
+    }
+    if (slot < 0 || this.weaponSlotDisabled(slot) || !this.hasAmmo(slot)) return;
+    const spec = this.loadout[slot]!;
+    const n = craftSocketBarrelCount(h.spec, slot);
+    const cds =
+      this.stationFireCd[slot] ??
+      (this.stationFireCd[slot] = Array.from({ length: n }, () => 0));
+    if ((cds[0] ?? 0) > 0) return;
+
+    const aware = remoteSpecOf("wingman").awareRange ?? 560;
+    let threat = false;
+    for (const u of this.units) {
+      if (u.dead) continue;
+      if (this.unitKnownToFriendlies(u, aware)) {
+        threat = true;
+        break;
+      }
+    }
+    if (!threat) return;
+
+    const cd = craftSocketFireCd(spec.fireCd, h.spec, slot);
+    cds[0] = cd;
+    if (h.weapon === slot) h.fireCd = Math.max(h.fireCd, cd);
+    this.firePlayerWeapon(slot, spec, this.worldPointer());
+  }
+
+  /**
    * Skiff / unpiloted Raptor AI:
    * - Idle wide orbit around Raptor (when one is live) or the airship.
    * - Engage enemies known to friendlies within max attack range (slightly past screen).
@@ -9215,7 +9293,7 @@ specIsShellGun(spec)
 
   /**
    * Skiff fixed-gun boom pass: steer onto the target, fire when lined up,
-   * fly through, then break-turn for another run.
+   * fly through a long overshoot, then break-turn for another run.
    */
   tickSkiffAttackPass(drone: RemoteCraft, dt: number, target: Unit): void {
     const dx = target.x - drone.x;
@@ -9233,6 +9311,8 @@ specIsShellGun(spec)
     const aimY = target.y + target.vy * leadT;
     const aimWant = Math.atan2(aimY - drone.y, aimX - drone.x);
     const aimErr = Math.abs(Phaser.Math.Angle.Wrap(drone.angle - aimWant));
+    // World units past the target before the Skiff is allowed to reverse.
+    const overshoot = 280;
 
     if (!drone.aiPass) drone.aiPass = "run";
 
@@ -9246,17 +9326,24 @@ specIsShellGun(spec)
       if (ahead > 0 && aimErr < 0.22 && dist < fireMax && dist > fireMin) {
         this.fireRemoteGun(drone, dt, { x: aimX, y: aimY });
       }
-      // Overshoot tripwire — flew past or punched in close.
-      if (ahead < -12 || (dist < 48 && ahead < dist * 0.35)) {
+      // Passed abeam — leave `run` and start the outbound overshoot.
+      if (ahead < -20 || (dist < 52 && ahead < 0)) {
         drone.aiPass = "break";
       }
-    } else {
-      // Break turn: keep speed, yank nose back toward the target for the next pass.
-      const { stick, aim } = this.remoteAiStickAim(drone, aimWant, 0.9);
+    } else if (dist < overshoot) {
+      // Egress: keep flying away until comfortably past, don't yank back early.
+      const away = Math.atan2(drone.y - target.y, drone.x - target.x);
+      const blend = Phaser.Math.Angle.Wrap(away - drone.angle);
+      const outbound = drone.angle + Phaser.Math.Clamp(blend, -0.55, 0.55);
+      const { stick, aim } = this.remoteAiStickAim(drone, outbound, 1);
       this.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false });
       drone.gunAngle = drone.angle;
-      // Re-commit once the target is ahead again and roughly lined up.
-      if (ahead > Math.max(70, dist * 0.35) && aimErr < 0.55) {
+    } else {
+      // Far enough out — reverse and re-commit when the nose is back on target.
+      const { stick, aim } = this.remoteAiStickAim(drone, aimWant, 0.95);
+      this.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false });
+      drone.gunAngle = drone.angle;
+      if (ahead > Math.max(110, dist * 0.4) && aimErr < 0.5) {
         drone.aiPass = "run";
       }
     }
@@ -9540,7 +9627,6 @@ specIsShellGun(spec)
       if (r.spec.track && !r.airborne && !this.remoteCraftDriven.has(r.id)) {
         this.stampRemoteTracks(r, dt, trackX0, trackY0);
       }
-      if (r.spec.exhaustSmoke && !r.airborne) this.emitRemoteExhaustSmoke(r, dt);
       if (r.life <= 0) {
         if (r.spec.dockable) r.dock = true;
         else r.detonate = true;
@@ -9580,6 +9666,12 @@ specIsShellGun(spec)
     for (const glow of this.remoteExhaustGlows) glow.setVisible(false);
     for (const r of this.remotes) {
       if (r.spec.antenna) this.tickRemoteAntenna(r, dt);
+      if (
+        r.spec.exhaustSmoke &&
+        (r.spec.exhaustSmoke.airborne || !r.airborne)
+      ) {
+        this.emitRemoteExhaustSmoke(r, dt);
+      }
       if (
         r.spec.craftLook &&
         craftControlScheme(craftOf(r.spec.craftLook)) === "plane" &&
@@ -9767,31 +9859,68 @@ specIsShellGun(spec)
       return;
     }
     if (!cameraPointVisible(r.z, r.y)) return;
-    const power = Phaser.Math.Clamp(spd / Math.max(40, r.spec.maxSpeed), 0, 1);
-    const aft = cfg.aft ?? r.spec.radius * 0.75;
-    const wx = r.x - Math.cos(r.angle) * aft;
-    const wy = r.y - Math.sin(r.angle) * aft;
-    const at = worldToScreen(wx, wy, r.z);
-    this.exhaustSmokeTint = cfg.tint ?? 0x5a5a56;
-    this.exhaustScaleY = (cfg.size ?? 0.3) * (0.55 + power * 0.65);
-    this.exhaustAlpha = 0.18 + power * 0.32;
-    this.exhaustVx = -Math.cos(r.angle) * spd * 0.12 + range(-6, 6);
-    this.exhaustVy = -Math.sin(r.angle) * spd * 0.12 + range(-6, 6);
-    this.exhaustAngle = projectHeading(r.angle + Math.PI, r.x, r.y, r.z);
+    // Don't starve high-maxSpeed planes (Skiff 380) — scale against cruise, not top speed.
+    const powerRef = Math.max(90, (r.spec.minSpeed ?? 0) * 1.15, r.spec.maxSpeed * 0.4);
+    const power = Phaser.Math.Clamp(spd / powerRef, 0.35, 1);
     r.exhaustCarry = (r.exhaustCarry ?? 0) + cfg.rate * power * dt;
     const n = Math.floor(r.exhaustCarry);
     if (n <= 0) return;
     r.exhaustCarry -= n;
-    this.withTrailFx(0.85, () => {
-      const take = this.fxEmitCount(n);
-      if (take) {
-        this.emitBudgeted(
-          "smoke",
-          this.fxAt(r.z, r.y, this.craftExhaustSmoke, ZOff.smoke - 0.2),
-          at.x,
-          at.y,
-          take
-        );
+
+    const pts: { x: number; y: number }[] = [];
+    const body = this.remoteBodyImage(r);
+    const uvs = lookupSpritePoints(r.spec.look, "exhaust");
+    let bodyDepth = worldDepth(r.z, ZOff.body, r.y);
+    if (body?.visible && uvs.length) {
+      const pose = this.remoteBodyDrawPose(body);
+      for (const uv of uvs) pts.push(spriteUvPos(pose, uv.x, uv.y));
+      const wrap = body.getData("tiltWrap") as Phaser.GameObjects.Container | undefined;
+      bodyDepth = wrap?.depth ?? body.depth;
+    } else {
+      const aft = cfg.aft ?? r.spec.radius * 0.75;
+      pts.push(
+        worldToScreen(
+          r.x - Math.cos(r.angle) * aft,
+          r.y - Math.sin(r.angle) * aft,
+          r.z
+        )
+      );
+    }
+    if (!pts.length) return;
+
+    const tint = cfg.tint ?? 0x5a5a56;
+    const brightness = ((tint >> 16) & 0xff) + ((tint >> 8) & 0xff) + (tint & 0xff);
+    const pale = brightness > 0x2a0; // ~white / light grey → whitened sheet
+    const jetAng = projectHeading(r.angle + Math.PI, r.x, r.y, r.z);
+    const size = (cfg.size ?? 0.3) * (0.7 + power * 0.55);
+
+    this.withTrailFx(0.9, () => {
+      if (pale) {
+        // Same whitened sheet as wingtip contrails — dark fx_smoke stays muddy when tinted white.
+        this.wingTrailTint = tint;
+        this.wingTrailLife = 750 + power * 550;
+        this.wingTrailScaleX = size * 1.15;
+        this.wingTrailScaleY = size * 0.95;
+        this.wingTrailAngle = jetAng;
+        this.wingTrailVx = -Math.cos(r.angle) * spd * 0.1 + range(-4, 4);
+        this.wingTrailVy = -Math.sin(r.angle) * spd * 0.1 + range(-4, 4);
+        const trail = this.fxAt(r.z, r.y, this.jetWingTrail, ZOff.exhaust - 0.35);
+        trail.setDepth(bodyDepth - 1.15);
+        for (const at of pts) {
+          this.emitBudgeted("smoke", trail, at.x, at.y, n);
+        }
+      } else {
+        this.exhaustSmokeTint = tint;
+        this.exhaustScaleY = size;
+        this.exhaustAlpha = 0.22 + power * 0.38;
+        this.exhaustVx = -Math.cos(r.angle) * spd * 0.12 + range(-6, 6);
+        this.exhaustVy = -Math.sin(r.angle) * spd * 0.12 + range(-6, 6);
+        this.exhaustAngle = jetAng;
+        const smoke = this.fxAt(r.z, r.y, this.craftExhaustSmoke, ZOff.smoke - 0.2);
+        smoke.setDepth(bodyDepth - 1.1);
+        for (const at of pts) {
+          this.emitBudgeted("smoke", smoke, at.x, at.y, n);
+        }
       }
     });
   }
@@ -10324,30 +10453,91 @@ specIsShellGun(spec)
     };
   }
 
-  remoteAntennaRest(
-    drone: RemoteCraft,
-    base: { x: number; y: number; z: number }
+  /**
+   * Player craft antenna base — UV on the turret/gun overlay that authors `antenna`
+   * (Wraith rail cupola). Falls back to hull body UV if needed.
+   */
+  heliAntennaBase(): { x: number; y: number; z: number; face: number } | undefined {
+    const cfg = this.heli.spec.antenna;
+    if (!cfg) return undefined;
+    const h = this.heli;
+    const z = h.z + h.spec.height * 0.55;
+    const face = h.gunAngle;
+    for (const gun of this.guns) {
+      if (!gun.visible) continue;
+      const uv = lookupSpritePoints(gun.texture.key, "antenna")[0];
+      if (!uv) continue;
+      const scr = spriteUvPos(gun, uv.x, uv.y);
+      const at = screenToWorldAtZ(scr.x, scr.y, z);
+      return { x: at.x, y: at.y, z, face };
+    }
+    const body = this.body;
+    if (body?.visible) {
+      const uv = lookupSpritePoints(body.texture.key, "antenna")[0];
+      if (uv) {
+        const scr = spriteUvPos(body, uv.x, uv.y);
+        const at = screenToWorldAtZ(scr.x, scr.y, z);
+        return { x: at.x, y: at.y, z, face: h.angle };
+      }
+    }
+    return {
+      x: h.x - Math.cos(face) * h.spec.radius * 0.35,
+      y: h.y - Math.sin(face) * h.spec.radius * 0.35,
+      z,
+      face,
+    };
+  }
+
+  whipAntennaRest(
+    base: { x: number; y: number; z: number },
+    faceAng: number,
+    cfg: { length?: number; aft?: number }
   ): { x: number; y: number; z: number } {
-    const cfg = drone.spec.antenna!;
     const len = cfg.length ?? 12;
     const aft = cfg.aft ?? 2;
     return {
-      x: base.x - Math.cos(drone.angle) * aft,
-      y: base.y - Math.sin(drone.angle) * aft,
+      x: base.x - Math.cos(faceAng) * aft,
+      y: base.y - Math.sin(faceAng) * aft,
       z: base.z + len,
     };
   }
 
-  /** Spring whip — lags thrust / yaw, overshoots rest on stop, then settles. */
-  tickRemoteAntenna(drone: RemoteCraft, dt: number): void {
-    const cfg = drone.spec.antenna;
-    if (!cfg || dt <= 1e-6) return;
-    const base = this.remoteAntennaBase(drone);
-    if (!base) return;
-    const rest = this.remoteAntennaRest(drone, base);
-    let tip = drone.antenna;
+  /**
+   * Spring whip — lags base accel / yaw, overshoots rest on stop, then settles.
+   * `faceAng` is the heading the rest tip leans aft of (turret aim or hull yaw).
+   */
+  tickWhipAntenna(
+    tip:
+      | {
+          x: number;
+          y: number;
+          z: number;
+          vx: number;
+          vy: number;
+          vz: number;
+          bx: number;
+          by: number;
+          bz: number;
+          bvx: number;
+          bvy: number;
+          angle: number;
+        }
+      | undefined,
+    base: { x: number; y: number; z: number },
+    faceAng: number,
+    cfg: {
+      length?: number;
+      aft?: number;
+      stiffness?: number;
+      damping?: number;
+      yawWhip?: number;
+      lag?: number;
+    },
+    dt: number
+  ): NonNullable<typeof tip> {
+    const rest = this.whipAntennaRest(base, faceAng, cfg);
     if (!tip) {
-      drone.antenna = {
+      return {
         x: rest.x,
         y: rest.y,
         z: rest.z,
@@ -10359,16 +10549,15 @@ specIsShellGun(spec)
         bz: base.z,
         bvx: 0,
         bvy: 0,
-        angle: drone.angle,
+        angle: faceAng,
       };
-      return;
     }
     const invDt = 1 / Math.max(1e-4, dt);
     const bvx = (base.x - tip.bx) * invDt;
     const bvy = (base.y - tip.by) * invDt;
     const ax = (bvx - tip.bvx) * invDt;
     const ay = (bvy - tip.bvy) * invDt;
-    const omega = Phaser.Math.Angle.Wrap(drone.angle - tip.angle) * invDt;
+    const omega = Phaser.Math.Angle.Wrap(faceAng - tip.angle) * invDt;
 
     const k = cfg.stiffness ?? 26;
     const c = cfg.damping ?? 2.4;
@@ -10381,8 +10570,8 @@ specIsShellGun(spec)
     tip.vz += ((rest.z - tip.z) * k - tip.vz * c) * dt;
     tip.vx -= ax * lag * dt;
     tip.vy -= ay * lag * dt;
-    tip.vx += -Math.sin(drone.angle) * omega * whip * len * dt;
-    tip.vy += Math.cos(drone.angle) * omega * whip * len * dt;
+    tip.vx += -Math.sin(faceAng) * omega * whip * len * dt;
+    tip.vy += Math.cos(faceAng) * omega * whip * len * dt;
 
     tip.x += tip.vx * dt;
     tip.y += tip.vy * dt;
@@ -10393,7 +10582,6 @@ specIsShellGun(spec)
       const dy = tip.y - base.y;
       const dz = tip.z - base.z;
       const span = Math.hypot(dx, dy, dz);
-      // Keep the whip short — tip stays near rest length, mild lean only.
       const maxLen = len * 1.28;
       if (span > maxLen && span > 1e-4) {
         const s = maxLen / span;
@@ -10415,77 +10603,109 @@ specIsShellGun(spec)
     tip.bz = base.z;
     tip.bvx = bvx;
     tip.bvy = bvy;
-    tip.angle = drone.angle;
+    tip.angle = faceAng;
+    return tip;
+  }
+
+  tickRemoteAntenna(drone: RemoteCraft, dt: number): void {
+    const cfg = drone.spec.antenna;
+    if (!cfg || dt <= 1e-6) return;
+    const base = this.remoteAntennaBase(drone);
+    if (!base) return;
+    drone.antenna = this.tickWhipAntenna(drone.antenna, base, drone.angle, cfg, dt);
+  }
+
+  tickHeliAntenna(dt: number): void {
+    const cfg = this.heli.spec.antenna;
+    if (!cfg || dt <= 1e-6) return;
+    if (this.heli.phase === "dead") {
+      this.heliAntenna = undefined;
+      return;
+    }
+    const base = this.heliAntennaBase();
+    if (!base) return;
+    this.heliAntenna = this.tickWhipAntenna(this.heliAntenna, base, base.face, cfg, dt);
+  }
+
+  drawWhipAntennaStroke(
+    g: Phaser.GameObjects.Graphics,
+    base: { x: number; y: number; z: number },
+    tip: { x: number; y: number; z: number },
+    rest: { x: number; y: number; z: number }
+  ): void {
+    const leanX = tip.x - rest.x;
+    const leanY = tip.y - rest.y;
+    const leanZ = tip.z - rest.z;
+    const bend = 1.55;
+    const c1 = {
+      x: base.x + (rest.x - base.x) * 0.35 + leanX * bend * 0.55,
+      y: base.y + (rest.y - base.y) * 0.35 + leanY * bend * 0.55,
+      z: base.z + (rest.z - base.z) * 0.35 + leanZ * bend * 0.25,
+    };
+    const c2 = {
+      x: base.x + (rest.x - base.x) * 0.72 + leanX * bend * 1.05,
+      y: base.y + (rest.y - base.y) * 0.72 + leanY * bend * 1.05,
+      z: base.z + (rest.z - base.z) * 0.72 + leanZ * bend * 0.55,
+    };
+    const segs = 10;
+    const pts: { x: number; y: number }[] = [];
+    for (let i = 0; i <= segs; i++) {
+      const t = i / segs;
+      const u = 1 - t;
+      const wx =
+        u * u * u * base.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * tip.x;
+      const wy =
+        u * u * u * base.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * tip.y;
+      const wz =
+        u * u * u * base.z + 3 * u * u * t * c1.z + 3 * u * t * t * c2.z + t * t * t * tip.z;
+      const at = worldToScreen(wx, wy, wz);
+      pts.push({ x: at.x, y: at.y });
+    }
+    if (pts.length < 2) return;
+    const stroke = (color: number, alpha: number, width: number, dy: number) => {
+      g.lineStyle(width, color, alpha);
+      g.beginPath();
+      g.moveTo(pts[0]!.x, pts[0]!.y + dy);
+      for (let i = 1; i < pts.length; i++) g.lineTo(pts[i]!.x, pts[i]!.y + dy);
+      g.strokePath();
+    };
+    stroke(0x0c0c0e, 0.55, 1.85, 0.45);
+    stroke(0x2a2c28, 0.78, 1.05, 0);
+    stroke(0x3e4238, 0.35, 0.45, -0.3);
   }
 
   drawRemoteAntennas(): void {
     const g = this.remoteAntennaGfx;
     if (!g) return;
     g.clear();
-    let depth: number = Layer.WORLD;
+    // Seed high so Math.min keeps real worldDepth values (Layer.WORLD alone
+    // clamped the stroke under turret sprites at ~focal bias).
+    let depth = Number.POSITIVE_INFINITY;
     let drew = false;
+    // Sort with the host hull z/y (same as gun overlays), not whip tip altitude,
+    // and sit above cupola/coax (turret + coaxBias ≤ ~0.6).
+    const antOff = ZOff.turret + 0.85;
     for (const r of this.remotes) {
       if (!r.spec.antenna || r.detonate || r.dock) continue;
       if (!cameraPointVisible(r.z, r.y)) continue;
       const base = this.remoteAntennaBase(r);
       const tip = r.antenna;
       if (!base || !tip) continue;
-      const rest = this.remoteAntennaRest(r, base);
-      // Tip spring is the only sim — draw a visible bend by pulling control
-      // points ~90° off the upright rest spine toward the tip's lean.
-      const leanX = tip.x - rest.x;
-      const leanY = tip.y - rest.y;
-      const leanZ = tip.z - rest.z;
-      // Amplify lateral lean so the curve reads even when tip motion is small.
-      const bend = 1.55;
-      const c1 = {
-        x: base.x + (rest.x - base.x) * 0.35 + leanX * bend * 0.55,
-        y: base.y + (rest.y - base.y) * 0.35 + leanY * bend * 0.55,
-        z: base.z + (rest.z - base.z) * 0.35 + leanZ * bend * 0.25,
-      };
-      const c2 = {
-        x: base.x + (rest.x - base.x) * 0.72 + leanX * bend * 1.05,
-        y: base.y + (rest.y - base.y) * 0.72 + leanY * bend * 1.05,
-        z: base.z + (rest.z - base.z) * 0.72 + leanZ * bend * 0.55,
-      };
-      const segs = 10;
-      const pts: { x: number; y: number }[] = [];
-      for (let i = 0; i <= segs; i++) {
-        const t = i / segs;
-        const u = 1 - t;
-        // Cubic Bezier base → c1 → c2 → tip
-        const wx =
-          u * u * u * base.x +
-          3 * u * u * t * c1.x +
-          3 * u * t * t * c2.x +
-          t * t * t * tip.x;
-        const wy =
-          u * u * u * base.y +
-          3 * u * u * t * c1.y +
-          3 * u * t * t * c2.y +
-          t * t * t * tip.y;
-        const wz =
-          u * u * u * base.z +
-          3 * u * u * t * c1.z +
-          3 * u * t * t * c2.z +
-          t * t * t * tip.z;
-        const at = worldToScreen(wx, wy, wz);
-        pts.push({ x: at.x, y: at.y });
-        depth = Math.min(depth, worldDepth(wz, ZOff.body + 0.55, wy));
-      }
-      if (pts.length < 2) continue;
+      const rest = this.whipAntennaRest(base, r.angle, r.spec.antenna);
+      this.drawWhipAntennaStroke(g, base, tip, rest);
+      depth = Math.min(depth, worldDepth(r.z, antOff, r.y));
       drew = true;
-      const stroke = (color: number, alpha: number, width: number, dy: number) => {
-        g.lineStyle(width, color, alpha);
-        g.beginPath();
-        g.moveTo(pts[0]!.x, pts[0]!.y + dy);
-        for (let i = 1; i < pts.length; i++) g.lineTo(pts[i]!.x, pts[i]!.y + dy);
-        g.strokePath();
-      };
-      // Matte rubber/black whip — no pale metal highlight (that read as a gun barrel).
-      stroke(0x0c0c0e, 0.55, 1.85, 0.45);
-      stroke(0x2a2c28, 0.78, 1.05, 0);
-      stroke(0x3e4238, 0.35, 0.45, -0.3);
+    }
+    const heliCfg = this.heli.spec.antenna;
+    if (heliCfg && this.heli.phase !== "dead" && this.heliAntenna) {
+      const base = this.heliAntennaBase();
+      if (base && cameraPointVisible(base.z, base.y)) {
+        const rest = this.whipAntennaRest(base, base.face, heliCfg);
+        this.drawWhipAntennaStroke(g, base, this.heliAntenna, rest);
+        const h = this.heli;
+        depth = Math.min(depth, worldDepth(h.z, antOff, h.y));
+        drew = true;
+      }
     }
     if (drew) g.setDepth(depth);
   }

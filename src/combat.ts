@@ -787,13 +787,13 @@ const PLAYER_WPNS_DEFS = {
     fits: FIT_HARDPOINT, notes: ["launches as a separate controllable craft", "Q / RMB drop camera without detonating", "select Spectre slot to return view", "click Spectre in its view to detonate"],
   },
   wingman_drone: {
-    id: "wingman_drone", name: "SKIFF", fullName: "SKIFF WINGMAN", designation: "AUTONOMOUS WINGMAN SKIFF", ammo: 4, fireCd: 0.85, speed: 200,
+    id: "wingman_drone", name: "SKIFF", fullName: "SKIFF WINGMAN", designation: "AUTONOMOUS WINGMAN SKIFF", ammo: 8, fireCd: 0.85, speed: 200,
     dmg: 40, blast: 48, life: 90,
     art: ordArt("guided", 0.5, "velocity"),
     cam: CAM_GUIDED, control: CLICK, launch: { mode: "muzzle", inheritMomentum: 0.7 },
     payload: { remote: { kind: "wingman", duration: 90 } },
     fits: FIT_HARDPOINT, notes: [
-      "AI wingmen — launch several; LIVE ×N; Q recalls all to dock",
+      "AI wingmen — auto-launch on contact (LIVE ×N, max 8); Q recalls all to dock",
       "fixed nose guns: line up, fire, overshoot, turn for another pass",
       "shared awareness with airship / Raptor",
     ],
@@ -836,7 +836,7 @@ const PLAYER_WPNS_DEFS = {
     blast: 95,
     life: 18,
     art: { look: "enemy_drone", scale: 0.55, face: "heading" },
-    cam: { ...CAM_GUIDED, sight: "mouse" },
+    cam: { reticle: "square", look: LOOK_GUIDED, povCam: true, sight: "mouse" },
     control: CLICK,
     launch: { mode: "muzzle", inheritMomentum: 0.15 },
     guidance: steerGuidance(6.2, 1.4, {
@@ -851,7 +851,7 @@ const PLAYER_WPNS_DEFS = {
     fits: FIT_GUN.concat("hardpoint" as SocketClass),
     notes: [
       "alternating ground skimmers from the hull ports",
-      "crawl to the mouse; dash onto nearby hostiles and detonate",
+      "ride the seeker cam — crawl to the mouse, dash onto nearby hostiles and detonate",
     ],
   },
   plasma_cannon: {

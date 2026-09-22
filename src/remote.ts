@@ -80,8 +80,9 @@ export interface RemoteSpec {
   trackGap?: number;
   trackScale?: number;
   /**
-   * Soft linger smoke from the tail while moving (HOUND).
+   * Soft linger smoke from the tail while moving (HOUND ground plume, Skiff trail).
    * Rate scales with speed / maxSpeed — idle = no plume.
+   * Prefer authored `exhaust` UVs on `look` when the body is posed.
    */
   exhaustSmoke?: {
     /** Particles / sec at full speed. */
@@ -91,6 +92,8 @@ export interface RemoteSpec {
     tint?: number;
     /** World units behind center along −heading. Omit → radius × 0.75. */
     aft?: number;
+    /** When true, emit while airborne (Skiff). Default: ground only (HOUND). */
+    airborne?: boolean;
   };
   /**
    * Elastic whip antenna — base UV role `antenna` on `look`.
@@ -243,7 +246,7 @@ export interface RemoteCraft {
   aiTargetId?: number;
   /**
    * Skiff attack-pass FSM: `run` lines up fixed guns and fires;
-   * `break` overshoots then turns for another pass.
+   * `break` coasts outbound past the target, then turns for another pass.
    */
   aiPass?: "run" | "break";
   /** Per-tip screen samples for wingtip contrail stretch (plane remotes). */
@@ -447,6 +450,8 @@ const REMOTE_DEFS: Record<RemoteKind, RemoteDef> = {
     orbitRange: 160,
     awareRange: 560,
     escortRange: 200,
+    // Small white engine smoke off the aft UV on craft_skiff.
+    exhaustSmoke: { rate: 16, size: 0.28, tint: 0xffffff, aft: 10, airborne: true },
   },
   fighter: {
     kind: "fighter",

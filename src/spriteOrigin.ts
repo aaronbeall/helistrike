@@ -326,9 +326,9 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     points: [
       { role: "muzzle", x: 0.385, y: 0.115 },
       { role: "muzzle", x: 0.611, y: 0.115 },
-      { role: "gun", x: 0.498, y: 0.517, id: "main" },
+      { role: "gun", x: 0.496, y: 0.514, id: "main" },
       // Coax .50 sits on the same cupola as the main rail turret.
-      { role: "gun", x: 0.498, y: 0.517, id: "coax" },
+      { role: "gun", x: 0.496, y: 0.514, id: "coax" },
       { role: "hardpoint", x: 0.103, y: 0.425, id: "wing_l" },
       { role: "hardpoint", x: 0.896, y: 0.425, id: "wing_r" },
       { role: "exhaust", x: 0.311, y: 0.922 },
@@ -336,10 +336,12 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     ],
   },
   craft_hover_tank_turret: {
-    origin: uv(0.489, 0.708),
+    origin: uv(0.488, 0.658),
     points: [
       { role: "muzzle", x: 0.335, y: 0.028 },
       { role: "muzzle", x: 0.653, y: 0.028 },
+      // Aft cupola deck — whip antenna (same role as HOUND).
+      { role: "antenna", x: 0.811, y: 0.865, id: "whip" },
     ],
   },
   // HOUND AGV chassis (gun is a separate overlay).

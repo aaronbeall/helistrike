@@ -154,6 +154,18 @@ export interface CraftSpec {
   /** Chin/turret overlay draw scale (cobra/viper 0.42). */
   gunOverlayScale?: number;
   /**
+   * Elastic whip antenna — base UV role `antenna` on the gun overlay (or body).
+   * Tip springs upright and wobbles with hull / turret motion.
+   */
+  antenna?: {
+    length?: number;
+    aft?: number;
+    stiffness?: number;
+    damping?: number;
+    yawWhip?: number;
+    lag?: number;
+  };
+  /**
    * Extra framing mul on size-based camera scale (<1 zooms out).
    * Use for low ground-huggers that need more theater around the hull.
    */
@@ -848,6 +860,8 @@ const CRAFTS_DEFS = {
         controller: "pilot",
         weapon: "wingman_drone",
         points: [{ id: "skiff" }],
+        // Catalog ammo 8 × airship ammoScale 2.4 → cap the bay at 8 Skiffs.
+        ammoMul: 8 / Math.round(8 * 2.4),
       },
       {
         id: "fighter_bay",
@@ -1080,6 +1094,8 @@ const CRAFTS_DEFS = {
         points: [{ id: "wing_l" }],
       },
     ],
+    // Whip on the rail cupola — wobbles with hull + turret yaw.
+    antenna: { length: 12, aft: 1.6, stiffness: 28, damping: 2.8, yawWhip: 12, lag: 1.8 },
     countermeasure: "reactive_armor",
     sensorPalette: "full_spectrum",
   },
