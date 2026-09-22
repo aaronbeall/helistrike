@@ -4376,27 +4376,8 @@ export class MissionScene extends Phaser.Scene {
         ? this.gunTip(gunI)
         : screenToWorldAtZ(aimMount.x, aimMount.y + bob, h.z);
       const want = Math.atan2(aim.y - from.y, aim.x - from.x);
-      for (let slot = 0; slot < craft.sockets.length; slot++) {
-        const socket = craft.sockets[slot]!;
-        if (socket.class !== "turret") continue;
-        // Unselected automatic stations track in tickAutomaticStations.
-        if (socket.controller === "automatic" && h.weapon !== slot) continue;
-        const barrels = h.stationAim[slot] ?? (h.stationAim[slot] = [h.angle]);
-        for (let b = 0; b < barrels.length; b++) {
-          const trav = this.stationTraverseForBarrel(slot, b);
-          const clamped = trav ? clampAimToStationArc(want, h.angle, trav) : want;
-          barrels[b] = Phaser.Math.Angle.RotateTo(
-            barrels[b] ?? h.angle,
-            clamped,
-            GUN_STATION_TURN_RATE * dt
-          );
-          if (trav) {
-            barrels[b] = clampAimToStationArc(barrels[b]!, h.angle, trav);
-          }
-        }
-      }
+      this.slewCraftTurretStations(h, want, dt, h.weapon);
       if (aimSlot != null) h.gunAngle = h.stationAim[aimSlot]?.[0] ?? want;
-      else h.gunAngle = want;
     }
     this.guns.forEach((gun, i) => {
       const gunMount = gunParts[i]?.mount ?? aimMountUv;
@@ -8185,13 +8166,48 @@ specIsShellGun(spec)
   /**
    * Socket traverse cone: arc from socket, center from barrel heading.
    */
-  stationTraverseForBarrel(slot: number, barrel: number): StationTraverse | undefined {
-    const socket = this.heli.spec.sockets[slot];
+  stationTraverseForBarrel(
+    slot: number,
+    barrel: number,
+    craft: Heli = this.heli
+  ): StationTraverse | undefined {
+    const socket = craft.spec.sockets[slot];
     if (socket?.traverse == null) return undefined;
     return {
       arc: socket.traverse,
-      center: craftGunPreferDegrees(this.heli.spec, slot, barrel),
+      center: craftGunPreferDegrees(craft.spec, slot, barrel),
     };
+  }
+
+  /**
+   * Slew pilot turret stations toward `want` at chin-gun rate (host + craft-backed remotes).
+   * Automatic stations only slew when selected; otherwise tickAutomaticStations owns them.
+   */
+  slewCraftTurretStations(
+    craft: Heli,
+    want: number,
+    dt: number,
+    selectedSlot: number
+  ): void {
+    for (let slot = 0; slot < craft.spec.sockets.length; slot++) {
+      const socket = craft.spec.sockets[slot]!;
+      if (socket.class !== "turret") continue;
+      if (socket.controller === "automatic" && selectedSlot !== slot) continue;
+      const barrels = craft.stationAim[slot] ?? (craft.stationAim[slot] = [craft.angle]);
+      for (let b = 0; b < barrels.length; b++) {
+        const trav = this.stationTraverseForBarrel(slot, b, craft);
+        const clamped = trav ? clampAimToStationArc(want, craft.angle, trav) : want;
+        barrels[b] = Phaser.Math.Angle.RotateTo(
+          barrels[b] ?? craft.angle,
+          clamped,
+          GUN_STATION_TURN_RATE * dt
+        );
+        if (trav) {
+          barrels[b] = clampAimToStationArc(barrels[b]!, craft.angle, trav);
+        }
+      }
+    }
+    craft.gunAngle = craft.stationAim[selectedSlot]?.[0] ?? want;
   }
 
   /** Per-barrel acquire center: mount position shifted along preferred heading. */
@@ -8747,12 +8763,20 @@ specIsShellGun(spec)
     drone.roll = craft.roll;
     drone.pitch = craft.pitch;
     drone.rotor = craft.rotor;
-    // Plane / fixed nose: guns follow hull. Orbit / turrets: mouse aims independently.
-    if (craftControlScheme(craft.spec) === "orbit") {
-      drone.gunAngle = Math.atan2(aim.y - drone.y, aim.x - drone.x);
-      craft.gunAngle = drone.gunAngle;
+    // Turrets slew like host chin guns; fixed/plane nose stays hull-locked.
+    const selected = Phaser.Math.Clamp(
+      drone.weapon ?? 0,
+      0,
+      Math.max(0, craft.spec.sockets.length - 1)
+    );
+    craft.weapon = selected;
+    if (craftAimsWithTurret(craft.spec)) {
+      const want = Math.atan2(aim.y - drone.y, aim.x - drone.x);
+      this.slewCraftTurretStations(craft, want, dt, selected);
+      drone.gunAngle = craft.gunAngle;
     } else {
       drone.gunAngle = craft.angle;
+      craft.gunAngle = craft.angle;
     }
     drone.health = Math.min(drone.health, craft.health);
     // Craft-piloted remotes integrate inside Heli.update — stamp tracks here (not in updateRemotes).
@@ -9103,13 +9127,32 @@ specIsShellGun(spec)
 
     if (target) {
       const aimWant = Math.atan2(target.y - drone.y, target.x - drone.x);
-      drone.gunAngle = aimWant;
+      const hull = drone.spec.craftLook ? craftOf(drone.spec.craftLook) : undefined;
+      if (hull && craftAimsWithTurret(hull)) {
+        drone.gunAngle = Phaser.Math.Angle.RotateTo(
+          drone.gunAngle ?? drone.angle,
+          aimWant,
+          GUN_STATION_TURN_RATE * dt
+        );
+      } else {
+        drone.gunAngle = aimWant;
+      }
       const aimErr = Math.abs(Phaser.Math.Angle.Wrap((drone.gunAngle ?? 0) - aimWant));
-      if (aimErr < 1.35 || Math.hypot(target.x - drone.x, target.y - drone.y) < engage * 0.45) {
+      if (aimErr < 0.22 || Math.hypot(target.x - drone.x, target.y - drone.y) < engage * 0.45) {
         this.fireRemoteGun(drone, dt, { x: target.x, y: target.y });
       }
     } else {
-      drone.gunAngle = Math.atan2(ptr.y - drone.y, ptr.x - drone.x);
+      const idleWant = Math.atan2(ptr.y - drone.y, ptr.x - drone.x);
+      const hull = drone.spec.craftLook ? craftOf(drone.spec.craftLook) : undefined;
+      if (hull && craftAimsWithTurret(hull)) {
+        drone.gunAngle = Phaser.Math.Angle.RotateTo(
+          drone.gunAngle ?? drone.angle,
+          idleWant,
+          GUN_STATION_TURN_RATE * dt
+        );
+      } else {
+        drone.gunAngle = idleWant;
+      }
     }
 
     // Always drive toward the pointer — park when close enough.
@@ -9564,10 +9607,15 @@ specIsShellGun(spec)
       !!hull &&
       craftControlScheme(hull) === "plane" &&
       socket?.class !== "turret";
-    const baseAng = planeFixed
+    const wantAng = planeFixed
       ? drone.angle
       : Math.atan2(aim.y - drone.y, aim.x - drone.x);
-    drone.gunAngle = planeFixed ? drone.angle : baseAng;
+    // Turrets keep slewed gunAngle (pilot/AI); do not snap to want on fire.
+    const turret =
+      socket?.class === "turret" || (!!hull && craftAimsWithTurret(hull) && socket?.class !== "fixed");
+    if (planeFixed) drone.gunAngle = drone.angle;
+    else if (!turret) drone.gunAngle = wantAng;
+    const baseAng = planeFixed ? drone.angle : (drone.gunAngle ?? wantAng);
 
     const tips =
       slot >= 0
@@ -9861,10 +9909,21 @@ specIsShellGun(spec)
       !!hull &&
       craftControlScheme(hull) === "plane" &&
       socket?.class === "fixed";
-    const aimAng = planeFixed
+    const wantAng = planeFixed
       ? drone.angle
       : Math.atan2(ptr.y - drone.y, ptr.x - drone.x);
-    drone.gunAngle = planeFixed ? drone.angle : aimAng;
+    // Turret stations fire along the slewed barrel; hardpoints / observers may face aim.
+    if (planeFixed) {
+      drone.gunAngle = drone.angle;
+    } else if (socket?.class === "turret" && hull && craftAimsWithTurret(hull)) {
+      // Keep current slewed angle from tickRemoteCraftPilot / AI.
+    } else {
+      drone.gunAngle = wantAng;
+    }
+    const aimAng =
+      socket?.class === "turret" && hull && craftAimsWithTurret(hull)
+        ? (drone.gunAngle ?? wantAng)
+        : wantAng;
 
     if (payloadIsHostFire(spec.payload)) {
       const ok = this.fireHostWeaponAt(spec.payload.hostFire!.weapon, ptr);
