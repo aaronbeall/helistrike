@@ -749,12 +749,13 @@ const PLAYER_WPNS_DEFS = {
     notes: ["low-signature heat seeker — air punch, soft AG"],
   },
   railgun: {
-    id: "railgun", name: "RAILGUN", fullName: "RAILGUN", designation: "RG-40 HYPERVELOCITY RAILGUN", ammo: 180, fireCd: 0.2, speed: 1850,
-    dmg: 52, blast: 12, life: 0.16,
+    id: "railgun", name: "RAILGUN", fullName: "RAILGUN", designation: "RG-40 HYPERVELOCITY RAILGUN", ammo: 180, fireCd: 0.4, speed: 1850,
+    // Half the old cadence (0.2→0.4); dmg doubled so sustained DPS stays the same.
+    dmg: 104, blast: 12, life: 0.16,
     art: gunArt("railgun", 0.82, { w: 128, h: 12, core: [255, 255, 255], mid: [120, 220, 255], rim: [40, 120, 255], glow: 1.05, shape: "bolt" }, MOUNT_RAILGUN),
     cam: CAM_GUN, fire: FIRE_GUN, control: HOLD, launch: MUZZLE,
     payload: { penetration: 1.4 },
-    fits: FIT_GUN, notes: ["hypervelocity penetrator; paced automatic fire"],
+    fits: FIT_GUN, notes: ["hypervelocity penetrator; deliberate automatic fire"],
   },
   swarm_missile: {
     id: "swarm_missile", name: "STARSTREAK", fullName: "STARSTREAK MISSILE", designation: "STARSTREAK HVM GUIDED DARTS", ammo: 92, fireCd: 0.095, speed: 920,

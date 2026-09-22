@@ -336,7 +336,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     ],
   },
   craft_hover_tank_turret: {
-    origin: uv(0.496, 0.792),
+    origin: uv(0.489, 0.708),
     points: [
       { role: "muzzle", x: 0.335, y: 0.028 },
       { role: "muzzle", x: 0.653, y: 0.028 },

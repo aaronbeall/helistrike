@@ -919,10 +919,12 @@ export class MissionScene extends Phaser.Scene {
   /** Camera + WASD are on the live remote (independent of which weapon is selected). */
   remoteView = false;
   /**
-   * Shadow `Heli` for plane-scheme remotes (Raptor) — same flight path as player craft.
+   * Shadow `Heli` for craft-backed remotes (pilot + AI) — same flight path as player craft.
    * Keyed by remote id; dropped on dock / detonate / mission reset.
    */
   remotePilotCraft = new Map<number, Heli>();
+  /** Remotes integrated via shadow Heli this frame (skip vx·dt integrate in updateRemotes). */
+  remoteCraftDriven = new Set<number>();
   /** Host craft escort while piloting a POV remote — default hold. */
   hostEscortMode: "hold" | "follow" = "hold";
   /** Follow leash hysteresis — true while closing to the inner ring after breaking outer. */
@@ -1235,6 +1237,7 @@ export class MissionScene extends Phaser.Scene {
     this.refractorBeams = [];
     this.remotes = [];
     this.remotePilotCraft.clear();
+    this.remoteCraftDriven.clear();
     this.remoteView = false;
     this.remoteCamT = 0;
     this.hostEscortMode = "hold";
@@ -3785,6 +3788,7 @@ export class MissionScene extends Phaser.Scene {
         let t = performance.now();
         const aim = this.worldPointer();
         const pilot = this.pilotingRemote();
+        this.remoteCraftDriven.clear();
         // POV remotes (HOUND): after Q exit the slot stays selected but bird flight returns.
         this.remotePilotActive =
           !!pilot && (this.remoteView || !remoteHasPovHud(pilot.spec));
@@ -3857,6 +3861,7 @@ export class MissionScene extends Phaser.Scene {
       } else {
         const aim = this.worldPointer();
         const pilot = this.pilotingRemote();
+        this.remoteCraftDriven.clear();
         // POV remotes (HOUND): after Q exit the slot stays selected but bird flight returns.
         this.remotePilotActive =
           !!pilot && (this.remoteView || !remoteHasPovHud(pilot.spec));
@@ -8891,13 +8896,70 @@ specIsShellGun(spec)
     return craft;
   }
 
-  /** Drive a remote through the same Heli.update path as a player craft. */
-  tickRemoteCraftPilot(drone: RemoteCraft, dt: number, aim: { x: number; y: number }): void {
+  /**
+   * Map AI face angle + throttle (−1..1) onto the same stick/aim Heli.update expects.
+   * Orbit/ground: A/D yaw + W/S thrust. Plane/aim: nose follows aim, W/S throttle.
+   */
+  remoteAiStickAim(
+    drone: RemoteCraft,
+    faceAng: number,
+    throttle: number
+  ): {
+    stick: { up: boolean; down: boolean; left: boolean; right: boolean };
+    aim: { x: number; y: number };
+  } {
+    const aim = {
+      x: drone.x + Math.cos(faceAng) * 220,
+      y: drone.y + Math.sin(faceAng) * 220,
+    };
+    const hull = craftOf(drone.spec.craftLook);
+    if (craftControlScheme(hull) === "orbit") {
+      const err = Phaser.Math.Angle.Wrap(faceAng - drone.angle);
+      return {
+        aim,
+        stick: {
+          left: err < -0.06,
+          right: err > 0.06,
+          up: throttle > 0.2,
+          down: throttle < -0.2,
+        },
+      };
+    }
+    return {
+      aim,
+      stick: {
+        up: throttle > 0.2,
+        down: throttle < -0.2,
+        left: false,
+        right: false,
+      },
+    };
+  }
+
+  /**
+   * Drive a remote through the same Heli.update path as a player craft.
+   * Marks the remote craft-driven this frame (no second vx·dt integrate).
+   */
+  driveRemoteCraft(
+    drone: RemoteCraft,
+    dt: number,
+    stick: { up: boolean; down: boolean; left: boolean; right: boolean },
+    aim: { x: number; y: number },
+    opts?: {
+      space?: boolean;
+      shift?: boolean;
+      /** World point for turret slew; defaults to `aim`. */
+      gunAim?: { x: number; y: number };
+      /** When false, skip track stamps (caller handles). Default true. */
+      stampTracks?: boolean;
+      /** When false, skip turret/nose gun sync. Default true. */
+      syncGun?: boolean;
+    }
+  ): void {
     const craft = this.ensureRemotePilotCraft(drone);
     if (!craft) return;
     const trackX0 = drone.x;
     const trackY0 = drone.y;
-    // Pull remote→Heli first (ground snap / other systems may have corrected pose).
     craft.x = drone.x;
     craft.y = drone.y;
     craft.z = drone.z;
@@ -8909,17 +8971,11 @@ specIsShellGun(spec)
     craft.update(
       dt,
       this.world,
-      {
-        up: this.keyW.isDown,
-        down: this.keyS.isDown,
-        left: this.keyA.isDown,
-        right: this.keyD.isDown,
-      },
+      stick,
       aim.x,
       aim.y,
-      // Ground pods stay dirt-locked via snapRemoteGround — no collective loft.
-      drone.spec.ground ? false : this.keySpace.isDown,
-      drone.spec.ground ? false : this.keyShift.isDown
+      drone.spec.ground ? false : !!opts?.space,
+      drone.spec.ground ? false : !!opts?.shift
     );
     drone.x = craft.x;
     drone.y = craft.y;
@@ -8931,26 +8987,48 @@ specIsShellGun(spec)
     drone.roll = craft.roll;
     drone.pitch = craft.pitch;
     drone.rotor = craft.rotor;
-    // Turrets slew like host chin guns; fixed/plane nose stays hull-locked.
-    const selected = Phaser.Math.Clamp(
-      drone.weapon ?? 0,
-      0,
-      Math.max(0, craft.spec.sockets.length - 1)
-    );
-    craft.weapon = selected;
-    if (craftAimsWithTurret(craft.spec)) {
-      const want = Math.atan2(aim.y - drone.y, aim.x - drone.x);
-      this.slewCraftTurretStations(craft, want, dt, selected);
-      drone.gunAngle = craft.gunAngle;
-    } else {
-      drone.gunAngle = craft.angle;
-      craft.gunAngle = craft.angle;
+    this.remoteCraftDriven.add(drone.id);
+
+    if (opts?.syncGun !== false) {
+      const selected = Phaser.Math.Clamp(
+        drone.weapon ?? 0,
+        0,
+        Math.max(0, craft.spec.sockets.length - 1)
+      );
+      craft.weapon = selected;
+      const gunAim = opts?.gunAim ?? aim;
+      if (craftAimsWithTurret(craft.spec)) {
+        const want = Math.atan2(gunAim.y - drone.y, gunAim.x - drone.x);
+        this.slewCraftTurretStations(craft, want, dt, selected);
+        drone.gunAngle = craft.gunAngle;
+      } else {
+        drone.gunAngle = craft.angle;
+        craft.gunAngle = craft.angle;
+      }
     }
     drone.health = Math.min(drone.health, craft.health);
-    // Craft-piloted remotes integrate inside Heli.update — stamp tracks here (not in updateRemotes).
-    if (drone.spec.track && !drone.airborne) {
+    if (opts?.stampTracks !== false && drone.spec.track && !drone.airborne) {
       this.stampRemoteTracks(drone, dt, trackX0, trackY0);
     }
+  }
+
+  /** Player WASD → shadow Heli. */
+  tickRemoteCraftPilot(drone: RemoteCraft, dt: number, aim: { x: number; y: number }): void {
+    this.driveRemoteCraft(
+      drone,
+      dt,
+      {
+        up: this.keyW.isDown,
+        down: this.keyS.isDown,
+        left: this.keyA.isDown,
+        right: this.keyD.isDown,
+      },
+      aim,
+      {
+        space: this.keySpace.isDown,
+        shift: this.keyShift.isDown,
+      }
+    );
     if (drone.spec.dockable) {
       if (this.remoteNearHost(drone) && (this.keyE.isDown || drone.life < 10)) drone.dock = true;
     }
@@ -8960,28 +9038,8 @@ specIsShellGun(spec)
     this.remotePilotCraft.delete(id);
   }
 
-  /** Project velocity onto hull forward and accelerate along it (no strafe / slide). */
-  driveRemoteAlongHeading(
-    drone: RemoteCraft,
-    thrustAlong: number,
-    dt: number,
-    friction: number,
-    speedCap?: number
-  ): void {
-    const spec = drone.spec;
-    const ca = Math.cos(drone.angle);
-    const sa = Math.sin(drone.angle);
-    let along = drone.vx * ca + drone.vy * sa;
-    along += thrustAlong * dt;
-    along *= Math.pow(friction, dt);
-    const cap = speedCap ?? spec.maxSpeed;
-    if (Math.abs(along) > cap) along = Math.sign(along) * cap;
-    drone.vx = ca * along;
-    drone.vy = sa * along;
-  }
-
   tickRemoteAi(drone: RemoteCraft, dt: number): void {
-    // Ground AGV AI (HOUND) — orbit/shoot; piloted path uses craft Heli instead.
+    // Ground AGV AI (HOUND) — orbit/shoot; same shadow Heli as piloted.
     if (drone.spec.ground && drone.spec.gun) {
       this.tickHoundAi(drone, dt);
       return;
@@ -9019,18 +9077,11 @@ specIsShellGun(spec)
       ty = h.y + Math.sin(drone.orbit) * ring;
     }
     const want = Math.atan2(ty - drone.y, tx - drone.x);
-    drone.angle = this.steerUnitAngle(drone.angle, want, spec.yawRate * 0.85, dt);
-    const ca = Math.cos(drone.angle);
-    const sa = Math.sin(drone.angle);
-    drone.vx += ca * spec.thrust * 0.55 * dt;
-    drone.vy += sa * spec.thrust * 0.55 * dt;
-    drone.vx *= Math.pow(0.15, dt);
-    drone.vy *= Math.pow(0.15, dt);
-    const spd = Math.hypot(drone.vx, drone.vy);
-    if (spd > spec.maxSpeed) {
-      drone.vx *= spec.maxSpeed / spd;
-      drone.vy *= spec.maxSpeed / spd;
-    }
+    const near = Math.hypot(tx - drone.x, ty - drone.y);
+    const throttle = near < 40 ? 0.35 : 1;
+    const { stick, aim } = this.remoteAiStickAim(drone, want, throttle);
+    this.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false });
+    drone.gunAngle = want;
     if (spec.dockable && drone.life < 8) {
       const d = Math.hypot(drone.x - h.x, drone.y - h.y, drone.z - h.z);
       if (d < 100) drone.dock = true;
@@ -9090,7 +9141,6 @@ specIsShellGun(spec)
     const aware = spec.awareRange ?? 560;
     const strafeR = spec.orbitRange ?? 160;
     const escortR = (spec.escortRange ?? 240) + host.radius;
-    const cruiseSpd = spec.maxSpeed;
 
     let target: Unit | undefined =
       drone.aiTargetId != null ? this.unitById(drone.aiTargetId) : undefined;
@@ -9130,30 +9180,30 @@ specIsShellGun(spec)
       // Bank into the strafe ring; nose leans toward the hostile for guns.
       const blend = Phaser.Math.Angle.Wrap(aimWant - pathWant);
       const face = pathWant + Phaser.Math.Clamp(blend, -0.85, 0.85);
-      drone.angle = this.steerUnitAngle(drone.angle, face, spec.yawRate * 0.95, dt);
-      drone.gunAngle = aimWant;
+      const near = Math.hypot(tx - drone.x, ty - drone.y);
+      const throttle = near < 40 ? 0.35 : 1;
+      const { stick, aim } = this.remoteAiStickAim(drone, face, throttle);
+      this.driveRemoteCraft(drone, dt, stick, aim, {
+        gunAim: { x: target.x, y: target.y },
+      });
       const aimErr = Math.abs(Phaser.Math.Angle.Wrap(drone.angle - aimWant));
       if (aimErr < 0.7 || Math.hypot(target.x - drone.x, target.y - drone.y) < maxEngage * 0.45) {
         this.fireRemoteGun(drone, dt, { x: target.x, y: target.y });
       }
-      const near = Math.hypot(tx - drone.x, ty - drone.y);
-      const throttle = near < 40 ? 0.55 : 1;
-      this.driveRemoteAlongHeading(drone, spec.thrust * throttle, dt, 0.16, cruiseSpd);
     } else {
       const ring = escortR + Math.sin((drone.orbit ?? 0) * 0.55 + drone.id) * 55;
       const tx = host.x + Math.cos(drone.orbit ?? 0) * ring;
       const ty = host.y + Math.sin(drone.orbit ?? 0) * ring;
       const want = Math.atan2(ty - drone.y, tx - drone.x);
-      drone.angle = this.steerUnitAngle(drone.angle, want, spec.yawRate * 0.85, dt);
-      drone.gunAngle = drone.angle;
       const near = Math.hypot(tx - drone.x, ty - drone.y);
-      // One speed band — slight thrust bump when closing on the escort ring (Raptor/host).
       const catchUp = near > escortR * 0.85;
-      const thrustMul = near < 50 ? 0.35 : catchUp ? 1.2 : 0.55;
-      this.driveRemoteAlongHeading(drone, spec.thrust * thrustMul, dt, 0.14, cruiseSpd);
+      const throttle = near < 50 ? 0 : catchUp ? 1 : 0.35;
+      const { stick, aim } = this.remoteAiStickAim(drone, want, throttle);
+      this.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false });
+      drone.gunAngle = drone.angle;
     }
 
-    // Soft climb toward host altitude band.
+    // Soft climb toward host altitude band (Heli seeks hull cruiseAgl; AI biases to host).
     const band = host.z + Phaser.Math.Clamp(spec.cruiseAgl - 30, -20, 40);
     drone.vz += (band - drone.z) * 1.8 * dt;
     drone.vz *= Math.pow(0.25, dt);
@@ -9168,7 +9218,6 @@ specIsShellGun(spec)
    * fly through, then break-turn for another run.
    */
   tickSkiffAttackPass(drone: RemoteCraft, dt: number, target: Unit): void {
-    const spec = drone.spec;
     const dx = target.x - drone.x;
     const dy = target.y - drone.y;
     const dist = Math.hypot(dx, dy);
@@ -9176,7 +9225,7 @@ specIsShellGun(spec)
     const sa = Math.sin(drone.angle);
     // >0 when the target is still ahead of the nose.
     const ahead = dx * ca + dy * sa;
-    const gunId = remoteGunId(spec);
+    const gunId = remoteGunId(drone.spec);
     const bulletSpd = gunId ? PLAYER_WPNS[gunId]?.speed ?? 900 : 900;
     // Lead the nose for a collision course; shots still leave along heading.
     const leadT = Phaser.Math.Clamp(dist / Math.max(280, bulletSpd * 0.4), 0.04, 0.45);
@@ -9188,7 +9237,8 @@ specIsShellGun(spec)
     if (!drone.aiPass) drone.aiPass = "run";
 
     if (drone.aiPass === "run") {
-      drone.angle = this.steerUnitAngle(drone.angle, aimWant, spec.yawRate * 1.05, dt);
+      const { stick, aim } = this.remoteAiStickAim(drone, aimWant, 1);
+      this.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false });
       drone.gunAngle = drone.angle;
       // Fire window: nose on target, not too close to clip through the burst.
       const fireMax = Math.min(420, this.wingmanMaxEngageRange() * 0.55);
@@ -9200,12 +9250,11 @@ specIsShellGun(spec)
       if (ahead < -12 || (dist < 48 && ahead < dist * 0.35)) {
         drone.aiPass = "break";
       }
-      this.driveRemoteAlongHeading(drone, spec.thrust, dt, 0.14);
     } else {
       // Break turn: keep speed, yank nose back toward the target for the next pass.
-      drone.angle = this.steerUnitAngle(drone.angle, aimWant, spec.yawRate * 1.35, dt);
+      const { stick, aim } = this.remoteAiStickAim(drone, aimWant, 0.9);
+      this.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false });
       drone.gunAngle = drone.angle;
-      this.driveRemoteAlongHeading(drone, spec.thrust * 0.92, dt, 0.12);
       // Re-commit once the target is ahead again and roughly lined up.
       if (ahead > Math.max(70, dist * 0.35) && aimErr < 0.55) {
         drone.aiPass = "run";
@@ -9254,16 +9303,15 @@ specIsShellGun(spec)
     if (dist < 24) return true;
 
     const want = Math.atan2(dy, dx);
-    drone.angle = this.steerUnitAngle(drone.angle, want, drone.spec.yawRate * 1.25, dt);
-    drone.gunAngle = drone.angle;
     const approach = Phaser.Math.Clamp(dist / 220, 0.22, 1);
-    const speed = drone.spec.maxSpeed * (0.45 + approach * 0.4);
-    this.driveRemoteAlongHeading(drone, drone.spec.thrust * (0.35 + approach * 0.75), dt, 0.2, speed);
+    const { stick, aim } = this.remoteAiStickAim(drone, want, 0.35 + approach * 0.75);
+    this.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false });
+    drone.gunAngle = drone.angle;
     drone.vz += dz * 2.6 * dt;
     drone.vz *= Math.pow(0.3, dt);
     if (dist < 110) {
       const pull = 1 - Math.exp(-5 * dt);
-      const along = speed * 0.9;
+      const along = drone.spec.maxSpeed * (0.45 + approach * 0.4) * 0.9;
       drone.vx = Phaser.Math.Linear(drone.vx, (dx / dist) * along, pull);
       drone.vy = Phaser.Math.Linear(drone.vy, (dy / dist) * along, pull);
     }
@@ -9293,10 +9341,13 @@ specIsShellGun(spec)
       drone.aiTargetId = best?.id;
     }
 
+    const gunAim = target
+      ? { x: target.x, y: target.y }
+      : { x: ptr.x, y: ptr.y };
     if (target) {
       const aimWant = Math.atan2(target.y - drone.y, target.x - drone.x);
-      const hull = drone.spec.craftLook ? craftOf(drone.spec.craftLook) : undefined;
-      if (hull && craftAimsWithTurret(hull)) {
+      const hull = craftOf(drone.spec.craftLook);
+      if (craftAimsWithTurret(hull)) {
         drone.gunAngle = Phaser.Math.Angle.RotateTo(
           drone.gunAngle ?? drone.angle,
           aimWant,
@@ -9311,8 +9362,8 @@ specIsShellGun(spec)
       }
     } else {
       const idleWant = Math.atan2(ptr.y - drone.y, ptr.x - drone.x);
-      const hull = drone.spec.craftLook ? craftOf(drone.spec.craftLook) : undefined;
-      if (hull && craftAimsWithTurret(hull)) {
+      const hull = craftOf(drone.spec.craftLook);
+      if (craftAimsWithTurret(hull)) {
         drone.gunAngle = Phaser.Math.Angle.RotateTo(
           drone.gunAngle ?? drone.angle,
           idleWant,
@@ -9323,16 +9374,15 @@ specIsShellGun(spec)
       }
     }
 
-    // Always drive toward the pointer — park when close enough.
+    // Always drive toward the pointer — park when close enough (same orbit stick as piloted).
     const toMouse = Math.hypot(ptr.x - drone.x, ptr.y - drone.y);
-    if (toMouse < stopR) {
-      this.driveRemoteAlongHeading(drone, 0, dt, 0.04);
-      return;
-    }
     const want = Math.atan2(ptr.y - drone.y, ptr.x - drone.x);
-    drone.angle = this.steerUnitAngle(drone.angle, want, spec.yawRate * 0.9, dt);
-    const throttle = toMouse < stopR * 1.6 ? 0.3 : 0.7;
-    this.driveRemoteAlongHeading(drone, spec.thrust * throttle, dt, 0.14);
+    const throttle = toMouse < stopR ? 0 : toMouse < stopR * 1.6 ? 0.35 : 0.7;
+    const { stick, aim } = this.remoteAiStickAim(drone, want, throttle);
+    this.driveRemoteCraft(drone, dt, stick, aim, {
+      syncGun: false,
+      gunAim,
+    });
   }
 
   /**
@@ -9462,21 +9512,14 @@ specIsShellGun(spec)
     }
 
     const pilotedId = this.pilotingRemote()?.id;
-    const craftPiloted =
-      !!pilotedId &&
-      this.remoteView &&
-      this.remotePilotCraft.has(pilotedId);
-    // Drive AI pods / dock approaches every frame (piloted / airborne remotes steered earlier).
+    // Drive AI pods / dock approaches every frame (piloted remotes steered earlier via shadow Heli).
     for (const r of this.remotes) {
       if (r.detonate || r.airborne) continue;
       if (r.dock) {
-        if (this.remotePilotCraft.has(r.id)) this.releaseRemotePilotCraft(r.id);
         this.tickRemoteDockApproach(r, dt);
         continue;
       }
       if (r.spec.ai && r.id !== pilotedId) {
-        // Drop shadow Heli when AI takes over after Q exit.
-        if (this.remotePilotCraft.has(r.id)) this.releaseRemotePilotCraft(r.id);
         this.tickRemoteAi(r, dt);
       }
     }
@@ -9486,15 +9529,15 @@ specIsShellGun(spec)
       const trackX0 = r.x;
       const trackY0 = r.y;
       r.life -= dt;
-      // Craft-piloted remotes already integrated inside Heli.update this frame.
-      if (!(craftPiloted && r.id === pilotedId) || r.dock) {
+      // Shadow-Heli remotes (pilot + AI) already integrated inside Heli.update this frame.
+      if (!this.remoteCraftDriven.has(r.id)) {
         r.x += r.vx * dt;
         r.y += r.vy * dt;
         r.z += r.vz * dt;
       }
       if (!r.dock) this.snapRemoteGround(r, dt);
-      // Craft-piloted remotes stamp tracks inside tickRemoteCraftPilot (Heli already moved them).
-      if (r.spec.track && !r.airborne && !(craftPiloted && r.id === pilotedId)) {
+      // Craft-driven remotes stamp tracks inside driveRemoteCraft.
+      if (r.spec.track && !r.airborne && !this.remoteCraftDriven.has(r.id)) {
         this.stampRemoteTracks(r, dt, trackX0, trackY0);
       }
       if (r.spec.exhaustSmoke && !r.airborne) this.emitRemoteExhaustSmoke(r, dt);
@@ -9523,8 +9566,8 @@ specIsShellGun(spec)
         this.explode(r.x, r.y, r.z, r.spec.detonateBlast, r.spec.detonateDmg, undefined, r.vx, r.vy, r.vz, false, "guided-missile", 1);
         continue;
       }
-      // Craft-piloted rotors spin inside Heli.update.
-      if (remoteRotorParts(r.spec).length && !(craftPiloted && r.id === pilotedId)) {
+      // Shadow-Heli remotes spin rotors inside Heli.update.
+      if (remoteRotorParts(r.spec).length && !this.remoteCraftDriven.has(r.id)) {
         r.rotor += 18 * dt;
       }
       this.remotes[w++] = r;

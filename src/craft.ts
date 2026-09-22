@@ -1050,6 +1050,8 @@ const CRAFTS_DEFS = {
         fireRateMul: 0.48,
         gunTex: "craft_hover_tank_turret",
         gunLayer: "above",
+        // Cupola rail — print larger than the coax MG on the same mount.
+        gunScale: 1.35,
         // Kick opposite turret aim (not hull heading).
         recoil: true,
       },
