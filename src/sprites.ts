@@ -17,6 +17,7 @@ const SRC = {
   enemyAirShipHulk: "sprites/units/enemy_air_ship_hulk.png",
   enemyMotoMg: "sprites/units/enemy_moto_mg.png",
   enemyMotoMgHulk: "sprites/units/enemy_moto_mg_hulk.png",
+  enemyMotoHulk: "sprites/units/enemy_moto_hulk.png",
   buildingBunker: "sprites/units/building_bunker.png",
   buildingBunkerHulk: "sprites/units/building_bunker_hulk.png",
   buildingStructures: "sprites/units/building_structures.png",
@@ -86,6 +87,7 @@ export const PLAYER_ORDNANCE_SHOT_ART: readonly {
   { look: "shot_bomb", size: 44 },
   { look: "shot_winged_bomb", size: 40 },
   { look: "shot_canister", size: 32 },
+  { look: "shot_artillery_shell", size: 28 },
 ];
 
 /** Additive Photon lens-flare layers (black-keyed). Old `shot_photon` lives in `shots/_shelf/`. */
@@ -100,14 +102,16 @@ export const PHOTON_FLARE_ART: readonly { key: string; file: string; size: numbe
  * Shared player turret gun bodies (barrel-up, magenta key) under `public/sprites/guns/`.
  * Weapons map onto these via `PlayerWpnSpec.mount` in combat.ts — no swivel track art.
  */
-export const PLAYER_GUN_MOUNT_ART: readonly { key: string; size: number }[] = [
+export const PLAYER_GUN_MOUNT_ART: readonly { key: string; size: number; procedural?: boolean }[] = [
   { key: "gun_gatling", size: 52 },
+  { key: "gun_dual_chain", size: 56 },
   { key: "gun_minigun", size: 40 },
   { key: "gun_machine", size: 38 },
   { key: "gun_artillery", size: 56 },
   { key: "gun_railgun", size: 52 },
   { key: "gun_plasma", size: 50 },
   { key: "gun_tesla", size: 48 },
+  { key: "gun_pilot", size: 28 },
 ];
 
 /**
@@ -164,6 +168,22 @@ const CRAFT_ART: { key: string; file: string; fit: number; rotor?: boolean; keyP
   { key: "craft_gunship_hulk", file: "sprites/craft/gunship-hulk.png", fit: 324 },
   { key: "craft_warthog", file: "sprites/craft/warthog.png", fit: 142 },
   { key: "craft_warthog_hulk", file: "sprites/craft/warthog-hulk.png", fit: 142 },
+  { key: "craft_airship", file: "sprites/craft/airship.png", fit: 380 },
+  { key: "craft_airship_hulk", file: "sprites/craft/airship-hulk.png", fit: 380 },
+  { key: "craft_biplane", file: "sprites/craft/biplane.png", fit: 72 },
+  { key: "craft_biplane_hulk", file: "sprites/craft/biplane-hulk.png", fit: 72 },
+  { key: "craft_skiff", file: "sprites/craft/skiff.png", fit: 64 },
+  { key: "craft_skiff_hulk", file: "sprites/craft/skiff-hulk.png", fit: 64 },
+  { key: "craft_raptor", file: "sprites/craft/raptor.png", fit: 88 },
+  { key: "craft_raptor_hulk", file: "sprites/craft/raptor-hulk.png", fit: 88 },
+  { key: "craft_reaper", file: "sprites/craft/reaper.png", fit: 150 },
+  { key: "craft_reaper_hulk", file: "sprites/craft/reaper-hulk.png", fit: 150 },
+  { key: "craft_hover_tank", file: "sprites/craft/hover-tank.png", fit: 110 },
+  { key: "craft_hover_tank_hulk", file: "sprites/craft/hover-tank-hulk.png", fit: 110 },
+  { key: "craft_hover_tank_turret", file: "sprites/craft/hover-tank-turret.png", fit: 64 },
+  { key: "craft_hound", file: "sprites/craft/hound.png", fit: 72 },
+  { key: "craft_vtol_dropship_v2", file: "sprites/craft/vtol-dropship-v2.png", fit: 140 },
+  { key: "craft_vtol_dropship_v2_hulk", file: "sprites/craft/vtol-dropship-v2-hulk.png", fit: 140 },
 ];
 
 export const BIOME_TILE_NAMES = ["water", "sand", "grass", "forest", "rock", "peak"] as const;
@@ -182,7 +202,7 @@ export const DOODAD_ART: { key: string; size: number }[] = [
   { key: "snowrock", size: 34 },
 ];
 
-export const FX_KINDS = ["spark", "flame", "smoke", "muzzle", "exhaust", "dirt", "splash", "zap"] as const;
+export const FX_KINDS = ["spark", "flame", "smoke", "muzzle", "exhaust", "dirt", "splash", "zap", "ember"] as const;
 export type FxKind = (typeof FX_KINDS)[number];
 export const FX_VARIANTS = 4;
 /** Bake cell size per FX sheet (putFxSheet). */
@@ -195,9 +215,16 @@ export const FX_SHEET_SIZE: Record<FxKind, number> = {
   dirt: 22,
   splash: 20,
   zap: 96,
+  /**
+   * Source PNGs are single ember particles; bake composes scatter patterns
+   * into `fx_ember` and keeps raw particles on `fx_ember_particle`.
+   */
+  ember: 48,
 };
 /** Cells from src_blasts 2×2 grid → fx_blast_0..n-1. */
 export const FX_BLAST_CELLS = 4;
+/** Baked pixel span for scorch stamps. */
+export const FX_BLAST_FIT = 88;
 
 /** Soft cloud banks for chase-cam parallax (all craft; scale/alpha/scroll from cruise AGL). Black/white alpha masks. */
 export const CLOUD_ART: readonly { key: string; file: string; size: number }[] = [
@@ -205,6 +232,13 @@ export const CLOUD_ART: readonly { key: string; file: string; size: number }[] =
   { key: "fx_cloud_2", file: "sprites/clouds/cloud-2.png", size: 640 },
   { key: "fx_cloud_3", file: "sprites/clouds/cloud-3.png", size: 420 },
   { key: "fx_cloud_4", file: "sprites/clouds/cloud-4.png", size: 580 },
+];
+
+/** Distant mountain peaks for leave-theater sky (planes only). Magenta-keyed. */
+export const MOUNTAIN_PEAK_ART: readonly { key: string; file: string; size: number }[] = [
+  { key: "fx_mountain_peak_1", file: "sprites/clouds/mountain-peak-1.png", size: 480 },
+  { key: "fx_mountain_peak_2", file: "sprites/clouds/mountain-peak-2.png", size: 520 },
+  { key: "fx_mountain_peak_3", file: "sprites/clouds/mountain-peak-3.png", size: 460 },
 ];
 
 export function preloadArt(scene: Phaser.Scene): void {
@@ -225,6 +259,7 @@ export function preloadArt(scene: Phaser.Scene): void {
   scene.load.image("src_enemy_air_ship_hulk", SRC.enemyAirShipHulk);
   scene.load.image("src_enemy_moto_mg", SRC.enemyMotoMg);
   scene.load.image("src_enemy_moto_mg_hulk", SRC.enemyMotoMgHulk);
+  scene.load.image("src_enemy_moto_hulk", SRC.enemyMotoHulk);
   scene.load.image("src_building_bunker", SRC.buildingBunker);
   scene.load.image("src_building_bunker_hulk", SRC.buildingBunkerHulk);
   scene.load.image("src_building_structures", SRC.buildingStructures);
@@ -260,6 +295,9 @@ export function preloadArt(scene: Phaser.Scene): void {
   for (const art of CLOUD_ART) {
     scene.load.image(`src_${art.key}`, art.file);
   }
+  for (const art of MOUNTAIN_PEAK_ART) {
+    scene.load.image(`src_${art.key}`, art.file);
+  }
   for (const art of PLAYER_ORDNANCE_SHOT_ART) {
     scene.load.image(`src_${art.look}`, `sprites/shots/${art.look}.png`);
   }
@@ -267,6 +305,7 @@ export function preloadArt(scene: Phaser.Scene): void {
     scene.load.image(`src_${art.key}`, art.file);
   }
   for (const art of PLAYER_GUN_MOUNT_ART) {
+    if (art.procedural) continue;
     scene.load.image(`src_${art.key}`, `sprites/guns/${art.key}.png`);
   }
 }
@@ -635,6 +674,16 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
       put(textures, art.key, fit(keyed, art.fit));
     }
   }
+  // Craft-specific turret overlays (barrel-up) get the same tip glow bake as shared gun mounts.
+  if (textures.exists("craft_hover_tank_turret")) {
+    const gun = textures.get("craft_hover_tank_turret").getSourceImage() as HTMLCanvasElement;
+    put(
+      textures,
+      "craft_hover_tank_turret_muzzle_glow",
+      bakeMuzzleGlow(gun, muzzleGlowPalette("gun_railgun")),
+      "generated"
+    );
+  }
 
   const parts = sliceGrid(keyImage(src(textures, "src_enemy_tank_parts"), "magenta"), 2, 1);
   const hull = fit(parts[0]!, 72);
@@ -720,9 +769,16 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     put(textures, `${key}_sink`, submergeBlue(img), "generated");
   }
   putHulkGrid(textures, "src_enemy_moto_mg_hulk", 2, 1, [
-    ["enemy_motorcycle_hulk", 46],
+    ["_moto", 46],
     ["enemy_troop_mounted_mg_hulk", 36],
   ]);
+  if (textures.exists("src_enemy_moto_hulk")) {
+    put(
+      textures,
+      "enemy_motorcycle_hulk",
+      darkenWreck(fit(keyImage(src(textures, "src_enemy_moto_hulk"), "magenta"), 52))
+    );
+  }
   putHulkGrid(textures, "src_building_structures_hulk", 2, 2, [
     ["building_barn_hulk", 86],
     ["building_tent_hulk", 64],
@@ -796,6 +852,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   putPhotonFlare(textures);
 
   for (const art of PLAYER_GUN_MOUNT_ART) {
+    if (art.procedural) continue;
     const srcKey = `src_${art.key}`;
     if (!textures.exists(srcKey)) continue;
     // Gun mounts are authored barrel-up — no rotate.
@@ -812,7 +869,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   const blastSrc = src(textures, "src_blasts");
   const blasts = sliceGrid(matteMagenta(copyToCanvas(blastSrc, blastSrc.width, blastSrc.height)), 2, 2);
   blasts.forEach((c, i) => {
-    const blast = fit(c, 88);
+    const blast = fit(c, FX_BLAST_FIT);
     put(textures, `fx_blast_${i}`, blast);
     put(textures, `fx_blast_${i}_heat`, bakeThermalHeatFromDarkness(blast), "generated");
   });
@@ -827,6 +884,12 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     if (!textures.exists(srcKey)) continue;
     // Pink → transparent, white luminance → alpha (same idea as smoke's black knockout).
     put(textures, art.key, fit(bakeCloudArt(src(textures, srcKey)), art.size));
+  }
+
+  for (const art of MOUNTAIN_PEAK_ART) {
+    const srcKey = `src_${art.key}`;
+    if (!textures.exists(srcKey)) continue;
+    put(textures, art.key, fit(bakeMountainPeakArt(src(textures, srcKey)), art.size));
   }
 
   const shadowSrc = [
@@ -1062,6 +1125,33 @@ function putFxSheet(
     }
   }
   if (!cells.length) return;
+
+  // Ember sources are single particles — keep them, and bake scatter patterns.
+  if (kind === "ember") {
+    const particleSize = Math.max(10, Math.round(size * 0.28));
+    const particles = cells.map((c) => fit(trim(c, 1), particleSize));
+    putFxSpriteSheet(textures, "fx_ember_particle", particles, particleSize, "generated");
+    putFxSpriteSheet(
+      textures,
+      "fx_ember_particle_soft",
+      particles.map((p) => softBlurFx(p, 0.42)),
+      particleSize,
+      "generated"
+    );
+    const patterns = Array.from({ length: FX_VARIANTS }, (_, i) =>
+      composeEmberPattern(particles, size, 1103 + i * 7919)
+    );
+    putFxSpriteSheet(textures, destKey, patterns, size, "generated");
+    putFxSpriteSheet(
+      textures,
+      `${destKey}_soft`,
+      patterns.map((cell) => softBlurFx(cell, 0.4)),
+      size,
+      "generated"
+    );
+    return;
+  }
+
   putFxSpriteSheet(textures, destKey, cells, size);
   if (tintCells.length) putFxSpriteSheet(textures, `${destKey}_tint`, tintCells, size);
   // ParticleEmitter has no ColorMatrix preFX — bake craft trail hues up front.
@@ -1089,6 +1179,60 @@ function putFxSheet(
       "generated"
     );
   }
+}
+
+/** Deterministic mulberry32 from a seed. */
+function emberRand(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Scatter single ember particles into a pattern cell (additive, radial bias).
+ * Source art is one coal each — composition is randomized per seed.
+ */
+function composeEmberPattern(
+  particles: HTMLCanvasElement[],
+  size: number,
+  seed: number
+): HTMLCanvasElement {
+  const out = document.createElement("canvas");
+  out.width = size;
+  out.height = size;
+  const g = out.getContext("2d", { willReadFrequently: true })!;
+  g.clearRect(0, 0, size, size);
+  g.globalCompositeOperation = "lighter";
+  const rnd = emberRand(seed);
+  const n = 7 + ((rnd() * 8) | 0);
+  const cx = size * 0.5;
+  const cy = size * 0.5;
+  for (let i = 0; i < n; i++) {
+    const p = particles[(rnd() * particles.length) | 0]!;
+    // Radial bias: denser near center, sparse rim.
+    const ang = rnd() * Math.PI * 2;
+    const dist = Math.pow(rnd(), 0.55) * size * 0.42;
+    const x = cx + Math.cos(ang) * dist;
+    const y = cy + Math.sin(ang) * dist;
+    const sc = 0.35 + rnd() * 1.15;
+    const rot = rnd() * Math.PI * 2;
+    const w = p.width * sc;
+    const h = p.height * sc;
+    g.save();
+    g.translate(x, y);
+    g.rotate(rot);
+    g.globalAlpha = 0.55 + rnd() * 0.45;
+    g.drawImage(p, -w * 0.5, -h * 0.5, w, h);
+    g.restore();
+  }
+  g.globalCompositeOperation = "source-over";
+  g.globalAlpha = 1;
+  return out;
 }
 
 /** Keep horizontal U range [u0, u1] of an FX cell (tear tip cut for exhaust cones). */
@@ -1292,6 +1436,24 @@ function fxKnockBlack(src: HTMLCanvasElement): HTMLCanvasElement {
   }
   g.putImageData(pix, 0, 0);
   return src;
+}
+
+/** Soft blurred copy for ADD ember bloom overlays. */
+function softBlurFx(src: HTMLCanvasElement, strength = 0.35): HTMLCanvasElement {
+  const pad = Math.max(4, Math.round(Math.max(src.width, src.height) * strength * 0.45));
+  const out = document.createElement("canvas");
+  out.width = src.width + pad * 2;
+  out.height = src.height + pad * 2;
+  const g = out.getContext("2d", { willReadFrequently: true })!;
+  g.clearRect(0, 0, out.width, out.height);
+  g.filter = `blur(${Math.max(2, Math.round(pad * 0.55))}px)`;
+  g.globalAlpha = 0.95;
+  g.drawImage(src, pad, pad);
+  g.filter = "none";
+  g.globalAlpha = 0.55;
+  g.drawImage(src, pad, pad);
+  // Fit back to source cell size for sheet packing.
+  return fit(out, src.width);
 }
 
 /** Neutralize generated warm flame color so Phaser tint can produce energy exhaust hues. */
@@ -1591,6 +1753,67 @@ function keyDoodad(img: HTMLImageElement): HTMLCanvasElement {
   }
   g.putImageData(pix, 0, 0);
   return trim(c);
+}
+
+/**
+ * Magenta-key mountain peaks (edge-connected key only — keep dark rock + snow),
+ * then force a solid opaque core with a soft feather at the silhouette rim.
+ */
+function bakeMountainPeakArt(img: HTMLImageElement): HTMLCanvasElement {
+  // "edge" keys only backdrop magenta touching the frame — never punches dark rock or snow.
+  const c = trim(keyPixels(img, "edge"));
+  const g = c.getContext("2d", { willReadFrequently: true })!;
+  const pix = g.getImageData(0, 0, c.width, c.height);
+  const d = pix.data;
+  const w = c.width;
+  const h = c.height;
+  const n = w * h;
+  const solid = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    solid[i] = d[i * 4 + 3]! >= 20 ? 1 : 0;
+  }
+  // Chamfer distance into the silhouette (0 at rim, larger deeper inside).
+  const dist = new Float32Array(n);
+  const INF = 1e6;
+  for (let i = 0; i < n; i++) dist[i] = solid[i] ? INF : 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (!solid[i]) continue;
+      let best = dist[i]!;
+      if (x > 0) best = Math.min(best, dist[i - 1]! + 1);
+      if (y > 0) best = Math.min(best, dist[i - w]! + 1);
+      if (x > 0 && y > 0) best = Math.min(best, dist[i - w - 1]! + 1.414);
+      if (x + 1 < w && y > 0) best = Math.min(best, dist[i - w + 1]! + 1.414);
+      dist[i] = best;
+    }
+  }
+  for (let y = h - 1; y >= 0; y--) {
+    for (let x = w - 1; x >= 0; x--) {
+      const i = y * w + x;
+      if (!solid[i]) continue;
+      let best = dist[i]!;
+      if (x + 1 < w) best = Math.min(best, dist[i + 1]! + 1);
+      if (y + 1 < h) best = Math.min(best, dist[i + w]! + 1);
+      if (x + 1 < w && y + 1 < h) best = Math.min(best, dist[i + w + 1]! + 1.414);
+      if (x > 0 && y + 1 < h) best = Math.min(best, dist[i + w - 1]! + 1.414);
+      dist[i] = best;
+    }
+  }
+  const feather = Math.max(5, Math.round(Math.min(w, h) * 0.035));
+  for (let i = 0; i < n; i++) {
+    const o = i * 4;
+    if (!solid[i]) {
+      d[o + 3] = 0;
+      continue;
+    }
+    const t = Math.min(1, dist[i]! / feather);
+    const edge = t * t * (3 - 2 * t);
+    // Fully opaque past the feather band; soft only at the rim.
+    d[o + 3] = Math.round(edge * 255);
+  }
+  g.putImageData(pix, 0, 0);
+  return c;
 }
 
 /** Keep the circular dish only — drop any pedestal/yoke hanging below. */
@@ -2480,24 +2703,30 @@ export function bakeShadows(textures: Phaser.Textures.TextureManager, key: strin
   });
 }
 
+/** Soft engine glow: top-middle = nozzle; short soft wash behind the flame root. */
 export function ensureExhaustGlow(textures: Phaser.Textures.TextureManager): void {
-  if (textures.exists("fx_exhaust_glow")) return;
-  const w = 48;
-  const h = 20;
+  if (textures.exists("fx_exhaust_glow")) {
+    const src = textures.get("fx_exhaust_glow").getSourceImage() as { width?: number; height?: number };
+    // Rebuild if an older bake is still cached.
+    if (src.width === 32 && src.height === 28) return;
+    textures.remove("fx_exhaust_glow");
+  }
+  // Compact soft blob under the nozzle — origin (0.5, 0); not a long plume.
+  const w = 32;
+  const h = 28;
   const c = document.createElement("canvas");
   c.width = w;
   c.height = h;
   const g = c.getContext("2d", { willReadFrequently: true })!;
-  const grad = g.createRadialGradient(w * 0.5, h * 0.5, 0, w * 0.5, h * 0.5, w * 0.5);
+  const cx = w * 0.5;
+  const cy = h * 0.22;
+  const grad = g.createRadialGradient(cx, cy, 0, cx, cy, Math.max(w, h) * 0.62);
   grad.addColorStop(0, "rgba(255,255,255,1)");
-  grad.addColorStop(0.2, "rgba(255,255,255,0.92)");
-  grad.addColorStop(0.58, "rgba(255,255,255,0.34)");
+  grad.addColorStop(0.28, "rgba(255,255,255,0.72)");
+  grad.addColorStop(0.62, "rgba(255,255,255,0.22)");
   grad.addColorStop(1, "rgba(255,255,255,0)");
-  g.save();
-  g.scale(1, h / w);
   g.fillStyle = grad;
-  g.fillRect(0, 0, w, w);
-  g.restore();
+  g.fillRect(0, 0, w, h);
   textures.addCanvas("fx_exhaust_glow", c);
   registerArt("fx_exhaust_glow", "generated");
 }

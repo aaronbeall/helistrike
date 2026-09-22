@@ -11,9 +11,6 @@ export const SHOT_ORIGIN = { x: 0.84, y: 0.5 } as const;
 /** Exhaust / trail emit UV (rear of projectile art, nose-along-+X). */
 export const SHOT_TAIL = { x: 0.06, y: 0.5 } as const;
 
-/** Player loadout identity (slot / catalog key). */
-export type WpnId = string;
-
 /** Shared ordnance projectile keys under public/sprites/shots/. */
 const ORD = {
   rocket: "shot_rocket",
@@ -26,6 +23,7 @@ const ORD = {
   wingedBomb: "shot_winged_bomb",
   canister: "shot_canister",
   photon: "shot_photon",
+  artilleryShell: "shot_artillery_shell",
 } as const;
 
 function ordLook(key: keyof typeof ORD): ShotLook {
@@ -73,16 +71,38 @@ export type ExhaustTrail =
   | {
       kind: "particles";
       fire?: "burn" | "hotFlame";
+      /**
+       * Emit fire only for this many seconds after launch (motor flash),
+       * then continue with smoke alone. Omit = fire for the whole flight.
+       */
+      fireFor?: number;
       smoke?: "linger" | "short" | "rocket";
+      /** Thin pale stretched smoke like jet wingtip contrails (JDAM). */
+      contrail?: boolean;
       align?: "heading";
       size?: number;
+      /**
+       * Particle scale for motor fire only. Omit = use `size` (same as smoke).
+       * Coast rockets use a smaller fireSize so the plume stays dense without
+       * bloating the long smoke.
+       */
+      fireSize?: number;
+      /** Multiplier on trail particle emit rate (bombs use sparse <1). */
       density?: number;
+      /** Override trail emit UV (default SHOT_TAIL). */
+      emitUv?: { x: number; y: number };
     }
   | {
       kind: "energy";
       ribbons?: number;
       hue?: "cyan" | "green" | "magenta";
       warpMotes?: boolean | { density?: number };
+    }
+  /** Signal-flare pellet: pink/red flame-smoke loft + fast red sparks. */
+  | {
+      kind: "signalFlare";
+      size?: number;
+      density?: number;
     };
 
 export type WeaponCam = {
@@ -93,9 +113,19 @@ export type WeaponCam = {
   /** When false, skip plane look-ahead mul (Sidewinder). Omit = apply mul. */
   planeLookMul?: false;
   lockHud?: { seeking: string; locked: string; color: number; textColor: string };
+  /**
+   * Laser aim mode. Default boresight (project mouse along gun/nose).
+   * `mouse` = free aim at the reticle from socket mounts (spiders, laser/command AG).
+   */
+  sight?: "mouse" | "boresight";
 };
 
-export type HeDetonate = { look: "fire" | "energy" | "photonic"; dustMul?: number };
+export type HeDetonate = {
+  look: "fire" | "energy" | "photonic";
+  dustMul?: number;
+  /** Drop-bomb style toon blast + big-boom sparks/debris (MOAB / arty shells). */
+  bigBoom?: boolean;
+};
 
 export type WeaponPayload = {
   penetration?: number;
@@ -108,15 +138,59 @@ export type WeaponPayload = {
     spread: number;
     bombletDmg: number;
     bombletBlast: number;
+    /** Projectile art for each bomblet (e.g. shot_mini_rocket). */
+    look: ShotLook;
     break?: "spray" | "cone_hop";
+    /**
+     * Mid-air open after this fraction of predicted flight time to impact
+     * (same ballistic estimate as the drop path preview). Omit = open on impact.
+     */
+    openAt?: number;
     bombletDetonate?: HeDetonate;
   };
   smoke?: { duration: number; radius: number };
   remote?: { kind: RemoteKind; duration: number };
+  /**
+   * Ground skimmer: steer to mouse; when an enemy enters engageRange, latch and
+   * dash onto them (spider drones).
+   */
+  spider?: {
+    engageRange: number;
+    /** Dash top speed as × cruise (default 1.5). */
+    dashMul?: number;
+    /** Horizontal accel toward dash top speed (world u/s²; default 380). */
+    dashAccel?: number;
+  };
   warp?: { timeScale: number };
   helix?: { strands: number };
   split?: { at: number; count: number };
   bounce?: { maxBounces: number };
+  /**
+   * Mark-then-call: marker settles, then off-map shells rain onto the mark
+   * with XY jitter. Reusable across any craft socket.
+   */
+  callStrike?: {
+    /** Seconds after marker rest before the first shell. Omit / 0 = fire immediately. */
+    delay?: number;
+    rounds: number;
+    /** Seconds between shells. */
+    interval: number;
+    /** Uniform disk radius around the mark (world units). */
+    jitter: number;
+    shellDmg: number;
+    shellBlast: number;
+    /** Inbound shell projectile art. */
+    shellLook: ShotLook;
+    /** Constant inbound speed of each shell (world u/s). */
+    shellSpeed?: number;
+    /** Keep flare FX until this many shells have impacted (default 3). */
+    flareUntilHits?: number;
+  };
+  /**
+   * POV remote spot — one click fires `weapon` from the host craft mount
+   * (e.g. HOUND calling the dropship howitzer onto aim).
+   */
+  hostFire?: { weapon: string };
 };
 
 export type WeaponFire = {
@@ -175,7 +249,20 @@ export interface WeaponGravity {
 }
 
 export type WeaponLaunch =
-  | { mode: "muzzle"; inheritMomentum: number; acceleration?: number; gravity?: WeaponGravity }
+  | {
+      mode: "muzzle";
+      inheritMomentum: number;
+      /** Accel toward `speed` after leave (AA rail / Hydra boost). */
+      acceleration?: number;
+      /**
+       * With `acceleration`: burn duration then coast. Omit = keep thrusting
+       * (AA rail). Dumbfire rockets set this for motor flash → coast.
+       */
+      burnTime?: number;
+      /** Leave speed when `acceleration` is set (default 10 for rails). */
+      leaveSpeed?: number;
+      gravity?: WeaponGravity;
+    }
   | {
       mode: "kick_motor"; // Tube-launched missile: kick, coast, ignite, burn.
       kickSpeed: number;
@@ -194,8 +281,8 @@ export type WeaponLaunch =
 
 /** Player loadout — shared by fire logic and the combat rig. */
 export interface PlayerWpnSpec {
-  /** Loadout identity (slot / catalog). */
-  id: WpnId;
+  /** Loadout identity (must match the PLAYER_WPNS key). */
+  id: string;
   /** Short HUD nickname. */
   name: string;
   /** Display name: nickname + ordnance class (loadout / help). */
@@ -243,6 +330,8 @@ const LOOK_LOCK = { pull: 0.58, max: 220, rate: 5.6 } as const;
 const LOOK_ROCKET = { pull: 0.42, max: 160, rate: 7.4 } as const;
 const LOOK_GUIDED = { pull: 0.55, max: 210, rate: 6.5 } as const;
 const LOOK_GUN = { pull: 0.2, max: 88, rate: 10 } as const;
+/** Lobbed howitzer — longer lead than Starstreak, short of a theater pull-out. */
+const LOOK_ARTILLERY = { pull: 0.58, max: 260, rate: 5.2 } as const;
 const DIVE_TOW = { range: 280, power: 2.85, inner: 45 } as const;
 const DIVE_GRIFFIN = { range: 560, power: 1.25, inner: 90 } as const;
 const DIVE_SPIKE = { range: 340, power: 2.05 } as const;
@@ -250,6 +339,7 @@ const CAM_LOCK: WeaponCam = { reticle: "square", look: LOOK_LOCK };
 const CAM_ROCKET: WeaponCam = { reticle: "square", look: LOOK_ROCKET };
 const CAM_GUIDED: WeaponCam = { reticle: "square", look: LOOK_GUIDED };
 const CAM_GUN: WeaponCam = { reticle: "round", look: LOOK_GUN };
+const CAM_ARTILLERY: WeaponCam = { reticle: "round", look: LOOK_ARTILLERY };
 const CAM_DROP: WeaponCam = { reticle: "round", look: LOOK_GUIDED };
 const FIRE_GUN: WeaponFire = { muzzleFlash: true, jitter: 0.08 };
 const FIT_GUN: SocketClass[] = ["turret", "fixed"];
@@ -271,6 +361,7 @@ const MOUNT_ARTILLERY = "gun_artillery";
 const MOUNT_RAILGUN = "gun_railgun";
 const MOUNT_PLASMA = "gun_plasma";
 const MOUNT_TESLA = "gun_tesla";
+const MOUNT_PILOT = "gun_pilot";
 
 export type TracerRgb = [number, number, number];
 
@@ -338,6 +429,22 @@ const railAccel = (acceleration: number): WeaponLaunch => ({
   inheritMomentum: 0,
   acceleration,
 });
+/**
+ * Dumbfire rocket: soft leave, motor burn accel to catalog speed, then coast.
+ * `fireFor` on exhaust should match `burnTime` for the flame cue.
+ */
+const rocketBoost = (
+  acceleration: number,
+  burnTime: number,
+  leaveSpeed = 100,
+  inheritMomentum = 0.28
+): WeaponLaunch => ({
+  mode: "muzzle",
+  inheritMomentum,
+  acceleration,
+  burnTime,
+  leaveSpeed,
+});
 const gunArt = (
   id: string,
   scale: number,
@@ -363,7 +470,15 @@ const ordArt = (
 });
 const particleTrail = (
   size: number,
-  opts: { fire?: "burn" | "hotFlame"; smoke?: "linger" | "short" | "rocket"; align?: "heading" } = {}
+  opts: {
+    fire?: "burn" | "hotFlame";
+    fireFor?: number;
+    fireSize?: number;
+    smoke?: "linger" | "short" | "rocket";
+    contrail?: boolean;
+    align?: "heading";
+    density?: number;
+  } = {}
 ): ExhaustTrail => ({
   kind: "particles",
   size,
@@ -407,7 +522,7 @@ const commitGuidance = (
 });
 
 /** Canonical weapon identities; craft sockets supply installation policy + default loadout. */
-export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
+const PLAYER_WPNS_DEFS = {
   chain_gun: {
     id: "chain_gun", name: "CHAIN GUN", fullName: "30MM CHAIN GUN", designation: "M230 30MM CHAIN GUN", ammo: 1200, fireCd: 0.096, speed: 580,
     dmg: 28, blast: 36, life: 0.22,
@@ -418,18 +533,48 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   },
   rocket: {
     id: "rocket", name: "HYDRA", fullName: "HYDRA ROCKET PODS", designation: "HYDRA 70 ROCKET PODS", ammo: 38, fireCd: 0.22, speed: 620,
-    dmg: 258, blast: 255, life: 3.4,
+    dmg: 258, blast: 150, life: 3.4,
     art: ordArt("rocket", 1, "velocity"),
-    exhaust: particleTrail(0.72, { smoke: "rocket", align: "heading" }),
-    cam: CAM_ROCKET, fire: FIRE_GUN, control: HOLD, launch: MUZZLE, payload: HE_FIRE,
-    fits: FIT_HARDPOINT, notes: ["unguided dumbfire — 1.3× kills a tank (258 / 336)"],
+    exhaust: particleTrail(0.72, {
+      fire: "burn",
+      fireFor: 0.42,
+      fireSize: 0.36,
+      density: 1.7,
+      smoke: "rocket",
+      align: "heading",
+    }),
+    cam: CAM_ROCKET, fire: FIRE_GUN, control: HOLD,
+    launch: rocketBoost(1450, 0.42, 95),
+    payload: HE_FIRE,
+    fits: FIT_HARDPOINT, notes: ["unguided dumbfire — soft leave, motor burn, then coast"],
+  },
+  incendiary_rocket: {
+    id: "incendiary_rocket", name: "INCENDIARY", fullName: "INCENDIARY ROCKETS", designation: "LE PRIEUR INCENDIARY ROCKETS",
+    ammo: 28, fireCd: 0.28, speed: 460,
+    dmg: 118, blast: 160, life: 2.9,
+    art: ordArt("rocket", 0.92, "velocity"),
+    exhaust: particleTrail(0.68, {
+      fire: "burn",
+      fireFor: 0.38,
+      fireSize: 0.34,
+      density: 1.55,
+      smoke: "rocket",
+      align: "heading",
+    }),
+    cam: CAM_ROCKET, fire: { muzzleFlash: true, jitter: 0.52 }, control: HOLD,
+    launch: rocketBoost(1100, 0.38, 85),
+    // Fat fireball damage radius, but a small ground scorch.
+    payload: { detonate: { look: "fire" }, dustMul: 0.28 },
+    fits: FIT_HARDPOINT,
+    dmgMul: { troop: 1.65, vehicle: 0.32, building: 0.42, air: 1.1 },
+    notes: ["Le Prieur-style — soft leave + short burn; fat fireball, wild spray"],
   },
   hellfire_missile: {
     id: "hellfire_missile", name: "HELLFIRE", fullName: "HELLFIRE MISSILE", designation: "AGM-114R HELLFIRE II", ammo: 8, fireCd: 0.55, speed: 380,
     dmg: 360, blast: 155, life: 4.9,
     art: ordArt("laserGuided", 1, "heading"),
-    exhaust: particleTrail(0.55, { fire: "burn", smoke: "linger" }),
-    cam: CAM_LOCK, control: { mode: "lock_then_click" },
+    exhaust: particleTrail(0.55, { fire: "burn", smoke: "linger", density: 1.35 }),
+    cam: { ...CAM_LOCK, sight: "mouse" }, control: { mode: "lock_then_click" },
     launch: motor(250, 500, 2.1, 1, { pitch: 1.15, loftCap: 0.3 }),
     guidance: lockGuidance(lockOn(0.5, 160, RETICLE, 0.28), 7.8),
     payload: HE_FIRE,
@@ -441,8 +586,8 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     id: "tv_missile", name: "SPIKE", fullName: "SPIKE MISSILE", designation: "SPIKE NLOS COMMAND MISSILE", ammo: 6, fireCd: 1.15, speed: 290,
     dmg: 380, blast: 160, life: 30,
     art: ordArt("guided", 0.95, "heading"),
-    exhaust: particleTrail(0.52, { fire: "burn", smoke: "linger" }),
-    cam: { reticle: "square", look: LOOK_GUIDED, povCam: true, thermal: true },
+    exhaust: particleTrail(0.52, { fire: "burn", smoke: "linger", density: 1.35 }),
+    cam: { reticle: "square", look: LOOK_GUIDED, povCam: true, thermal: true, sight: "mouse" },
     control: { mode: "click_then_click_to_commit" },
     launch: motor(215, 360, 2.4, 1, { softLoft: 0.22 }),
     guidance: commitGuidance(0.45, 60, 90, 2.4, 6.5, { cruise: "player", dive: DIVE_SPIKE }),
@@ -475,8 +620,8 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     id: "tow_missile", name: "TOW", fullName: "TOW MISSILE", designation: "BGM-71E TOW 2A MISSILE", ammo: 6, fireCd: 1.1, speed: 290,
     dmg: 350, blast: 145, life: 6.1,
     art: ordArt("guided", 1, "heading"),
-    exhaust: particleTrail(0.52, { fire: "burn", smoke: "linger" }),
-    cam: { reticle: "square", look: LOOK_GUIDED, povCam: true },
+    exhaust: particleTrail(0.52, { fire: "burn", smoke: "linger", density: 1.3 }),
+    cam: { reticle: "square", look: LOOK_GUIDED, povCam: true, sight: "mouse" },
     control: HOLD,
     launch: motor(215, 360, 2.4, 1, { leaveVz: 120 }),
     guidance: steerGuidance(2.2, 0.75, { cruise: "player", dive: DIVE_TOW }, true),
@@ -518,9 +663,9 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   },
   heavy_bomb: {
     id: "heavy_bomb", name: "MOAB", fullName: "MASSIVE ORDNANCE AIR BLAST", designation: "GBU-43/B MASSIVE ORDNANCE AIR BLAST", ammo: 2, fireCd: 2.4, speed: 165,
-    dmg: 980, blast: 400, life: 7.5,
-    art: ordArt("bomb", 1.75, "velocity"),
-    exhaust: particleTrail(0.52, { fire: "burn", smoke: "linger" }),
+    dmg: 980, blast: 280, life: 7.5,
+    art: ordArt("bomb", 1.15, "velocity"),
+    exhaust: particleTrail(0.52, { smoke: "short", density: 0.55 }),
     cam: CAM_DROP, control: CLICK, launch: DROP, payload: HE_FIRE,
     fits: FIT_HARDPOINT,
     dmgMul: { building: 1.35, vehicle: 1.15, troop: 0.9, air: 0.25 },
@@ -528,20 +673,24 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   },
   cluster_bomb: {
     id: "cluster_bomb", name: "ROCKEYE", fullName: "ROCKEYE CLUSTER BOMB", designation: "CBU-100 ROCKEYE II CLUSTER BOMB", ammo: 5, fireCd: 1.35, speed: 185,
-    dmg: 42, blast: 78, life: 6.8,
-    art: ordArt("bomb", 1.2, "velocity"),
-    exhaust: particleTrail(0.52, { fire: "burn", smoke: "linger" }),
+    dmg: 12, blast: 28, life: 6.8,
+    art: ordArt("canister", 1.65, "velocity"),
+    exhaust: particleTrail(0.48, { smoke: "short", density: 0.5 }),
     cam: CAM_DROP, control: CLICK, launch: DROP,
     payload: {
-      cluster: { bomblets: 18, spread: 145, bombletDmg: 82, bombletBlast: 95, break: "spray" },
+      cluster: {
+        bomblets: 18, spread: 175, bombletDmg: 82, bombletBlast: 95, break: "spray",
+        look: ordLook("miniRocket"),
+        openAt: 0.6,
+      },
     },
-    fits: FIT_HARDPOINT, notes: ["dispenser pop is light; damage is the bomblet pattern"],
+    fits: FIT_HARDPOINT, notes: ["light mid-air canister pop ~60% down; damage is the bomblet carpet"],
   },
   guided_rockets: {
     id: "guided_rockets", name: "MICROS MISSILES", fullName: "DEFENSE MICRO-MISSILES", designation: "FORWARD DEFENSE MICRO-MISSILE POD", ammo: 80, fireCd: 0.24, speed: 420,
     dmg: 110, blast: 140, life: 4.1,
     art: ordArt("rocket", 0.5, "heading"),
-    exhaust: particleTrail(0.32, { fire: "burn", smoke: "rocket", align: "heading" }),
+    exhaust: particleTrail(0.32, { fire: "burn", fireFor: 0.1, smoke: "rocket", align: "heading" }),
     cam: CAM_ROCKET, fire: { muzzleFlash: true, jitter: 0.08, salvo: { count: 2, interval: 0.08, spread: 0.08 } },
     control: HOLD, launch: MUZZLE,
     guidance: steerGuidance(0.55, 0.16, undefined, false),
@@ -577,8 +726,8 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     id: "smoke_bomb", name: "SMOKE", fullName: "SMOKE BOMB", designation: "COMMAND-GUIDED SMOKE BOMB", ammo: 8, fireCd: 1.15, speed: 290,
     dmg: 24, blast: 195, life: 9,
     art: ordArt("canister", 0.88, "heading"),
-    exhaust: particleTrail(0.4, { fire: "burn", smoke: "linger" }),
-    cam: { reticle: "square", look: LOOK_GUIDED, povCam: true },
+    exhaust: particleTrail(0.4, { fire: "burn", smoke: "linger", density: 1.3 }),
+    cam: { reticle: "square", look: LOOK_GUIDED, povCam: true, sight: "mouse" },
     control: CLICK,
     launch: motor(215, 360, 2.4, 1, { leaveVz: 120 }),
     guidance: steerGuidance(2.2, 0.75, { cruise: "player", dive: DIVE_TOW }, true),
@@ -589,7 +738,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     id: "stinger_missile", name: "STINGER", fullName: "STINGER MISSILE", designation: "FIM-92 STINGER STEALTH POD", ammo: 10, fireCd: 0.5, speed: 475,
     dmg: 168, blast: 85, life: 4.7,
     art: ordArt("missile", 0.6, "heading"),
-    exhaust: particleTrail(0.55, { fire: "burn", smoke: "linger" }),
+    exhaust: particleTrail(0.55, { fire: "burn", smoke: "linger", density: 1.3 }),
     cam: CAM_LOCK, control: { mode: "lock_then_click" },
     launch: motor(220, 550, 1.8, 1, { pitch: 0.92 }),
     guidance: lockGuidance(lockOn(0.38, 185, signature(["air", "ground", "vehicle"], 1.05)), 9.4),
@@ -618,6 +767,7 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
       detonate: { look: "energy" },
       cluster: {
         bomblets: 3, spread: 64, bombletDmg: 14, bombletBlast: 26,
+        look: ordLook("miniRocket"),
         break: "cone_hop",
         bombletDetonate: { look: "energy" },
       },
@@ -634,6 +784,74 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     payload: { remote: { kind: "spectre", duration: 45 } },
     fits: FIT_HARDPOINT, notes: ["launches as a separate controllable craft", "Q / RMB drop camera without detonating", "select Spectre slot to return view", "click Spectre in its view to detonate"],
   },
+  wingman_drone: {
+    id: "wingman_drone", name: "SKIFF", fullName: "SKIFF WINGMAN", designation: "AUTONOMOUS WINGMAN SKIFF", ammo: 4, fireCd: 0.85, speed: 200,
+    dmg: 40, blast: 48, life: 90,
+    art: ordArt("guided", 0.5, "velocity"),
+    cam: CAM_GUIDED, control: CLICK, launch: { mode: "muzzle", inheritMomentum: 0.7 },
+    payload: { remote: { kind: "wingman", duration: 90 } },
+    fits: FIT_HARDPOINT, notes: [
+      "AI wingmen — launch several; LIVE ×N; Q recalls all to dock",
+      "fixed nose guns: line up, fire, overshoot, turn for another pass",
+      "shared awareness with airship / Raptor",
+    ],
+  },
+  fighter_pod: {
+    id: "fighter_pod", name: "RAPTOR", fullName: "RAPTOR FIGHTER", designation: "PILOTED FIGHTER POD", ammo: 2, fireCd: 4, speed: 260,
+    dmg: 120, blast: 70, life: 75,
+    art: ordArt("guided", 0.62, "velocity"),
+    cam: { reticle: "square", look: LOOK_GUIDED },
+    control: CLICK, launch: { mode: "muzzle", inheritMomentum: 0.8 },
+    payload: { remote: { kind: "fighter", duration: 75 } },
+    fits: FIT_HARDPOINT, notes: [
+      "piloted force-forward fighter — own POV loadout HUD (guns, rockets, bomb)",
+      "Q exits view (docks when near the Leviathan); AI escorts when unpiloted",
+    ],
+  },
+  agv_drop: {
+    id: "agv_drop", name: "HOUND", fullName: "HOUND AGV", designation: "AUTONOMOUS GROUND VEHICLE", ammo: 2, fireCd: 5, speed: 40,
+    dmg: 180, blast: 90, life: 600,
+    art: ordArt("guided", 0.7, "velocity"),
+    cam: { reticle: "square", look: LOOK_GUN },
+    control: CLICK, launch: DROP,
+    payload: { remote: { kind: "agv", duration: 600 } },
+    fits: FIT_HARDPOINT,
+    notes: [
+      "mini hover-tank with center minigun — select + hold fire in its POV",
+      "A/D yaw, W/S thrust; deselect → tracks mouse, turret shoots on its own",
+      "very long battery — detonates when empty",
+    ],
+  },
+  spider_drone: {
+    id: "spider_drone",
+    name: "SPIDER DRONE",
+    fullName: "SPIDER DRONE",
+    designation: "ALTERNATING GROUND SEEKER DRONES",
+    ammo: 10,
+    fireCd: 1.15,
+    speed: 240,
+    dmg: 210,
+    blast: 95,
+    life: 18,
+    art: { look: "enemy_drone", scale: 0.55, face: "heading" },
+    cam: { ...CAM_GUIDED, sight: "mouse" },
+    control: CLICK,
+    launch: { mode: "muzzle", inheritMomentum: 0.15 },
+    guidance: steerGuidance(6.2, 1.4, {
+      cruise: { agl: 5 },
+      dive: { range: 70, power: 1.1 },
+      clear: { far: 6, near: 2.5, coast: 4 },
+    }),
+    payload: {
+      ...HE_FIRE,
+      spider: { engageRange: 88, dashMul: 1.5, dashAccel: 380 },
+    },
+    fits: FIT_GUN.concat("hardpoint" as SocketClass),
+    notes: [
+      "alternating ground skimmers from the hull ports",
+      "crawl to the mouse; dash onto nearby hostiles and detonate",
+    ],
+  },
   plasma_cannon: {
     id: "plasma_cannon", name: "PLASMA HELIX", fullName: "PLASMA HELIX CANNON", designation: "PLASMA HELIX CANNON", ammo: 1800, fireCd: 0.2, speed: 1050,
     dmg: 42, blast: 52, life: 0.14,
@@ -647,12 +865,12 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   laser_rocket: {
     id: "laser_rocket", name: "REFRACTOR", fullName: "REFRACTOR BEAM", designation: "REFRACTOR ENERGY BEAM", ammo: 72, fireCd: 0.2, speed: 1,
     dmg: 210, blast: 88, life: 0.16,
-    art: gunArt("plasma_cannon", 0.7, { w: 48, h: 10, core: [255, 220, 255], mid: [180, 90, 255], rim: [80, 40, 255], glow: 1.1, shape: "bolt" }, MOUNT_PLASMA),
+    art: gunArt("plasma_cannon", 0.7, { w: 48, h: 10, core: [255, 220, 255], mid: [180, 90, 255], rim: [80, 40, 255], glow: 1.1, shape: "bolt" }, MOUNT_TESLA),
     cam: { reticle: "square", look: LOOK_GUN },
     fire: FIRE_GUN, control: HOLD,
     launch: { mode: "beam", range: 780, delivery: "ray" },
     payload: { split: { at: 0.3, count: 8 }, bounce: { maxBounces: 3 } },
-    fits: ["hardpoint", "fixed"] as SocketClass[],
+    fits: FIT_GUN.concat("hardpoint" as SocketClass),
     notes: ["solid beam forks at 30% to reticle into a spray; ground hits shatter into random smaller beams"],
   },
   photon_missile: {
@@ -681,10 +899,10 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   },
   warp_bomb: {
     id: "warp_bomb", name: "WARPWIRE BOMB", fullName: "WARPWIRE BOMB", designation: "WB-1 WARPWIRE BOMB", ammo: 4, fireCd: 1.25, speed: 340,
-    dmg: 560, blast: 330, life: 30,
+    dmg: 560, blast: 242, life: 30,
     art: ordArt("photon", 1.35, "heading", { tint: 0xc86cff }),
     exhaust: energyTrail({ ribbons: 3, hue: "magenta", warpMotes: true }),
-    cam: { reticle: "square", look: LOOK_GUIDED, povCam: true },
+    cam: { reticle: "square", look: LOOK_GUIDED, povCam: true, sight: "mouse" },
     control: { mode: "click_then_click_to_commit" },
     launch: {
       mode: "kick_motor",
@@ -712,8 +930,8 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     id: "light_gps_missile", name: "PYROS", fullName: "PYROS GPS MISSILE", designation: "PYROS LIGHT GPS GUIDED MISSILE", ammo: 24, fireCd: 0.38, speed: 460,
     dmg: 155, blast: 95, life: 4.8,
     art: ordArt("guided", 0.68, "heading"),
-    exhaust: particleTrail(0.42, { fire: "burn", smoke: "linger" }),
-    cam: CAM_GUIDED, control: { mode: "click_to_set_target" },
+    exhaust: particleTrail(0.42, { fire: "burn", smoke: "linger", density: 1.3 }),
+    cam: { ...CAM_GUIDED, sight: "mouse" }, control: { mode: "click_to_set_target" },
     launch: motor(180, 560, 2.0),
     guidance: { targeting: { mode: "waypoint" }, flight: { turnRate: 6.2 } },
     payload: HE_FIRE,
@@ -721,9 +939,9 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   },
   gps_bomb: {
     id: "gps_bomb", name: "JDAM", fullName: "JDAM GPS BOMB", designation: "GBU-31 JDAM GPS PRECISION-GUIDED BOMB", ammo: 8, fireCd: 0.95, speed: 205,
-    dmg: 450, blast: 305, life: 7,
+    dmg: 450, blast: 232, life: 7,
     art: ordArt("wingedBomb", 1.1, "heading"),
-    exhaust: particleTrail(0.52, { fire: "burn", smoke: "linger" }),
+    exhaust: particleTrail(0.5, { smoke: "short", density: 0.48, contrail: true }),
     cam: CAM_DROP, control: { mode: "click_to_set_target" },
     launch: DROP,
     guidance: { targeting: { mode: "waypoint" }, flight: { turnRate: 3.15 } },
@@ -732,11 +950,14 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     fits: FIT_HARDPOINT, notes: ["clicked GPS point; steers hard while falling — structure / armor"],
   },
   heavy_artillery: {
-    id: "heavy_artillery", name: "HOWITZER", fullName: "HOWITZER ARTILLERY", designation: "105MM M102 HOWITZER ARTILLERY", ammo: 28, fireCd: 1.0, speed: 520,
-    dmg: 420, blast: 310, life: 2.8,
-    art: gunArt("heavy_artillery", 1.55, { w: 96, h: 18, core: [255, 250, 230], mid: [255, 170, 50], rim: [180, 70, 20], blunt: 0.85, glow: 0.48 }, MOUNT_ARTILLERY),
-    cam: CAM_GUN, fire: FIRE_GUN, control: CLICK,
-    launch: { mode: "muzzle", inheritMomentum: 0.4, gravity: { acceleration: 200, terminalVelocity: 900 } },
+    id: "heavy_artillery", name: "HOWITZER", fullName: "HOWITZER ARTILLERY", designation: "105MM M102 HOWITZER ARTILLERY", ammo: 28, fireCd: 1.85, speed: 520,
+    dmg: 420, blast: 210, life: 2.8,
+    // Fatter than MG tracers, not a floating brick — call-strike shell trail behind.
+    art: gunArt("heavy_artillery", 0.98, { w: 70, h: 11, core: [255, 250, 230], mid: [255, 170, 50], rim: [180, 70, 20], blunt: 0.72, glow: 0.42 }, MOUNT_ARTILLERY),
+    exhaust: { ...particleTrail(0.55, { density: 0.85, contrail: true }), emitUv: { x: 0.08, y: 0.5 } },
+    cam: CAM_ARTILLERY, fire: FIRE_GUN, control: CLICK,
+    // Heavier g → higher muzzle loft for the same aim (more visible lob).
+    launch: { mode: "muzzle", inheritMomentum: 0.4, gravity: { acceleration: 310, terminalVelocity: 980 } },
     payload: HE_FIRE,
     fits: FIT_GUN, notes: ["lobbed 105mm — Hellfire-class punch, wide HE splash"],
   },
@@ -759,8 +980,8 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     id: "gps_missile", name: "GRIFFIN", fullName: "GRIFFIN GUIDED MISSILE", designation: "AGM-176 GRIFFIN COMMAND-GUIDED MISSILE", ammo: 12, fireCd: 0.7, speed: 340,
     dmg: 240, blast: 110, life: 9.5,
     art: ordArt("guided", 0.84, "heading"),
-    exhaust: particleTrail(0.52, { fire: "burn", smoke: "linger" }),
-    cam: { reticle: "square", look: LOOK_GUIDED, povCam: true },
+    exhaust: particleTrail(0.52, { fire: "burn", smoke: "linger", density: 1.3 }),
+    cam: { reticle: "square", look: LOOK_GUIDED, povCam: true, sight: "mouse" },
     control: HOLD,
     launch: motor(140, 260, 3.2),
     guidance: steerGuidance(4.1, 1.25, { cruise: "player_descend", dive: DIVE_GRIFFIN }, false),
@@ -781,9 +1002,9 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     id: "heavy_guided_missile", name: "MAVERICK", fullName: "MAVERICK MISSILE (AIR-TO-GROUND)", designation: "AGM-65 MAVERICK", ammo: 6, fireCd: 0.72, speed: 445,
     dmg: 420, blast: 170, life: 5.5,
     art: ordArt("laserGuided", 0.98, "heading"),
-    exhaust: particleTrail(0.55, { fire: "burn", smoke: "linger" }),
+    exhaust: particleTrail(0.55, { fire: "burn", smoke: "linger", density: 1.3 }),
     cam: CAM_LOCK, control: { mode: "lock_then_click" },
-    launch: MUZZLE,
+    launch: motor(260, 520, 2.2, 1, { pitch: 1.05, loftCap: 0.28 }),
     guidance: lockGuidance(lockOn(0.62, 225, RETICLE_AG), 6.8),
     payload: HE_FIRE,
     fits: FIT_HARDPOINT,
@@ -792,9 +1013,9 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
   },
   bomb: {
     id: "bomb", name: "IRON BOMB", fullName: "IRON BOMB", designation: "MARK 82 GENERAL-PURPOSE BOMB", ammo: 10, fireCd: 0.72, speed: 220,
-    dmg: 380, blast: 285, life: 6.5,
-    art: ordArt("bomb", 1, "velocity"),
-    exhaust: particleTrail(0.52, { fire: "burn", smoke: "linger" }),
+    dmg: 380, blast: 200, life: 6.5,
+    art: ordArt("bomb", 0.85, "velocity"),
+    exhaust: particleTrail(0.5, { smoke: "short", density: 0.52 }),
     cam: CAM_DROP, control: CLICK, launch: DROP, payload: HE_FIRE,
     dmgMul: { building: 1.35, vehicle: 1.15, troop: 0.9, air: 0.25 },
     fits: FIT_HARDPOINT, notes: ["gravity bomb — weak aim correction vs JDAM; structure / armor fantasy"],
@@ -817,14 +1038,14 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     id: "mini_hellfire_missile", name: "MICRO-HELLFIRE", fullName: "MICRO-HELLFIRE MISSILE", designation: "MICRO-HELLFIRE MISSILE", ammo: 10, fireCd: 0.45, speed: 400,
     dmg: 200, blast: 90, life: 4.2,
     art: ordArt("laserGuided", 0.31, "heading"),
-    exhaust: particleTrail(0.55, { fire: "burn", smoke: "linger" }),
-    cam: CAM_LOCK, control: { mode: "lock_then_click" },
+    exhaust: particleTrail(0.55, { fire: "burn", smoke: "linger", density: 1.3 }),
+    cam: { ...CAM_LOCK, sight: "mouse" }, control: { mode: "lock_then_click" },
     launch: motor(200, 500, 1.65, 1, { pitch: 1.12, loftCap: 0.28 }),
     guidance: lockGuidance(lockOn(0.32, 145), 8.9),
     payload: HE_FIRE,
     fits: FIT_HARDPOINT,
     dmgMul: { vehicle: 1.25, building: 1.1, air: 0.55, troop: 0.7 },
-    notes: ["Murder Drone AT — compact laser F&F; lighter punch / shorter belt than Hellfire"],
+    notes: ["Murder Hornet AT — compact laser F&F; lighter punch / shorter belt than Hellfire"],
   },
   mini_bomb: {
     id: "mini_bomb", name: "KINETIC SLUGS", fullName: "KINETIC SLUGS", designation: "KINETIC DROP SLUGS", ammo: 14, fireCd: 0.6, speed: 180,
@@ -834,9 +1055,104 @@ export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = {
     cam: CAM_DROP, fire: { muzzleFlash: true, jitter: 0.08, salvo: { count: 2, interval: 0.035, spread: 0.08 } },
     control: CLICK, launch: DROP,
     payload: { penetration: 1.05 },
-    fits: FIT_HARDPOINT, notes: ["Murder Drone AT — paired kinetic drops; armor needles, not Apache splash"],
+    fits: FIT_HARDPOINT, notes: ["Murder Hornet AT — paired kinetic drops; armor needles, not Apache splash"],
   },
-};
+  artillery_strike: {
+    id: "artillery_strike",
+    name: "ARTILLERY STRIKE",
+    fullName: "SIGNAL FLARE ARTILLERY STRIKE",
+    designation: "VF-1 SIGNAL FLARE + OFF-MAP BARRAGE",
+    ammo: 4,
+    fireCd: 1.4,
+    speed: 165,
+    dmg: 2,
+    blast: 12,
+    life: 10,
+    art: gunArt(
+      "artillery_strike",
+      0.55,
+      {
+        // Square padded so tip-origin orb halo fits without clipping (r ≤ tip-side margin).
+        w: 72,
+        h: 72,
+        core: [255, 120, 90],
+        mid: [255, 28, 36],
+        rim: [160, 0, 18],
+        glow: 1.05,
+        shape: "orb",
+      },
+      MOUNT_PILOT
+    ),
+    exhaust: { kind: "signalFlare", size: 0.78, density: 1.05 },
+    cam: CAM_GUN,
+    fire: { muzzleFlash: true, jitter: 0.035 },
+    control: CLICK,
+    launch: {
+      mode: "muzzle",
+      inheritMomentum: 0.35,
+      gravity: { acceleration: 180, terminalVelocity: 720 },
+    },
+    payload: {
+      callStrike: {
+        rounds: 8,
+        interval: 1.65,
+        jitter: 300,
+        shellDmg: 560,
+        shellBlast: 175,
+        shellLook: ordLook("artilleryShell"),
+        shellSpeed: 420,
+        flareUntilHits: 3,
+      },
+    },
+    fits: FIT_GUN,
+    dmgMul: { building: 1.4, vehicle: 1.2, troop: 0.85, air: 0.2 },
+    notes: [
+      "pilot flare gun — aim with the mouse like any turret gun; pellet marks the grid",
+      "flare settles and howitzers walk immediately; marker stays lit through the first impacts",
+      "marker itself is almost inert — damage is the incoming shells",
+    ],
+  },
+  remote_howitzer: {
+    id: "remote_howitzer",
+    name: "HOWITZER",
+    fullName: "DROPSHIP HOWITZER SPOT",
+    designation: "REMOTE 105MM HOWITZER FIRE MISSION",
+    ammo: 12,
+    fireCd: 1.85,
+    speed: 520,
+    dmg: 420,
+    blast: 210,
+    life: 2.8,
+    art: gunArt(
+      "remote_howitzer",
+      0.98,
+      { w: 70, h: 11, core: [255, 250, 230], mid: [255, 170, 50], rim: [180, 70, 20], blunt: 0.72, glow: 0.42 },
+      MOUNT_ARTILLERY
+    ),
+    exhaust: particleTrail(0.55, { density: 0.85, contrail: true }),
+    cam: { ...CAM_ARTILLERY, sight: "mouse" },
+    fire: FIRE_GUN,
+    control: CLICK,
+    launch: { mode: "muzzle", inheritMomentum: 0.4, gravity: { acceleration: 200, terminalVelocity: 900 } },
+    payload: { hostFire: { weapon: "heavy_artillery" } },
+    fits: FIT_GUN,
+    notes: [
+      "HOUND spotter — one click lobs a shell from the dropship howitzer onto aim",
+      "uses the host howitzer mount, ballistics, and shared ammo bank",
+    ],
+  },
+} satisfies Record<string, PlayerWpnSpec>;
+
+/** Player loadout identity — literal union of PLAYER_WPNS keys. */
+export type WpnId = keyof typeof PLAYER_WPNS_DEFS;
+
+/** Homogeneous catalog (keys stay literal via WpnId). */
+export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = PLAYER_WPNS_DEFS;
+
+/** Narrow a catalog row to its key-typed id (defs use plain string `id`). */
+export function wpnIdOf(w: PlayerWpnSpec): WpnId {
+  return w.id as WpnId;
+}
 
 export function playerLoadout(ids: readonly WpnId[]): PlayerWpnSpec[] {
   return ids.map((id) => {
@@ -848,7 +1164,7 @@ export function playerLoadout(ids: readonly WpnId[]): PlayerWpnSpec[] {
 
 /** Resolve craft sockets into an ordered weapon loadout. */
 export function playerLoadoutFromSockets(
-  sockets: readonly { weapon: string }[]
+  sockets: readonly { weapon: WpnId }[]
 ): PlayerWpnSpec[] {
   return playerLoadout(sockets.map((s) => s.weapon));
 }
@@ -877,6 +1193,8 @@ export interface Unit {
   angle: number;
   /** Smoothed `projectHeading` so 2.5D singularities can't flip the sprite. */
   drawRot?: number;
+  /** Smoothed projected aim for guns / soft troop facing (keyed). */
+  aimDrawRots?: Record<string, number>;
   turret: number;
   health: number;
   max: number;
@@ -980,12 +1298,25 @@ export interface ShotState {
   helixPhase?: number;
   /** Cluster / smoke payload already opened. */
   opened?: boolean;
+  /**
+   * Cluster dispenser: open when `age >= openAge` (seconds).
+   * Authored from predicted fall time × `payload.cluster.openAt`.
+   */
+  openAge?: number;
   /** Remaining armor targets a penetrator can pass through. */
   pierce?: number;
   /** Units already damaged by this penetrator. */
   hitIds?: number[];
   /** Sub-munition (bomblet) — skips lock HUD and camera hand-off. */
   bomblet?: boolean;
+  /** Off-map call-strike shell — links impacts back to the flare mark. */
+  callStrikeMarkId?: number;
+  /** Impact aim point for ETA / constant-speed flight. */
+  callStrikeTx?: number;
+  callStrikeTy?: number;
+  callStrikeTz?: number;
+  /** Flare from a POV remote — barrage spawns from the host craft. */
+  callStrikeFromHost?: boolean;
 }
 
 /**
@@ -1126,6 +1457,12 @@ export function exhaustWarpMotes(
   return exhaustIsEnergy(e) ? e.warpMotes : undefined;
 }
 
+export function exhaustIsSignalFlare(
+  e: ExhaustTrail | undefined
+): e is Extract<ExhaustTrail, { kind: "signalFlare" }> {
+  return e?.kind === "signalFlare";
+}
+
 /** Hold-to-arc beam (Tesla) — live stream, not a ray cast. */
 export function launchIsArcBeam(
   launch: WeaponLaunch | undefined
@@ -1229,21 +1566,26 @@ export interface Flare {
   max: number;
 }
 
-export type CountermeasureId = "flares" | "timewarp" | "phase_cloak" | "emp";
-
 export interface CountermeasureSpec {
-  id: CountermeasureId;
+  id: string;
   name: string;
   duration: number;
   cooldown: number;
 }
 
-export const COUNTERMEASURES: Record<CountermeasureId, CountermeasureSpec> = {
+export const COUNTERMEASURES_DEFS = {
   flares: { id: "flares", name: "FLARES", duration: 12, cooldown: 8 },
   timewarp: { id: "timewarp", name: "TIMEWARP", duration: 14, cooldown: 6 },
   phase_cloak: { id: "phase_cloak", name: "PHASE CLOAK", duration: 5.5, cooldown: 16 },
   emp: { id: "emp", name: "EMP", duration: 4, cooldown: 11 },
-};
+  reactive_armor: { id: "reactive_armor", name: "REACTIVE ARMOR", duration: 3.5, cooldown: 10 },
+  smoke_screen: { id: "smoke_screen", name: "SMOKE SCREEN", duration: 8, cooldown: 12 },
+} satisfies Record<string, CountermeasureSpec>;
+
+/** Countermeasure identity — literal union of COUNTERMEASURES keys. */
+export type CountermeasureId = keyof typeof COUNTERMEASURES_DEFS;
+
+export const COUNTERMEASURES: Record<CountermeasureId, CountermeasureSpec> = COUNTERMEASURES_DEFS;
 
 function formatCmSeconds(n: number): string {
   return `${Number.isInteger(n) ? n : n.toFixed(1)}s`;
@@ -1413,6 +1755,11 @@ export interface Debris {
   track?: number;
   /** Spent cannon casing: bounce with heavy friction, stamp on rest. */
   shellEject?: boolean;
+  /**
+   * Big-boom mech flecks: Hydra-style smoke trail, hold size in flight,
+   * stamp on impact and remove (no bounce).
+   */
+  boomBit?: boolean;
   /** Draw under the firer (air craft). Ground casings omit this and draw above. */
   shellUnder?: boolean;
   /** Thermal heat 1→0 while the casing is still a live debris sprite. */
@@ -1422,6 +1769,12 @@ export interface Debris {
   /** Elapsed / total sink duration for scale progress. */
   sinkT?: number;
   sinkMax?: number;
+  /**
+   * Light-vehicle crash pop: flaming spinning arc, then crater + embers on settle.
+   */
+  crashPop?: boolean;
+  /** Blast-crater scale stamped when a crashPop piece lands. */
+  crashCraterScale?: number;
 }
 
 let nid = 1;

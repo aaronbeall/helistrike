@@ -228,6 +228,8 @@ export class ArtGenRig {
     syncRigSystemCursor(this.scene);
     this.uiCam.setVisible(this.open);
     if (this.open) {
+      const zoom = this.gen().defaultZoom;
+      if (zoom != null) this.viewZoom = zoom;
       this.dirtyLayout = true;
       this.animT = 0;
     }
@@ -240,6 +242,8 @@ export class ArtGenRig {
       if (!n) return;
       this.genIdx = (this.genIdx + dir + n) % n;
       this.paramIdx = 0;
+      const zoom = this.gen().defaultZoom;
+      if (zoom != null) this.viewZoom = zoom;
       this.dirtyLayout = true;
       this.animT = 0;
       return;
@@ -251,7 +255,7 @@ export class ArtGenRig {
 
   nudgeZoom(dir: number): void {
     if (!this.open) return;
-    const steps = [0.5, 1, 1.5, 2, 3, 4, 6, 8];
+    const steps = [0.5, 1, 1.5, 2, 3, 4, 6, 8, 12, 16];
     let i = 0;
     let best = Infinity;
     for (let k = 0; k < steps.length; k++) {
@@ -283,6 +287,8 @@ export class ArtGenRig {
       if (i < 0 || i >= this.gens().length) return;
       this.genIdx = i;
       this.paramIdx = 0;
+      const zoom = this.gen().defaultZoom;
+      if (zoom != null) this.viewZoom = zoom;
       this.dirtyLayout = true;
       this.animT = 0;
       return;
@@ -306,7 +312,7 @@ export class ArtGenRig {
     this.ensureBuilt();
     const def = this.gen();
     if (this.dirtyLayout) {
-      this.prepared = def.prepare?.(this.seed, def.params);
+      this.prepared = def.prepare?.(this.seed, def.params, this.scene.textures);
       this.dirtyLayout = false;
     }
     if (def.animated && !this.paused) {
@@ -347,9 +353,9 @@ export class ArtGenRig {
           ...slice.map((key, i) => {
             const mark = start + i === this.paramIdx ? "▸" : " ";
             const v = formatArtGenValue(def, key);
-            const defV = def.defaults[key] ?? 0;
-            const cur = def.params[key] ?? 0;
-            const tag = Math.abs(cur - defV) > 1e-6 ? "*" : " ";
+            const defV = def.defaults[key];
+            const cur = def.params[key];
+            const tag = cur !== defV ? "*" : " ";
             return `${mark}${tag}${key.padEnd(18)}${v}`;
           }),
         ].join("\n")
@@ -385,7 +391,7 @@ export class ArtGenRig {
   private paint(def: ArtGenDef, t: number): void {
     // Toon (and similar) expect a sized scratch canvas.
     if (def.params.size != null) {
-      const sizeHint = Math.max(32, Math.round(def.params.size));
+      const sizeHint = Math.max(32, Math.round(Number(def.params.size) || 192));
       if (this.tmp.width !== sizeHint || this.tmp.height !== sizeHint) {
         this.tmp.width = sizeHint;
         this.tmp.height = sizeHint;

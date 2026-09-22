@@ -22,6 +22,7 @@ import {
   exhaustRibbons,
   exhaustHue,
   exhaustWarpMotes,
+  exhaustIsSignalFlare,
   launchIsArcBeam,
   launchIsRayBeam,
   ENERGY_TRAIL_NODE_LIFE,
@@ -30,6 +31,7 @@ import {
   COUNTERMEASURES,
   craftCountermeasure,
   countermeasureTimingLabel,
+  wpnIdOf,
   stunUnit,
   unitStunned,
   tickStunKinematics,
@@ -42,6 +44,7 @@ import {
   type SimParticleKind,
   type Unit,
   type PlayerWpnSpec,
+  type WpnId,
   type LockAcquire,
   type Flare,
   type EnergyTrailNode,
@@ -78,6 +81,14 @@ function payloadIsSmoke(p: WeaponPayload | undefined): boolean {
   return !!p?.smoke;
 }
 
+function payloadIsCallStrike(p: WeaponPayload | undefined): boolean {
+  return !!p?.callStrike;
+}
+
+function payloadIsHostFire(p: WeaponPayload | undefined): boolean {
+  return !!p?.hostFire?.weapon;
+}
+
 function payloadIsHelix(p: WeaponPayload | undefined): boolean {
   return !!p?.helix;
 }
@@ -99,7 +110,9 @@ function payloadIsKinetic(p: WeaponPayload | undefined, launch?: WeaponLaunch): 
     !p.remote &&
     !p.warp &&
     !p.helix &&
-    !p.stun
+    !p.stun &&
+    !p.callStrike &&
+    !p.hostFire
   );
 }
 
@@ -107,7 +120,17 @@ function payloadIsKinetic(p: WeaponPayload | undefined, launch?: WeaponLaunch): 
 function specIsShellGun(spec: PlayerWpnSpec): boolean {
   if (spec.launch.mode !== "muzzle" || spec.guidance) return false;
   const p = spec.payload;
-  if (payloadIsHelix(p) || p.remote || p.warp || p.cluster || p.smoke || p.stun) return false;
+  if (
+    payloadIsHelix(p) ||
+    p.remote ||
+    p.warp ||
+    p.cluster ||
+    p.smoke ||
+    p.stun ||
+    p.callStrike ||
+    p.hostFire
+  )
+    return false;
   // Kinetic (incl. empty / no pen) or HE shell guns.
   return payloadIsKinetic(p, spec.launch) || !!p.detonate;
 }
@@ -122,6 +145,44 @@ function specIsRocketPod(spec: PlayerWpnSpec): boolean {
     ex.kind === "particles" &&
     ex.smoke === "rocket"
   );
+}
+
+/** One laser between multi-barrel ports (host chin duals + remote nose guns). */
+function collapseSightTips<T extends { x: number; y: number }>(tips: T[]): T[] {
+  if (tips.length <= 1) return tips;
+  let sx = 0;
+  let sy = 0;
+  for (const t of tips) {
+    sx += t.x;
+    sy += t.y;
+  }
+  const head = tips[0]!;
+  return [{ ...head, x: sx / tips.length, y: sy / tips.length }];
+}
+
+/**
+ * Next hardpoint index from remaining ammo — host pylons + remote racks.
+ * Same formula whether ammo was just spent (fire) or not (sight).
+ */
+function hardpointAmmoIndex(ammo: number, mountCount: number): number {
+  if (mountCount <= 1) return 0;
+  return ((ammo - 1) % mountCount + mountCount) % mountCount;
+}
+
+/** Plane hardpoint / drop look-ahead boost (host + remote POV). */
+function planeLookCam(
+  spec: PlayerWpnSpec,
+  isPlane: boolean
+): { pull: number; max: number; rate: number } {
+  const look = spec.cam.look;
+  if (
+    isPlane &&
+    spec.cam.planeLookMul !== false &&
+    (spec.guidance != null || spec.launch.mode === "drop" || !!spec.exhaust)
+  ) {
+    return { pull: look.pull * 1.22, max: look.max * 1.28, rate: look.rate };
+  }
+  return { pull: look.pull, max: look.max, rate: look.rate };
 }
 
 function shotIsGunOrBeam(s: Shot): boolean {
@@ -140,7 +201,16 @@ function shotFacesHeading(s: Shot): boolean {
   return !!(s.homePlayer || s.motor != null);
 }
 
-import { remoteSpecOf, type RemoteCraft } from "./remote";
+import {
+  initRemoteLoadout,
+  remoteGunId,
+  remoteHasPovHud,
+  remoteRotorParts,
+  remoteRotorPoolSize,
+  remoteSocketStartingAmmo,
+  remoteSpecOf,
+  type RemoteCraft,
+} from "./remote";
 import {
   aimInStationArc,
   clampAimToStationArc,
@@ -153,13 +223,13 @@ import {
 } from "./weaponRuntime";
 import { Layer, ZOff, Z_GRAVITY, worldDepth } from "./depth";
 import { range } from "./rng";
-import { CRUISE_AGL, Heli, JET_GUN_MAX_DEPRESS, JET_GUN_MAX_ELEV, LOW_AGL, MAX_AGL, craftCameraEdgeLocked } from "./heli";
+import { CRUISE_AGL, Heli, JET_GUN_MAX_DEPRESS, JET_GUN_MAX_ELEV, LOW_AGL, MAX_AGL, MAP_AIR_SOFT, craftCameraEdgeLocked } from "./heli";
 import {
   TOON_BLAST_VARIANTS,
-  ensureToonBlastAnims,
   toonBlastAnimKey,
   toonBlastKey,
 } from "./toonBlast";
+import { ensureAllArtGenAnims } from "./artGen";
 import { isAerial, isGroundVehicle, isOrganic, hasSoftBlood, specOf, driveOf, spawnAngle, pickTroop, labelOf, allKinds, gunsOf, rollParts, crewOf, muzzlesOfGun, type ShotKind, type ShotLook } from "./roster";
 import {
   circumRadiusOf,
@@ -172,8 +242,8 @@ import {
   randomInFootprint,
   type Footprint,
 } from "./footprint";
-import { lookupSpriteMuzzles, lookupSpriteOrigin } from "./spriteOrigin";
-import { allCrafts, craftAgility, craftAimsWithTurret, craftBombDrop, craftCameraScale, craftCloudParallax, craftComposite, craftCompositePartScale, craftCrewHudTag, craftExhaustFlameHue, craftExhaustFlameSheet, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftGunPreferDegrees, craftGunPreferOffset, craftGunSocketSlots, craftHardpointMounts, craftControlScheme, craftLoadoutLabel, craftOf, craftOrigin, craftPreviewExhaustScale, craftPreviewExhaustTint, craftPreviewFitScale, craftRotorAlongScale, craftRotorFlightSpeed, craftRotorMounts, craftRotorPreviewSpinMs, craftRotorTiltMul, craftSocketBarrelCount, craftSocketIsPrimary, craftSocketMultiplicity, craftSocketPoints, craftSocketStartingAmmo, craftWingTipMounts, rotorDrawSpan, rotorMountsOf, rotorSpinSign, type CraftComposite } from "./craft";
+import { lookupSpriteMuzzles, lookupSpriteOrigin, lookupSpritePoints } from "./spriteOrigin";
+import { allCrafts, craftAgility, craftAimsWithTurret, craftBombDrop, craftCameraScale, craftCloudParallax, craftComposite, craftCompositePartScale, craftCrewHudTag, craftExhaustFlameHue, craftExhaustFlameSheet, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftGunPreferDegrees, craftGunPreferOffset, craftGunSocketSlots, craftHardpointMounts, craftControlScheme, craftLoadoutLabel, craftOf, craftOrigin, craftPreviewExhaustScale, craftPreviewExhaustTint, craftPreviewFitScale, craftRotorAlongScale, craftRotorFlightSpeed, craftRotorIsProp, craftRotorMounts, craftRotorPreviewSpinMs, craftRotorTiltMul, craftSocketBarrelCount, craftSocketFireCd, craftSocketIsPrimary, craftSocketMultiplicity, craftSocketPoints, craftSocketStartingAmmo, craftWingTipMounts, rotorDrawSpan, rotorMountsOf, rotorSpinSign, socketPointsOnKey, type CraftBombDrop, type CraftComposite } from "./craft";
 import { missionOf } from "./mission";
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
 import { rigsAnyOpen, installRigHotkeys } from "./rigs";
@@ -184,7 +254,7 @@ import { setWarpDistortPipeline } from "./warpDistort";
 import { setCloakFxPipeline } from "./cloakFx";
 import { createTerrain25D, type Terrain25D } from "./terrain25d";
 import { tipKnownFromSelection, tipsForKnown, type TacticalTip } from "./tips";
-import { extractBiomeTiles, bakeHeliHudWireTexture, heliHudWireUv, shadowAlpha, shadowKey, spriteUvPos, FX_SHEET_SIZE, FX_VARIANTS, registerArt, nameGameTexture, spritePivot, muzzleGlowKey, ensureExhaustGlow, type HeliHudWireBake } from "./sprites";
+import { extractBiomeTiles, bakeHeliHudWireTexture, heliHudWireUv, shadowAlpha, shadowKey, spriteUvPos, FX_SHEET_SIZE, FX_VARIANTS, FX_BLAST_CELLS, registerArt, nameGameTexture, spritePivot, muzzleGlowKey, ensureExhaustGlow, type HeliHudWireBake } from "./sprites";
 import { createControlLegend } from "./menuChrome";
 import {
   generateWorld,
@@ -224,7 +294,7 @@ import {
 
 type FxClass = "short" | "fire" | "smoke" | "dust";
 /** Player chin / cabin traverse rate (rad/s) — also used by crew-served auto stations. */
-const GUN_STATION_TURN_RATE = 3.6;
+const GUN_STATION_TURN_RATE = 6.4;
 /** Auto fire once the barrel is within this angle of the track (radians). */
 const AUTO_GUN_ALIGN_TOL = 0.14;
 /** Score penalty per radian off the barrel's preferred (mount-outward) heading. */
@@ -243,6 +313,8 @@ type BurstParticle = Phaser.GameObjects.Particles.Particle & {
   burstHeading?: number;
   launchScale?: number;
   launchStretch?: number;
+  launchThick?: number;
+  launchSpd?: number;
   swirl?: number;
 };
 
@@ -263,6 +335,26 @@ type ThermalWreckMark = {
   /** Elapsed lifetime (hold + fade); advances even when thermal view is off. */
   age: number;
   kind: ThermalWreckKind;
+};
+
+/** Additive ember patch over a crater / hulk — fades to nothing with flicker. */
+type EmberGlow = {
+  /** Crisp coal / beam fragments. */
+  image: Phaser.GameObjects.Image;
+  /** Soft enlarged ADD bloom under/over the crisp layer. */
+  bloom: Phaser.GameObjects.Image;
+  x: number;
+  y: number;
+  z: number;
+  rotation: number;
+  scale: number;
+  /** Bloom scale relative to `scale`. */
+  bloomMul: number;
+  age: number;
+  hold: number;
+  fadeDur: number;
+  flickerPhase: number;
+  flickerRate: number;
 };
 
 function thermalWreckTiming(kind: ThermalWreckKind, scaleX: number, scaleY: number): { hold: number; fadeDur: number } {
@@ -429,8 +521,7 @@ function shotLookOf(s: Shot): ShotLook {
 const MAP_EDGE_MARGIN = 280;
 /** Hard pad ground units cannot cross. */
 const MAP_EDGE_PAD = 40;
-/** How far aircraft may overshoot before a soft cap (jets / enemy air). */
-const MAP_AIR_SOFT = 480;
+/** How far aircraft may overshoot before a soft cap (jets / enemy air) — see heli.MAP_AIR_SOFT. */
 
 type TextureAlphaBounds = {
   width: number;
@@ -482,6 +573,7 @@ export class MissionScene extends Phaser.Scene {
   sight!: Phaser.GameObjects.Graphics;
   lockGfx!: Phaser.GameObjects.Graphics;
   towWireGfx!: Phaser.GameObjects.Graphics;
+  remoteAntennaGfx!: Phaser.GameObjects.Graphics;
   teslaGfx!: Phaser.GameObjects.Graphics;
   energyTrailGfx!: Phaser.GameObjects.Graphics;
   /** Neon ribbons that keep fading after the dart is gone. */
@@ -503,6 +595,8 @@ export class MissionScene extends Phaser.Scene {
   smokePuffG!: Phaser.GameObjects.Group;
   thermalHotspotG!: Phaser.GameObjects.Group;
   thermalWreckMarks: ThermalWreckMark[] = [];
+  /** Warm ember patches over fresh craters / hulks (ADD, flicker-fade). */
+  emberGlows: EmberGlow[] = [];
   smoke!: Phaser.GameObjects.Particles.ParticleEmitter;
   flame!: Phaser.GameObjects.Particles.ParticleEmitter;
   hotFlame!: Phaser.GameObjects.Particles.ParticleEmitter;
@@ -514,6 +608,10 @@ export class MissionScene extends Phaser.Scene {
   shortBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
   /** Long, fast, high-drag streaks for HE / death bursts. */
   streakBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
+  /** Big boom sparks: thick dense needles — slow loft, gravity fall, frozen launch angle. */
+  bigBoomSparkBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
+  /** Big boom dirt streaks — long travel needles that keep size while they fall. */
+  bigBoomDirtBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
   /** Cyan blur streaks for Starstreak breaks. */
   energyStreakBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
   /** Tesla impact needles — omnidirectional, high-drag, frozen heading. */
@@ -528,6 +626,12 @@ export class MissionScene extends Phaser.Scene {
   flareTrail!: Phaser.GameObjects.Particles.ParticleEmitter;
   /** Bigger round sparks at the flare pellet itself. */
   flareSpark!: Phaser.GameObjects.Particles.ParticleEmitter;
+  /** Signal-flare gun: pink/red flame-smoke loft trail. */
+  signalFlareTrail!: Phaser.GameObjects.Particles.ParticleEmitter;
+  /** Signal-flare gun: pink tinted smoke loft. */
+  signalFlareSmoke!: Phaser.GameObjects.Particles.ParticleEmitter;
+  /** Signal-flare gun: fast red sparks. */
+  signalFlareSpark!: Phaser.GameObjects.Particles.ParticleEmitter;
   muzzleBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
   splashBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
   explosionPuff!: Phaser.GameObjects.Particles.ParticleEmitter;
@@ -547,6 +651,10 @@ export class MissionScene extends Phaser.Scene {
   exhaustEngineGlows: Phaser.GameObjects.Image[] = [];
   /** Hue ColorMatrix on each nozzle flame (preserves source grading). */
   exhaustFlameHueFx: (Phaser.FX.ColorMatrix | undefined)[] = [];
+  /** Plane-remote nozzle flame/glow (Raptor) — pooled across remotes each frame. */
+  remoteExhaustFlames: Phaser.GameObjects.Image[] = [];
+  remoteExhaustGlows: Phaser.GameObjects.Image[] = [];
+  remoteExhaustVisCursor = 0;
   exhaustEmitCarry = 0;
   exhaustMountCursor = 0;
   exhaustPrevWorld: ({ x: number; y: number; z: number } | undefined)[] = [];
@@ -615,11 +723,19 @@ export class MissionScene extends Phaser.Scene {
     /** Pre–z-scale glow diameter. */
     glowMul: number;
     rotJitter: number;
+    /** Socket that fired — drives above/below muzzle Z + depth. */
+    slot?: number;
     muzzleUv?: { x: number; y: number };
     gunI?: number;
+    /** Which muzzle UV on the gun texture (dual-rail turrets). */
+    gunMuzzleI?: number;
     /** Craft-local tip when no UV/gun (e.g. missile pylon). */
     localX?: number;
     localY?: number;
+    /** Absolute world tip (remote guns — not parented to the host craft). */
+    worldX?: number;
+    worldY?: number;
+    worldZ?: number;
   }[] = [];
   muzzleCursor = 0;
   playerGunSide = 0;
@@ -677,6 +793,16 @@ export class MissionScene extends Phaser.Scene {
     ammo: Phaser.GameObjects.Text;
     status: Phaser.GameObjects.Text;
   }[];
+  /** Extra HUD chrome for POV remotes — Q to exit back to the bird. */
+  exitHudSlot!: {
+    key: Phaser.GameObjects.Text;
+    name: Phaser.GameObjects.Text;
+  };
+  /** POV remotes with host escort — F toggles FOLLOW / HOLD. */
+  escortHudSlot!: {
+    key: Phaser.GameObjects.Text;
+    name: Phaser.GameObjects.Text;
+  };
   /** Countermeasure prompt under the weapon slots. */
   cmHudLabel!: Phaser.GameObjects.Text;
   cmHudTime!: Phaser.GameObjects.Text;
@@ -723,6 +849,11 @@ export class MissionScene extends Phaser.Scene {
   stingerStyle: "dramatic" | "subtle" = "dramatic";
   /** Space dismissed subtle stinger chrome/cam early; timer (time warp) continues. */
   stingerReleased = false;
+  /**
+   * Subtle Space-dismiss is armed only after Space goes up once (so a held climb
+   * key doesn't eat the focus cam) and after the arrive window.
+   */
+  stingerSpaceArmed = false;
   /** Look offset when the current stinger started — ease from here, not from the player. */
   stingerCamFromX = 0;
   stingerCamFromY = 0;
@@ -758,6 +889,17 @@ export class MissionScene extends Phaser.Scene {
     driftAng: number;
     driftSpd: number;
   }[] = [];
+  /** Off-map soft cloud / fog sprites (leave-theater; flat world XY). */
+  leaveTheaterClouds: Phaser.GameObjects.Image[] = [];
+  /** Off-map mountain peaks — 2.5D projected like units (leave-theater only). */
+  leaveTheaterPeaks: {
+    im: Phaser.GameObjects.Image;
+    x: number;
+    y: number;
+    z: number;
+    sx: number;
+    sy: number;
+  }[] = [];
   povCamLookHold = 0;
   /** Wall-clock dt for this frame (warp missiles ignore sim slowmo). */
   frameWallDt = 0;
@@ -765,6 +907,15 @@ export class MissionScene extends Phaser.Scene {
   spectrePilot = false;
   /** Camera + WASD are on the live remote (independent of which weapon is selected). */
   remoteView = false;
+  /**
+   * Shadow `Heli` for plane-scheme remotes (Raptor) — same flight path as player craft.
+   * Keyed by remote id; dropped on dock / detonate / mission reset.
+   */
+  remotePilotCraft = new Map<number, Heli>();
+  /** Host craft escort while piloting a POV remote — default hold. */
+  hostEscortMode: "hold" | "follow" = "hold";
+  /** Follow leash hysteresis — true while closing to the inner ring after breaking outer. */
+  hostEscortSeeking = false;
   /** 0 = heli cam, 1 = remote cam. Eased when entering / leaving Spectre view. */
   remoteCamT = 0;
   remotes: RemoteCraft[] = [];
@@ -802,6 +953,8 @@ export class MissionScene extends Phaser.Scene {
   timewarpMax = 0;
   cloakT = 0;
   cmPulseT = 0;
+  reactiveArmorT = 0;
+  smokeScreenT = 0;
   empGlitchT = 0;
   empGlitchMax = 0;
   empBurstT = 0;
@@ -824,6 +977,44 @@ export class MissionScene extends Phaser.Scene {
     barrel?: number;
     helixPhase?: number;
   }[] = [];
+  /**
+   * Active call-strike marks (flare settled → off-map barrage).
+   * Payload-driven; any craft weapon with `callStrike` can arm one.
+   */
+  callStrikeMarks: {
+    id: number;
+    x: number;
+    y: number;
+    z: number;
+    /** Countdown to first shell (from `callStrike.delay`; 0 = immediate). */
+    delayT: number;
+    roundsLeft: number;
+    interval: number;
+    intervalT: number;
+    jitter: number;
+    shellDmg: number;
+    shellBlast: number;
+    shellLook: string;
+    shellSpeed: number;
+    /** Fixed off-map origin for this barrage's shells (target X + map width). */
+    spawnX: number;
+    spawnY: number;
+    spawnZ: number;
+    /** Shells that have already impacted. */
+    hitsLanded: number;
+    /** Keep flare FX until this many hits. */
+    flareUntilHits: number;
+    /** Countdown to first shell impact — ETA label hides when this hits 0. */
+    firstImpactEta: number;
+    /**
+     * When set (HOUND / POV observer), each round fires this host craft weapon
+     * at the mark instead of a synthetic off-map shell.
+     */
+    hostWeapon?: string;
+  }[] = [];
+  nextCallStrikeMarkId = 1;
+  /** Pooled ETA labels for live call-strike flares. */
+  callStrikeEtaTxt: Phaser.GameObjects.Text[] = [];
   /** Fading Refractor beam segments (solid glowy lines). */
   refractorBeams: {
     x0: number;
@@ -882,6 +1073,8 @@ export class MissionScene extends Phaser.Scene {
   helpBody!: Phaser.GameObjects.Text;
   helpCounter!: Phaser.GameObjects.Text;
   helpCraftBody!: Phaser.GameObjects.Image;
+  helpCraftGuns: Phaser.GameObjects.Image[] = [];
+  helpCraftGunParts: CraftComposite["guns"] = [];
   helpCraftRotors: Phaser.GameObjects.Image[] = [];
   helpCraftRotorParts: CraftComposite["rotors"] = [];
   helpCraftExhaustGlows: Phaser.GameObjects.Image[] = [];
@@ -996,6 +1189,8 @@ export class MissionScene extends Phaser.Scene {
     this.lookCamX = 0;
     this.lookCamY = 0;
     this.planeClouds = [];
+    this.leaveTheaterClouds = [];
+    this.leaveTheaterPeaks = [];
     this.povCamLookHold = 0;
     this.povCamLookX = 0;
     this.povCamLookY = 0;
@@ -1003,6 +1198,7 @@ export class MissionScene extends Phaser.Scene {
     this.sensorLingerT = 0;
     this.warpLingerScale = null;
     this.stingerReleased = false;
+    this.stingerSpaceArmed = false;
     this.stingerCamFromX = 0;
     this.stingerCamFromY = 0;
     this.stingerCamFromZ = 0;
@@ -1017,10 +1213,16 @@ export class MissionScene extends Phaser.Scene {
     this.thermalPalette = "white_hot";
     this.fxBarrelPulse = 0;
     this.pendingSalvos = [];
+    this.callStrikeMarks = [];
+    this.nextCallStrikeMarkId = 1;
+    this.callStrikeEtaTxt = [];
     this.refractorBeams = [];
     this.remotes = [];
+    this.remotePilotCraft.clear();
     this.remoteView = false;
     this.remoteCamT = 0;
+    this.hostEscortMode = "hold";
+    this.hostEscortSeeking = false;
     this.flares = [];
     this.teslaZaps = [];
     this.teslaLive = null;
@@ -1034,6 +1236,8 @@ export class MissionScene extends Phaser.Scene {
     this.timewarpMax = 0;
     this.cloakT = 0;
     this.cmPulseT = 0;
+    this.reactiveArmorT = 0;
+    this.smokeScreenT = 0;
     this.empGlitchT = 0;
     this.empGlitchMax = 0;
     this.empBurstT = 0;
@@ -1061,6 +1265,11 @@ export class MissionScene extends Phaser.Scene {
     this.smokePuffs = [];
     this.gpsDistTxt = [];
     this.thermalWreckMarks = [];
+    for (const g of this.emberGlows) {
+      g.image.destroy();
+      g.bloom.destroy();
+    }
+    this.emberGlows = [];
     this.exhaustPrevWorld = [];
     this.exhaustMountCursor = 0;
     this.wingTrailPrevScreen = [];
@@ -1111,7 +1320,7 @@ export class MissionScene extends Phaser.Scene {
     ensureImpactGlow(this.textures);
     ensureExhaustGlow(this.textures);
     ensureBlastRingGradient(this.textures);
-    ensureToonBlastAnims(this.anims, this.textures);
+    ensureAllArtGenAnims(this.anims, this.textures);
     this.input.setDefaultCursor("none");
     this.canFire = !this.input.activePointer.isDown;
     this.input.on("pointerup", () => {
@@ -1124,7 +1333,7 @@ export class MissionScene extends Phaser.Scene {
 
     this.physics.world.setBounds(0, 0, WORLD, WORLD);
     this.cameras.main.setBounds(0, 0, WORLD, WORLD);
-    this.cameras.main.setBackgroundColor("#2a2418");
+    this.cameras.main.setBackgroundColor("#6a8496");
     this.setupTestPostFx();
 
     this.ground = this.add.image(WORLD / 2, WORLD / 2, "map_terrain");
@@ -1167,6 +1376,7 @@ export class MissionScene extends Phaser.Scene {
       this.heli.angle = 0.6;
       this.heli.syncStationAimToHull();
     }
+    this.createLeaveTheaterSky();
     this.createPlaneCloudParallax();
     setCamera25DFocus(this.heli.x, this.heli.y, this.heli.z);
     const craft = this.heli.spec;
@@ -1209,7 +1419,8 @@ export class MissionScene extends Phaser.Scene {
       this.add
         .image(0, 0, "fx_exhaust_glow")
         .setDepth(Layer.WORLD)
-        .setOrigin(0.5, 0.5)
+        // Top-middle = nozzle; plume hangs in local +Y (exhaust).
+        .setOrigin(0.5, 0)
         .setBlendMode(Phaser.BlendModes.ADD)
         .setTint(craftPreviewExhaustTint(craft.kind))
         .setVisible(false)
@@ -1261,6 +1472,7 @@ export class MissionScene extends Phaser.Scene {
     this.sight = this.add.graphics().setDepth(Layer.WORLD);
     this.lockGfx = this.add.graphics().setDepth(Layer.FIELD).setVisible(false);
     this.towWireGfx = this.add.graphics().setDepth(Layer.WORLD);
+    this.remoteAntennaGfx = this.add.graphics().setDepth(Layer.WORLD);
     this.teslaGfx = this.add.graphics().setDepth(Layer.WORLD).setBlendMode(Phaser.BlendModes.ADD);
     this.energyTrailGfx = this.add.graphics().setDepth(Layer.WORLD).setBlendMode(Phaser.BlendModes.ADD);
     this.refractorGfx = this.add.graphics().setDepth(Layer.WORLD).setBlendMode(Phaser.BlendModes.ADD);
@@ -1481,6 +1693,103 @@ export class MissionScene extends Phaser.Scene {
           // Hold launch heading so gravity drifts them without tipping the streak.
           onEmit: burstRotation,
           onUpdate: (p) => Phaser.Math.RadToDeg((p as BurstParticle).burstHeading ?? Math.atan2(p.velocityY, p.velocityX)),
+        },
+      })
+    );
+    this.bigBoomSparkBurst = this.poolFx("short", () =>
+      this.add.particles(0, 0, "fx_spark", {
+        // Long hang so coast + gravity arc reads.
+        lifespan: { onEmit: (p) => seedBurst(p, 1600, 2600) },
+        speedX: { onEmit: burstVelocityX },
+        speedY: { onEmit: burstVelocityY },
+        scaleX: {
+          onEmit: (p) => {
+            const q = p as BurstParticle;
+            q.launchScale = this.burstLaunch.scale * range(1.05, 1.5);
+            q.launchStretch = range(2.4, 3.6) * this.burstLaunch.stretchMul;
+            q.launchSpd = Math.max(40, Math.hypot(q.burstVx ?? 0, q.burstVy ?? 0));
+            return q.launchScale * q.launchStretch;
+          },
+          onUpdate: (p, _k, t) => {
+            const q = p as BurstParticle;
+            const spd = Math.hypot(p.velocityX, p.velocityY);
+            const slow = Phaser.Math.Clamp(spd / (q.launchSpd ?? 1), 0.12, 1);
+            // Shrink with speed; mild life taper at the end.
+            return (q.launchScale ?? 1) * (q.launchStretch ?? 1) * slow * Math.pow(1 - t, 0.35);
+          },
+        },
+        scaleY: {
+          onEmit: (p) => {
+            const q = p as BurstParticle;
+            q.launchThick = range(0.4, 0.58);
+            return (q.launchScale ?? this.burstLaunch.scale) * q.launchThick;
+          },
+          onUpdate: (p, _k, t) => {
+            const q = p as BurstParticle;
+            const spd = Math.hypot(p.velocityX, p.velocityY);
+            const slow = Phaser.Math.Clamp(spd / (q.launchSpd ?? 1), 0.15, 1);
+            return (q.launchScale ?? 1) * (q.launchThick ?? 1) * slow * Math.pow(1 - t, 0.35);
+          },
+        },
+        alpha: { start: 1, end: 0, ease: "Quad.easeIn" },
+        blendMode: "ADD",
+        tint: [0xffffff, 0xfff2b0, 0xffc050, 0xff7820],
+        // Soft drag so they reach distance then settle; gravity arcs them down.
+        gravityY: 200,
+        accelerationX: { onUpdate: (p) => -p.velocityX * 1.15 },
+        accelerationY: { onUpdate: (p) => -p.velocityY * 0.85 },
+        radial: false,
+        emitting: false,
+        frame: fxFrames,
+        rotate: {
+          onEmit: burstRotation,
+          onUpdate: (p) => Phaser.Math.RadToDeg((p as BurstParticle).burstHeading ?? 0),
+        },
+      })
+    );
+    this.bigBoomDirtBurst = this.poolFx("dust", () =>
+      this.add.particles(0, 0, "fx_dirt", {
+        lifespan: { onEmit: (p) => seedBurst(p, 1500, 2400) },
+        speedX: { onEmit: burstVelocityX },
+        speedY: { onEmit: burstVelocityY },
+        scaleX: {
+          onEmit: (p) => {
+            const q = p as BurstParticle;
+            // Long along travel (~0.7–0.9 of big-boom spark length band).
+            q.launchScale = this.burstLaunch.scale * range(1.0, 1.45);
+            q.launchStretch = range(1.7, 3.15) * this.burstLaunch.stretchMul;
+            return q.launchScale * q.launchStretch;
+          },
+          // Hold size while falling — no speed/life unshrink.
+          onUpdate: (p) => {
+            const q = p as BurstParticle;
+            return (q.launchScale ?? 1) * (q.launchStretch ?? 1);
+          },
+        },
+        scaleY: {
+          onEmit: (p) => {
+            const q = p as BurstParticle;
+            // Wider than spark needles (~2–3× that thickness band).
+            q.launchThick = range(0.85, 1.65);
+            return (q.launchScale ?? this.burstLaunch.scale) * q.launchThick;
+          },
+          onUpdate: (p) => {
+            const q = p as BurstParticle;
+            return (q.launchScale ?? 1) * (q.launchThick ?? 1);
+          },
+        },
+        alpha: { start: 0.92, end: 0, ease: "Quad.easeIn" },
+        blendMode: "NORMAL",
+        tint: [0xc4a070, 0xa88858, 0x8a6e48, 0x6e5638],
+        gravityY: 275,
+        accelerationX: { onUpdate: (p) => -p.velocityX * 1.05 },
+        accelerationY: { onUpdate: (p) => -p.velocityY * 0.75 },
+        radial: false,
+        emitting: false,
+        frame: fxFrames,
+        rotate: {
+          onEmit: burstRotation,
+          onUpdate: (p) => Phaser.Math.RadToDeg((p as BurstParticle).burstHeading ?? 0),
         },
       })
     );
@@ -2101,8 +2410,10 @@ export class MissionScene extends Phaser.Scene {
     );
     this.blastBurn = this.poolFx("fire", () =>
       this.add.particles(0, 0, "fx_flame", {
+        // Match lingerSmoke buoyancy/path so fire fades into the same rising plume.
         lifespan: { onEmit: () => range(240, 420) * this.trailFxLife },
-        speed: { min: 2, max: 14 },
+        speed: { min: 4, max: 18 },
+        angle: { min: -128, max: -52 },
         scale: {
           onEmit: (p) => fxEmit(p, () => (0.28 + Math.pow(Math.random(), 0.65) * 0.28) * this.trailFxScale),
           onUpdate: (p, _k, t) => fxLife(p, t, (u) => 1 - u * 0.9, 0.28),
@@ -2110,7 +2421,9 @@ export class MissionScene extends Phaser.Scene {
         alpha: { start: 1, end: 0 },
         blendMode: "ADD",
         tint: [0xfff4c0, 0xff9a32, 0xff5a18],
-        gravityY: -78,
+        gravityY: -6,
+        accelerationX: { onEmit: () => (Math.random() - 0.5) * 18 },
+        accelerationY: { onEmit: () => -5 + (Math.random() - 0.5) * 12 },
         emitting: false,
         frame: fxFrames,
         rotate: fxSpin,
@@ -2180,6 +2493,62 @@ export class MissionScene extends Phaser.Scene {
         rotate: fxSpin,
       })
     );
+    // Signal-flare gun pellet: pink/red flame loft with strong screen-up (Y/Z) drift.
+    this.signalFlareTrail = this.poolFx("fire", () =>
+      this.add.particles(0, 0, "fx_flame", {
+        lifespan: { onEmit: () => range(520, 980) * this.trailFxLife },
+        speed: { min: 6, max: 28 },
+        angle: { min: -130, max: -50 },
+        scale: {
+          onEmit: (p) => fxEmit(p, () => (0.28 + Math.pow(Math.random(), 0.6) * 0.22) * this.trailFxScale),
+          onUpdate: (p, _k, t) => fxLife(p, t, (u) => 1 - u * 0.72, 0.28),
+        },
+        alpha: { start: 0.95, end: 0 },
+        blendMode: "ADD",
+        tint: [0xffe0f0, 0xff6a9a, 0xff2a55, 0xe01040],
+        gravityY: -145,
+        accelerationY: { onEmit: () => -35 + (Math.random() - 0.5) * 18 },
+        emitting: false,
+        frame: fxFrames,
+        rotate: fxSpin,
+      })
+    );
+    this.signalFlareSmoke = this.poolFx("smoke", () =>
+      this.add.particles(0, 0, this.textures.exists("fx_smoke_tint") ? "fx_smoke_tint" : "fx_smoke", {
+        lifespan: { onEmit: () => range(900, 1600) * Math.max(1, this.trailFxLife * 0.8) },
+        speed: { min: 4, max: 22 },
+        angle: { min: -135, max: -45 },
+        scale: {
+          onEmit: (p) => fxEmit(p, () => (0.22 + Math.random() * 0.16) * this.trailFxScale),
+          onUpdate: (p, _k, t) => fxLife(p, t, (u) => 1 + 2.6 * u, 0.22),
+        },
+        alpha: { start: 0.55, end: 0 },
+        tint: [0xffb0c8, 0xff5578, 0xd02048, 0x901030],
+        gravityY: -95,
+        accelerationY: { onEmit: () => -28 + (Math.random() - 0.5) * 14 },
+        accelerationX: { onEmit: () => (Math.random() - 0.5) * 16 },
+        emitting: false,
+        frame: fxFrames,
+        rotate: { min: -70, max: 70 },
+      })
+    );
+    this.signalFlareSpark = this.poolFx("short", () =>
+      this.add.particles(0, 0, "fx_spark", {
+        lifespan: { onEmit: () => range(90, 220) },
+        speed: { min: 140, max: 420 },
+        scale: {
+          onEmit: (p) => fxEmit(p, () => (0.22 + Math.pow(Math.random(), 0.45) * 0.2) * this.trailFxScale),
+          onUpdate: (p, _k, t) => fxLife(p, t, (u) => 1 - u * 0.9, 0.28),
+        },
+        alpha: { start: 1, end: 0 },
+        blendMode: "ADD",
+        tint: [0xffffff, 0xff90b0, 0xff2858, 0xc01030],
+        gravityY: 18,
+        emitting: false,
+        frame: fxFrames,
+        rotate: fxSpin,
+      })
+    );
     this.shortTrailSmoke = this.poolFx("smoke", () =>
       this.add.particles(0, 0, "fx_smoke", {
         lifespan: { onEmit: () => 520 * this.trailFxLife },
@@ -2203,10 +2572,10 @@ export class MissionScene extends Phaser.Scene {
         speed: { min: 4, max: 18 },
         angle: { min: -128, max: -52 },
         scale: {
-          onEmit: (p) => fxEmit(p, () => 0.28 * this.trailFxScale),
-          onUpdate: (p, _k, t) => fxLife(p, t, (u) => 1 + 2.4 * u, 0.28),
+          onEmit: (p) => fxEmit(p, () => 0.38 * this.trailFxScale),
+          onUpdate: (p, _k, t) => fxLife(p, t, (u) => 1 + 2.4 * u, 0.38),
         },
-        alpha: { start: 0.42, end: 0 },
+        alpha: { start: 0.88, end: 0 },
         gravityY: -6,
         accelerationX: { onEmit: () => (Math.random() - 0.5) * 18 },
         accelerationY: { onEmit: () => -5 + (Math.random() - 0.5) * 12 },
@@ -2333,7 +2702,8 @@ export class MissionScene extends Phaser.Scene {
     });
     this.input.keyboard!.addKey("Q").on("down", () => {
       if (this.editOpen) this.nudgeEditRot(-1);
-      else this.exitRemoteView();
+      else if (this.remoteView && this.pilotingRemote()) this.exitRemoteView();
+      else this.recallWingmen();
     });
     this.input.keyboard!.addKey("COMMA").on("down", () => {
       if (this.editOpen) this.nudgeEditOff(-1, 0);
@@ -2413,7 +2783,12 @@ export class MissionScene extends Phaser.Scene {
       for (const policy of Object.values(this.fxPolicies)) policy.emitters.clear();
     });
     installRigHotkeys(this);
-    this.input.keyboard!.addKey("F").on("down", () => this.toggleTestFx());
+    this.input.keyboard!.addKey("F").on("down", () => {
+      if (this.editOpen || this.debugOpen || this.helpOpen || this.exitOpen) return;
+      // POV remotes with host escort claim F; otherwise F toggles test FX.
+      if (this.povHudRemote()?.spec.hostEscort) this.toggleHostEscortMode();
+      else this.toggleTestFx();
+    });
     this.input.keyboard!.addKey("T").on("down", () => this.toggleThermal());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.UP).on("down", () => {
       if (rigsAnyOpen(this)) return;
@@ -2463,8 +2838,11 @@ export class MissionScene extends Phaser.Scene {
         return;
       }
       if (this.debugOpen) return;
-      if (dy > 0) this.selectWeapon((this.heli.weapon + 1) % this.loadout.length);
-      else this.selectWeapon((this.heli.weapon + this.loadout.length - 1) % this.loadout.length);
+      if (dy > 0) this.selectWeapon((this.hudWeapon() + 1) % this.hudLoadout().length);
+      else
+        this.selectWeapon(
+          (this.hudWeapon() + this.hudLoadout().length - 1) % this.hudLoadout().length
+        );
     });
 
     this.hud = this.add
@@ -2581,6 +2959,28 @@ export class MissionScene extends Phaser.Scene {
         status: mk("10px", "#7ad0ff", 0.5, 0).setStroke("#12100c", 2),
       };
     });
+    {
+      const mk = (size: string, color: string, originX: number) =>
+        this.add
+          .text(0, 0, "", {
+            fontFamily: "Share Tech Mono, monospace",
+            fontSize: size,
+            color,
+          })
+          .setOrigin(originX, 0.5)
+          .setScrollFactor(0)
+          .setDepth(Layer.HUD + 1)
+          .setStroke("#12100c", 3)
+          .setVisible(false);
+      this.exitHudSlot = {
+        key: mk("12px", "#a89868", 0),
+        name: mk("13px", "#f0d56a", 0),
+      };
+      this.escortHudSlot = {
+        key: mk("12px", "#a89868", 0),
+        name: mk("13px", "#f0d56a", 0),
+      };
+    }
     this.wpnHud = this.add.text(0, 0, "").setVisible(false);
     const cmMk = (size: string, color: string, originX: number) =>
       this.add
@@ -2680,7 +3080,7 @@ export class MissionScene extends Phaser.Scene {
     this.miniMask.fillStyle(0xffffff);
     this.miniMask.fillCircle(cx, cy, 88);
     this.miniBg = this.add.graphics().setScrollFactor(0).setDepth(Layer.HUD - 1);
-    this.miniBg.fillStyle(0x12100c, 1);
+    this.miniBg.fillStyle(minimapTerrainBgColor(this.world.canvas), 1);
     this.miniBg.fillCircle(cx, cy, 90);
     this.miniTerrain = this.add.image(cx, cy, "map_terrain").setScrollFactor(0).setDepth(Layer.HUD);
     this.miniTerrain.setMask(this.miniMask.createGeometryMask());
@@ -2913,6 +3313,198 @@ export class MissionScene extends Phaser.Scene {
     };
   }
 
+  /**
+   * Soft-cap crater stamp scale so 88px scorches don't go fuzzy on huge blasts.
+   * Approaches `hard` asymptotically past `soft`.
+   */
+  softCapBlastCraterScale(raw: number, soft = 1.28, hard = 2.05, k = 1.7): number {
+    if (!(raw > soft)) return Math.max(0.04, raw);
+    return soft + (hard - soft) * (1 - Math.exp(-(raw - soft) / k));
+  }
+
+  /** Pick a standard blast crater tex + soft-capped stamp scale. */
+  pickBlastCraterStamp(rawScale: number): { key: string; scale: number } {
+    const scale = this.softCapBlastCraterScale(rawScale);
+    const i = (Math.random() * FX_BLAST_CELLS) | 0;
+    const key = `fx_blast_${i}`;
+    return { key: this.textures.exists(key) ? key : "fx_blast_0", scale };
+  }
+
+  /** Stamp a blast crater using soft-capped scale (no large-tex swap). */
+  stampBlastCrater(x: number, y: number, rawScale: number, alpha = 1): void {
+    const pick = this.pickBlastCraterStamp(rawScale);
+    this.stampWreck(pick.key, x, y, Math.random() * Math.PI * 2, pick.scale, alpha);
+  }
+
+  /**
+   * Embers on mech/building kill craters and bomb/missile/rocket impacts only —
+   * never debris, troops, or gun scars.
+   */
+  spawnCraterEmbers(x: number, y: number, scale: number): void {
+    // Scatter individual baked particles — each crater gets a unique layout.
+    const n = Math.max(4, Math.min(14, Math.round(5 + scale * 6 + range(-2, 3))));
+    this.spawnEmberGlow(x, y, scale, {
+      hold: range(0.35, 0.85),
+      fade: range(1.1, 2.2),
+      particles: n,
+    });
+  }
+
+  /**
+   * Warm ember scatter over a crater. Places individual ADD particles (+ soft
+   * bloom) that hold briefly then flicker-fade out.
+   */
+  spawnEmberGlow(
+    x: number,
+    y: number,
+    scale: number,
+    opts?: {
+      hold?: number;
+      fade?: number;
+      /** How many single ember particles to scatter (default 1 pattern stamp). */
+      particles?: number;
+    }
+  ): void {
+    if (isWater(this.world, x, y)) return;
+    const particleKey = this.textures.exists("fx_ember_particle")
+      ? "fx_ember_particle"
+      : "fx_ember";
+    if (!this.textures.exists(particleKey)) return;
+    const n = Math.max(1, opts?.particles ?? 1);
+    for (let p = 0; p < n; p++) {
+      this.spawnEmberGlowPatch(x, y, scale, particleKey, opts?.hold, opts?.fade);
+    }
+  }
+
+  spawnEmberGlowPatch(
+    x: number,
+    y: number,
+    scale: number,
+    sheet: string,
+    hold?: number,
+    fade?: number
+  ): void {
+    const sc = Math.max(0.04, scale * range(0.06, 0.52));
+    if (sc < 0.06 && Math.random() > 0.55) return;
+    const frames = this.textures.get(sheet).frameTotal;
+    const frame = frames > 1 ? (Math.random() * frames) | 0 : 0;
+    const rot = Math.random() * Math.PI * 2;
+    // Tight radial jitter around the crater center.
+    const ang = Math.random() * Math.PI * 2;
+    const dist = Math.pow(Math.random(), 0.65) * (6 + scale * 12);
+    const ox = Math.cos(ang) * dist;
+    const oy = Math.sin(ang) * dist;
+    const softKey = `${sheet}_soft`;
+    const bloomTex = this.textures.exists(softKey) ? softKey : sheet;
+    const image = this.add
+      .image(0, 0, sheet, frame)
+      .setOrigin(0.5, 0.5)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setVisible(false);
+    const bloom = this.add
+      .image(0, 0, bloomTex, frame)
+      .setOrigin(0.5, 0.5)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setVisible(false);
+    const glow: EmberGlow = {
+      image,
+      bloom,
+      x: x + ox,
+      y: y + oy,
+      z: groundZ(this.world, x, y) + 0.4,
+      rotation: rot,
+      scale: sc,
+      bloomMul: range(1.45, 2.05),
+      age: 0,
+      hold: hold ?? range(0.3, 0.75),
+      fadeDur: fade ?? range(1.0, 2.0),
+      flickerPhase: Math.random() * Math.PI * 2,
+      flickerRate: range(11, 22),
+    };
+    this.emberGlows.push(glow);
+    this.syncEmberGlow(glow);
+    const cap = 160;
+    while (this.emberGlows.length > cap) {
+      const old = this.emberGlows.shift()!;
+      old.image.destroy();
+      old.bloom.destroy();
+    }
+  }
+
+  emberGlowFade(g: EmberGlow): number {
+    if (g.age <= g.hold) return 1;
+    return Math.max(0, 1 - (g.age - g.hold) / g.fadeDur);
+  }
+
+  syncEmberGlow(g: EmberGlow): void {
+    if (!cameraPointVisible(g.z, g.y) || this.mapBlend > 0.5) {
+      g.image.setVisible(false);
+      g.bloom.setVisible(false);
+      return;
+    }
+    const base = this.emberGlowFade(g);
+    if (base <= 0) {
+      g.image.setVisible(false);
+      g.bloom.setVisible(false);
+      return;
+    }
+    // Mid-drama flicker — stronger than the soft pulse, gentler than full sputter.
+    const w1 = Math.sin(g.age * g.flickerRate + g.flickerPhase);
+    const w2 = Math.sin(g.age * g.flickerRate * 1.73 + g.flickerPhase * 0.7);
+    const w3 = Math.sin(g.age * g.flickerRate * 2.8 + g.flickerPhase * 1.1);
+    const pulse = 0.5 + 0.5 * w1 * w2;
+    const crackle = 0.5 + 0.5 * w3;
+    const flicker = 0.38 + 0.62 * pulse * (0.65 + 0.35 * crackle);
+    const sputter = Phaser.Math.Linear(flicker, 0.2 + 0.8 * flicker * flicker, 1 - base);
+    const thermal = this.thermalOn;
+    const crispA = base * sputter * (thermal ? 0.5 : 0.98);
+    const bloomA = base * sputter * (thermal ? 0.28 : 0.58);
+    const at = worldToScreen(g.x, g.y, g.z);
+    const depth = worldDepth(g.z, ZOff.fire * 0.15, g.y);
+    const rot = projectHeading(g.rotation, g.x, g.y, g.z);
+    g.bloom
+      .setVisible(true)
+      .setPosition(at.x, at.y)
+      .setRotation(rot)
+      .setScale(g.scale * g.bloomMul * at.scale)
+      .setAlpha(bloomA)
+      .setDepth(depth - 0.02);
+    g.image
+      .setVisible(true)
+      .setPosition(at.x, at.y)
+      .setRotation(rot)
+      .setScale(g.scale * at.scale)
+      .setAlpha(crispA)
+      .setDepth(depth);
+    if (thermal) {
+      g.image.setBlendMode(Phaser.BlendModes.NORMAL);
+      g.bloom.setBlendMode(Phaser.BlendModes.NORMAL);
+      applyThermalHeat(g.image, true, 0.85 * base);
+      applyThermalHeat(g.bloom, true, 0.55 * base);
+    } else {
+      g.image.setBlendMode(Phaser.BlendModes.ADD);
+      g.bloom.setBlendMode(Phaser.BlendModes.ADD);
+      applyThermalHeat(g.image, false, 0);
+      applyThermalHeat(g.bloom, false, 0);
+    }
+  }
+
+  updateEmberGlows(dt: number): void {
+    let w = 0;
+    for (const g of this.emberGlows) {
+      if (!g.image.scene) continue;
+      g.age += dt;
+      if (this.emberGlowFade(g) <= 0) {
+        g.image.destroy();
+        g.bloom.destroy();
+        continue;
+      }
+      this.syncEmberGlow(g);
+      this.emberGlows[w++] = g;
+    }
+    this.emberGlows.length = w;
+  }
+
   /** Light bounce scorch, stretched along incoming debris travel. */
   stampDebrisBounceScorch(x: number, y: number, vx: number, vy: number): void {
     if (isWater(this.world, x, y)) return;
@@ -3141,6 +3733,7 @@ export class MissionScene extends Phaser.Scene {
       this.drawMinimap();
       this.drawPlayerHud();
       this.towWireGfx.clear();
+      this.remoteAntennaGfx?.clear();
       this.teslaGfx.clear();
       this.hideTeslaVisuals();
       this.energyTrailGfx.clear();
@@ -3162,28 +3755,43 @@ export class MissionScene extends Phaser.Scene {
         timings.fill(0);
         let t = performance.now();
         const aim = this.worldPointer();
-        const pilot = this.activeRemote();
-        this.spectrePilot = !!pilot && this.remoteView;
-        if (this.spectrePilot && pilot) this.tickRemotePilot(pilot, dt, aim);
-        else if (pilot) this.tickRemoteIdle(pilot, dt);
+        const pilot = this.pilotingRemote();
+        // POV remotes (HOUND): after Q exit the slot stays selected but bird flight returns.
+        this.spectrePilot =
+          !!pilot && (this.remoteView || !remoteHasPovHud(pilot.spec));
+        if (this.spectrePilot && pilot && !pilot.airborne) this.tickRemotePilot(pilot, dt, aim);
+        else {
+          const parked = this.activeRemote();
+          if (parked && !parked.spec.ai && !parked.airborne) this.tickRemoteIdle(parked, dt);
+        }
         this.tickCountermeasures(dt, wallDt);
-        this.heli.update(
-          dt,
-          this.world,
-          this.spectrePilot
-            ? { up: false, down: false, left: false, right: false }
-            : {
-                up: this.keyW.isDown,
-                down: this.keyS.isDown,
-                left: this.keyA.isDown,
-                right: this.keyD.isDown,
-              },
-          aim.x,
-          aim.y,
-          this.keySpace.isDown && !(this.stingerStyle === "subtle" && this.stingerT > 0 && !this.stingerReleased),
-          this.keyShift.isDown
-        );
+        {
+          const escort = this.hostEscortDrive(pilot);
+          this.heli.update(
+            dt,
+            this.world,
+            escort?.stick ??
+              (this.spectrePilot
+                ? { up: false, down: false, left: false, right: false }
+                : {
+                    up: this.keyW.isDown,
+                    down: this.keyS.isDown,
+                    left: this.keyA.isDown,
+                    right: this.keyD.isDown,
+                  }),
+            escort?.aimX ?? aim.x,
+            escort?.aimY ?? aim.y,
+            escort
+              ? false
+              : this.keySpace.isDown &&
+                  !(this.stingerStyle === "subtle" && this.stingerT > 0 && !this.stingerReleased),
+            escort ? false : this.keyShift.isDown
+          );
+          if (escort?.brake) this.brakeHostEscort(dt);
+          if (escort?.speedCap != null) this.capHostEscortSpeed(escort.speedCap);
+        }
         this.syncProjectionPose();
+        this.syncLeaveTheaterPeaks();
         this.syncHeliGfx(dt);
         this.handleFire(dt);
         this.tickPlayerMuzzles(dt);
@@ -3219,29 +3827,44 @@ export class MissionScene extends Phaser.Scene {
         timings[11] = performance.now() - t;
       } else {
         const aim = this.worldPointer();
-        const pilot = this.activeRemote();
-        this.spectrePilot = !!pilot && this.remoteView;
-        if (this.spectrePilot && pilot) this.tickRemotePilot(pilot, dt, aim);
-        else if (pilot) this.tickRemoteIdle(pilot, dt);
+        const pilot = this.pilotingRemote();
+        // POV remotes (HOUND): after Q exit the slot stays selected but bird flight returns.
+        this.spectrePilot =
+          !!pilot && (this.remoteView || !remoteHasPovHud(pilot.spec));
+        if (this.spectrePilot && pilot && !pilot.airborne) this.tickRemotePilot(pilot, dt, aim);
+        else {
+          const parked = this.activeRemote();
+          if (parked && !parked.spec.ai && !parked.airborne) this.tickRemoteIdle(parked, dt);
+        }
         this.tickCountermeasures(dt, wallDt);
-        this.heli.update(
-          dt,
-          this.world,
-          this.spectrePilot
-            ? { up: false, down: false, left: false, right: false }
-            : {
-                up: this.keyW.isDown,
-                down: this.keyS.isDown,
-                left: this.keyA.isDown,
-                right: this.keyD.isDown,
-              },
-          aim.x,
-          aim.y,
-          this.keySpace.isDown && !(this.stingerStyle === "subtle" && this.stingerT > 0 && !this.stingerReleased),
-          this.keyShift.isDown
-        );
+        {
+          const escort = this.hostEscortDrive(pilot);
+          this.heli.update(
+            dt,
+            this.world,
+            escort?.stick ??
+              (this.spectrePilot
+                ? { up: false, down: false, left: false, right: false }
+                : {
+                    up: this.keyW.isDown,
+                    down: this.keyS.isDown,
+                    left: this.keyA.isDown,
+                    right: this.keyD.isDown,
+                  }),
+            escort?.aimX ?? aim.x,
+            escort?.aimY ?? aim.y,
+            escort
+              ? false
+              : this.keySpace.isDown &&
+                  !(this.stingerStyle === "subtle" && this.stingerT > 0 && !this.stingerReleased),
+            escort ? false : this.keyShift.isDown
+          );
+          if (escort?.brake) this.brakeHostEscort(dt);
+          if (escort?.speedCap != null) this.capHostEscortSpeed(escort.speedCap);
+        }
 
         this.syncProjectionPose();
+        this.syncLeaveTheaterPeaks();
         this.syncHeliGfx(dt);
         this.handleFire(dt);
         this.tickPlayerMuzzles(dt);
@@ -3262,6 +3885,7 @@ export class MissionScene extends Phaser.Scene {
       }
     }
     this.updateThermalWreckMarks(dt);
+    this.updateEmberGlows(dt);
     this.tickDebugBlast(wallDt);
 
     if (this.editOpen) this.handleReliefEdit(wallDt);
@@ -3276,6 +3900,7 @@ export class MissionScene extends Phaser.Scene {
     if (mapOn) {
       this.drawMapOverlay();
       this.towWireGfx.clear();
+      this.remoteAntennaGfx?.clear();
       this.teslaGfx.clear();
       this.hideTeslaVisuals();
       this.energyTrailGfx.clear();
@@ -3289,6 +3914,7 @@ export class MissionScene extends Phaser.Scene {
       this.drawHvArrows();
       this.drawPlayerHud();
       this.drawTowWires();
+      this.drawRemoteAntennas();
       this.drawEnergyTrails();
       this.drawRefractorBeams();
       this.drawTeslaArcs();
@@ -3324,8 +3950,12 @@ export class MissionScene extends Phaser.Scene {
       }
       if (!objectiveAlive && !this.completedHv.has(h.id)) {
         this.completedHv.add(h.id);
-        const gz = groundZ(this.world, h.x, h.y);
-        completedTarget = { x: h.x, y: h.y, z: gz + 36 };
+        // Moving HV (field officer) dies away from the site pin — focus the unit, not spawn.
+        const corpse = this.units.find((q) => q.hv === h.id);
+        const x = corpse?.x ?? h.x;
+        const y = corpse?.y ?? h.y;
+        const z = (corpse?.z ?? groundZ(this.world, x, y)) + 36;
+        completedTarget = { x, y, z };
         if (this.heli.phase !== "dead" && this.completedHv.size < this.world.hv.length) {
           this.showStinger(
             "OBJECTIVE COMPLETE",
@@ -3417,22 +4047,76 @@ export class MissionScene extends Phaser.Scene {
     return this.troopSoftTurret(u) ? u.turret : u.angle;
   }
 
-  /** Projected hull facing with a cap so 2.5D poles can't snap the sprite 180°. */
+  /**
+   * Projected hull facing with rate-limited draw rotation.
+   * Near 2.5D poles, hold or prefer π continuity; otherwise always chase true
+   * projection so a one-frame flip cannot lock the sprite nose-aft forever.
+   */
   unitDrawRot(u: Unit, worldRot: number): number {
-    const raw = projectHeading(worldRot, u.x, u.y, u.z);
+    const vx = Math.cos(worldRot);
+    const vy = Math.sin(worldRot);
+    const sx = screenVelX(vx, vy, 0, u.x, u.y, u.z);
+    const sy = screenVelY(vy, 0, u.z, u.y);
+    const mag = Math.hypot(sx, sy);
+    let raw = Math.atan2(sy, sx);
     const prev = u.drawRot;
     if (prev == null || !Number.isFinite(prev)) {
       u.drawRot = raw;
       return raw;
     }
-    const jump = Math.abs(Phaser.Math.Angle.Wrap(raw - prev));
-    if (jump > 1.15) {
-      const visDt = Math.min(0.05, (this.game.loop.delta || 16) / 1000);
-      u.drawRot = Phaser.Math.Angle.RotateTo(prev, raw, 2.6 * visDt);
-    } else {
-      u.drawRot = raw;
+    // Collapsed projection (into/out of camera) → hold prior draw facing.
+    if (mag < 0.08) return prev;
+    // Only near the singularity: π-flip toward prev. Healthy mag always trusts raw.
+    if (mag < 0.35) {
+      const jump = Math.abs(Phaser.Math.Angle.Wrap(raw - prev));
+      if (jump > Math.PI * 0.55) {
+        const flipped = Phaser.Math.Angle.Wrap(raw + Math.PI);
+        if (Math.abs(Phaser.Math.Angle.Wrap(flipped - prev)) < jump) raw = flipped;
+        else return prev;
+      }
     }
+    const visDt = Math.min(0.05, (this.game.loop.delta || 16) / 1000);
+    u.drawRot = this.steerUnitAngle(prev, raw, 2.8, visDt);
     return u.drawRot;
+  }
+
+  /**
+   * Sim yaw toward `want`. Caps hitch dt and per-tick step so units never
+   * flip 180° in one frame even with high turn rates or large dt spikes.
+   */
+  steerUnitAngle(angle: number, want: number, rate: number, dt: number): number {
+    const stepDt = Math.min(Math.max(0, dt), 1 / 20);
+    // ~10°/tick hard cap — turns always take multiple frames, never axis snaps.
+    const maxStep = Math.min(Math.abs(rate) * stepDt, 0.18);
+    return Phaser.Math.Angle.RotateTo(angle, want, maxStep);
+  }
+
+  /** Smoothed projected aim for overlay guns / soft troop facing. */
+  unitAimDrawRot(u: Unit, key: string, worldRot: number): number {
+    if (!u.aimDrawRots) u.aimDrawRots = {};
+    const vx = Math.cos(worldRot);
+    const vy = Math.sin(worldRot);
+    const sx = screenVelX(vx, vy, 0, u.x, u.y, u.z);
+    const sy = screenVelY(vy, 0, u.z, u.y);
+    const mag = Math.hypot(sx, sy);
+    let raw = Math.atan2(sy, sx);
+    const prev = u.aimDrawRots[key];
+    if (prev == null || !Number.isFinite(prev)) {
+      u.aimDrawRots[key] = raw;
+      return raw;
+    }
+    if (mag < 0.08) return prev;
+    if (mag < 0.35) {
+      const jump = Math.abs(Phaser.Math.Angle.Wrap(raw - prev));
+      if (jump > Math.PI * 0.55) {
+        const flipped = Phaser.Math.Angle.Wrap(raw + Math.PI);
+        if (Math.abs(Phaser.Math.Angle.Wrap(flipped - prev)) < jump) raw = flipped;
+        else return prev;
+      }
+    }
+    const visDt = Math.min(0.05, (this.game.loop.delta || 16) / 1000);
+    u.aimDrawRots[key] = this.steerUnitAngle(prev, raw, 3.2, visDt);
+    return u.aimDrawRots[key]!;
   }
 
   mountAt(host: Unit, tex: string, mount: { x: number; y: number }): { x: number; y: number } {
@@ -3522,7 +4206,9 @@ export class MissionScene extends Phaser.Scene {
     rot: number,
     scale = 1,
     raycastInterval = 1,
-    cacheOwner?: object
+    cacheOwner?: object,
+    /** When set, use this screen rotation (keeps shadow locked to body drawRot). */
+    screenRot?: number
   ): void {
     type CachedShadow = {
       x: number;
@@ -3573,7 +4259,11 @@ export class MissionScene extends Phaser.Scene {
     const sk = this.textures.exists(want) ? want : "fx_shadow";
     if (sh.texture.key !== sk) sh.setTexture(sk);
     sh.setPosition(at.x, at.y)
-      .setRotation(projectHeading(rot, resolved.x, resolved.y, resolved.z))
+      .setRotation(
+        screenRot != null && Number.isFinite(screenRot)
+          ? screenRot
+          : projectHeading(rot, resolved.x, resolved.y, resolved.z)
+      )
       .setAlpha(shadowAlpha(cast))
       .setScale(scale * at.scale);
     const depth = worldDepth(resolved.z, -12, resolved.y);
@@ -3622,7 +4312,7 @@ export class MissionScene extends Phaser.Scene {
     const bodyRot = projectHeading(h.angle + craft.rotOff, h.x, h.y, h.z);
     this.body.setOrigin(craftOrigin(craft).x, craftOrigin(craft).y);
     const planeScheme = craftControlScheme(craft) === "plane";
-    if (planeScheme) {
+    if (planeScheme && !craft.flatHull) {
       // Billboard bank: foreshorten wing span with cos(roll), keep heading on the wrap.
       const wrap = this.ensureBodyTiltWrap();
       const bankAng = h.roll * 1.05;
@@ -3644,8 +4334,9 @@ export class MissionScene extends Phaser.Scene {
         .setVisible(true)
         .setPosition(scr.x, scr.y - bob)
         .setRotation(bodyRot);
-      const sx = 1 + Math.abs(h.roll) * 0.12;
-      const sy = 1 - Math.abs(h.pitch) * 0.14;
+      // Flat hulls stay a plate — no roll squash from A/D yaw / strafe.
+      const sx = craft.flatHull ? 1 : 1 + Math.abs(h.roll) * 0.12;
+      const sy = craft.flatHull ? 1 : 1 - Math.abs(h.pitch) * 0.14;
       this.body.setScale(sx * zs, sy * zs);
     }
     const bodyPose = this.heliBodyDrawPose();
@@ -3710,8 +4401,6 @@ export class MissionScene extends Phaser.Scene {
     this.guns.forEach((gun, i) => {
       const gunMount = gunParts[i]?.mount ?? aimMountUv;
       const at = spriteUvPos(bodyPose, gunMount.x, gunMount.y);
-      const gunSc =
-        craft.gunOverlayScale ?? 1;
       const slot = gunSlots[i];
       const barrel = this.gunBarrelIndexForVisual(i);
       const ang =
@@ -3723,6 +4412,10 @@ export class MissionScene extends Phaser.Scene {
       const tipH = this.gunTipHeat[i] ?? 0;
       let showGun = true;
       if (slot != null && gunParts[i]?.mount) {
+        // Turrets stacked on the same hull UV:
+        // - Pilot alt-weapons (Cyberhawk rail/tesla, Prometheus plasma/refractor)
+        //   are mutually exclusive — show the selected socket's mount.
+        // - Mixed controllers (main rail + automatic coax) keep every overlay.
         const siblings: number[] = [];
         for (let j = 0; j < gunSlots.length; j++) {
           const m = gunParts[j]?.mount;
@@ -3734,17 +4427,38 @@ export class MissionScene extends Phaser.Scene {
             siblings.push(gunSlots[j]!);
           }
         }
-        if (siblings.length > 1) {
-          const prefer = siblings.includes(h.weapon) ? h.weapon : siblings[0]!;
-          showGun = slot === prefer;
+        const uniqueSlots: number[] = [];
+        for (const s of siblings) {
+          if (!uniqueSlots.includes(s)) uniqueSlots.push(s);
+        }
+        if (uniqueSlots.length > 1) {
+          const exclusive = uniqueSlots.every(
+            (s) => craft.sockets[s]?.controller === "pilot"
+          );
+          if (exclusive) {
+            const prefer = uniqueSlots.includes(h.weapon)
+              ? h.weapon
+              : uniqueSlots[0]!;
+            showGun = slot === prefer;
+          }
         }
       }
+      const sock = slot != null ? craft.sockets[slot] : undefined;
+      const gunSc = (craft.gunOverlayScale ?? 1) * (sock?.gunScale ?? 1);
+      // Automatic coax on a shared cupola draws above the pilot turret.
+      const coaxBias = sock?.controller === "automatic" ? 0.55 : 0;
       gun
         .setVisible(showGun)
         .setPosition(at.x, at.y)
         .setRotation(gunRot)
         .setScale(zs * gunSc)
-        .setDepth(worldDepth(h.z, ZOff.gun + i * 0.001, h.y));
+        .setDepth(
+          worldDepth(
+            h.z,
+            (gunParts[i]?.layer === "above" ? ZOff.turret : ZOff.gun) + coaxBias + i * 0.05,
+            h.y
+          )
+        );
       applyEdgeLight(gun, gun.rotation);
       applyThermalHeat(gun, this.thermalOn, 0.3);
       this.syncGunHeatGlow(i, gun, tipH);
@@ -3849,10 +4563,10 @@ export class MissionScene extends Phaser.Scene {
   }
 
   /**
-   * Screen pose for UV mounts on the player hull — accounts for jet tilt wrap
+   * Screen pose for UV mounts on a hull image — accounts for jet tilt wrap
    * foreshortening so guns/exhaust stay glued to the billboard.
    */
-  heliBodyDrawPose(): {
+  imageDrawPose(im: Phaser.GameObjects.Image): {
     x: number;
     y: number;
     rotation: number;
@@ -3861,28 +4575,108 @@ export class MissionScene extends Phaser.Scene {
     originX: number;
     originY: number;
   } {
-    const body = this.body;
-    const wrap = body.getData("tiltWrap") as Phaser.GameObjects.Container | undefined;
+    const wrap = im.getData("tiltWrap") as Phaser.GameObjects.Container | undefined;
     if (!wrap?.scene) {
       return {
-        x: body.x,
-        y: body.y,
-        rotation: body.rotation,
-        displayWidth: body.displayWidth,
-        displayHeight: body.displayHeight,
-        originX: body.originX,
-        originY: body.originY,
+        x: im.x,
+        y: im.y,
+        rotation: im.rotation,
+        displayWidth: im.displayWidth,
+        displayHeight: im.displayHeight,
+        originX: im.originX,
+        originY: im.originY,
       };
     }
     return {
       x: wrap.x,
       y: wrap.y,
-      rotation: wrap.rotation + body.rotation,
-      displayWidth: body.width * Math.abs(wrap.scaleX),
-      displayHeight: body.height * Math.abs(wrap.scaleY),
-      originX: body.originX,
-      originY: body.originY,
+      rotation: wrap.rotation + im.rotation,
+      displayWidth: im.width * Math.abs(wrap.scaleX),
+      displayHeight: im.height * Math.abs(wrap.scaleY),
+      originX: im.originX,
+      originY: im.originY,
     };
+  }
+
+  /** Player hull draw pose (tilt wrap aware). */
+  heliBodyDrawPose(): ReturnType<MissionScene["imageDrawPose"]> {
+    return this.imageDrawPose(this.body);
+  }
+
+  /**
+   * Shared nozzle glow + flame for host craft exhaust and remote plane FX.
+   * Keeps Raptor / jet remotes on the same breath / flicker / thermal rules.
+   */
+  paintExhaustNozzle(
+    i: number,
+    mount: { x: number; y: number },
+    opts: {
+      pose: ReturnType<MissionScene["imageDrawPose"]>;
+      jetAng: number;
+      glowAng: number;
+      zs: number;
+      power: number;
+      bodyDepth: number;
+      cloakMul: number;
+      flameScale: number;
+      glowTint: number;
+      flame: Phaser.GameObjects.Image;
+      glow: Phaser.GameObjects.Image;
+      flameHue?: number;
+      hueFx?: Phaser.FX.ColorMatrix;
+    }
+  ): void {
+    const {
+      pose,
+      jetAng,
+      glowAng,
+      zs,
+      power,
+      bodyDepth,
+      cloakMul,
+      flameScale,
+      glowTint,
+      flame,
+      glow,
+      flameHue,
+      hueFx,
+    } = opts;
+    const at = spriteUvPos(pose, mount.x, mount.y);
+    const base = craftPreviewExhaustScale(zs);
+    const breath = 0.94 + Math.sin(this.time.now * 0.0068 + i * 1.7) * 0.07;
+    const thrust = 0.62 + power * 0.55;
+    glow
+      .setVisible(true)
+      .setPosition(at.x, at.y)
+      .setRotation(glowAng)
+      .setScale(base.x * thrust * breath, base.y * thrust * breath)
+      .setAlpha((0.28 + power * 0.7) * cloakMul)
+      .setDepth(bodyDepth + 0.15);
+    if (this.thermalOn) applyThermalHeat(glow, true, 0.9);
+    else glow.clearTint().setTint(glowTint);
+
+    const frameStep = Math.floor(this.time.now / 55);
+    const flicker = 0.92 + Math.sin(this.time.now * 0.043 + i * 2.17) * 0.08;
+    const sc = flameScale * zs * (0.35 + power * 0.75);
+    flame
+      .setVisible(true)
+      .setTexture("fx_exhaust")
+      .setFrame((frameStep + i) % FX_VARIANTS)
+      .setPosition(at.x, at.y)
+      .setRotation(jetAng)
+      .setScale(sc * flicker, sc * (1.04 - flicker * 0.12))
+      .setAlpha((0.62 + power * 0.34) * cloakMul)
+      .setDepth(bodyDepth + 0.2);
+    if (this.thermalOn) {
+      if (hueFx) hueFx.active = false;
+      applyThermalHeat(flame, true, 0.96);
+    } else {
+      flame.clearTint();
+      if (hueFx && flameHue != null) {
+        hueFx.active = true;
+        hueFx.hue(flameHue);
+      }
+    }
   }
 
   emitCraftExhaust(dt: number): void {
@@ -3913,63 +4707,40 @@ export class MissionScene extends Phaser.Scene {
       ((this.body.getData("tiltWrap") as Phaser.GameObjects.Container | undefined)?.depth ??
         this.body.depth);
     const cloakMul = this.cloakT > 0 ? 0.12 : 1;
-    const pulse = 0.92 + Math.sin(this.time.now * 0.0068) * 0.08;
 
-    // Soft engine glow — present through spool and flight, tracks thrust.
-    // Prometheus nozzles are wide across the hull in art; keep the oval on that axis.
+    // Soft engine glow — top-middle pinned to the nozzle; local +Y = exhaust.
+    // glowFollowsHull: body axes (rear vent row). Else: thrust direction.
     const pose = this.heliBodyDrawPose();
-    const glowAng = profile.glowFollowsHull ? pose.rotation : jetAng;
+    // Local +Y at rotation 0 points screen-down; jetAng is exhaust heading → −π/2.
+    const glowAng = profile.glowFollowsHull ? pose.rotation : jetAng - Math.PI / 2;
     this.exhaustEngineGlows.forEach((glow, i) => {
       const mount = mounts[i];
-      if (!mount) {
+      const flame = this.exhaustFlames[i];
+      if (!mount || !flame) {
         glow.setVisible(false);
+        flame?.setVisible(false);
         return;
       }
-      const at = spriteUvPos(pose, mount.x, mount.y);
-      const base = craftPreviewExhaustScale(zs);
-      const sc = (0.55 + power * 0.9) * pulse;
-      glow
-        .setVisible(true)
-        .setPosition(at.x, at.y)
-        .setRotation(glowAng)
-        .setScale(base.x * sc, base.y * sc)
-        .setAlpha((0.28 + power * 0.7) * cloakMul)
-        .setDepth(bodyDepth + 0.15);
-      if (this.thermalOn) applyThermalHeat(glow, true, 0.9);
-      else glow.clearTint().setTint(glowTint);
+      this.paintExhaustNozzle(i, mount, {
+        pose,
+        jetAng,
+        glowAng,
+        zs,
+        power,
+        bodyDepth,
+        cloakMul,
+        flameScale: profile.flame,
+        glowTint,
+        flame,
+        glow,
+        flameHue,
+        hueFx: this.exhaustFlameHueFx[i],
+      });
     });
-
-    const frameStep = Math.floor(this.time.now / 55);
-    this.exhaustFlames.forEach((flame, i) => {
-      const mount = mounts[i];
-      if (!mount) {
-        flame.setVisible(false);
-        return;
-      }
-      const at = spriteUvPos(this.heliBodyDrawPose(), mount.x, mount.y);
-      const flicker = 0.92 + Math.sin(this.time.now * 0.043 + i * 2.17) * 0.08;
-      const sc = profile.flame * zs * (0.35 + power * 0.75);
-      flame
-        .setVisible(true)
-        .setFrame((frameStep + i) % FX_VARIANTS)
-        .setPosition(at.x, at.y)
-        .setRotation(jetAng)
-        .setScale(sc * flicker, sc * (1.04 - flicker * 0.12))
-        .setAlpha((0.62 + power * 0.34) * cloakMul)
-        // The attached flame lights the nozzle and belongs just above the hull.
-        .setDepth(bodyDepth + 0.2);
-      const hueFx = this.exhaustFlameHueFx[i];
-      if (this.thermalOn) {
-        if (hueFx) hueFx.active = false;
-        applyThermalHeat(flame, true, 0.96);
-      } else {
-        flame.clearTint();
-        if (hueFx) {
-          hueFx.active = true;
-          hueFx.hue(flameHue);
-        }
-      }
-    });
+    for (let i = mounts.length; i < this.exhaustFlames.length; i++) {
+      this.exhaustFlames[i]?.setVisible(false);
+      this.exhaustEngineGlows[i]?.setVisible(false);
+    }
 
     this.exhaustEmitCarry += profile.rate * power * mounts.length * Math.min(dt, 0.05);
     const emitCap = ribbonDense ? 16 : 12;
@@ -4107,40 +4878,87 @@ export class MissionScene extends Phaser.Scene {
     }
     const tips = craftWingTipMounts(h.spec);
     if (!tips.length) return;
-    const bank = Math.abs(h.roll);
-    const bankT = Phaser.Math.Clamp((bank - 0.1) / 0.75, 0, 1);
+    const bodyDepth =
+      ((this.body.getData("tiltWrap") as Phaser.GameObjects.Container | undefined)?.depth ??
+        this.body.depth);
+    const state = {
+      emitCarry: this.wingTrailEmitCarry,
+      mountCursor: this.wingTrailMountCursor,
+      prevScreen: this.wingTrailPrevScreen,
+    };
+    this.emitWingTipContrails({
+      dt,
+      tips,
+      bank: Math.abs(h.roll),
+      heading: h.angle,
+      x: h.x,
+      y: h.y,
+      z: h.z,
+      pose: this.heliBodyDrawPose(),
+      bodyDepth,
+      state,
+    });
+    this.wingTrailEmitCarry = state.emitCarry;
+    this.wingTrailMountCursor = state.mountCursor;
+  }
+
+  /**
+   * Shared banked wingtip trails (host jets + Raptor remotes).
+   * Round-robins tips and stretches particles along each tip’s path so L/R don’t overlap.
+   */
+  emitWingTipContrails(opts: {
+    dt: number;
+    tips: { x: number; y: number }[];
+    bank: number;
+    heading: number;
+    x: number;
+    y: number;
+    z: number;
+    pose: {
+      x: number;
+      y: number;
+      rotation: number;
+      displayWidth: number;
+      displayHeight: number;
+      originX: number;
+      originY: number;
+    };
+    bodyDepth: number;
+    state: {
+      emitCarry: number;
+      mountCursor: number;
+      prevScreen: ({ x: number; y: number } | undefined)[];
+    };
+  }): void {
+    const { tips, state } = opts;
+    const bankT = Phaser.Math.Clamp((opts.bank - 0.1) / 0.75, 0, 1);
     if (bankT < 0.04) {
-      this.wingTrailEmitCarry = 0;
-      this.wingTrailMountCursor = 0;
-      this.wingTrailPrevScreen.length = 0;
+      state.emitCarry = 0;
+      state.mountCursor = 0;
+      state.prevScreen.length = 0;
       return;
     }
 
     const rate = (10 + bankT * 38) * tips.length;
-    this.wingTrailEmitCarry += rate * Math.min(dt, 0.05);
-    const emitN = Math.min(10, Math.floor(this.wingTrailEmitCarry));
-    this.wingTrailEmitCarry -= emitN;
+    state.emitCarry += rate * Math.min(opts.dt, 0.05);
+    const emitN = Math.min(10, Math.floor(state.emitCarry));
+    state.emitCarry -= emitN;
     if (!emitN) return;
 
-    const trailAng = projectHeading(h.angle + Math.PI, h.x, h.y, h.z);
+    const trailAng = projectHeading(opts.heading + Math.PI, opts.x, opts.y, opts.z);
     const drift = 28 + bankT * 55;
     this.wingTrailTint = 0xffffff;
     this.wingTrailLife = 700 + bankT * 1100;
     this.wingTrailScaleY = (0.12 + bankT * 0.22) * (0.85 + Math.random() * 0.2);
 
-    const trail = this.fxAt(h.z, h.y, this.jetWingTrail, ZOff.exhaust - 0.5);
-    const bodyDepth =
-      ((this.body.getData("tiltWrap") as Phaser.GameObjects.Container | undefined)?.depth ??
-        this.body.depth);
-    trail.setDepth(bodyDepth - 1.6);
+    const trail = this.fxAt(opts.z, opts.y, this.jetWingTrail, ZOff.exhaust - 0.5);
+    trail.setDepth(opts.bodyDepth - 1.6);
 
-    // Emit in draw-pose screen space so tips stick to the banked billboard.
-    const pose = this.heliBodyDrawPose();
     const tintKey = this.textures.exists("fx_smoke_tint") ? "fx_smoke_tint" : "fx_smoke";
     for (let i = 0; i < emitN; i++) {
-      const tipI = this.wingTrailMountCursor++ % tips.length;
+      const tipI = state.mountCursor++ % tips.length;
       const tip = tips[tipI]!;
-      const at = spriteUvPos(pose, tip.x, tip.y);
+      const at = spriteUvPos(opts.pose, tip.x, tip.y);
       // Small aft spit so stretched particles don't cover the tip.
       const spout = 4;
       const currentX = at.x + Math.cos(trailAng) * spout;
@@ -4151,7 +4969,7 @@ export class MissionScene extends Phaser.Scene {
       const baseSx = 0.55 + bankT * 1.1;
       this.wingTrailScaleX = baseSx;
 
-      const previous = this.wingTrailPrevScreen[tipI];
+      const previous = state.prevScreen[tipI];
       if (previous && Math.hypot(currentX - previous.x, currentY - previous.y) < 280) {
         const dx = previous.x - currentX;
         const dy = previous.y - currentY;
@@ -4164,7 +4982,7 @@ export class MissionScene extends Phaser.Scene {
           this.wingTrailScaleX = Math.max(baseSx * 0.35, (span / frameWidth) * 1.45);
         }
       }
-      this.wingTrailPrevScreen[tipI] = { x: currentX, y: currentY };
+      state.prevScreen[tipI] = { x: currentX, y: currentY };
 
       this.wingTrailAngle = connectionAngle;
       this.wingTrailVx = Math.cos(connectionAngle) * drift * range(0.9, 1.1);
@@ -4325,80 +5143,250 @@ export class MissionScene extends Phaser.Scene {
       !bombDrop && square && this.textures.exists("mark_reticle_sq") ? "mark_reticle_sq" : "mark_reticle"
     );
     const ammoLeft = this.ammo[h.weapon] ?? 0;
+    const ammoShown = this.remotePoolDisplayAmmo(h.weapon, ammoLeft);
     if (spec.launch.mode === "beam") {
-      this.drawReticleAmmoBar(p.x, p.y, ammoLeft, spec.ammo);
+      this.drawReticleAmmoBar(p.x, p.y, ammoShown, spec.ammo);
     } else {
-      this.drawReticleTally(p.x, p.y, !gunSight ? ammoLeft : 0, spec.ammo);
+      this.drawReticleTally(p.x, p.y, !gunSight ? ammoShown : 0, spec.ammo);
     }
-    // Remote slot and hold-arc beams have no laser. Other slots keep theirs even while the camera is on the drone.
-    if (payloadIsRemote(spec.payload) || launchIsArcBeam(spec.launch)) {
+    // Remote slot: gun remotes keep a POV sight while selected; others have no laser.
+    // POV-HUD remotes (HOUND) fall through to their own loadout sight below.
+    if (payloadIsRemote(spec.payload)) {
+      const live = this.selectedSlotRemote();
+      if (live && remoteHasPovHud(live.spec)) {
+        // Handled by povHudRemote sight path.
+      } else if (live && remoteGunId(live.spec) && !(live.spec.ai && !live.spec.pilotable)) {
+        this.sight.setVisible(true);
+        this.sight.clear();
+        const aimAng = live.gunAngle ?? live.angle;
+        const muzzle = this.remoteGunMuzzle(live);
+        const gunSpec = this.loadout[h.weapon]!;
+        const origin = this.playerShotOrigin(muzzle, aimAng, gunSpec, h.weapon);
+        const clip = this.playerSightAimWorld(origin.x, origin.y, origin.z, aimAng);
+        if (this.sightPastMuzzle(origin, clip, h.weapon, { x: live.x, y: live.y })) {
+          const from = worldToScreen(origin.x, origin.y, origin.z);
+          const x0 = from.x;
+          const y0 = from.y;
+          const to = worldToScreen(clip.x, clip.y, clip.z);
+          this.drawSightLine(x0, y0, to.x, to.y, "cannon", false, clip);
+        }
+        this.sight.setDepth(worldDepth(muzzle.z, ZOff.shot + 2, live.y));
+        return;
+      } else {
+        this.sight.clear();
+        this.sight.setVisible(false);
+        return;
+      }
+    }
+    const povRem = this.povHudRemote();
+    if (povRem) {
+      const remSpec = this.hudLoadout()[this.hudWeapon()]!;
+      const ammoLeft = this.hudAmmo()[this.hudWeapon()] ?? 0;
+      const remSlot = Phaser.Math.Clamp(povRem.weapon ?? 0, 0, (povRem.loadout?.length ?? 1) - 1);
+      const remSocket = povRem.spec.sockets?.[remSlot];
+      const bombDrop = remSpec.launch.mode === "drop";
+      const remGunSight =
+        remSpec.launch.mode !== "beam" &&
+        remSpec.launch.mode !== "drop" &&
+        !remSpec.guidance &&
+        (!!remSpec.art.tracer || (remSpec.launch.mode === "muzzle" && !remSpec.exhaust));
+      this.reticle.setTexture(
+        remSpec.cam.reticle === "square" && this.textures.exists("mark_reticle_sq")
+          ? "mark_reticle_sq"
+          : "mark_reticle"
+      );
+      const hostAmmoId = this.remoteHostAmmoWeapon(remSpec);
+      const hostSpec = hostAmmoId ? PLAYER_WPNS[hostAmmoId as WpnId] : undefined;
+      const remAmmoCap = hostSpec?.ammo ?? remSpec.ammo;
+      if (remSpec.launch.mode === "beam") {
+        this.drawReticleAmmoBar(p.x, p.y, ammoLeft, remAmmoCap);
+      } else {
+        this.drawReticleTally(p.x, p.y, !remGunSight ? ammoLeft : 0, remAmmoCap);
+      }
+      this.sight.setVisible(true);
+      this.sight.clear();
+      if (bombDrop) {
+        this.drawRemoteBombTrajectory(povRem, remSlot, remSpec, this.worldPointer());
+        return;
+      }
+      const hull = povRem.spec.craftLook ? craftOf(povRem.spec.craftLook) : undefined;
+      const planeFixed =
+        !!hull &&
+        craftControlScheme(hull) === "plane" &&
+        remSocket?.class === "fixed";
+      const aimAng = planeFixed
+        ? povRem.angle
+        : remSocket?.class === "hardpoint"
+          ? povRem.angle
+          : (povRem.gunAngle ?? povRem.angle);
+      const tips = this.remoteSightOrigins(povRem, remSlot);
+      let drew = false;
+      let tipZ = tips[0]?.z ?? povRem.z;
+      const pivot = { x: povRem.x, y: povRem.y };
+      for (const tip of tips) {
+        const origin = this.playerShotOrigin(tip, aimAng, remSpec, remSlot);
+        const clip = this.playerSightAimWorld(origin.x, origin.y, origin.z, aimAng);
+        if (!this.sightPastMuzzle(origin, clip, remSlot, pivot)) continue;
+        const from = worldToScreen(origin.x, origin.y, origin.z);
+        const x0 = from.x;
+        const y0 = from.y;
+        const to = worldToScreen(clip.x, clip.y, clip.z);
+        this.drawSightLine(
+          x0,
+          y0,
+          to.x,
+          to.y,
+          remGunSight ? "cannon" : "missile",
+          !remGunSight,
+          clip
+        );
+        tipZ = tip.z;
+        drew = true;
+      }
+      if (!drew) this.sight.clear();
+      this.sight.setDepth(worldDepth(tipZ, ZOff.shot + 2, povRem.y));
+      return;
+    }
+    if (launchIsArcBeam(spec.launch)) {
       this.sight.clear();
       this.sight.setVisible(false);
       return;
     }
     this.sight.setVisible(true);
-    this.syncSightDepth();
+    this.syncSightDepth(h.weapon);
     if (bombDrop) {
       this.drawBombTrajectory(aim);
       return;
     }
+    // Mouse designator: free aim at reticle from socket muzzle mounts (spiders, laser/command AG).
+    if (spec.cam.sight === "mouse") {
+      this.drawMouseDesignatorSight(h.weapon);
+      return;
+    }
     if (gunSight) {
-      const tip = this.cannonSightOrigin(h.weapon);
+      const tips = this.cannonSightOrigins(h.weapon);
       const socket = h.spec.sockets[h.weapon];
       const aimAng =
         socket?.class === "fixed"
           ? h.angle
           : (h.stationAim[h.weapon]?.[0] ?? h.gunAngle);
-      const origin = this.playerShotOrigin(tip, aimAng, spec);
-      const clip = this.playerSightAimWorld(origin.x, origin.y, origin.z, aimAng);
-      if (!this.sightPastMuzzle(origin, clip, h.weapon)) {
-        this.sight.clear();
-        return;
+      this.sight.clear();
+      let drew = false;
+      for (const tip of tips) {
+        const origin = this.playerShotOrigin(tip, aimAng, spec, h.weapon);
+        const clip = this.playerSightAimWorld(origin.x, origin.y, origin.z, aimAng);
+        if (!this.sightPastMuzzle(origin, clip, h.weapon)) continue;
+        // worldToScreen reuses a scratch — copy before the second call.
+        const from = worldToScreen(origin.x, origin.y, origin.z);
+        const x0 = from.x;
+        const y0 = from.y;
+        const to = worldToScreen(clip.x, clip.y, clip.z);
+        this.drawSightLine(x0, y0, to.x, to.y, "cannon", false, clip);
+        drew = true;
       }
-      // worldToScreen reuses a scratch — copy before the second call.
-      const from = worldToScreen(tip.x, tip.y, h.z);
-      const x0 = from.x;
-      const y0 = from.y;
-      const to = worldToScreen(clip.x, clip.y, clip.z);
-      this.drawSightLine(x0, y0, to.x, to.y, "cannon");
+      if (!drew) this.sight.clear();
       return;
     }
     const pylon = this.hardpointPylon();
-    const origin = this.playerShotOrigin(pylon, h.angle, spec);
+    const origin = this.playerShotOrigin(pylon, h.angle, spec, h.weapon);
     const clip = this.playerSightAimWorld(origin.x, origin.y, origin.z, h.angle);
     if (!this.sightPastMuzzle(pylon, clip, h.weapon)) {
       this.sight.clear();
       return;
     }
-    const from = worldToScreen(pylon.x, pylon.y, h.z);
+    const from = worldToScreen(origin.x, origin.y, origin.z);
     const x0 = from.x;
     const y0 = from.y;
     const to = worldToScreen(clip.x, clip.y, clip.z);
-    this.drawSightLine(x0, y0, to.x, to.y, "missile");
+    this.drawSightLine(x0, y0, to.x, to.y, "missile", true, clip);
   }
 
-  /** Laser / bomb path always sorts under the craft hull. */
-  syncSightDepth(): void {
+  /**
+   * Free-aim laser at the reticle (not boresight). Emits from socket muzzle
+   * mounts — hull ports / gun tips — never from wing hardpoint pylons.
+   */
+  drawMouseDesignatorSight(slot = this.heli.weapon): void {
+    const tips = this.designatorSightOrigins(slot);
+    const z = this.playerMuzzleZ(slot);
+    const tgt = this.reticleAimWorld(this.reticleUnit());
+    this.sight.clear();
+    let drew = false;
+    for (const tip of tips) {
+      const clip = this.sightTerrainHitWorld(tip.x, tip.y, z, tgt.x, tgt.y, tgt.z);
+      if (!this.sightPastMuzzle(tip, clip, slot)) continue;
+      const from = worldToScreen(tip.x, tip.y, z);
+      const x0 = from.x;
+      const y0 = from.y;
+      const to = worldToScreen(clip.x, clip.y, clip.z);
+      this.drawSightLine(x0, y0, to.x, to.y, "missile", false, clip);
+      drew = true;
+    }
+    if (!drew) this.sight.clear();
+  }
+
+  /**
+   * Designator emit tips for the selected slot: authored muzzle / socket points
+   * only (fixed→body muzzles, turret→gun tips, hardpoint→that socket's mounts).
+   * Does not fall back to other wing pylons.
+   */
+  designatorSightOrigins(slot = this.heli.weapon): { x: number; y: number }[] {
     const h = this.heli;
-    this.sight.setDepth(worldDepth(h.z, ZOff.body - 0.2, h.y));
+    const socket = h.spec.sockets[slot];
+    let tips: { x: number; y: number }[] = [];
+    if (socket?.class === "turret") {
+      const gunI = this.gunVisualIndexForSlot(slot);
+      const gun = this.guns[gunI] ?? this.gun;
+      if (gun?.visible) {
+        const muzzles = lookupSpriteMuzzles(gun.texture.key);
+        tips =
+          muzzles.length > 1
+            ? muzzles.map((_, i) => this.gunTip(gunI, i))
+            : [this.gunTip(gunI)];
+      }
+    } else if (socket) {
+      // fixed → muzzle UVs; hardpoint → this socket's stores only (not every rack).
+      const mounts = craftSocketPoints(h.spec, socket);
+      if (mounts.length) tips = mounts.map((m) => this.craftBodyMountWorldPos(m));
+    }
+    if (!tips.length) {
+      const bodyMuzzles = craftFixedMuzzles(h.spec);
+      if (bodyMuzzles.length) tips = bodyMuzzles.map((m) => this.craftBodyMountWorldPos(m));
+      else tips = [{ x: h.x, y: h.y }];
+    }
+    // One beam between multi-muzzle ports (same as chin duals / remotes).
+    return collapseSightTips(tips);
+  }
+
+  /** Laser sorts under the hull for chin guns; above for roof mounts. */
+  syncSightDepth(slot = this.heli.weapon): void {
+    const h = this.heli;
+    const z = this.playerMuzzleZ(slot);
+    const off =
+      h.spec.sockets[slot]?.gunLayer === "above"
+        ? this.playerMuzzleDepthOff(slot)
+        : ZOff.body - 0.2;
+    this.sight.setDepth(worldDepth(z, off, h.y));
   }
 
   /** True once the aim point is past the barrel (pivot → muzzle + 1). */
   sightPastMuzzle(
     emit: { x: number; y: number },
     clip: { x: number; y: number },
-    slot = this.heli.weapon
+    slot = this.heli.weapon,
+    pivot?: { x: number; y: number }
   ): boolean {
-    const h = this.heli;
-    const socket = h.spec.sockets[slot];
-    let px = h.x;
-    let py = h.y;
-    if (socket?.class === "turret") {
-      const gun = this.guns[this.gunVisualIndexForSlot(slot)] ?? this.gun;
-      if (gun?.visible) {
-        const at = screenToWorldAtZ(gun.x, gun.y, h.z);
-        px = at.x;
-        py = at.y;
+    let px = pivot?.x ?? this.heli.x;
+    let py = pivot?.y ?? this.heli.y;
+    if (!pivot) {
+      const h = this.heli;
+      const socket = h.spec.sockets[slot];
+      if (socket?.class === "turret") {
+        const gun = this.guns[this.gunVisualIndexForSlot(slot)] ?? this.gun;
+        if (gun?.visible) {
+          const at = screenToWorldAtZ(gun.x, gun.y, h.z);
+          px = at.x;
+          py = at.y;
+        }
       }
     }
     const near = Math.hypot(emit.x - px, emit.y - py) + 1;
@@ -4413,9 +5401,46 @@ export class MissionScene extends Phaser.Scene {
     g.clear();
     const pylon = this.hardpointPylon(h.weapon);
     const release = this.bombReleaseVelocity(spec, pylon.x, pylon.y, aim, 0, h.weapon);
-    let x = pylon.x;
-    let y = pylon.y;
-    let z = h.z + ZOff.shot;
+    this.strokeBombTrajectoryPath(
+      pylon.x,
+      pylon.y,
+      h.z + ZOff.shot,
+      release,
+      spec,
+      aim
+    );
+  }
+
+  /** Bomb arc from a POV remote bay (Raptor). */
+  drawRemoteBombTrajectory(
+    drone: RemoteCraft,
+    slot: number,
+    spec: PlayerWpnSpec,
+    aim: { x: number; y: number }
+  ): void {
+    const tip = this.remoteSightOrigins(drone, slot)[0] ?? {
+      x: drone.x,
+      y: drone.y,
+      z: drone.z,
+    };
+    const release = this.remoteBombReleaseVelocity(drone, spec, tip.x, tip.y, aim, slot);
+    this.sight.clear();
+    this.strokeBombTrajectoryPath(tip.x, tip.y, tip.z, release, spec, aim);
+    this.sight.setDepth(worldDepth(tip.z, ZOff.shot + 2, drone.y));
+  }
+
+  strokeBombTrajectoryPath(
+    ox: number,
+    oy: number,
+    oz: number,
+    release: { vx: number; vy: number; vz: number },
+    spec: PlayerWpnSpec,
+    aim: { x: number; y: number }
+  ): void {
+    const g = this.sight;
+    let x = ox;
+    let y = oy;
+    let z = oz;
     let vx = release.vx;
     let vy = release.vy;
     let vz = release.vz;
@@ -4432,7 +5457,6 @@ export class MissionScene extends Phaser.Scene {
       const at = worldToScreen(x, y, z);
       pts.push({ x: at.x, y: at.y });
       if (z <= gnd + 4) break;
-      // Soft bias toward reticle for GPS bombs (path hint only).
       if (targetingMode(spec.guidance) === "waypoint") {
         const want = Math.atan2(aim.y - y, aim.x - x);
         const da = Phaser.Math.Angle.Wrap(want - Math.atan2(vy, vx));
@@ -4459,6 +5483,30 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 
+  /** Bomb release from a remote hull — same loft search as player craft. */
+  remoteBombReleaseVelocity(
+    drone: RemoteCraft,
+    spec: PlayerWpnSpec,
+    ox: number,
+    oy: number,
+    aim: { x: number; y: number },
+    slot: number
+  ): { vx: number; vy: number; vz: number; angle: number } {
+    const hull = drone.spec.craftLook ? craftOf(drone.spec.craftLook) : undefined;
+    const socket = drone.spec.sockets?.[slot];
+    const tune = hull
+      ? craftBombDrop(hull, socket)
+      : { momentum: 0.4, maxBoost: 70, loft: 90, loftMax: 160 };
+    return this.bombReleaseFrom(spec, ox, oy, aim, 0, {
+      vx: drone.vx,
+      vy: drone.vy,
+      vz: drone.vz ?? 0,
+      z0: drone.z + drone.spec.height * 0.4,
+      angle: drone.angle,
+      tune,
+    });
+  }
+
   /**
    * Momentum-first bomb release: inherit craft velocity, then apply a capped boost
    * to steer impact toward the aim. Never brakes along-track (short aim → pure momentum).
@@ -4475,18 +5523,42 @@ export class MissionScene extends Phaser.Scene {
   ): { vx: number; vy: number; vz: number; angle: number } {
     const h = this.heli;
     const socket = slot != null ? h.spec.sockets[slot] : h.spec.sockets[h.weapon];
-    const tune = craftBombDrop(h.spec, socket);
+    return this.bombReleaseFrom(spec, ox, oy, aim, yawOff, {
+      vx: h.vx,
+      vy: h.vy,
+      vz: h.vz,
+      z0: h.z + ZOff.shot,
+      angle: h.angle,
+      tune: craftBombDrop(h.spec, socket),
+    });
+  }
+
+  /** Shared bomb release solver for host and remote hulls. */
+  bombReleaseFrom(
+    spec: PlayerWpnSpec,
+    ox: number,
+    oy: number,
+    aim: { x: number; y: number },
+    yawOff: number,
+    kin: {
+      vx: number;
+      vy: number;
+      vz: number;
+      z0: number;
+      angle: number;
+      tune: CraftBombDrop;
+    }
+  ): { vx: number; vy: number; vz: number; angle: number } {
     const grav = launchGravity(spec.launch)?.acceleration ?? 210;
     const term = launchGravity(spec.launch)?.terminalVelocity ?? 520;
-    const z0 = h.z + ZOff.shot;
+    const { tune } = kin;
     const gnd = groundZ(this.world, aim.x, aim.y);
-    // Socket momentum: fraction of craft vel. Low (Chinook) → aim-led; high (Lightning) → carry.
-    const baseVx = h.vx * tune.momentum;
-    const baseVy = h.vy * tune.momentum;
+    const baseVx = kin.vx * tune.momentum;
+    const baseVy = kin.vy * tune.momentum;
     const wantDx = aim.x - ox;
     const wantDy = aim.y - oy;
     const aimAng =
-      Math.hypot(wantDx, wantDy) > 1e-3 ? Math.atan2(wantDy, wantDx) : h.angle + yawOff;
+      Math.hypot(wantDx, wantDy) > 1e-3 ? Math.atan2(wantDy, wantDx) : kin.angle + yawOff;
 
     const loftLo = tune.loft;
     const loftHi = Math.max(loftLo, tune.loftMax ?? loftLo);
@@ -4500,11 +5572,10 @@ export class MissionScene extends Phaser.Scene {
 
     for (let i = 0; i < 9; i++) {
       const loft = loftLo + ((loftHi - loftLo) * i) / 8;
-      const vz = Math.max(0, h.vz) + loft;
-      const fallT = this.estimateBombFallTime(z0, vz, gnd, grav, term);
+      const vz = Math.max(0, kin.vz) + loft;
+      const fallT = this.estimateBombFallTime(kin.z0, vz, gnd, grav, term);
       const wantVx = wantDx / fallT;
       const wantVy = wantDy / fallT;
-      // Corrective boost toward aim in any direction (incl. reverse / sideways).
       let bx = wantVx - baseVx;
       let by = wantVy - baseVy;
       const bMag = Math.hypot(bx, by);
@@ -4559,6 +5630,103 @@ export class MissionScene extends Phaser.Scene {
   }
 
   /**
+   * Sample altitude after `t` seconds under the same gravity model as flight
+   * (`vz -= g*dt`, clamp to `-terminalVelocity`).
+   */
+  sampleBallisticAltitude(
+    z0: number,
+    vz0: number,
+    t: number,
+    grav: number,
+    term: number
+  ): number {
+    let z = z0;
+    let vz = vz0;
+    let left = Math.max(0, t);
+    const step = 1 / 60;
+    while (left > 1e-4) {
+      const dt = Math.min(step, left);
+      vz = Math.max(-term, vz - grav * dt);
+      z += vz * dt;
+      left -= dt;
+    }
+    return z;
+  }
+
+  /**
+   * Solve muzzle `vz0` so a gravity lob lands at `tz` after flight time `t`
+   * (XY travel is constant-speed; gravity only pulls Z).
+   * Free-fall closed form, then binary-search refine when terminal velocity bites.
+   */
+  solveBallisticMuzzleVz(
+    z0: number,
+    tz: number,
+    t: number,
+    grav: number,
+    term = 1e9
+  ): number {
+    const flightT = Math.max(0.05, t);
+    // Free-fall: z = z0 + vz0*t - 0.5*g*t^2  →  vz0 = (tz-z0)/t + 0.5*g*t
+    let vz0 = (tz - z0) / flightT + 0.5 * grav * flightT;
+    const end = this.sampleBallisticAltitude(z0, vz0, flightT, grav, term);
+    if (Math.abs(end - tz) < 2) return vz0;
+
+    // Terminal clamp bent the arc — bracket and refine.
+    let lo = vz0 - grav * flightT - Math.abs(tz - z0);
+    let hi = vz0 + grav * flightT + Math.abs(tz - z0);
+    for (let i = 0; i < 8; i++) {
+      const zLo = this.sampleBallisticAltitude(z0, lo, flightT, grav, term);
+      const zHi = this.sampleBallisticAltitude(z0, hi, flightT, grav, term);
+      if (zLo <= tz && tz <= zHi) break;
+      lo -= grav * flightT;
+      hi += grav * flightT;
+    }
+    for (let i = 0; i < 18; i++) {
+      const mid = (lo + hi) * 0.5;
+      const zMid = this.sampleBallisticAltitude(z0, mid, flightT, grav, term);
+      if (zMid < tz) lo = mid;
+      else hi = mid;
+      vz0 = mid;
+    }
+    return vz0;
+  }
+
+  /**
+   * Reticle muzzle velocity for ballistic shots.
+   * With gravity: loft `vz` so the shell lands on the aim point.
+   * Without: straight-line aim (existing gun behavior).
+   */
+  muzzleAimVelocity(opts: {
+    dx: number;
+    dy: number;
+    dz: number;
+    z0: number;
+    tz: number;
+    spd: number;
+    vx: number;
+    vy: number;
+    alongZ?: number;
+    grav?: WeaponGravity;
+  }): { vz: number; life: number } {
+    const distXY = Math.max(8, Math.hypot(opts.dx, opts.dy));
+    const vxy = Math.max(40, Math.hypot(opts.vx, opts.vy));
+    if (opts.grav) {
+      const flightT = distXY / vxy;
+      const vz = this.solveBallisticMuzzleVz(
+        opts.z0,
+        opts.tz,
+        flightT,
+        opts.grav.acceleration,
+        opts.grav.terminalVelocity ?? 1e9
+      );
+      return { vz, life: flightT + 0.08 };
+    }
+    const dist3 = Math.max(8, Math.hypot(opts.dx, opts.dy, opts.dz));
+    const t = dist3 / Math.max(40, opts.spd);
+    return { vz: opts.dz / t + (opts.alongZ ?? 0), life: t + 0.05 };
+  }
+
+  /**
    * Shared laser / ballistic aim. XY follows `aimAng` (gun / nose). The
    * reticle is unprojected in 2.5D: onto ground, or onto the unit/building
    * height under the cursor (not the ground point behind the sprite).
@@ -4585,8 +5753,17 @@ export class MissionScene extends Phaser.Scene {
     const bx = ox + Math.cos(aimAng) * along;
     const by = oy + Math.sin(aimAng) * along;
     const hit = this.sightTerrainHitWorld(ox, oy, oz, bx, by, ptr.z);
-    if (craftControlScheme(this.heli.spec) === "plane") return this.clampJetGunAim(ox, oy, oz, aimAng, hit);
+    if (this.aimCraftIsPlane()) return this.clampJetGunAim(ox, oy, oz, aimAng, hit);
     return hit;
+  }
+
+  /** Host hangar craft or POV remote hull — jets share gun-depress clamp. */
+  aimCraftIsPlane(): boolean {
+    const pov = this.povHudRemote();
+    if (pov?.spec.craftLook) {
+      return craftControlScheme(craftOf(pov.spec.craftLook)) === "plane";
+    }
+    return craftControlScheme(this.heli.spec) === "plane";
   }
 
   /**
@@ -4617,13 +5794,34 @@ export class MissionScene extends Phaser.Scene {
 
   /** Actual leave point: barrel tip + tracer-origin nudge (`spawnShot` applies the same). */
   playerShotOrigin(
-    tip: { x: number; y: number },
+    tip: { x: number; y: number; z?: number },
     angle: number,
-    spec: PlayerWpnSpec
+    spec: PlayerWpnSpec,
+    slot = this.heli.weapon
   ): { x: number; y: number; z: number } {
-    const z = this.heli.z + ZOff.shot;
+    const z = tip.z ?? this.playerMuzzleZ(slot);
     const xy = this.shotSpawnXY(tip.x, tip.y, angle, z, spec.art.look, spec.art.scale ?? 1);
     return { x: xy.x, y: xy.y, z };
+  }
+
+  /**
+   * World Z for player muzzle leave.
+   * Chin / under-body guns sit slightly below the hull (`ZOff.shot`);
+   * top-mounted turrets (`gunLayer: "above"`) leave from the roof (AGL + height).
+   */
+  playerMuzzleZ(slot = this.heli.weapon): number {
+    const h = this.heli;
+    if (h.spec.sockets[slot]?.gunLayer === "above") {
+      return h.z + h.spec.height;
+    }
+    return h.z + ZOff.shot;
+  }
+
+  /** Painter offset for muzzle flash / spark / beam so top mounts sort above the hull. */
+  playerMuzzleDepthOff(slot = this.heli.weapon): number {
+    return this.heli.spec.sockets[slot]?.gunLayer === "above"
+      ? ZOff.turret + 0.25
+      : ZOff.muzzle + 0.15;
   }
 
   /**
@@ -4679,14 +5877,26 @@ export class MissionScene extends Phaser.Scene {
     return { x: bx, y: by, z: bz };
   }
 
-  drawSightLine(x0: number, y0: number, x1: number, y1: number, kind: "cannon" | "missile"): void {
+  drawSightLine(
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    kind: "cannon" | "missile",
+    clear = true,
+    /** World hit used for tip sparkle (terrain-swept reflection flicker). */
+    tipHit?: { x: number; y: number; z: number }
+  ): void {
     const g = this.sight;
-    g.clear();
+    if (clear) g.clear();
     const missile = kind === "missile";
-    const line = missile ? 0xff2a18 : 0x4dff62;
-    const glow = missile ? 0xff6a3a : line;
-    const halo = missile ? 0xff8a62 : 0x5cff6a;
-    const core = missile ? 0xffece4 : 0xd8ffc4;
+    const thermal = this.thermalOn;
+    // Thermal: encode as semantic heat (magenta) so the post shader reads the beam as hot.
+    const line = thermal ? thermalSignalTint(1) : missile ? 0xff2a18 : 0x4dff62;
+    const glow = thermal ? thermalSignalTint(0.92) : missile ? 0xff6a3a : line;
+    const halo = thermal ? thermalSignalTint(0.98) : missile ? 0xff8a62 : 0x5cff6a;
+    const core = thermal ? thermalSignalTint(1) : missile ? 0xffece4 : 0xd8ffc4;
+    const aMul = thermal ? 1.35 : 1;
     const dx = x1 - x0;
     const dy = y1 - y0;
     if (dx * dx + dy * dy >= 36) {
@@ -4696,10 +5906,10 @@ export class MissionScene extends Phaser.Scene {
         const t1 = (i + 1) / segs;
         // Fade in toward the tip (near-zero at the muzzle) — same curve for red & green.
         const t = t1 * t1;
-        if (missile) {
-          g.lineStyle(2.4, glow, t * 0.32);
+        if (missile || thermal) {
+          g.lineStyle(thermal ? 2.8 : 2.4, glow, Math.min(1, t * 0.32 * aMul));
           g.lineBetween(x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1);
-          g.lineStyle(1.15, line, t * 0.55);
+          g.lineStyle(thermal ? 1.5 : 1.15, line, Math.min(1, t * 0.55 * aMul));
           g.lineBetween(x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1);
         } else {
           g.lineStyle(1, line, t * 0.42);
@@ -4707,19 +5917,70 @@ export class MissionScene extends Phaser.Scene {
         }
       }
     }
-    if (missile) {
-      g.fillStyle(glow, 0.35);
-      g.fillCircle(x1, y1, 6.2);
-      g.fillStyle(halo, 0.8);
-      g.fillCircle(x1, y1, 3.6);
-      g.fillStyle(core, 1);
-      g.fillCircle(x1, y1, 2);
-    } else {
-      g.fillStyle(halo, 0.55);
-      g.fillCircle(x1, y1, 3.1);
-      g.fillStyle(core, 1);
-      g.fillCircle(x1, y1, 1.7);
+    this.drawSightTip(x1, y1, {
+      missile,
+      thermal,
+      aMul,
+      glow,
+      halo,
+      core,
+      tipHit,
+    });
+  }
+
+  /**
+   * Soft bloom at the laser contact point. Size jitters from a spatial hash of the
+   * hit (incl. ground z as salt) so sweeping across terrain reads as a live reflection.
+   */
+  drawSightTip(
+    x: number,
+    y: number,
+    opt: {
+      missile: boolean;
+      thermal: boolean;
+      aMul: number;
+      glow: number;
+      halo: number;
+      core: number;
+      tipHit?: { x: number; y: number; z: number };
     }
+  ): void {
+    const g = this.sight;
+    const hit = opt.tipHit;
+    let sparkle = 0.55;
+    if (hit) {
+      // Cheap hash — continuous enough that neighboring cells blend, discrete enough to flicker.
+      const n =
+        Math.sin(hit.x * 0.071 + hit.z * 0.13) * 12.9898 +
+        Math.cos(hit.y * 0.063 - hit.z * 0.09) * 78.233 +
+        Math.sin((hit.x + hit.y) * 0.037 + hit.z * 0.21) * 4.141;
+      sparkle = Phaser.Math.Clamp(0.5 + 0.5 * Math.sin(n), 0, 1);
+      // Mild temporal shimmer so a parked tip still breathes.
+      const t = this.time.now * 0.001;
+      sparkle = Phaser.Math.Clamp(
+        sparkle * (0.9 + 0.1 * Math.sin(t * 11.3 + n * 0.7)) +
+          0.05 * Math.sin(t * 23.1 + hit.z * 0.4),
+        0,
+        1
+      );
+    }
+    const sizeMul = Phaser.Math.Linear(0.72, 1.32, sparkle);
+    const base = opt.thermal ? 2.35 : opt.missile ? 2.05 : 1.55;
+    const r = base * sizeMul;
+    const a = opt.aMul;
+    // Soft falloff rings (outer → core) instead of three hard discs.
+    g.fillStyle(opt.glow, Math.min(1, 0.1 * a));
+    g.fillCircle(x, y, r * 2.55);
+    g.fillStyle(opt.glow, Math.min(1, 0.18 * a));
+    g.fillCircle(x, y, r * 1.85);
+    g.fillStyle(opt.halo, Math.min(1, 0.32 * a));
+    g.fillCircle(x, y, r * 1.28);
+    g.fillStyle(opt.halo, Math.min(1, 0.58 * a));
+    g.fillCircle(x, y, r * 0.82);
+    g.fillStyle(opt.core, Math.min(1, 0.92 * a));
+    g.fillCircle(x, y, r * 0.42);
+    g.fillStyle(opt.core, 1);
+    g.fillCircle(x, y, r * 0.22);
   }
 
   drawReticleTally(cx: number, cy: number, count: number, max = count): void {
@@ -4801,9 +6062,10 @@ export class MissionScene extends Phaser.Scene {
     };
   }
 
-  gunTip(index = 0): { x: number; y: number } {
+  gunTip(index = 0, muzzleI = 0): { x: number; y: number } {
     const gun = this.guns[index] ?? this.gun;
-    const tipUv = lookupSpriteMuzzles(gun.texture.key)[0];
+    const tips = lookupSpriteMuzzles(gun.texture.key);
+    const tipUv = tips[muzzleI] ?? tips[0];
     if (!tipUv) throw new Error(`gunTip: ${gun.texture.key} missing muzzle`);
     const mx = (tipUv.x - gun.originX) * gun.displayWidth;
     const my = (tipUv.y - gun.originY) * gun.displayHeight;
@@ -4851,45 +6113,58 @@ export class MissionScene extends Phaser.Scene {
   }
 
   /**
-   * Laser-sight emit point for the selected cannon slot.
-   * Multi-muzzle fixed guns (Little Bird / Black Hawk wing pairs) use the average tip.
+   * Laser-sight emit points for the selected cannon slot.
+   * Multi-muzzle guns collapse to one beam between barrels (shared with remotes).
    */
-  cannonSightOrigin(slot = this.heli.weapon): { x: number; y: number } {
+  cannonSightOrigins(slot = this.heli.weapon): { x: number; y: number }[] {
     const h = this.heli;
     const socket = h.spec.sockets[slot];
+    let tips: { x: number; y: number }[] = [];
     if (socket?.class === "fixed") {
       const muzzles = craftSocketPoints(h.spec, socket);
-      if (muzzles.length > 1) {
-        let sx = 0;
-        let sy = 0;
-        for (const m of muzzles) {
-          const at = this.craftBodyMountWorldPos(m);
-          sx += at.x;
-          sy += at.y;
-        }
-        return { x: sx / muzzles.length, y: sy / muzzles.length };
+      if (muzzles.length) tips = muzzles.map((m) => this.craftBodyMountWorldPos(m));
+    } else if (socket?.class === "turret") {
+      const gunI = this.gunVisualIndexForSlot(slot);
+      const gun = this.guns[gunI] ?? this.gun;
+      if (gun?.visible) {
+        const muzzles = lookupSpriteMuzzles(gun.texture.key);
+        tips =
+          muzzles.length > 1
+            ? muzzles.map((_, i) => this.gunTip(gunI, i))
+            : [this.gunTip(gunI)];
       }
-      if (muzzles[0]) return this.craftBodyMountWorldPos(muzzles[0]);
     }
-    const bodyMuzzle = craftFixedMuzzles(h.spec)[0];
-    if (bodyMuzzle) return this.craftBodyMountWorldPos(bodyMuzzle);
-    const gunI = this.gunVisualIndexForSlot(slot);
-    return this.gunTip(gunI);
+    if (!tips.length) {
+      const bodyMuzzles = craftFixedMuzzles(h.spec);
+      if (bodyMuzzles.length) tips = bodyMuzzles.map((m) => this.craftBodyMountWorldPos(m));
+      else tips = [this.gunTip(this.gunVisualIndexForSlot(slot))];
+    }
+    return collapseSightTips(tips);
   }
 
-  /** World position of an authored mount UV on the active craft body. */
+  /** @deprecated Prefer cannonSightOrigins — kept for single-tip call sites. */
+  cannonSightOrigin(slot = this.heli.weapon): { x: number; y: number } {
+    return this.cannonSightOrigins(slot)[0] ?? { x: this.heli.x, y: this.heli.y };
+  }
+
+  /** World position of an authored mount UV on the active craft body (live draw pose). */
   craftBodyMountWorldPos(mount: { x: number; y: number }): { x: number; y: number } {
     const h = this.heli;
+    if (this.body?.visible) {
+      const pose = this.heliBodyDrawPose();
+      const scr = spriteUvPos(pose, mount.x, mount.y);
+      const z = h.z + h.spec.height * 0.55;
+      return screenToWorldAtZ(scr.x, scr.y, z);
+    }
+    // Pre-sync fallback: rotate UV offset around craft origin in world space.
     const craft = h.spec;
     const pivot = craftOrigin(craft);
     const img = this.textures.exists(craft.body)
       ? (this.textures.get(craft.body).getSourceImage() as { width: number; height: number })
       : { width: 120, height: 120 };
-    const dw = img.width;
-    const dh = img.height;
     const hullRot = h.angle + craft.rotOff;
-    const mx = (mount.x - pivot.x) * dw;
-    const my = (mount.y - pivot.y) * dh;
+    const mx = (mount.x - pivot.x) * img.width;
+    const my = (mount.y - pivot.y) * img.height;
     return {
       x: h.x + mx * Math.cos(hullRot) - my * Math.sin(hullRot),
       y: h.y + mx * Math.sin(hullRot) + my * Math.cos(hullRot),
@@ -4910,9 +6185,7 @@ export class MissionScene extends Phaser.Scene {
         ? craftSocketPoints(h.spec, socket)
         : craftHardpointMounts(h.spec);
     const ammo = this.ammo[slot] ?? 0;
-    // Remaining-ammo phase cycles every authored hardpoint; for two mounts this
-    // preserves the original right/left alternation.
-    const index = mounts.length > 1 ? ((ammo - 1) % mounts.length + mounts.length) % mounts.length : 0;
+    const index = hardpointAmmoIndex(ammo, mounts.length);
     const mount = mounts[index] ?? mounts[0]!;
     const side = mount.x < craftOrigin(h.spec).x ? -1 : 1;
     return { ...this.hardpointWorldPos(mount), side };
@@ -4933,6 +6206,7 @@ export class MissionScene extends Phaser.Scene {
     }
 
     this.tickPendingSalvos(dt, ptr);
+    this.tickCallStrikeMarks(dt);
     this.teslaLive = null;
     if (!launchIsArcBeam(this.loadout[h.weapon]?.launch)) {
       this.teslaHead = null;
@@ -4946,6 +6220,14 @@ export class MissionScene extends Phaser.Scene {
     this.tickLockOn(dt, ptr);
 
     if (h.phase !== "flight" || !this.canFire || this.debugOpen || this.editOpen || this.helpOpen || this.exitOpen) {
+      this.pointerWasDown = down;
+      return;
+    }
+
+    // POV remote loadout owns fire while piloting (HOUND) — bird guns stay parked.
+    const pov = this.povHudRemote();
+    if (pov && !pov.airborne) {
+      this.handlePovRemoteFire(pov, dt, ptr, down, pressed, released);
       this.pointerWasDown = down;
       return;
     }
@@ -4983,7 +6265,7 @@ export class MissionScene extends Phaser.Scene {
         while (barrels.length < n) barrels.push(0);
         for (let b = 0; b < barrels.length; b++) {
           if ((barrels[b] ?? 0) > 0 || !this.hasAmmo(slot)) continue;
-          barrels[b] = spec.fireCd;
+          barrels[b] = craftSocketFireCd(spec.fireCd, h.spec, slot);
           this.firePlayerWeapon(slot, spec, ptr, 0, undefined, undefined, undefined, b);
         }
       }
@@ -5016,18 +6298,36 @@ export class MissionScene extends Phaser.Scene {
       }
     }
 
-    // Remote: click detonates only while its slot is selected AND you're in its view.
-    // Other weapons fire from the heli without leaving Spectre cam.
+    // Remote: live pod for this HUD slot — POV remotes stay in their HUD; Spectre detonates in view.
+    // AI wingmen (Skiffs) never bind mouse fire — fall through so more can launch while LIVE.
     if (payloadIsRemote(spec.payload)) {
-      const live = this.activeRemote();
+      const live = this.selectedSlotRemote();
       if (live) {
-        if (pressed) {
+        if (remoteHasPovHud(live.spec)) {
+          // POV-HUD remotes fire only inside their own HUD (handlePovRemoteFire).
+          // Never auto-reenter here — that undoes Q exit every frame while the
+          // HOUND slot stays selected (and briefly flashes the dropship bomb arc).
+          this.pointerWasDown = down;
+          return;
+        }
+        if (live.spec.ai && !live.spec.pilotable) {
+          // Skiffs / AI-only: launch more if ammo remains.
+        } else if (remoteGunId(live.spec)) {
+          // Legacy single-gun remotes: selected + alive = player fire only.
+          if (down) this.fireRemoteGun(live, dt);
+          this.pointerWasDown = down;
+          return;
+        } else if (pressed) {
           if (this.remoteView) live.detonate = true;
           else this.enterRemoteView();
+          this.pointerWasDown = down;
+          return;
+        } else {
+          this.pointerWasDown = down;
+          return;
         }
-        this.pointerWasDown = down;
-        return;
       }
+      // Dead / none / AI wingmen — fall through to launch another if ammo remains.
     }
 
     let wantFire = false;
@@ -5041,7 +6341,7 @@ export class MissionScene extends Phaser.Scene {
       if (down && this.hasAmmo(slot)) {
         const spend = h.fireCd <= 0;
         if (spend) {
-          h.fireCd = spec.fireCd;
+          h.fireCd = craftSocketFireCd(spec.fireCd, h.spec, slot);
           this.spendAmmo(slot);
           // Turret coils heat the overlay barrel; fixed belly coils skip.
           if (socket.class !== "fixed") {
@@ -5076,7 +6376,7 @@ export class MissionScene extends Phaser.Scene {
       h.gunAngle = barrels[0]!;
     }
 
-    h.fireCd = spec.fireCd;
+    h.fireCd = craftSocketFireCd(spec.fireCd, h.spec, slot);
     const salvoN = spec.fire?.salvo?.count ?? 1;
     const interval = spec.fire?.salvo?.interval ?? 0;
     const spread = spec.fire?.salvo?.spread ?? 0;
@@ -5107,7 +6407,7 @@ export class MissionScene extends Phaser.Scene {
           this.pendingSalvos.push({
             t: interval * i,
             slot,
-            wpnId: spec.id,
+            wpnId: wpnIdOf(spec),
             yawOff: 0,
             gx,
             gy,
@@ -5125,7 +6425,7 @@ export class MissionScene extends Phaser.Scene {
       this.pendingSalvos.push({
         t: interval * i,
         slot,
-        wpnId: spec.id,
+        wpnId: wpnIdOf(spec),
         yawOff: (i - (salvoN - 1) / 2) * spread,
         gx,
         gy,
@@ -5153,6 +6453,307 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 
+  /** Arm a reusable mark-then-call barrage at the flare's rest point. */
+  armCallStrike(
+    x: number,
+    y: number,
+    z: number,
+    spec: NonNullable<WeaponPayload["callStrike"]>,
+    spawnFrom?: { x: number; y: number; z: number },
+    hostWeapon?: string
+  ): void {
+    const markZ = Math.max(z, groundZ(this.world, x, y));
+    // Default: inbound from one map-width to the right. Host-spawn = dropship fire support.
+    const spawnX = spawnFrom?.x ?? x + WORLD;
+    const spawnY = spawnFrom?.y ?? y;
+    const spawnZ = spawnFrom?.z ?? 1500;
+    const delayT = Math.max(0, spec.delay ?? 0);
+    const hostSpec = hostWeapon ? PLAYER_WPNS[hostWeapon as WpnId] : undefined;
+    const shellSpeed = hostSpec?.speed ?? spec.shellSpeed ?? 400;
+    const interval = hostSpec
+      ? Math.max(0.12, hostSpec.fireCd)
+      : Math.max(0.12, spec.interval);
+    let roundsLeft = Math.max(1, spec.rounds | 0);
+    if (hostWeapon && !this.infAmmo) {
+      const left = this.hostWeaponAmmoLeft(hostWeapon);
+      if (left != null && Number.isFinite(left)) {
+        roundsLeft = Math.min(roundsLeft, Math.max(0, left | 0));
+      }
+    }
+    if (roundsLeft <= 0) return;
+    const flightDist = hostWeapon
+      ? Math.hypot(this.heli.x - x, this.heli.y - y)
+      : Math.hypot(spawnX - x, spawnY - y);
+    const firstImpactEta = delayT + flightDist / Math.max(80, shellSpeed);
+    this.callStrikeMarks.push({
+      id: this.nextCallStrikeMarkId++,
+      x,
+      y,
+      z: markZ,
+      delayT,
+      roundsLeft,
+      interval,
+      intervalT: 0,
+      jitter: Math.max(8, spec.jitter),
+      shellDmg: hostSpec?.dmg ?? spec.shellDmg,
+      shellBlast: hostSpec?.blast ?? spec.shellBlast,
+      shellLook: hostSpec?.art.look ?? spec.shellLook,
+      shellSpeed,
+      spawnX,
+      spawnY,
+      spawnZ,
+      hitsLanded: 0,
+      flareUntilHits: Math.max(1, spec.flareUntilHits ?? 3),
+      firstImpactEta,
+      hostWeapon,
+    });
+  }
+
+  tickCallStrikeMarks(dt: number): void {
+    if (!this.callStrikeMarks.length) {
+      this.hideCallStrikeEtaTxt();
+      return;
+    }
+    let w = 0;
+    let etaI = 0;
+    for (const m of this.callStrikeMarks) {
+      // Host howitzer walk: flare dies when the last shell is fired (hits aren't tagged).
+      // Off-map barrages: keep signaling until the first few impacts land.
+      const showFlare = m.hostWeapon
+        ? m.roundsLeft > 0
+        : m.hitsLanded < m.flareUntilHits;
+      if (m.firstImpactEta > 0) m.firstImpactEta = Math.max(0, m.firstImpactEta - dt);
+
+      // Heavy upward flare column while the mark is still signaling.
+      if (showFlare && cameraPointVisible(m.z, m.y) && this.fxChance(0.92)) {
+        const at = worldToScreen(m.x, m.y, m.z + 6);
+        this.withTrailFx(1.7, () => {
+          const nf = this.fxEmitCount(1.45);
+          const ns = this.fxEmitCount(1.35);
+          if (nf) {
+            this.emitBudgeted(
+              "fire",
+              this.fxAt(m.z, m.y, this.signalFlareTrail, ZOff.fire + 0.4),
+              at.x,
+              at.y,
+              nf
+            );
+          }
+          if (ns) {
+            this.emitBudgeted(
+              "smoke",
+              this.fxAt(m.z, m.y, this.signalFlareSmoke, ZOff.smoke),
+              at.x,
+              at.y,
+              ns
+            );
+          }
+        });
+        if (this.fxChance(0.7)) {
+          this.emitVisualBurst(
+            m.x,
+            m.y,
+            m.z + 10,
+            {
+              n: 3,
+              spdMin: 80,
+              spdMax: 280,
+              bx: range(-0.12, 0.12),
+              by: -0.95,
+              bz: 1.45,
+              tight: 0.42,
+              scaleMul: 0.75,
+              gravity: 28,
+              depthOff: ZOff.fire + 0.8,
+            },
+            this.signalFlareSpark
+          );
+        }
+      }
+
+      // ETA only until first impact — then the label goes away.
+      if (m.firstImpactEta > 0) {
+        this.syncCallStrikeEtaTxt(m, etaI++);
+      }
+
+      if (m.delayT > 0) {
+        m.delayT -= dt;
+        this.callStrikeMarks[w++] = m;
+        continue;
+      }
+
+      m.intervalT -= dt;
+      while (m.intervalT <= 0 && m.roundsLeft > 0) {
+        if (m.hostWeapon) {
+          const hit = jitterDisk(m.x, m.y, m.jitter);
+          const ok = this.fireHostWeaponAt(m.hostWeapon, hit);
+          if (!ok) {
+            // Out of host ammo / no mount — end the walk.
+            m.roundsLeft = 0;
+            break;
+          }
+        } else {
+          this.spawnCallStrikeShell(m);
+        }
+        m.roundsLeft--;
+        m.intervalT += m.interval;
+      }
+      // Host walk: drop the mark once the barrage is done firing.
+      // Off-map: keep until authored rounds AND flare-until-hits are satisfied.
+      if (m.hostWeapon) {
+        if (m.roundsLeft > 0) this.callStrikeMarks[w++] = m;
+      } else if (m.roundsLeft > 0 || m.hitsLanded < m.flareUntilHits) {
+        this.callStrikeMarks[w++] = m;
+      }
+    }
+    this.callStrikeMarks.length = w;
+    for (let i = etaI; i < this.callStrikeEtaTxt.length; i++) {
+      const t = this.callStrikeEtaTxt[i];
+      if (t?.active) t.setVisible(false);
+    }
+  }
+
+  hideCallStrikeEtaTxt(): void {
+    for (const t of this.callStrikeEtaTxt) {
+      if (t?.active) t.setVisible(false);
+    }
+  }
+
+  syncCallStrikeEtaTxt(
+    m: (typeof this.callStrikeMarks)[number],
+    i: number
+  ): void {
+    const at = worldToScreen(m.x, m.y, m.z + 10);
+    if (!this.projectedInView(at.x, at.y, 80) || m.firstImpactEta <= 0) {
+      const existing = this.callStrikeEtaTxt[i];
+      if (existing?.active) existing.setVisible(false);
+      return;
+    }
+    const txt = this.acquireCallStrikeEtaTxt(i);
+    txt
+      .setText(`${Math.max(1, Math.ceil(m.firstImpactEta))}s`)
+      .setVisible(true)
+      .setPosition(at.x, at.y - 18 * at.scale)
+      .setDepth(worldDepth(m.z, ZOff.fire + 2, m.y))
+      .setScale(Math.max(0.85, at.scale))
+      .setAlpha(0.9);
+  }
+
+  acquireCallStrikeEtaTxt(i: number): Phaser.GameObjects.Text {
+    while (this.callStrikeEtaTxt.length <= i) {
+      this.callStrikeEtaTxt.push(this.makeCallStrikeEtaTxt());
+    }
+    const existing = this.callStrikeEtaTxt[i];
+    if (!existing || !existing.active || !existing.scene) {
+      this.callStrikeEtaTxt[i] = this.makeCallStrikeEtaTxt();
+    }
+    return this.callStrikeEtaTxt[i]!;
+  }
+
+  makeCallStrikeEtaTxt(): Phaser.GameObjects.Text {
+    const t = this.add
+      .text(0, 0, "", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "13px",
+        color: "#ff6a7a",
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(Layer.FIELD)
+      .setVisible(false)
+      .setStroke("#2a080c", 3)
+      .setAlpha(0.9);
+    this.bindFieldHud(t);
+    return t;
+  }
+
+  /** One off-map shell on a lofted ballistic arc toward the mark (+disk jitter). */
+  spawnCallStrikeShell(m: (typeof this.callStrikeMarks)[number]): void {
+    const hit = jitterDisk(m.x, m.y, m.jitter);
+    const tx = hit.x;
+    const ty = hit.y;
+    const tz = groundZ(this.world, tx, ty);
+    // Same spawn for every round so inbound timing stays consistent.
+    const sx = m.spawnX;
+    const sy = m.spawnY;
+    const sz = m.spawnZ;
+    const dx = tx - sx;
+    const dy = ty - sy;
+    const distXY = Math.max(80, Math.hypot(dx, dy));
+    const spd = Math.max(80, m.shellSpeed);
+    const flightT = distXY / spd;
+    const vx = (dx / distXY) * spd;
+    const vy = (dy / distXY) * spd;
+    // Mild gravity on a high spawn: mostly aimed at the mark, with a gentle
+    // descending curve (not a sky-high loft) that steepens a bit on the way in.
+    const grav = { acceleration: 22, terminalVelocity: 720 };
+    const vz = this.solveBallisticMuzzleVz(
+      sz,
+      tz,
+      flightT,
+      grav.acceleration,
+      grav.terminalVelocity
+    );
+    const ang = Math.atan2(dy, dx);
+    this.spawnShot({
+      from: "player",
+      beh: {
+        art: { look: m.shellLook, scale: 0.58, face: "velocity" },
+        exhaust: {
+          kind: "particles",
+          size: 0.55,
+          density: 0.85,
+          contrail: true,
+          // Base of the warhead (nose is tip-biased SHOT_ORIGIN).
+          emitUv: { x: 0.08, y: 0.5 },
+        },
+        cam: { reticle: "round", look: { pull: 0.2, max: 88, rate: 10 } },
+        control: { mode: "click" },
+        launch: {
+          mode: "muzzle",
+          inheritMomentum: 0,
+          gravity: grav,
+        },
+        payload: { detonate: { look: "fire", bigBoom: true } },
+        cruiseSpeed: spd,
+        dmg: m.shellDmg,
+        blast: m.shellBlast,
+        dmgMul: { building: 1.4, vehicle: 1.2, troop: 0.85, air: 0.2 },
+      },
+      st: {
+        age: 0,
+        launchAngle: ang,
+        bomblet: true,
+        opened: true,
+        callStrikeMarkId: m.id,
+        callStrikeTx: tx,
+        callStrikeTy: ty,
+        callStrikeTz: tz,
+      },
+      x: sx,
+      y: sy,
+      z: sz,
+      vx,
+      vy,
+      vz,
+      angle: ang,
+      life: flightT + 0.35,
+      blast: m.shellBlast,
+      dmg: m.shellDmg,
+      look: m.shellLook,
+      scale: 0.58,
+      fxInterval: 0.12,
+    });
+  }
+
+  noteCallStrikeImpact(markId: number): void {
+    for (const m of this.callStrikeMarks) {
+      if (m.id === markId) {
+        m.hitsLanded++;
+        return;
+      }
+    }
+  }
+
   /** Spawn one player round from the selected (or automatic) loadout slot. */
   firePlayerWeapon(
     slot: number,
@@ -5170,13 +6771,27 @@ export class MissionScene extends Phaser.Scene {
     if (!this.hasAmmo(slot)) return;
     this.spendAmmo(slot);
     if (payloadIsRemote(spec.payload)) {
+      const socket = h.spec.sockets[slot]!;
+      // Fixed remotes leave authored hull muzzles (simultaneous = all, alternate = L/R/…).
+      if (socket.class === "fixed") {
+        const tips = craftSocketPoints(h.spec, socket);
+        if (tips.length) {
+          if (socket.muzzleFire === "simultaneous") {
+            for (const uv of tips) {
+              this.launchRemote(spec, slot, yawOff, pitchOff, this.craftBodyMountWorldPos(uv));
+            }
+            return;
+          }
+          const uv =
+            socket.muzzleFire === "alternate"
+              ? tips[this.playerGunSide++ % tips.length]!
+              : tips[0]!;
+          this.launchRemote(spec, slot, yawOff, pitchOff, this.craftBodyMountWorldPos(uv));
+          return;
+        }
+      }
       this.launchRemote(spec, slot, yawOff, pitchOff);
       return;
-    }
-    if (h.spec.cannonInherit && specIsShellGun(spec)) {
-      // Rate-normalized reverse thrust — gatling streams brake without stalling instantly.
-      const kick = (9 + spec.dmg * 0.28) * Math.min(1.35, spec.fireCd / 0.04);
-      h.applyGunRecoil(kick);
     }
     const mixed = applyKineticCombatMix(
       spec,
@@ -5243,6 +6858,7 @@ export class MissionScene extends Phaser.Scene {
       const { x: px, y: py, side } = this.hardpointPylon(slot);
       const jitter = spec.fire?.jitter ?? 0;
       const ang = h.angle + yawOff + (jitter ? (Math.random() - 0.5) * jitter : 0);
+      this.applyPlayerShellRecoil(slot, spec, h.angle + yawOff);
       const pitchJit = pitchOff + (jitter ? (Math.random() - 0.5) * jitter * 0.45 : 0);
       const g = spec.guidance;
       const lockOn = targetingMode(g) === "lock_on";
@@ -5253,9 +6869,12 @@ export class MissionScene extends Phaser.Scene {
         (lockOn && lockId != null ? this.unitById(lockId) : undefined) ??
         this.reticleUnit();
       const inherit = spec.launch.mode === "muzzle" ? spec.launch.inheritMomentum : 0.35;
-      const accelRail = spec.launch.mode === "muzzle" && spec.launch.acceleration != null;
-      // AA rail: near-zero leave along craft heading. Instant muzzle (Hydra): full catalog speed.
-      const ownSpd = accelRail ? 10 : spec.speed;
+      const accelMuzzle = spec.launch.mode === "muzzle" && spec.launch.acceleration != null;
+      // Soft leave when accelerating (rail / Hydra); catalog speed for ballistics aim.
+      const leaveSpd = accelMuzzle
+        ? (spec.launch.mode === "muzzle" ? (spec.launch.leaveSpeed ?? 10) : 10)
+        : spec.speed;
+      const aimSpd = accelMuzzle ? spec.speed : leaveSpd;
       const cp = Math.cos(pitchJit);
       const sp = Math.sin(pitchJit);
       const origin = this.playerShotOrigin({ x: px, y: py }, ang, spec);
@@ -5273,30 +6892,52 @@ export class MissionScene extends Phaser.Scene {
       const dist3 = Math.max(8, Math.hypot(dx, dy, dz));
       const hFrac = Math.hypot(dx, dy) / dist3;
       const hvx = lockOn
-        ? h.vx * inherit + Math.cos(ang) * ownSpd * cp
-        : Math.cos(ang) * ownSpd * hFrac;
+        ? h.vx * inherit + Math.cos(ang) * leaveSpd * cp
+        : Math.cos(ang) * leaveSpd * hFrac;
       const hvy = lockOn
-        ? h.vy * inherit + Math.sin(ang) * ownSpd * cp
-        : Math.sin(ang) * ownSpd * hFrac;
-      const t = dist3 / Math.max(40, ownSpd);
+        ? h.vy * inherit + Math.sin(ang) * leaveSpd * cp
+        : Math.sin(ang) * leaveSpd * hFrac;
       const seekLoft = g && guidanceIsLockOn(g) ? g.targeting.seekDelay : undefined;
+      const z0 = h.z + ZOff.shot;
+      const grav = !lockOn ? launchGravity(spec.launch) : undefined;
+      const aimVel = lockOn
+        ? {
+            vz:
+              h.vz * inherit +
+              leaveSpd * sp +
+              (accelMuzzle ? 0 : Math.max(28, leaveSpd * 0.08)),
+            life: spec.life,
+          }
+        : this.muzzleAimVelocity({
+            dx,
+            dy,
+            dz,
+            z0,
+            tz: clip.z,
+            spd: aimSpd,
+            vx: Math.cos(ang) * aimSpd * hFrac,
+            vy: Math.sin(ang) * aimSpd * hFrac,
+            grav,
+          });
+      // Boost rockets: aim as if at cruise, but leave at leaveSpd (scale vz to match).
+      const leaveVz = accelMuzzle && !lockOn && aimSpd > 1
+        ? aimVel.vz * (leaveSpd / aimSpd)
+        : aimVel.vz;
       this.spawnShot({
         from: "player",
         id: nextId(),
-        wpnId: spec.id,
+        wpnId: wpnIdOf(spec),
         slot,
         beh,
         st: { ...st, launchAngle: ang, seeking: lockOn ? false : undefined },
         x: px,
         y: py,
-        z: h.z + ZOff.shot,
+        z: z0,
         vx: hvx,
         vy: hvy,
-        vz: lockOn
-          ? h.vz * inherit + ownSpd * sp + (accelRail ? 0 : Math.max(28, ownSpd * 0.08))
-          : dz / t,
+        vz: leaveVz,
         angle: ang,
-        life: lockOn ? spec.life : t + 0.05,
+        life: accelMuzzle ? spec.life : aimVel.life,
         targetId: lockId,
         blast: beh.blast,
         dmg: beh.dmg,
@@ -5304,9 +6945,9 @@ export class MissionScene extends Phaser.Scene {
         scale: spec.art.scale,
         fxInterval: spec.fireCd,
         loft: seekLoft,
-        cruise: lockOn ? spec.speed : undefined,
-        // Tube kick-yaw only — AA rail stays on craft heading.
-        yaw: lockOn && !accelRail ? side * (0.35 + Math.random() * 0.2) : undefined,
+        cruise: lockOn || accelMuzzle ? spec.speed : undefined,
+        // Tube kick-yaw only — AA rail / boost rockets stay on leave heading.
+        yaw: lockOn && !accelMuzzle ? side * (0.35 + Math.random() * 0.2) : undefined,
         energyTrail: exhaustIsEnergy(spec.exhaust) ? [] : undefined,
         energyTrails:
           exhaustRibbons(spec.exhaust) > 1
@@ -5338,15 +6979,36 @@ specIsShellGun(spec)
     const authored = fixed ? craftSocketPoints(h.spec, socket) : [];
     const mountedGunI =
       authored.length === 0 ? this.gunVisualIndexForSlot(slot, barrelIndex) : 0;
-    const muzzleUvs =
-      authored.length === 0
-        ? [undefined]
-        : muzzleFire === "simultaneous"
+    // Fixed sockets use body muzzle UVs; turrets use gun-texture muzzles (dual rails).
+    type TipRef =
+      | { kind: "body"; uv: { x: number; y: number } }
+      | { kind: "gun"; muzzleI: number };
+    let tipRefs: TipRef[];
+    if (authored.length > 0) {
+      const uvs =
+        muzzleFire === "simultaneous"
           ? authored
           : muzzleFire === "alternate"
-            ? [authored[this.playerGunSide++ % authored.length]]
-            : [authored[0]];
-    const fxInterval = spec.fireCd / Math.max(1, muzzleUvs.length);
+            ? [authored[this.playerGunSide++ % authored.length]!]
+            : [authored[0]!];
+      tipRefs = uvs.map((uv) => ({ kind: "body" as const, uv }));
+    } else {
+      const gun = this.guns[mountedGunI] ?? this.gun;
+      const gunMuzzles = lookupSpriteMuzzles(gun.texture.key);
+      if (gunMuzzles.length > 1 && muzzleFire === "simultaneous") {
+        tipRefs = gunMuzzles.map((_, i) => ({ kind: "gun" as const, muzzleI: i }));
+      } else if (gunMuzzles.length > 1 && muzzleFire === "alternate") {
+        tipRefs = [
+          {
+            kind: "gun" as const,
+            muzzleI: this.playerGunSide++ % gunMuzzles.length,
+          },
+        ];
+      } else {
+        tipRefs = [{ kind: "gun" as const, muzzleI: 0 }];
+      }
+    }
+    const fxInterval = spec.fireCd / Math.max(1, tipRefs.length);
     const shotFxScale = projectileFxScale("player", fxInterval);
     const spd = spec.speed;
     const baseInherit =
@@ -5361,17 +7023,23 @@ specIsShellGun(spec)
     const stationAng = fixed
       ? h.angle
       : (h.stationAim[slot]?.[barrelIndex] ?? h.stationAim[slot]?.[0] ?? h.gunAngle);
-    for (const muzzleUv of muzzleUvs) {
+    this.applyPlayerShellRecoil(slot, spec, stationAng + yawOff);
+    for (const tipRef of tipRefs) {
       const spreadAmp = spec.fire?.jitter ?? (!(spec.fire?.muzzleFlash ?? true) ? 0.025 : 0.08);
       const spread = spec.launch.mode === "beam" ? 0 : (Math.random() - 0.5) * spreadAmp;
       const ang = stationAng + spread + yawOff + ((st.helixSide ?? 0) * 0.012);
-      const tip = muzzleUv ? this.craftBodyMountWorldPos(muzzleUv) : this.gunTip(mountedGunI);
-      const tipScr = worldToScreen(tip.x, tip.y, h.z);
+      const tip =
+        tipRef.kind === "body"
+          ? this.craftBodyMountWorldPos(tipRef.uv)
+          : this.gunTip(mountedGunI, tipRef.muzzleI);
+      const muzzleUv = tipRef.kind === "body" ? tipRef.uv : undefined;
+      const gunMuzzleI = tipRef.kind === "gun" ? tipRef.muzzleI : undefined;
+      const tipScr = worldToScreen(tip.x, tip.y, this.playerMuzzleZ(slot));
       const tipScreenX = tipScr.x;
       const tipScreenY = tipScr.y;
       const tipScale = tipScr.scale;
-      const z0 = h.z + ZOff.shot;
-      const origin = this.playerShotOrigin(tip, ang, spec);
+      const z0 = this.playerMuzzleZ(slot);
+      const origin = this.playerShotOrigin(tip, ang, spec, slot);
       const clip = this.playerSightAimWorld(
         origin.x,
         origin.y,
@@ -5384,7 +7052,6 @@ specIsShellGun(spec)
       const dy = clip.y - origin.y;
       const dz = clip.z - origin.z;
       const dist3 = Math.max(8, Math.hypot(dx, dy, dz));
-      const t = dist3 / Math.max(40, spd);
       const hFrac = Math.hypot(dx, dy) / dist3;
       const dirx = dx / dist3;
       const diry = dy / dist3;
@@ -5405,17 +7072,26 @@ specIsShellGun(spec)
       const lockId =
         autoTarget?.id ??
         (lockOn ? h.lockTarget?.id : undefined);
-      const life = beamRange != null
-        ? beamRange / spd
-        : lockOn
-          ? spec.life
-          : t + 0.05;
       const seekLoft = g && guidanceIsLockOn(g) ? g.targeting.seekDelay : undefined;
-      const muzzleVz = lockOn ? Math.max(28, spd * 0.08) : (tz - z0) / t;
+      const grav = !lockOn && beamRange == null ? launchGravity(spec.launch) : undefined;
+      const aimVel = lockOn
+        ? { vz: Math.max(28, spd * 0.08), life: spec.life }
+        : this.muzzleAimVelocity({
+            dx,
+            dy,
+            dz,
+            z0,
+            tz,
+            spd,
+            vx: hvx,
+            vy: hvy,
+            alongZ: dirz * along,
+            grav,
+          });
       this.spawnShot({
         from: "player",
         id: nextId(),
-        wpnId: spec.id,
+        wpnId: wpnIdOf(spec),
         slot,
         beh,
         st: {
@@ -5428,9 +7104,9 @@ specIsShellGun(spec)
         z: z0,
         vx: hvx,
         vy: hvy,
-        vz: muzzleVz + dirz * along,
+        vz: aimVel.vz,
         angle: ang,
-        life,
+        life: beamRange != null ? beamRange / spd : aimVel.life,
         targetId: lockId,
         blast: beh.blast,
         dmg: beh.dmg,
@@ -5454,14 +7130,16 @@ specIsShellGun(spec)
       if (!fixed) this.pulseTurretGunHeat(mountedGunI);
       if (spec.launch.mode === "beam") {
         const beamEnd = worldToScreen(tx, ty, tz);
-        const beam = this.add.graphics().setDepth(worldDepth(z0, ZOff.muzzle, tip.y));
+        const beam = this.add
+          .graphics()
+          .setDepth(worldDepth(z0, this.playerMuzzleDepthOff(slot), tip.y));
         beam.lineStyle(5 * tipScale, 0x55ddff, 0.24).lineBetween(tipScreenX, tipScreenY, beamEnd.x, beamEnd.y);
         beam.lineStyle(1.5 * tipScale, 0xffffff, 0.95).lineBetween(tipScreenX, tipScreenY, beamEnd.x, beamEnd.y);
         this.tweens.add({ targets: beam, alpha: 0, duration: 110, onComplete: () => beam.destroy() });
       } else if (!!(spec.fire?.muzzleFlash ?? true)) {
         const muzzleMul = playerMuzzleFxMul(spec);
         const sparkMul = Phaser.Math.Linear(0.55, 1, Phaser.Math.Clamp((muzzleMul - 0.4) / 0.6, 0, 1));
-        this.emitVisualBurst(tip.x, tip.y, h.z, {
+        this.emitVisualBurst(tip.x, tip.y, z0, {
           n: scaledProjectileFxCount(8, shotFxScale * Math.sqrt(sparkMul)),
           spdMin: 6 + 6 * sparkMul,
           spdMax: 110 + 90 * sparkMul,
@@ -5473,32 +7151,36 @@ specIsShellGun(spec)
           stretchMul: 1.55 + 1.05 * sparkMul,
           // 260° full cone; density + speed both favor the aim axis.
           coneHalf: (260 * Math.PI) / 360,
+          depthOff: this.playerMuzzleDepthOff(slot),
         }, this.muzzleBurst);
         this.showMuzzle({
           life: 0.1,
           ang,
           scaleMul: 0.78 * muzzleMul * range(0.9, 1.12),
+          slot,
           muzzleUv: muzzleUv ?? undefined,
           gunI: muzzleUv ? undefined : mountedGunI,
+          gunMuzzleI,
         });
         const craft = h.spec;
         const mountedGun = this.guns[mountedGunI] ?? this.gun;
         const mountedGunUv = craftGunMounts(craft)[mountedGunI] ?? craftGunMount(craft);
         const gunTex = mountedGun.texture.key;
+        const gunTips = lookupSpriteMuzzles(gunTex);
         const side = muzzleUv
           ? (muzzleUv.x < craftOrigin(craft).x ? -1 : 1)
           : this.shellEjectSide({
-              muzzleUv: lookupSpriteMuzzles(gunTex)[0],
+              muzzleUv: gunTips[gunMuzzleI ?? 0] ?? gunTips[0],
               mountUv: mountedGunUv,
             });
-        const ejectAt = muzzleUv ? tip : screenToWorldAtZ(mountedGun.x, mountedGun.y, h.z);
+        const ejectAt = muzzleUv ? tip : screenToWorldAtZ(mountedGun.x, mountedGun.y, z0);
         if (
 specIsShellGun(spec)
         ) {
           this.spawnShellEject({
             x: ejectAt.x,
             y: ejectAt.y,
-            z: h.z - 12,
+            z: z0 - 4,
             barrelAng: ang,
             designation: spec.designation,
             scale: spec.art.scale,
@@ -5538,7 +7220,7 @@ specIsShellGun(spec)
     this.spawnShot({
       from: "player",
       id: nextId(),
-      wpnId: spec.id,
+      wpnId: wpnIdOf(spec),
       slot,
       beh,
       st: { ...st, launchAngle: ang },
@@ -5995,21 +7677,41 @@ specIsShellGun(spec)
     const aim =
       st.gx != null && st.gy != null ? { x: st.gx, y: st.gy } : ptr;
     const release = this.bombReleaseVelocity(spec, pylon.x, pylon.y, aim, yawOff, slot);
+    const dropZ = h.z + ZOff.shot;
+    const grav = launchGravity(spec.launch);
+    const fallT = this.estimateBombFallTime(
+      dropZ,
+      release.vz,
+      groundZ(this.world, aim.x, aim.y),
+      grav?.acceleration ?? 210,
+      grav?.terminalVelocity ?? 520
+    );
+    const openFrac = beh.payload.cluster?.openAt;
+    const openAge =
+      openFrac != null && openFrac > 0 && openFrac < 1
+        ? Math.max(0.12, fallT * openFrac)
+        : undefined;
     this.spawnShot({
       from: "player",
       id: nextId(),
-      wpnId: spec.id,
+      wpnId: wpnIdOf(spec),
       slot,
       beh,
-      st: { ...st, launchAngle: release.angle, gx: st.gx ?? aim.x, gy: st.gy ?? aim.y },
+      st: {
+        ...st,
+        launchAngle: release.angle,
+        gx: st.gx ?? aim.x,
+        gy: st.gy ?? aim.y,
+        openAge,
+      },
       x: pylon.x,
       y: pylon.y,
-      z: h.z + ZOff.shot,
+      z: dropZ,
       vx: release.vx,
       vy: release.vy,
       vz: release.vz,
       angle: release.angle,
-      life: spec.life,
+      life: Math.max(spec.life, fallT + 1.2),
       blast: beh.blast,
       dmg: beh.dmg,
       look: spec.art.look,
@@ -6032,7 +7734,15 @@ specIsShellGun(spec)
     return spr;
   }
 
-  spawnSmokePuffs(x: number, y: number, z: number, radius: number, duration: number): void {
+  spawnSmokePuffs(
+    x: number,
+    y: number,
+    z: number,
+    radius: number,
+    duration: number,
+    /** Individual puff draw/vision radius. Smoke bombs keep the default; CM screen uses smaller. */
+    puffR: { min: number; max: number } = { min: 80, max: 118 }
+  ): void {
     const n = 36;
     const tints = [0xd8d4cc, 0xc4c0b8, 0xe0dcd4, 0xb0aca4];
     const gnd = groundZ(this.world, x, y);
@@ -6053,7 +7763,7 @@ specIsShellGun(spec)
         vx: Math.cos(outA) * burst,
         vy: Math.sin(outA) * burst,
         vz: range(18, 52),
-        radius: range(80, 118),
+        radius: range(puffR.min, puffR.max),
         t: duration * range(0.88, 1.18),
         max: duration,
         tint: tints[i % tints.length]!,
@@ -6117,11 +7827,12 @@ specIsShellGun(spec)
       }
       const lifeT = Phaser.Math.Clamp(s.t / s.max, 0, 1);
       const age = 1 - lifeT;
-      const bloom = 1 - Math.exp(-age / 0.16);
+      // Grow from ~0 to full quickly (~0.12s) — no hard pop at spawn size.
+      const bloom = 1 - Math.exp(-age / 0.055);
       const fade = lifeT > 0.4 ? 1 : Math.pow(lifeT / 0.4, 1.25);
       const at = worldToScreen(s.x, s.y, s.z);
       const zs = at.scale;
-      const visualR = s.radius * (0.7 + 0.55 * bloom);
+      const visualR = s.radius * bloom;
       if (im.texture.key !== "fx_smoke" || im.frame.name !== String(s.frame)) {
         im.setTexture("fx_smoke", s.frame);
       }
@@ -6134,6 +7845,145 @@ specIsShellGun(spec)
       im.clearTint();
       if (!this.thermalOn) im.setTint(s.tint);
       im.setAlpha((this.thermalOn ? 0.02 : 0.62) * fade);
+    }
+  }
+
+  /** Thick dense long needles for big boom blasts — fly out, coast, arc down, shrink as they slow. */
+  emitBigBoomSparks(
+    x: number,
+    y: number,
+    z: number,
+    size01: number,
+    dx: number,
+    dy: number,
+    dz: number
+  ): void {
+    const len = Math.max(1e-3, Math.hypot(dx, dy, dz));
+    const ix = dx / len;
+    const iy = dy / len;
+    let bx = ix * 0.55;
+    let by = -0.82 + iy * 0.35;
+    let bz = 0.22 + Math.max(0, dz / len) * 0.28;
+    const nLen = Math.max(1e-3, Math.hypot(bx, by, bz));
+    bx /= nLen;
+    by /= nLen;
+    bz /= nLen;
+    const s01 = Phaser.Math.Clamp(size01, 0.2, 1);
+    const n = Math.round(Phaser.Math.Linear(34, 58, s01));
+    this.emitVisualBurst(
+      x,
+      y,
+      z,
+      {
+        n,
+        spdMin: Phaser.Math.Linear(220, 320, s01),
+        spdMax: Phaser.Math.Linear(860, 1200, s01),
+        bx,
+        by,
+        bz,
+        tight: 0,
+        scaleMul: Phaser.Math.Linear(1.05, 1.65, s01),
+        stretchMul: Phaser.Math.Linear(1.5, 2.1, s01),
+        coneHalf: Phaser.Math.Linear(1.05, 1.25, s01),
+        // Above dirt streaks; boomBits draw higher still.
+        depthOff: ZOff.fire + 0.55,
+      },
+      this.bigBoomSparkBurst
+    );
+  }
+
+  /**
+   * Companion to big-boom sparks: dirt streaks + small mech bits with Hydra-style smoke.
+   * Same scatter family, slightly less loft / more impact bias / slower / heavier fall.
+   */
+  emitBigBoomDebris(
+    x: number,
+    y: number,
+    z: number,
+    size01: number,
+    dx: number,
+    dy: number,
+    dz: number
+  ): void {
+    const len = Math.max(1e-3, Math.hypot(dx, dy, dz));
+    const ix = dx / len;
+    const iy = dy / len;
+    // Vs sparks: more impact-dir weight, less upward loft.
+    let bx = ix * 0.72;
+    let by = -0.68 + iy * 0.38;
+    let bz = 0.16 + Math.max(0, dz / len) * 0.22;
+    const nLen = Math.max(1e-3, Math.hypot(bx, by, bz));
+    bx /= nLen;
+    by /= nLen;
+    bz /= nLen;
+    const s01 = Phaser.Math.Clamp(size01, 0.2, 1);
+    const coneHalf = Phaser.Math.Linear(1.0, 1.2, s01);
+    const dirtN = Math.round(Phaser.Math.Linear(22, 40, s01));
+    this.emitVisualBurst(
+      x,
+      y,
+      z,
+      {
+        n: dirtN,
+        spdMin: Phaser.Math.Linear(160, 240, s01),
+        spdMax: Phaser.Math.Linear(620, 920, s01),
+        bx,
+        by,
+        bz,
+        tight: 0,
+        scaleMul: Phaser.Math.Linear(0.95, 1.45, s01),
+        stretchMul: Phaser.Math.Linear(1.35, 1.9, s01),
+        coneHalf,
+        // Back of the boom stack — under fire / sparks / mech bits.
+        depthOff: ZOff.smoke - 0.15,
+      },
+      this.bigBoomDirtBurst,
+      "dust"
+    );
+
+    const bitN = Math.round(Phaser.Math.Linear(36, 68, s01));
+    const mechKeys = Array.from({ length: 12 }, (_, i) => `fx_debris_mech_${i}`);
+    for (let i = 0; i < bitN; i++) {
+      const key = this.textures.exists(mechKeys[i % mechKeys.length]!)
+        ? mechKeys[i % mechKeys.length]!
+        : this.textures.exists("fx_debris_metal")
+          ? "fx_debris_metal"
+          : null;
+      if (!key) continue;
+      const d = coneDir(bx, by, bz, coneHalf, 6.5);
+      const cosMin = Math.cos(coneHalf);
+      const kSpeed = 11;
+      const t =
+        (Math.exp(kSpeed * d.align) - Math.exp(kSpeed * cosMin)) /
+        Math.max(1e-4, Math.exp(kSpeed) - Math.exp(kSpeed * cosMin));
+      const spd =
+        Phaser.Math.Linear(
+          Phaser.Math.Linear(140, 200, s01),
+          Phaser.Math.Linear(480, 720, s01),
+          Phaser.Math.Clamp(t, 0, 1)
+        ) * range(0.88, 1.08);
+      const scale = range(0.14, 0.26) * Phaser.Math.Linear(0.95, 1.2, s01);
+      // Strong loft so flecks arc in XY before ground contact.
+      const loft = range(160, 340) * Phaser.Math.Linear(0.9, 1.2, s01);
+      this.admitDebris({
+        x: x + range(-6, 6),
+        y: y + range(-6, 6),
+        z: z + range(16, 42),
+        vx: d.x * spd,
+        vy: d.y * spd,
+        vz: Math.max(0, d.z) * spd * 2.0 + loft,
+        angle: Math.atan2(d.y, d.x) + range(-0.6, 0.6),
+        spin: range(-8, 8),
+        life: 2.5,
+        key,
+        settled: false,
+        gravity: true,
+        bounces: 0,
+        trailR: this.texTrailR(key) * scale * 0.45,
+        scale,
+        boomBit: true,
+        debrisClass: "ephemeral",
+      });
     }
   }
 
@@ -6277,7 +8127,7 @@ specIsShellGun(spec)
         if (!aligned) continue;
         if (onCd) continue;
         if (!this.hasAmmo(slot)) continue;
-        cds[b] = spec.fireCd;
+        cds[b] = craftSocketFireCd(spec.fireCd, h.spec, slot);
         const salvoN = spec.fire?.salvo?.count ?? 1;
         const interval = spec.fire?.salvo?.interval ?? 0;
         const spread = spec.fire?.salvo?.spread ?? 0;
@@ -6287,7 +8137,7 @@ specIsShellGun(spec)
           this.pendingSalvos.push({
             t: interval * i,
             slot,
-            wpnId: spec.id,
+            wpnId: wpnIdOf(spec),
             yawOff: (i - (salvoN - 1) / 2) * spread,
             autoTargetId: tgt.id,
             barrel: b,
@@ -6363,27 +8213,358 @@ specIsShellGun(spec)
     return craftCountermeasure(this.heli.spec.countermeasure);
   }
 
+  /**
+   * Live remote for the *selected* HUD weapon only (launch / detonate / HOUND fire).
+   */
+  selectedSlotRemote(): RemoteCraft | undefined {
+    const slot = this.loadout[this.heli.weapon];
+    if (!payloadIsRemote(slot?.payload)) return undefined;
+    const wantKind = slot!.payload!.remote!.kind;
+    return this.remotes.find((r) => !r.detonate && !r.dock && r.spec.kind === wantKind);
+  }
+
+  /**
+   * Piloted POV remote whose own loadout currently owns the weapon HUD (HOUND).
+   * Player-HUD remotes (Spectre) return undefined — bird loadout stays on screen.
+   */
+  povHudRemote(): RemoteCraft | undefined {
+    if (!this.remoteView) return undefined;
+    const p = this.pilotingRemote();
+    return p && remoteHasPovHud(p.spec) && p.loadout?.length ? p : undefined;
+  }
+
+  /** Active weapon strip — remote POV loadout or bird loadout. */
+  hudLoadout(): PlayerWpnSpec[] {
+    return this.povHudRemote()?.loadout ?? this.loadout;
+  }
+
+  hudAmmo(): number[] {
+    const rem = this.povHudRemote();
+    if (!rem?.ammo || !rem.loadout) return this.ammo;
+    // Host-linked slots (howitzer spot / call-strike) show the dropship bank.
+    return rem.loadout.map((wp, i) => {
+      const hostId = this.remoteHostAmmoWeapon(wp);
+      if (hostId) {
+        const n = this.hostWeaponAmmoLeft(hostId);
+        return n ?? rem.ammo![i]!;
+      }
+      return rem.ammo![i]!;
+    });
+  }
+
+  /**
+   * Ammo shown for a host remote slot: hangar reserve + live craft.
+   * Dockable remotes (Skiffs) stay "available" while airborne or mid-dock
+   * (refund happens on bay arrival); count drops only when lost.
+   */
+  remotePoolDisplayAmmo(slot: number, reserve: number): number {
+    if (this.infAmmo || !Number.isFinite(reserve)) return reserve;
+    const wp = this.loadout[slot];
+    if (!payloadIsRemote(wp?.payload)) return reserve;
+    const kind = wp!.payload!.remote!.kind;
+    if (!remoteSpecOf(kind).dockable) return reserve;
+    let live = 0;
+    for (const r of this.remotes) {
+      if (r.detonate || r.spec.kind !== kind) continue;
+      live++;
+    }
+    return reserve + live;
+  }
+
+  /** Catalog weapon id whose host ammo a POV remote slot spends, if any. */
+  remoteHostAmmoWeapon(wp: PlayerWpnSpec): string | undefined {
+    if (payloadIsHostFire(wp.payload)) return wp.payload!.hostFire!.weapon;
+    // HOUND artillery observer — barrage is the dropship howitzer.
+    if (payloadIsCallStrike(wp.payload)) return "heavy_artillery";
+    return undefined;
+  }
+
+  hostWeaponSlot(wpnId: string): number {
+    let slot = this.loadout.findIndex((w) => w.id === wpnId);
+    if (slot < 0) slot = this.heli.spec.sockets.findIndex((s) => s.weapon === wpnId);
+    return slot;
+  }
+
+  hostWeaponAmmoLeft(wpnId: string): number | undefined {
+    const slot = this.hostWeaponSlot(wpnId);
+    if (slot < 0) return undefined;
+    return this.ammo[slot];
+  }
+
+  hudWeapon(): number {
+    const rem = this.povHudRemote();
+    return rem?.weapon ?? this.heli.weapon;
+  }
+
+  /** Grow weapon HUD text rows if a POV remote loadout is longer than the bird's. */
+  ensureWpnHudSlots(n: number): void {
+    const mk = (size: string, color: string, originX: number, originY = 0.5) =>
+      this.add
+        .text(0, 0, "", {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: size,
+          color,
+        })
+        .setOrigin(originX, originY)
+        .setScrollFactor(0)
+        .setDepth(Layer.HUD + 1)
+        .setStroke("#12100c", 3);
+    while (this.wpnHudSlots.length < n) {
+      this.wpnHudSlots.push({
+        key: mk("12px", "#a89868", 0, 0.5),
+        name: mk("13px", "#f0d56a", 0, 0.5),
+        ammo: mk("13px", "#e8d49a", 1, 0.5),
+        status: mk("10px", "#7ad0ff", 0.5, 0).setStroke("#12100c", 2),
+      });
+    }
+  }
+
+  /**
+   * Camera / WASD remote.
+   * Spectre sticks while `remoteView` even if another weapon (e.g. railgun) is selected.
+   * HOUND only while its HUD slot is selected.
+   */
   activeRemote(): RemoteCraft | undefined {
-    return this.remotes.find((r) => !r.detonate);
+    const selected = this.selectedSlotRemote();
+    if (selected?.spec.pilotable) return selected;
+    if (selected && !selected.spec.ai) return selected;
+    if (this.remoteView) {
+      // Sticky Spectre (or other non-pilotable) cam after switching weapons.
+      return this.remotes.find(
+        (r) => !r.detonate && !r.dock && !r.spec.ai && !r.spec.pilotable
+      );
+    }
+    return undefined;
+  }
+
+  /** Player is driving this remote (WASD). HOUND = HUD selected; Spectre = sticky view. */
+  pilotingRemote(): RemoteCraft | undefined {
+    const selected = this.selectedSlotRemote();
+    if (selected?.spec.pilotable) return selected;
+    if (!this.remoteView) return undefined;
+    return this.remotes.find(
+      (r) => !r.detonate && !r.dock && !r.spec.ai && !r.spec.pilotable
+    );
   }
 
   selectWeapon(slot: number): void {
+    // POV remote HUD owns 1–N while piloting — never switches the bird loadout.
+    const rem = this.povHudRemote();
+    if (rem?.loadout) {
+      if (slot < 0 || slot >= rem.loadout.length) return;
+      rem.weapon = slot;
+      return;
+    }
     if (slot < 0 || slot >= this.loadout.length) return;
+    const wasHound = !!this.selectedSlotRemote()?.spec.pilotable;
     this.heli.weapon = slot;
-    const spec = this.loadout[slot];
-    if (payloadIsRemote(spec?.payload) && this.activeRemote()) this.enterRemoteView();
+    const live = this.selectedSlotRemote();
+    if (live?.spec.pilotable || (live && !live.spec.ai)) {
+      this.enterRemoteView();
+    } else if (wasHound) {
+      // HOUND POV is HUD-tied; Spectre POV stays sticky when switching to guns.
+      this.remoteView = false;
+      this.applyThermalMode();
+    }
   }
 
   enterRemoteView(): void {
-    if (!this.activeRemote()) return;
+    const canView =
+      !!this.selectedSlotRemote() ||
+      this.remotes.some((r) => !r.detonate && !r.dock && !r.spec.ai && !r.spec.pilotable);
+    if (!canView) return;
     this.remoteView = true;
     this.applyThermalMode();
   }
 
   exitRemoteView(): void {
-    if (!this.remoteView) return;
+    const hound = this.selectedSlotRemote()?.spec.pilotable
+      ? this.selectedSlotRemote()
+      : this.pilotingRemote();
+    // Near-host dockable POV (Raptor): Q docks instead of just dropping the cam.
+    if (hound && remoteHasPovHud(hound.spec) && hound.spec.dockable && this.remoteNearHost(hound)) {
+      hound.dock = true;
+      this.remoteView = false;
+      this.applyThermalMode();
+      return;
+    }
+    // POV-HUD remotes (HOUND / Raptor): Q drops the view and leaves the slot so the
+    // bird HUD returns (LIVE). Staying on the drop slot would draw a bomb arc.
+    if (hound && remoteHasPovHud(hound.spec)) {
+      this.remoteView = false;
+      for (let i = 0; i < this.loadout.length; i++) {
+        if (i === this.heli.weapon) continue;
+        const wp = this.loadout[i]!;
+        if (
+          !payloadIsRemote(wp.payload) ||
+          wp.payload!.remote!.kind !== hound.spec.kind
+        ) {
+          this.heli.weapon = i;
+          break;
+        }
+      }
+      this.applyThermalMode();
+      return;
+    }
+    // Legacy HOUND / non-socket pilotable: Q releases by switching off its slot.
+    if (hound) {
+      for (let i = 0; i < this.loadout.length; i++) {
+        if (i === this.heli.weapon) continue;
+        const wp = this.loadout[i]!;
+        if (
+          !payloadIsRemote(wp.payload) ||
+          wp.payload!.remote!.kind !== hound.spec.kind
+        ) {
+          this.heli.weapon = i;
+          break;
+        }
+      }
+    }
+    if (!this.remoteView) {
+      this.applyThermalMode();
+      return;
+    }
     this.remoteView = false;
     this.applyThermalMode();
+  }
+
+  /** Peaceful dock radius for remotes returning to the host craft. */
+  remoteDockRange(drone: RemoteCraft): number {
+    return Math.max(160, this.heli.spec.radius * 0.55 + drone.spec.radius + 48);
+  }
+
+  remoteNearHost(drone: RemoteCraft): boolean {
+    const d = Math.hypot(drone.x - this.heli.x, drone.y - this.heli.y, drone.z - this.heli.z);
+    return d < this.remoteDockRange(drone);
+  }
+
+  /** Q from bird-cam — send every live Skiff home to dock. */
+  recallWingmen(): void {
+    let any = false;
+    for (const r of this.remotes) {
+      if (r.detonate || r.dock || r.spec.kind !== "wingman") continue;
+      r.dock = true;
+      any = true;
+    }
+    if (any) this.applyThermalMode();
+  }
+
+  /** Toggle dropship FOLLOW / HOLD while piloting a POV remote with `hostEscort`. */
+  toggleHostEscortMode(): void {
+    const pilot = this.povHudRemote();
+    if (!pilot?.spec.hostEscort) return;
+    this.hostEscortMode = this.hostEscortMode === "hold" ? "follow" : "hold";
+    this.hostEscortSeeking = false;
+  }
+
+  /**
+   * Host craft drive while a POV remote is piloted.
+   * Spoofs stick + aim into the normal heli controller (no custom locomotion):
+   * - `hostFace`: yaw toward the remote (orbit hosts use A/D; plane hosts aim-turn).
+   * - `hostEscort` Hold parks; Follow aims at the leash target, turns first, then thrusts.
+   * Turrets still track the mouse in syncHeliGfx.
+   */
+  hostEscortDrive(pilot: RemoteCraft | undefined):
+    | {
+        stick: { up: boolean; down: boolean; left: boolean; right: boolean };
+        aimX: number;
+        aimY: number;
+        brake: boolean;
+        /** Soft max speed while escorting (follow crawl). */
+        speedCap?: number;
+      }
+    | undefined {
+    if (!this.remoteView || !pilot || pilot.airborne || !remoteHasPovHud(pilot.spec)) {
+      return undefined;
+    }
+    const h = this.heli;
+    const zero = { up: false, down: false, left: false, right: false };
+
+    // Face-only (Raptor): keep cruising, yaw the hull toward the pilot.
+    if (pilot.spec.hostFace) {
+      const want = Math.atan2(pilot.y - h.y, pilot.x - h.x);
+      const err = Phaser.Math.Angle.Wrap(want - h.angle);
+      const dead = 0.07;
+      if (craftControlScheme(h.spec) === "orbit") {
+        return {
+          stick: {
+            up: false,
+            down: false,
+            left: err < -dead,
+            right: err > dead,
+          },
+          aimX: pilot.x,
+          aimY: pilot.y,
+          brake: false,
+        };
+      }
+      return { stick: zero, aimX: pilot.x, aimY: pilot.y, brake: true };
+    }
+
+    if (!pilot.spec.hostEscort) return undefined;
+
+    // Hold heading by aiming ahead of the nose (turrets use worldPointer separately).
+    const parkAimX = h.x + Math.cos(h.angle) * 80;
+    const parkAimY = h.y + Math.sin(h.angle) * 80;
+    if (this.hostEscortMode === "hold") {
+      this.hostEscortSeeking = false;
+      return { stick: zero, aimX: parkAimX, aimY: parkAimY, brake: true };
+    }
+
+    const { innerRadius, outerRadius } = pilot.spec.hostEscort;
+    const dist = Math.hypot(h.x - pilot.x, h.y - pilot.y);
+    if (this.hostEscortSeeking) {
+      if (dist <= innerRadius) this.hostEscortSeeking = false;
+    } else if (dist > outerRadius) {
+      this.hostEscortSeeking = true;
+    }
+
+    // Always face the Hound in follow — even while parked inside the leash.
+    const aimX = pilot.x;
+    const aimY = pilot.y;
+
+    if (!this.hostEscortSeeking) {
+      return { stick: zero, aimX, aimY, brake: true };
+    }
+
+    // Catch-up: turn toward the inner ring, thrust only once the nose is close enough.
+    const dx = h.x - pilot.x;
+    const dy = h.y - pilot.y;
+    const inv = dist > 1e-3 ? 1 / dist : 0;
+    const tx = pilot.x + dx * inv * innerRadius;
+    const ty = pilot.y + dy * inv * innerRadius;
+    const want = Math.atan2(ty - h.y, tx - h.x);
+    const err = Math.abs(Phaser.Math.Angle.Wrap(want - h.angle));
+    // ~28° — yaw first, then crawl; avoids thrusting off-axis.
+    const aligned = err < 0.49;
+    return {
+      stick: { up: aligned, down: false, left: false, right: false },
+      aimX: tx,
+      aimY: ty,
+      // Kill residual speed while lining up so it doesn't coast the wrong way.
+      brake: !aligned,
+      // Follow crawl — well under player full-throttle max.
+      speedCap: aligned ? h.spec.maxSpeed * 0.42 : undefined,
+    };
+  }
+
+  /** Extra stop for hold / inside-leash / turn-to-align so the dropship doesn't drift. */
+  brakeHostEscort(dt: number): void {
+    const h = this.heli;
+    const damp = Math.pow(0.04, dt);
+    h.vx *= damp;
+    h.vy *= damp;
+  }
+
+  /** Clamp host speed while follow-thrusting (slower than full throttle). */
+  capHostEscortSpeed(cap: number): void {
+    const h = this.heli;
+    const spd = Math.hypot(h.vx, h.vy);
+    if (spd > cap && spd > 1e-4) {
+      const s = cap / spd;
+      h.vx *= s;
+      h.vy *= s;
+    }
   }
 
   /** Hold play-cam on an impact (any povCam / wire / warp linger), optionally keeping the sensor palette. */
@@ -6413,55 +8594,611 @@ specIsShellGun(spec)
     }
   }
 
-  launchRemote(spec: PlayerWpnSpec, slot: number, yawOff: number, pitchOff = 0): void {
+  launchRemote(
+    spec: PlayerWpnSpec,
+    slot: number,
+    yawOff: number,
+    pitchOff = 0,
+    at?: { x: number; y: number; z?: number }
+  ): void {
     if (!payloadIsRemote(spec.payload)) return;
     const remoteSpec = remoteSpecOf(spec.payload.remote!.kind);
     const h = this.heli;
-    const pylon = this.hardpointPylon(slot);
-    const ang = h.angle + yawOff;
+    const pylon = at ?? this.hardpointPylon(slot);
+    // HOUND: leave the rear ramp facing aft, at ship altitude, then fall to dirt.
+    const reverseDrop = remoteSpec.ground && remoteSpec.pilotable;
+    const ang = reverseDrop ? h.angle + Math.PI + yawOff : h.angle + yawOff;
     const cp = Math.cos(pitchOff);
     const sp = Math.sin(pitchOff);
     const kick = remoteSpec.launchSpeed;
+    const gnd = groundZ(this.world, pylon.x, pylon.y);
     this.remotes.push({
       id: nextId(),
       spec: remoteSpec,
       x: pylon.x,
       y: pylon.y,
-      z: h.z + ZOff.shot,
-      vx: h.vx * 0.85 + Math.cos(ang) * kick * cp,
-      vy: h.vy * 0.85 + Math.sin(ang) * kick * cp,
-      vz: h.vz * 0.4 + kick * sp,
+      z: reverseDrop ? h.z : remoteSpec.ground ? gnd + remoteSpec.cruiseAgl : (at?.z ?? h.z + ZOff.shot),
+      vx: h.vx * (reverseDrop ? 0.55 : 0.85) + Math.cos(ang) * kick * cp,
+      vy: h.vy * (reverseDrop ? 0.55 : 0.85) + Math.sin(ang) * kick * cp,
+      vz: reverseDrop ? h.vz * 0.35 - 30 : remoteSpec.ground ? 0 : h.vz * 0.4 + kick * sp,
       angle: ang,
       health: remoteSpec.health,
       life: spec.payload.remote!.duration,
       lifeMax: spec.payload.remote!.duration,
       rotor: Math.random() * Math.PI * 2,
+      orbit: Math.random() * Math.PI * 2,
+      gunAngle: ang,
+      track: 0,
+      airborne: reverseDrop || undefined,
     });
-    this.remoteView = true;
-    this.applyThermalMode();
+    initRemoteLoadout(this.remotes[this.remotes.length - 1]!);
+    // Spectre auto-views; HOUND takes control when dropped from its selected HUD slot.
+    if (!remoteSpec.ai || remoteSpec.pilotable) {
+      const selectedKind = payloadIsRemote(this.loadout[this.heli.weapon]?.payload)
+        ? this.loadout[this.heli.weapon]!.payload!.remote!.kind
+        : undefined;
+      if (!remoteSpec.ai || selectedKind === remoteSpec.kind) {
+        this.remoteView = true;
+        this.applyThermalMode();
+      }
+    }
   }
 
   tickRemotePilot(drone: RemoteCraft, dt: number, aim: { x: number; y: number }): void {
     const spec = drone.spec;
-    const want = Math.atan2(aim.y - drone.y, aim.x - drone.x);
-    drone.angle = Phaser.Math.Angle.RotateTo(drone.angle, want, spec.yawRate * dt);
+    // Craft-backed remotes: same Heli.update path as a selected player craft.
+    // Lifecycle (HUD / cam / battery / dock) stays on the remote wrapper.
+    if (spec.craftLook) {
+      this.tickRemoteCraftPilot(drone, dt, aim);
+      return;
+    }
+    // Legacy remotes without a CraftKind (HOUND until it gets one).
+    if (spec.control === "orbit" || spec.ground) {
+      const turn = (this.keyD.isDown ? 1 : 0) + (this.keyA.isDown ? -1 : 0);
+      drone.angle += turn * spec.yawRate * dt;
+      const fwd = (this.keyW.isDown ? 1 : 0) + (this.keyS.isDown ? -1 : 0);
+      this.driveRemoteAlongHeading(drone, fwd * spec.thrust, dt, 0.12);
+      drone.gunAngle = Math.atan2(aim.y - drone.y, aim.x - drone.x);
+    } else {
+      const want = Math.atan2(aim.y - drone.y, aim.x - drone.x);
+      drone.angle = this.steerUnitAngle(drone.angle, want, spec.yawRate, dt);
+      const fwd = (this.keyW.isDown ? 1 : 0) + (this.keyS.isDown ? -1 : 0);
+      const str = (this.keyD.isDown ? 1 : 0) + (this.keyA.isDown ? -1 : 0);
+      if (spec.strafe > 0 && str !== 0) {
+        const ca = Math.cos(drone.angle);
+        const sa = Math.sin(drone.angle);
+        drone.vx += (ca * fwd * spec.thrust - sa * str * spec.strafe) * dt;
+        drone.vy += (sa * fwd * spec.thrust + ca * str * spec.strafe) * dt;
+        drone.vx *= Math.pow(0.12, dt);
+        drone.vy *= Math.pow(0.12, dt);
+        const spd = Math.hypot(drone.vx, drone.vy);
+        if (spd > spec.maxSpeed) {
+          drone.vx *= spec.maxSpeed / spd;
+          drone.vy *= spec.maxSpeed / spd;
+        }
+      } else {
+        this.driveRemoteAlongHeading(drone, fwd * spec.thrust, dt, 0.12);
+      }
+      drone.gunAngle = want;
+    }
+    if (spec.dockable) {
+      if (this.remoteNearHost(drone) && (this.keyE.isDown || drone.life < 10)) drone.dock = true;
+    }
+  }
+
+  /** Shadow Heli for a craft-backed remote — created once, kinematics synced each frame. */
+  ensureRemotePilotCraft(drone: RemoteCraft): Heli | undefined {
+    const kind = drone.spec.craftLook;
+    if (!kind) return undefined;
+    let craft = this.remotePilotCraft.get(drone.id);
+    if (!craft) {
+      craft = new Heli(drone.x, drone.y, this.world, kind);
+      craft.startAirborne(drone.angle, this.world);
+      craft.x = drone.x;
+      craft.y = drone.y;
+      craft.z = drone.z;
+      craft.vx = drone.vx;
+      craft.vy = drone.vy;
+      craft.vz = drone.vz ?? 0;
+      craft.angle = drone.angle;
+      craft.health = drone.health;
+      this.remotePilotCraft.set(drone.id, craft);
+    }
+    return craft;
+  }
+
+  /** Drive a remote through the same Heli.update path as a player craft. */
+  tickRemoteCraftPilot(drone: RemoteCraft, dt: number, aim: { x: number; y: number }): void {
+    const craft = this.ensureRemotePilotCraft(drone);
+    if (!craft) return;
+    const trackX0 = drone.x;
+    const trackY0 = drone.y;
+    // Pull remote→Heli first (ground snap / other systems may have corrected pose).
+    craft.x = drone.x;
+    craft.y = drone.y;
+    craft.z = drone.z;
+    craft.vx = drone.vx;
+    craft.vy = drone.vy;
+    craft.vz = drone.vz ?? 0;
+    craft.angle = drone.angle;
+    craft.phase = "flight";
+    craft.update(
+      dt,
+      this.world,
+      {
+        up: this.keyW.isDown,
+        down: this.keyS.isDown,
+        left: this.keyA.isDown,
+        right: this.keyD.isDown,
+      },
+      aim.x,
+      aim.y,
+      // Ground pods stay dirt-locked via snapRemoteGround — no collective loft.
+      drone.spec.ground ? false : this.keySpace.isDown,
+      drone.spec.ground ? false : this.keyShift.isDown
+    );
+    drone.x = craft.x;
+    drone.y = craft.y;
+    drone.z = craft.z;
+    drone.vx = craft.vx;
+    drone.vy = craft.vy;
+    drone.vz = craft.vz;
+    drone.angle = craft.angle;
+    drone.roll = craft.roll;
+    drone.pitch = craft.pitch;
+    drone.rotor = craft.rotor;
+    // Plane / fixed nose: guns follow hull. Orbit / turrets: mouse aims independently.
+    if (craftControlScheme(craft.spec) === "orbit") {
+      drone.gunAngle = Math.atan2(aim.y - drone.y, aim.x - drone.x);
+      craft.gunAngle = drone.gunAngle;
+    } else {
+      drone.gunAngle = craft.angle;
+    }
+    drone.health = Math.min(drone.health, craft.health);
+    // Craft-piloted remotes integrate inside Heli.update — stamp tracks here (not in updateRemotes).
+    if (drone.spec.track && !drone.airborne) {
+      this.stampRemoteTracks(drone, dt, trackX0, trackY0);
+    }
+    if (drone.spec.dockable) {
+      if (this.remoteNearHost(drone) && (this.keyE.isDown || drone.life < 10)) drone.dock = true;
+    }
+  }
+
+  releaseRemotePilotCraft(id: number): void {
+    this.remotePilotCraft.delete(id);
+  }
+
+  /** Project velocity onto hull forward and accelerate along it (no strafe / slide). */
+  driveRemoteAlongHeading(
+    drone: RemoteCraft,
+    thrustAlong: number,
+    dt: number,
+    friction: number,
+    speedCap?: number
+  ): void {
+    const spec = drone.spec;
     const ca = Math.cos(drone.angle);
     const sa = Math.sin(drone.angle);
-    const fwd = (this.keyW.isDown ? 1 : 0) + (this.keyS.isDown ? -1 : 0);
-    const str = (this.keyD.isDown ? 1 : 0) + (this.keyA.isDown ? -1 : 0);
-    drone.vx += (ca * fwd * spec.thrust - sa * str * spec.strafe) * dt;
-    drone.vy += (sa * fwd * spec.thrust + ca * str * spec.strafe) * dt;
-    drone.vx *= Math.pow(0.12, dt);
-    drone.vy *= Math.pow(0.12, dt);
+    let along = drone.vx * ca + drone.vy * sa;
+    along += thrustAlong * dt;
+    along *= Math.pow(friction, dt);
+    const cap = speedCap ?? spec.maxSpeed;
+    if (Math.abs(along) > cap) along = Math.sign(along) * cap;
+    drone.vx = ca * along;
+    drone.vy = sa * along;
+  }
+
+  tickRemoteAi(drone: RemoteCraft, dt: number): void {
+    // Ground AGV AI (HOUND) — orbit/shoot; piloted path uses craft Heli instead.
+    if (drone.spec.ground && drone.spec.gun) {
+      this.tickHoundAi(drone, dt);
+      return;
+    }
+    if (drone.spec.kind === "wingman" || drone.spec.kind === "fighter") {
+      this.tickWingmanAi(drone, dt);
+      return;
+    }
+    const h = this.heli;
+    const spec = drone.spec;
+    drone.orbit = (drone.orbit ?? 0) + dt * (spec.ground ? 0.7 : 1.15);
+    let tx = h.x;
+    let ty = h.y;
+    if (spec.ground) {
+      let best: Unit | undefined;
+      let bestD = 520;
+      for (const u of this.units) {
+        if (u.dead) continue;
+        const d = Math.hypot(u.x - drone.x, u.y - drone.y);
+        if (d < bestD) {
+          bestD = d;
+          best = u;
+        }
+      }
+      if (best) {
+        tx = best.x;
+        ty = best.y;
+      } else {
+        tx = h.x + Math.cos(drone.orbit) * 40;
+        ty = h.y + Math.sin(drone.orbit) * 40;
+      }
+    } else {
+      const ring = 110 + Math.sin(drone.orbit * 0.7) * 35;
+      tx = h.x + Math.cos(drone.orbit) * ring;
+      ty = h.y + Math.sin(drone.orbit) * ring;
+    }
+    const want = Math.atan2(ty - drone.y, tx - drone.x);
+    drone.angle = this.steerUnitAngle(drone.angle, want, spec.yawRate * 0.85, dt);
+    const ca = Math.cos(drone.angle);
+    const sa = Math.sin(drone.angle);
+    drone.vx += ca * spec.thrust * 0.55 * dt;
+    drone.vy += sa * spec.thrust * 0.55 * dt;
+    drone.vx *= Math.pow(0.15, dt);
+    drone.vy *= Math.pow(0.15, dt);
     const spd = Math.hypot(drone.vx, drone.vy);
     if (spd > spec.maxSpeed) {
       drone.vx *= spec.maxSpeed / spd;
       drone.vy *= spec.maxSpeed / spd;
     }
+    if (spec.dockable && drone.life < 8) {
+      const d = Math.hypot(drone.x - h.x, drone.y - h.y, drone.z - h.z);
+      if (d < 100) drone.dock = true;
+    }
+  }
+
+  /** Host a wingman orbits — live Raptor if any, else the airship/heli. */
+  wingmanOrbitHost(drone: RemoteCraft): { x: number; y: number; z: number; radius: number } {
+    if (drone.spec.kind === "wingman") {
+      const raptor = this.remotes.find(
+        (r) => r !== drone && !r.detonate && !r.dock && r.spec.kind === "fighter"
+      );
+      if (raptor) {
+        return {
+          x: raptor.x,
+          y: raptor.y,
+          z: raptor.z,
+          radius: raptor.spec.radius,
+        };
+      }
+    }
+    const h = this.heli;
+    return { x: h.x, y: h.y, z: h.z, radius: h.spec.radius };
+  }
+
+  /** Friendly sensor net: heli + live Skiffs + Raptor. */
+  remoteFriendlySensors(): { x: number; y: number }[] {
+    const out: { x: number; y: number }[] = [{ x: this.heli.x, y: this.heli.y }];
+    for (const r of this.remotes) {
+      if (r.detonate || r.dock) continue;
+      if (r.spec.kind === "wingman" || r.spec.kind === "fighter") {
+        out.push({ x: r.x, y: r.y });
+      }
+    }
+    return out;
+  }
+
+  /** True when any friendly is within `awareRange` of the unit. */
+  unitKnownToFriendlies(u: Unit, awareRange: number): boolean {
+    for (const f of this.remoteFriendlySensors()) {
+      if (Math.hypot(u.x - f.x, u.y - f.y) <= awareRange) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Skiff / unpiloted Raptor AI:
+   * - Idle wide orbit around Raptor (when one is live) or the airship.
+   * - Engage enemies known to friendlies within max attack range (slightly past screen).
+   * - Skiff: fixed-gun attack passes (line up → fire → overshoot → turn).
+   * - Raptor AI: strafe ring (turret-lean) while unpiloted.
+   */
+  tickWingmanAi(drone: RemoteCraft, dt: number): void {
+    const spec = drone.spec;
+    const host = this.wingmanOrbitHost(drone);
+    const maxEngage = this.wingmanMaxEngageRange();
+    const aware = spec.awareRange ?? 560;
+    const strafeR = spec.orbitRange ?? 160;
+    const escortR = (spec.escortRange ?? 240) + host.radius;
+    const cruiseSpd = spec.maxSpeed;
+
+    let target: Unit | undefined =
+      drone.aiTargetId != null ? this.unitById(drone.aiTargetId) : undefined;
+    if (
+      !target ||
+      target.dead ||
+      !this.unitKnownToFriendlies(target, aware) ||
+      Math.hypot(target.x - host.x, target.y - host.y) > maxEngage
+    ) {
+      let best: Unit | undefined;
+      let bestD = maxEngage;
+      for (const u of this.units) {
+        if (u.dead) continue;
+        if (!this.unitKnownToFriendlies(u, aware)) continue;
+        const dHost = Math.hypot(u.x - host.x, u.y - host.y);
+        if (dHost > maxEngage) continue;
+        const d = Math.hypot(u.x - drone.x, u.y - drone.y);
+        if (d < bestD) {
+          bestD = d;
+          best = u;
+        }
+      }
+      target = best;
+      drone.aiTargetId = best?.id;
+      if (!target) drone.aiPass = undefined;
+    }
+
+    drone.orbit = (drone.orbit ?? 0) + dt * (target ? 1.05 : 0.85);
+    if (target && spec.kind === "wingman") {
+      this.tickSkiffAttackPass(drone, dt, target);
+    } else if (target) {
+      const lead = (drone.orbit ?? 0) + drone.id * 0.7;
+      const tx = target.x + Math.cos(lead) * strafeR;
+      const ty = target.y + Math.sin(lead) * strafeR;
+      const pathWant = Math.atan2(ty - drone.y, tx - drone.x);
+      const aimWant = Math.atan2(target.y - drone.y, target.x - drone.x);
+      // Bank into the strafe ring; nose leans toward the hostile for guns.
+      const blend = Phaser.Math.Angle.Wrap(aimWant - pathWant);
+      const face = pathWant + Phaser.Math.Clamp(blend, -0.85, 0.85);
+      drone.angle = this.steerUnitAngle(drone.angle, face, spec.yawRate * 0.95, dt);
+      drone.gunAngle = aimWant;
+      const aimErr = Math.abs(Phaser.Math.Angle.Wrap(drone.angle - aimWant));
+      if (aimErr < 0.7 || Math.hypot(target.x - drone.x, target.y - drone.y) < maxEngage * 0.45) {
+        this.fireRemoteGun(drone, dt, { x: target.x, y: target.y });
+      }
+      const near = Math.hypot(tx - drone.x, ty - drone.y);
+      const throttle = near < 40 ? 0.55 : 1;
+      this.driveRemoteAlongHeading(drone, spec.thrust * throttle, dt, 0.16, cruiseSpd);
+    } else {
+      const ring = escortR + Math.sin((drone.orbit ?? 0) * 0.55 + drone.id) * 55;
+      const tx = host.x + Math.cos(drone.orbit ?? 0) * ring;
+      const ty = host.y + Math.sin(drone.orbit ?? 0) * ring;
+      const want = Math.atan2(ty - drone.y, tx - drone.x);
+      drone.angle = this.steerUnitAngle(drone.angle, want, spec.yawRate * 0.85, dt);
+      drone.gunAngle = drone.angle;
+      const near = Math.hypot(tx - drone.x, ty - drone.y);
+      // One speed band — slight thrust bump when closing on the escort ring (Raptor/host).
+      const catchUp = near > escortR * 0.85;
+      const thrustMul = near < 50 ? 0.35 : catchUp ? 1.2 : 0.55;
+      this.driveRemoteAlongHeading(drone, spec.thrust * thrustMul, dt, 0.14, cruiseSpd);
+    }
+
+    // Soft climb toward host altitude band.
+    const band = host.z + Phaser.Math.Clamp(spec.cruiseAgl - 30, -20, 40);
+    drone.vz += (band - drone.z) * 1.8 * dt;
+    drone.vz *= Math.pow(0.25, dt);
+
+    if (spec.dockable && drone.life < 8 && this.remoteNearHost(drone)) {
+      drone.dock = true;
+    }
+  }
+
+  /**
+   * Skiff fixed-gun boom pass: steer onto the target, fire when lined up,
+   * fly through, then break-turn for another run.
+   */
+  tickSkiffAttackPass(drone: RemoteCraft, dt: number, target: Unit): void {
+    const spec = drone.spec;
+    const dx = target.x - drone.x;
+    const dy = target.y - drone.y;
+    const dist = Math.hypot(dx, dy);
+    const ca = Math.cos(drone.angle);
+    const sa = Math.sin(drone.angle);
+    // >0 when the target is still ahead of the nose.
+    const ahead = dx * ca + dy * sa;
+    const gunId = remoteGunId(spec);
+    const bulletSpd = gunId ? PLAYER_WPNS[gunId]?.speed ?? 900 : 900;
+    // Lead the nose for a collision course; shots still leave along heading.
+    const leadT = Phaser.Math.Clamp(dist / Math.max(280, bulletSpd * 0.4), 0.04, 0.45);
+    const aimX = target.x + target.vx * leadT;
+    const aimY = target.y + target.vy * leadT;
+    const aimWant = Math.atan2(aimY - drone.y, aimX - drone.x);
+    const aimErr = Math.abs(Phaser.Math.Angle.Wrap(drone.angle - aimWant));
+
+    if (!drone.aiPass) drone.aiPass = "run";
+
+    if (drone.aiPass === "run") {
+      drone.angle = this.steerUnitAngle(drone.angle, aimWant, spec.yawRate * 1.05, dt);
+      drone.gunAngle = drone.angle;
+      // Fire window: nose on target, not too close to clip through the burst.
+      const fireMax = Math.min(420, this.wingmanMaxEngageRange() * 0.55);
+      const fireMin = 55;
+      if (ahead > 0 && aimErr < 0.22 && dist < fireMax && dist > fireMin) {
+        this.fireRemoteGun(drone, dt, { x: aimX, y: aimY });
+      }
+      // Overshoot tripwire — flew past or punched in close.
+      if (ahead < -12 || (dist < 48 && ahead < dist * 0.35)) {
+        drone.aiPass = "break";
+      }
+      this.driveRemoteAlongHeading(drone, spec.thrust, dt, 0.14);
+    } else {
+      // Break turn: keep speed, yank nose back toward the target for the next pass.
+      drone.angle = this.steerUnitAngle(drone.angle, aimWant, spec.yawRate * 1.35, dt);
+      drone.gunAngle = drone.angle;
+      this.driveRemoteAlongHeading(drone, spec.thrust * 0.92, dt, 0.12);
+      // Re-commit once the target is ahead again and roughly lined up.
+      if (ahead > Math.max(70, dist * 0.35) && aimErr < 0.55) {
+        drone.aiPass = "run";
+      }
+    }
+  }
+
+  /** Attack leash — roughly the longer screen edge + a little past (world units). */
+  wingmanMaxEngageRange(): number {
+    const v = this.cameras.main.worldView;
+    return Math.max(v.width, v.height) * 0.52 + 80;
+  }
+
+  /** Host bay world pos for skiff / fighter dock approach. */
+  remoteDockBayPos(drone: RemoteCraft): { x: number; y: number; z: number } {
+    const h = this.heli;
+    const wantWpn =
+      drone.spec.kind === "fighter" ? "fighter_pod" : drone.spec.kind === "wingman" ? "wingman_drone" : undefined;
+    const socket = wantWpn
+      ? h.spec.sockets.find((s) => s.weapon === wantWpn)
+      : h.spec.sockets.find((s) => s.id.includes("bay") || s.id.includes("skiff"));
+    if (socket) {
+      const pts = craftSocketPoints(h.spec, socket);
+      if (pts[0]) {
+        const p = this.craftBodyMountWorldPos(pts[0]);
+        return { x: p.x, y: p.y, z: h.z };
+      }
+    }
+    return {
+      x: h.x - Math.cos(h.angle) * h.spec.radius * 0.25,
+      y: h.y - Math.sin(h.angle) * h.spec.radius * 0.25,
+      z: h.z,
+    };
+  }
+
+  /**
+   * Steer a docking remote into the host bay hardpoint.
+   * Sets velocity; caller integrates. Returns true when captured.
+   */
+  tickRemoteDockApproach(drone: RemoteCraft, dt: number): boolean {
+    const bay = this.remoteDockBayPos(drone);
+    const dx = bay.x - drone.x;
+    const dy = bay.y - drone.y;
+    const dz = bay.z - drone.z;
+    const dist = Math.hypot(dx, dy, dz);
+    if (dist < 24) return true;
+
+    const want = Math.atan2(dy, dx);
+    drone.angle = this.steerUnitAngle(drone.angle, want, drone.spec.yawRate * 1.25, dt);
+    drone.gunAngle = drone.angle;
+    const approach = Phaser.Math.Clamp(dist / 220, 0.22, 1);
+    const speed = drone.spec.maxSpeed * (0.45 + approach * 0.4);
+    this.driveRemoteAlongHeading(drone, drone.spec.thrust * (0.35 + approach * 0.75), dt, 0.2, speed);
+    drone.vz += dz * 2.6 * dt;
+    drone.vz *= Math.pow(0.3, dt);
+    if (dist < 110) {
+      const pull = 1 - Math.exp(-5 * dt);
+      const along = speed * 0.9;
+      drone.vx = Phaser.Math.Linear(drone.vx, (dx / dist) * along, pull);
+      drone.vy = Phaser.Math.Linear(drone.vy, (dy / dist) * along, pull);
+    }
+    return false;
+  }
+
+  /** HOUND autonomous: hull tracks mouse; turret acquires/shoots hostiles in range. */
+  tickHoundAi(drone: RemoteCraft, dt: number): void {
+    const spec = drone.spec;
+    const ptr = this.worldPointer();
+    const engage = spec.engageRange ?? 320;
+    const stopR = spec.mouseStopRange ?? 48;
+
+    let target = drone.aiTargetId != null ? this.unitById(drone.aiTargetId) : undefined;
+    if (!target || target.dead || Math.hypot(target.x - drone.x, target.y - drone.y) > engage) {
+      let best: Unit | undefined;
+      let bestD = engage;
+      for (const u of this.units) {
+        if (u.dead) continue;
+        const d = Math.hypot(u.x - drone.x, u.y - drone.y);
+        if (d < bestD) {
+          bestD = d;
+          best = u;
+        }
+      }
+      target = best;
+      drone.aiTargetId = best?.id;
+    }
+
+    if (target) {
+      const aimWant = Math.atan2(target.y - drone.y, target.x - drone.x);
+      drone.gunAngle = aimWant;
+      const aimErr = Math.abs(Phaser.Math.Angle.Wrap((drone.gunAngle ?? 0) - aimWant));
+      if (aimErr < 1.35 || Math.hypot(target.x - drone.x, target.y - drone.y) < engage * 0.45) {
+        this.fireRemoteGun(drone, dt, { x: target.x, y: target.y });
+      }
+    } else {
+      drone.gunAngle = Math.atan2(ptr.y - drone.y, ptr.x - drone.x);
+    }
+
+    // Always drive toward the pointer — park when close enough.
+    const toMouse = Math.hypot(ptr.x - drone.x, ptr.y - drone.y);
+    if (toMouse < stopR) {
+      this.driveRemoteAlongHeading(drone, 0, dt, 0.04);
+      return;
+    }
+    const want = Math.atan2(ptr.y - drone.y, ptr.x - drone.x);
+    drone.angle = this.steerUnitAngle(drone.angle, want, spec.yawRate * 0.9, dt);
+    const throttle = toMouse < stopR * 1.6 ? 0.3 : 0.7;
+    this.driveRemoteAlongHeading(drone, spec.thrust * throttle, dt, 0.14);
+  }
+
+  /**
+   * Ground remotes: locked pad AGL like enemy vehicles (no heli-style soft climb).
+   * Airborne drops fall under gravity and thud-land with no bounce.
+   */
+  snapRemoteGround(drone: RemoteCraft, dt: number): void {
+    const spec = drone.spec;
     const gnd = groundZ(this.world, drone.x, drone.y);
-    const rest = gnd + spec.cruiseAgl;
-    drone.vz += (rest - drone.z) * 2.4 * dt;
-    drone.vz *= Math.pow(0.2, dt);
+    if (!spec.ground) {
+      const rest = gnd + spec.cruiseAgl;
+      drone.vz += (rest - drone.z) * 2.4 * dt;
+      drone.vz *= Math.pow(0.2, dt);
+      return;
+    }
+    const pad = gnd + spec.cruiseAgl;
+    if (drone.airborne) {
+      drone.vz -= 620 * dt;
+      if (drone.z <= pad) {
+        drone.z = pad;
+        drone.vz = 0;
+        drone.airborne = false;
+        this.emitHoundLandingThud(drone);
+      }
+      return;
+    }
+    // Instant clamp — same language as enemy tanks on dirt.
+    drone.z = pad;
+    drone.vz = 0;
+  }
+
+  /** Dirt puff + smear when a dropped HOUND hits the ground. */
+  emitHoundLandingThud(drone: RemoteCraft): void {
+    if (isWater(this.world, drone.x, drone.y)) return;
+    const gnd = groundZ(this.world, drone.x, drone.y);
+    this.heliDust.setDepth(worldDepth(gnd, 0.25, drone.y));
+    for (let i = 0; i < 10; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = range(10, 42);
+      const wx = drone.x + Math.cos(a) * r;
+      const wy = drone.y + Math.sin(a) * r;
+      const p = worldToScreen(wx, wy, groundZ(this.world, wx, wy));
+      this.heliDust.setEmitterAngle(Phaser.Math.RadToDeg(a) + (Math.random() - 0.5) * 36);
+      this.emitBudgeted("dust", this.heliDust, p.x, p.y, 1);
+    }
+    this.stampDirtSmears(drone.x, drone.y, drone.vx * 0.35, drone.vy * 0.35);
+    const admitted = this.reserveSimParticleSlots("dust", 14);
+    const biome = sampleBiome(this.world, drone.x, drone.y);
+    for (let i = 0; i < admitted; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const ca = Math.cos(a);
+      const sa = Math.sin(a);
+      const spd = range(180, 420);
+      const life = range(0.35, 0.7);
+      const look = simParticleLook("dirt", biome);
+      this.simParticles.push({
+        x: drone.x + ca * range(2, 12),
+        y: drone.y + sa * range(2, 12),
+        z: gnd + range(2, 10),
+        vx: ca * spd,
+        vy: sa * spd,
+        vz: range(80, 220),
+        life,
+        max: life,
+        scale: range(0.7, 1.15),
+        bounces: 0,
+        kind: "dirt",
+        tex: simParticleTexKey("dirt"),
+        frame: (Math.random() * FX_VARIANTS) | 0,
+        angJit: range(-0.06, 0.06),
+        spin: range(-8, 8),
+        tint: look.tint,
+        additive: look.add,
+        heading: a,
+        capacityClass: "dust",
+      });
+    }
   }
 
   tickRemoteIdle(drone: RemoteCraft, dt: number): void {
@@ -6471,6 +9208,1296 @@ specIsShellGun(spec)
     const rest = gnd + drone.spec.cruiseAgl;
     drone.vz += (rest - drone.z) * 2.4 * dt;
     drone.vz *= Math.pow(0.2, dt);
+  }
+
+  refundRemoteAmmo(kind: string): void {
+    for (let i = 0; i < this.loadout.length; i++) {
+      const w = this.loadout[i]!;
+      if (!payloadIsRemote(w.payload)) continue;
+      if (w.payload!.remote!.kind !== kind) continue;
+      // Match hangar capacity (craft ammoScale / socket mul), not bare catalog ammo.
+      const cap = craftSocketStartingAmmo(w.ammo, this.heli.spec, i);
+      if (!Number.isFinite(cap)) return;
+      if ((this.ammo[i] ?? 0) < cap) {
+        this.ammo[i] = (this.ammo[i] ?? 0) + 1;
+        return;
+      }
+    }
+  }
+
+  updateRemotes(dt: number): void {
+    // Keep HOUND cam/view latched while its HUD slot is selected and it's alive.
+    // Spectre view is sticky across weapon changes — do not clear just because the
+    // selected slot is a gun (railgun, etc.).
+    const selected = this.selectedSlotRemote();
+    // POV-HUD remotes (HOUND): Q exits without deselecting — do not auto-reenter every
+    // frame. Re-enter via selecting the slot again or firing while it's selected.
+    if (
+      selected?.spec.pilotable &&
+      !this.remoteView &&
+      !remoteHasPovHud(selected.spec)
+    ) {
+      this.enterRemoteView();
+    }
+    if (
+      this.remoteView &&
+      payloadIsRemote(this.loadout[this.heli.weapon]?.payload) &&
+      remoteSpecOf(this.loadout[this.heli.weapon]!.payload!.remote!.kind).pilotable &&
+      !selected
+    ) {
+      // HOUND slot selected but the vehicle is gone — drop view so a fresh drop can launch.
+      this.remoteView = false;
+      this.applyThermalMode();
+    }
+
+    const pilotedId = this.pilotingRemote()?.id;
+    const craftPiloted =
+      !!pilotedId &&
+      this.remoteView &&
+      this.remotePilotCraft.has(pilotedId);
+    // Drive AI pods / dock approaches every frame (piloted / airborne remotes steered earlier).
+    for (const r of this.remotes) {
+      if (r.detonate || r.airborne) continue;
+      if (r.dock) {
+        if (this.remotePilotCraft.has(r.id)) this.releaseRemotePilotCraft(r.id);
+        this.tickRemoteDockApproach(r, dt);
+        continue;
+      }
+      if (r.spec.ai && r.id !== pilotedId) {
+        // Drop shadow Heli when AI takes over after Q exit.
+        if (this.remotePilotCraft.has(r.id)) this.releaseRemotePilotCraft(r.id);
+        this.tickRemoteAi(r, dt);
+      }
+    }
+    let w = 0;
+    for (let i = 0; i < this.remotes.length; i++) {
+      const r = this.remotes[i]!;
+      const trackX0 = r.x;
+      const trackY0 = r.y;
+      r.life -= dt;
+      // Craft-piloted remotes already integrated inside Heli.update this frame.
+      if (!(craftPiloted && r.id === pilotedId) || r.dock) {
+        r.x += r.vx * dt;
+        r.y += r.vy * dt;
+        r.z += r.vz * dt;
+      }
+      if (!r.dock) this.snapRemoteGround(r, dt);
+      // Craft-piloted remotes stamp tracks inside tickRemoteCraftPilot (Heli already moved them).
+      if (r.spec.track && !r.airborne && !(craftPiloted && r.id === pilotedId)) {
+        this.stampRemoteTracks(r, dt, trackX0, trackY0);
+      }
+      if (r.spec.exhaustSmoke && !r.airborne) this.emitRemoteExhaustSmoke(r, dt);
+      if (r.life <= 0) {
+        if (r.spec.dockable) r.dock = true;
+        else r.detonate = true;
+      }
+      if (r.dock) {
+        const bay = this.remoteDockBayPos(r);
+        const arrived = Math.hypot(r.x - bay.x, r.y - bay.y, r.z - bay.z) < 28;
+        if (!arrived) {
+          this.remotes[w++] = r;
+          continue;
+        }
+        this.releaseRemotePilotCraft(r.id);
+        this.refundRemoteAmmo(r.spec.kind);
+        if (!r.spec.ai || r.spec.pilotable) this.exitRemoteView();
+        continue;
+      }
+      if (r.detonate) {
+        this.releaseRemotePilotCraft(r.id);
+        this.beginImpactCamLinger(r.x, r.y, {
+          thermal: r.spec.thermal ? this.craftSensorPalette() : undefined,
+          hold: 1.65,
+        });
+        this.explode(r.x, r.y, r.z, r.spec.detonateBlast, r.spec.detonateDmg, undefined, r.vx, r.vy, r.vz, false, "guided-missile", 1);
+        continue;
+      }
+      // Craft-piloted rotors spin inside Heli.update.
+      if (remoteRotorParts(r.spec).length && !(craftPiloted && r.id === pilotedId)) {
+        r.rotor += 18 * dt;
+      }
+      this.remotes[w++] = r;
+    }
+    this.remotes.length = w;
+    if (!this.activeRemote()) this.remoteView = false;
+    this.syncRemoteSprites();
+    this.remoteExhaustVisCursor = 0;
+    for (const flame of this.remoteExhaustFlames) flame.setVisible(false);
+    for (const glow of this.remoteExhaustGlows) glow.setVisible(false);
+    for (const r of this.remotes) {
+      if (r.spec.antenna) this.tickRemoteAntenna(r, dt);
+      if (
+        r.spec.craftLook &&
+        craftControlScheme(craftOf(r.spec.craftLook)) === "plane" &&
+        !r.detonate &&
+        !r.dock
+      ) {
+        this.emitRemotePlaneFx(r, dt);
+      }
+    }
+    this.applyThermalMode();
+  }
+
+  ensureRemoteExhaustVisual(i: number): {
+    flame: Phaser.GameObjects.Image;
+    glow: Phaser.GameObjects.Image;
+  } {
+    while (this.remoteExhaustFlames.length <= i) {
+      this.remoteExhaustFlames.push(
+        this.add
+          .image(0, 0, "fx_exhaust")
+          .setDepth(Layer.WORLD)
+          .setOrigin(0, 0.5)
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setVisible(false)
+      );
+      this.remoteExhaustGlows.push(
+        this.add
+          .image(0, 0, "fx_exhaust_glow")
+          .setDepth(Layer.WORLD)
+          .setOrigin(0.5, 0)
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setVisible(false)
+      );
+    }
+    return {
+      flame: this.remoteExhaustFlames[i]!,
+      glow: this.remoteExhaustGlows[i]!,
+    };
+  }
+
+  /** Wingtip contrails + exhaust wash for craft-backed plane remotes (Raptor). */
+  emitRemotePlaneFx(r: RemoteCraft, dt: number): void {
+    const body = this.remoteBodyImage(r);
+    if (!body?.visible) return;
+    const spd = Math.hypot(r.vx, r.vy);
+    const hull = r.spec.craftLook ? craftOf(r.spec.craftLook) : undefined;
+    const min = hull?.minSpeed ?? r.spec.minSpeed ?? 120;
+    if (spd < min * 0.55) return;
+
+    const tips = hull
+      ? craftWingTipMounts(hull)
+      : lookupSpritePoints(r.spec.look, "wingtip");
+    if (tips.length) {
+      if (!r.wingTrailPrevScreen) r.wingTrailPrevScreen = [];
+      const state = {
+        emitCarry: r.wingTrailEmitCarry ?? 0,
+        mountCursor: r.wingTrailMountCursor ?? 0,
+        prevScreen: r.wingTrailPrevScreen,
+      };
+      const bodyDepth =
+        (body.getData("tiltWrap") as Phaser.GameObjects.Container | undefined)?.depth ??
+        body.depth;
+      this.emitWingTipContrails({
+        dt,
+        tips,
+        bank: Math.abs(r.roll ?? 0),
+        heading: r.angle,
+        x: r.x,
+        y: r.y,
+        z: r.z,
+        pose: this.remoteBodyDrawPose(body),
+        bodyDepth,
+        state,
+      });
+      r.wingTrailEmitCarry = state.emitCarry;
+      r.wingTrailMountCursor = state.mountCursor;
+    }
+
+    const profile = hull?.exhaustProfile;
+    const mounts = hull
+      ? craftExhaustMounts(hull)
+      : lookupSpritePoints(r.spec.look, "exhaust");
+    const power = Phaser.Math.Clamp(spd / Math.max(1, hull?.maxSpeed ?? r.spec.maxSpeed), 0.2, 1);
+    if (profile && mounts.length) {
+      const pose = this.remoteBodyDrawPose(body);
+      const bodyDepth =
+        (body.getData("tiltWrap") as Phaser.GameObjects.Container | undefined)?.depth ??
+        body.depth;
+      const jetAng = projectHeading(r.angle + Math.PI, r.x, r.y, r.z);
+      const zs = worldToScreen(r.x, r.y, r.z).scale;
+      const glowAng = profile.glowFollowsHull ? pose.rotation : jetAng - Math.PI / 2;
+      const flameHue = profile.flameHue ?? (hull ? craftExhaustFlameHue(hull.kind) : undefined);
+      for (let mi = 0; mi < mounts.length; mi++) {
+        const mount = mounts[mi]!;
+        const { flame, glow } = this.ensureRemoteExhaustVisual(this.remoteExhaustVisCursor++);
+        this.paintExhaustNozzle(mi, mount, {
+          pose,
+          jetAng,
+          glowAng,
+          zs,
+          power,
+          bodyDepth,
+          cloakMul: 1,
+          flameScale: profile.flame,
+          glowTint: profile.tint,
+          flame,
+          glow,
+          flameHue,
+        });
+      }
+      // Sparse light trail wash (not a dense jet ribbon).
+      if (spd > min * 0.7) {
+        this.exhaustTint = profile.tint;
+        this.exhaustSmokeTint = profile.smoke;
+        this.exhaustAlpha = 0.18 + power * 0.4;
+        this.exhaustScaleX = profile.sx * (0.35 + power * 0.45);
+        this.exhaustScaleY = profile.sy * (0.35 + power * 0.4);
+        this.exhaustLife = profile.life;
+        this.exhaustAngle = jetAng;
+        this.exhaustVx = Math.cos(r.angle + Math.PI) * profile.speed * (0.4 + power * 0.45);
+        this.exhaustVy = Math.sin(r.angle + Math.PI) * profile.speed * (0.4 + power * 0.45);
+        const glowFx = this.fxAt(r.z, r.y, this.craftExhaust, ZOff.exhaust + 0.04);
+        glowFx.setDepth(bodyDepth - 1.2);
+        for (const mount of mounts) {
+          const at = spriteUvPos(pose, mount.x, mount.y);
+          const take = this.fxEmitCount(0.35 + power * 0.35);
+          if (take) this.emitBudgeted("fire", glowFx, at.x, at.y, take);
+        }
+      }
+    } else if (mounts.length && spd > min * 0.7) {
+      const pose = this.remoteBodyDrawPose(body);
+      this.withTrailFx(0.7, () => {
+        for (const ex of mounts) {
+          const at = spriteUvPos(pose, ex.x, ex.y);
+          const take = this.fxEmitCount(0.45);
+          if (take) {
+            this.emitBudgeted(
+              "smoke",
+              this.fxAt(r.z, r.y, this.craftExhaustSmoke, ZOff.smoke - 0.2),
+              at.x,
+              at.y,
+              take
+            );
+          }
+        }
+      });
+    }
+  }
+
+  /** Tank-track prints sized to the HOUND hull. */
+  stampRemoteTracks(r: RemoteCraft, _dt: number, x0: number, y0: number): void {
+    const kind = r.spec.track;
+    if (!kind) return;
+    const gap = r.spec.trackGap ?? 8;
+    const sc = r.spec.trackScale ?? 0.4;
+    const step = Math.hypot(r.x - x0, r.y - y0);
+    // Distance-based: coasting / creeping still accumulate prints (no thrust gate).
+    if (step < 1e-4) return;
+    if (isWater(this.world, r.x, r.y)) return;
+    const printGap = gap * 0.8;
+    const first = printGap - (r.track ?? 0);
+    for (let dist = first; dist <= step; dist += printGap) {
+      const t = step > 0 ? Phaser.Math.Clamp(dist / step, 0, 1) : 1;
+      const key = `fx_track_${kind}`;
+      const back = r.spec.radius * 0.55;
+      this.stampWreck(
+        this.textures.exists(key) ? key : "fx_track_mono",
+        Phaser.Math.Linear(x0, r.x, t) - Math.cos(r.angle) * back,
+        Phaser.Math.Linear(y0, r.y, t) - Math.sin(r.angle) * back,
+        r.angle + Math.PI / 2,
+        sc,
+        0.65
+      );
+    }
+    r.track = ((r.track ?? 0) + step) % printGap;
+  }
+
+  /** Soft linger smoke off a remote’s aft (authored `exhaustSmoke`). */
+  emitRemoteExhaustSmoke(r: RemoteCraft, dt: number): void {
+    const cfg = r.spec.exhaustSmoke;
+    if (!cfg) return;
+    const spd = Math.hypot(r.vx, r.vy);
+    if (spd < 6) {
+      r.exhaustCarry = 0;
+      return;
+    }
+    if (!cameraPointVisible(r.z, r.y)) return;
+    const power = Phaser.Math.Clamp(spd / Math.max(40, r.spec.maxSpeed), 0, 1);
+    const aft = cfg.aft ?? r.spec.radius * 0.75;
+    const wx = r.x - Math.cos(r.angle) * aft;
+    const wy = r.y - Math.sin(r.angle) * aft;
+    const at = worldToScreen(wx, wy, r.z);
+    this.exhaustSmokeTint = cfg.tint ?? 0x5a5a56;
+    this.exhaustScaleY = (cfg.size ?? 0.3) * (0.55 + power * 0.65);
+    this.exhaustAlpha = 0.18 + power * 0.32;
+    this.exhaustVx = -Math.cos(r.angle) * spd * 0.12 + range(-6, 6);
+    this.exhaustVy = -Math.sin(r.angle) * spd * 0.12 + range(-6, 6);
+    this.exhaustAngle = projectHeading(r.angle + Math.PI, r.x, r.y, r.z);
+    r.exhaustCarry = (r.exhaustCarry ?? 0) + cfg.rate * power * dt;
+    const n = Math.floor(r.exhaustCarry);
+    if (n <= 0) return;
+    r.exhaustCarry -= n;
+    this.withTrailFx(0.85, () => {
+      const take = this.fxEmitCount(n);
+      if (take) {
+        this.emitBudgeted(
+          "smoke",
+          this.fxAt(r.z, r.y, this.craftExhaustSmoke, ZOff.smoke - 0.2),
+          at.x,
+          at.y,
+          take
+        );
+      }
+    });
+  }
+
+  /** Onboard remote gun — hold-fire in POV, or AI auto-fire toward aim. */
+  fireRemoteGun(drone: RemoteCraft, dt: number, aimAt?: { x: number; y: number }): void {
+    const gunId = remoteGunId(drone.spec);
+    if (!gunId) return;
+    const spec = PLAYER_WPNS[gunId];
+    if (!spec) return;
+    drone.gunCd = (drone.gunCd ?? 0) - dt;
+    if (drone.gunCd > 0) return;
+    drone.gunCd = spec.fireCd;
+
+    const aim = aimAt ?? this.worldPointer();
+    const jitterAmp = spec.fire?.jitter ?? 0.08;
+    const sockets = drone.spec.sockets;
+    let slot = sockets?.findIndex((s) => s.weapon === gunId && s.class === "fixed") ?? -1;
+    if (slot < 0) slot = sockets?.findIndex((s) => s.weapon === gunId) ?? -1;
+    const socket = slot >= 0 ? sockets![slot] : undefined;
+    const hull = drone.spec.craftLook ? craftOf(drone.spec.craftLook) : undefined;
+    // Plane remotes shoot along the nose (Skiff has no sockets — still fixed-forward).
+    const planeFixed =
+      !!hull &&
+      craftControlScheme(hull) === "plane" &&
+      socket?.class !== "turret";
+    const baseAng = planeFixed
+      ? drone.angle
+      : Math.atan2(aim.y - drone.y, aim.x - drone.x);
+    drone.gunAngle = planeFixed ? drone.angle : baseAng;
+
+    const tips =
+      slot >= 0
+        ? this.remoteFireTips(drone, slot)
+        : (() => {
+            const bodyMuzzles = lookupSpritePoints(drone.spec.look, "muzzle");
+            if (bodyMuzzles.length > 1) {
+              const z = drone.z + drone.spec.height * 0.55;
+              return bodyMuzzles.map((uv) => {
+                const p = this.remoteBodyMountWorldPos(drone, uv);
+                return { x: p.x, y: p.y, z };
+              });
+            }
+            return [this.remoteGunMuzzle(drone)];
+          })();
+    const fxInterval = spec.fireCd / Math.max(1, tips.length);
+    const muzzleMul = playerMuzzleFxMul(spec);
+    const gunSc = drone.spec.gunScale ?? 0.55;
+    const fxScale = projectileFxScale("player", fxInterval) * 0.7;
+
+    for (const muzzle of tips) {
+      const mx = muzzle.x;
+      const my = muzzle.y;
+      const mz = muzzle.z;
+      const aimAng = baseAng + (Math.random() - 0.5) * jitterAmp;
+      const spd = spec.speed;
+      const clip = this.playerSightAimWorld(mx, my, mz, aimAng, undefined, aim);
+      const dx = clip.x - mx;
+      const dy = clip.y - my;
+      const dz = clip.z - mz;
+      const dist3 = Math.max(8, Math.hypot(dx, dy, dz));
+      const hFrac = Math.hypot(dx, dy) / dist3;
+      const beh = shotBehaviorOf(spec);
+      const aimVel = this.muzzleAimVelocity({
+        dx,
+        dy,
+        dz,
+        z0: mz,
+        tz: clip.z,
+        spd,
+        vx: Math.cos(aimAng) * spd * hFrac,
+        vy: Math.sin(aimAng) * spd * hFrac,
+      });
+      this.spawnShot({
+        from: "player",
+        id: nextId(),
+        wpnId: gunId,
+        beh,
+        st: { age: 0, launchAngle: aimAng },
+        x: mx,
+        y: my,
+        z: mz,
+        vx: Math.cos(aimAng) * spd * hFrac,
+        vy: Math.sin(aimAng) * spd * hFrac,
+        vz: aimVel.vz,
+        angle: aimAng,
+        // Match heli guns: flight time from aim distance, not the catalog tracer life
+        // (minigun life ~0.08s is a short-range heli cue — it truncates AGV shots early).
+        life: aimVel.life,
+        blast: beh.blast,
+        dmg: beh.dmg,
+        look: spec.art.look,
+        scale: spec.art.scale * 0.85,
+        fxInterval,
+        energyTrail: exhaustIsEnergy(spec.exhaust) ? [] : undefined,
+      });
+      this.emitVisualBurst(mx, my, mz, {
+        n: scaledProjectileFxCount(12, fxScale),
+        spdMin: 35,
+        spdMax: 420,
+        bx: Math.cos(aimAng),
+        by: Math.sin(aimAng),
+        bz: 0.2,
+        tight: 0.84,
+        scaleMul: 0.3,
+        stretchMul: 2.8,
+        coneHalf: (260 * Math.PI) / 360,
+      }, this.muzzleBurst);
+      const flashMul = 0.95 * muzzleMul * range(0.9, 1.12);
+      this.showMuzzle({
+        life: 0.12,
+        ang: aimAng,
+        scaleMul: flashMul,
+        // Keep bloom tiny — flash sprite can be large without a huge soft circle.
+        glowMul: 7 * gunSc,
+        worldX: mx,
+        worldY: my,
+        worldZ: mz,
+      });
+      const at = worldToScreen(mx, my, mz);
+      this.spawnMuzzleLight(at.x, at.y, mz, 18 * at.scale);
+      this.emitVisualBurst(mx, my, mz, {
+        n: 4,
+        spdMin: 8,
+        spdMax: 90,
+        bx: Math.cos(aimAng),
+        by: Math.sin(aimAng),
+        bz: 0,
+        tight: 0.85,
+        scaleMul: 0.28,
+        stretchMul: 1.4,
+        coneHalf: (220 * Math.PI) / 360,
+        depthOff: ZOff.shot,
+      }, this.muzzleBurst);
+      if (specIsShellGun(spec)) {
+        const gunIm = this.remoteGunImage(drone);
+        const gunTips = gunIm ? lookupSpriteMuzzles(gunIm.texture.key) : [];
+        const side = this.shellEjectSide({ muzzleUv: gunTips[0] });
+        const ejectAt = gunIm
+          ? screenToWorldAtZ(gunIm.x, gunIm.y, mz)
+          : { x: mx, y: my };
+        this.spawnShellEject({
+          x: ejectAt.x,
+          y: ejectAt.y,
+          z: drone.spec.ground ? drone.z + drone.spec.height * 0.7 : mz - 4,
+          barrelAng: aimAng,
+          designation: spec.designation,
+          scale: spec.art.scale,
+          dmg: spec.dmg,
+          side,
+          aerial: !drone.spec.ground,
+          fireCd: fxInterval,
+        });
+      }
+    }
+  }
+
+  /**
+   * POV remote loadout fire — same control modes / catalog weapons as the bird HUD.
+   */
+  handlePovRemoteFire(
+    drone: RemoteCraft,
+    dt: number,
+    ptr: { x: number; y: number },
+    down: boolean,
+    pressed: boolean,
+    released: boolean
+  ): void {
+    const loadout = drone.loadout;
+    const ammo = drone.ammo;
+    if (!loadout?.length || !ammo) return;
+    const slot = Phaser.Math.Clamp(drone.weapon ?? 0, 0, loadout.length - 1);
+    drone.weapon = slot;
+    const spec = loadout[slot]!;
+    drone.fireCd = Math.max(0, (drone.fireCd ?? 0) - dt);
+
+    let wantFire = false;
+    if (spec.control.mode === "hold_mouse_down") wantFire = down;
+    else if (spec.control.mode === "click" || spec.control.mode === "click_then_click_to_commit") {
+      wantFire = pressed;
+    } else if (spec.control.mode === "lock_then_click") {
+      wantFire = (pressed || down) && !!this.heli.lockTarget;
+    } else if (spec.control.mode === "click_to_set_target") {
+      if (pressed) this.designateLatch = { x: ptr.x, y: ptr.y };
+      if (down && this.designateLatch) this.designateLatch = { x: ptr.x, y: ptr.y };
+      wantFire = released && !!this.designateLatch;
+      if (wantFire) this.designateLatch = null;
+    }
+
+    if (!wantFire || (drone.fireCd ?? 0) > 0) return;
+
+    const hostWpn = this.remoteHostAmmoWeapon(spec);
+    if (hostWpn) {
+      const hostLeft = this.hostWeaponAmmoLeft(hostWpn);
+      if (hostLeft == null) return;
+      if (!this.infAmmo && Number.isFinite(hostLeft) && hostLeft <= 0) return;
+      const hostSpec = PLAYER_WPNS[hostWpn as WpnId];
+      drone.fireCd = hostSpec?.fireCd ?? spec.fireCd;
+      // Host ammo spent in fireHostWeaponAt / call-strike walk — not the remote pool.
+      this.fireRemoteLoadoutWeapon(drone, slot, spec, ptr);
+      return;
+    }
+
+    if (!this.infAmmo && Number.isFinite(ammo[slot]!) && ammo[slot]! <= 0) return;
+
+    drone.fireCd = spec.fireCd;
+    if (!this.infAmmo && Number.isFinite(ammo[slot]!)) ammo[slot]!--;
+    this.fireRemoteLoadoutWeapon(drone, slot, spec, ptr);
+  }
+
+  /**
+   * POV spot fire — lob one shell from a host craft weapon mount onto aim.
+   * Spends the host ammo bank. Returns false if missing mount / empty.
+   */
+  fireHostWeaponAt(wpnId: string, ptr: { x: number; y: number }): boolean {
+    const hostSpec = PLAYER_WPNS[wpnId as WpnId];
+    if (!hostSpec) return false;
+    const h = this.heli;
+    const slot = this.hostWeaponSlot(wpnId);
+    if (slot < 0) return false;
+    const socket = h.spec.sockets[slot];
+    if (!socket) return false;
+    if (!this.infAmmo && Number.isFinite(this.ammo[slot]!) && this.ammo[slot]! <= 0) {
+      return false;
+    }
+
+    const aimAng = Math.atan2(ptr.y - h.y, ptr.x - h.x);
+    const barrels = h.stationAim[slot] ?? (h.stationAim[slot] = [aimAng]);
+    barrels[0] = aimAng;
+    h.gunAngle = aimAng;
+
+    const gunI = this.gunVisualIndexForSlot(slot);
+    const tip = this.gunTip(gunI);
+    const origin = this.playerShotOrigin(tip, aimAng, hostSpec, slot);
+    const clip = this.playerSightAimWorld(origin.x, origin.y, origin.z, aimAng, undefined, ptr);
+    const dx = clip.x - origin.x;
+    const dy = clip.y - origin.y;
+    const dz = clip.z - origin.z;
+    const dist3 = Math.max(8, Math.hypot(dx, dy, dz));
+    const hFrac = Math.hypot(dx, dy) / dist3;
+    const spd = hostSpec.speed;
+    const inherit =
+      hostSpec.launch.mode === "muzzle" ? hostSpec.launch.inheritMomentum : 0.4;
+    const grav = launchGravity(hostSpec.launch);
+    const aimVel = this.muzzleAimVelocity({
+      dx,
+      dy,
+      dz,
+      z0: origin.z,
+      tz: clip.z,
+      spd,
+      vx: Math.cos(aimAng) * spd * hFrac,
+      vy: Math.sin(aimAng) * spd * hFrac,
+      grav,
+    });
+    const beh = shotBehaviorOf(hostSpec);
+    this.spawnShot({
+      from: "player",
+      id: nextId(),
+      wpnId: wpnIdOf(hostSpec),
+      slot,
+      beh,
+      st: { age: 0, launchAngle: aimAng },
+      x: origin.x,
+      y: origin.y,
+      z: origin.z,
+      vx: Math.cos(aimAng) * spd * hFrac + h.vx * inherit,
+      vy: Math.sin(aimAng) * spd * hFrac + h.vy * inherit,
+      vz: aimVel.vz,
+      angle: aimAng,
+      life: aimVel.life,
+      blast: beh.blast,
+      dmg: beh.dmg,
+      look: hostSpec.art.look,
+      scale: hostSpec.art.scale,
+      fxInterval: hostSpec.fireCd,
+      energyTrail: exhaustIsEnergy(hostSpec.exhaust) ? [] : undefined,
+    });
+
+    if (!this.infAmmo && Number.isFinite(this.ammo[slot]!)) this.ammo[slot]!--;
+
+    if ((h.spec.cannonInherit || socket.recoil) && specIsShellGun(hostSpec)) {
+      const kick = (9 + hostSpec.dmg * 0.28) * Math.min(1.35, hostSpec.fireCd / 0.04);
+      h.applyGunRecoil(kick, aimAng);
+    }
+    this.pulseTurretGunHeat(gunI);
+    if (hostSpec.fire?.muzzleFlash ?? true) {
+      const muzzleMul = playerMuzzleFxMul(hostSpec);
+      this.showMuzzle({
+        life: 0.12,
+        ang: aimAng,
+        scaleMul: 0.95 * muzzleMul * range(0.9, 1.12),
+        slot,
+        gunI,
+      });
+      const at = worldToScreen(origin.x, origin.y, origin.z);
+      this.spawnMuzzleLight(at.x, at.y, origin.z, 22 * at.scale);
+    }
+    return true;
+  }
+
+  /** Shell-gun kick opposite the bore (turret aim or fixed hull heading). */
+  applyPlayerShellRecoil(slot: number, spec: PlayerWpnSpec, gunAngle: number): void {
+    const h = this.heli;
+    const fireSock = h.spec.sockets[slot];
+    if (!(h.spec.cannonInherit || fireSock?.recoil) || !specIsShellGun(spec)) return;
+    const kick = (9 + spec.dmg * 0.28) * Math.min(1.35, spec.fireCd / 0.04);
+    h.applyGunRecoil(kick, gunAngle);
+  }
+
+  /** Spawn one remote-loadout round from the remote (or host, for call-strike / hostFire). */
+  fireRemoteLoadoutWeapon(
+    drone: RemoteCraft,
+    slot: number,
+    spec: PlayerWpnSpec,
+    ptr: { x: number; y: number }
+  ): void {
+    const socket = drone.spec.sockets?.[slot];
+    const hull = drone.spec.craftLook ? craftOf(drone.spec.craftLook) : undefined;
+    const planeFixed =
+      !!hull &&
+      craftControlScheme(hull) === "plane" &&
+      socket?.class === "fixed";
+    const aimAng = planeFixed
+      ? drone.angle
+      : Math.atan2(ptr.y - drone.y, ptr.x - drone.x);
+    drone.gunAngle = planeFixed ? drone.angle : aimAng;
+
+    if (payloadIsHostFire(spec.payload)) {
+      const ok = this.fireHostWeaponAt(spec.payload.hostFire!.weapon, ptr);
+      if (!ok) {
+        // Mount missing / dry — clear remote CD so the player can retry.
+        drone.fireCd = 0;
+      }
+      return;
+    }
+
+    const launch = spec.launch;
+
+    if (launch.mode === "kick_motor") {
+      this.fireRemoteKickMotor(drone, slot, spec, aimAng);
+      return;
+    }
+
+    if (launch.mode === "drop") {
+      this.fireRemoteDropShot(drone, slot, spec, ptr);
+      return;
+    }
+
+    // Muzzle guns, flares, and other direct fire — from authored tips (simultaneous dual nose, etc.).
+    const fireAng =
+      socket?.class === "hardpoint" && hull && craftControlScheme(hull) === "plane"
+        ? drone.angle
+        : aimAng;
+    const tips = this.remoteFireTips(drone, slot);
+    const fxInterval = spec.fireCd / Math.max(1, tips.length);
+    const launchInherit =
+      spec.launch.mode === "muzzle" && "inheritMomentum" in launch
+        ? launch.inheritMomentum
+        : 0;
+    const planeish = hull?.flightModel === "plane" || hull?.flightModel === "vtol";
+    const inherit = planeish ? Math.min(1, launchInherit + 0.28) : launchInherit;
+    for (const muzzle of tips) {
+      const jitter = (Math.random() - 0.5) * (spec.fire?.jitter ?? 0.04);
+      const ang = fireAng + jitter;
+      const spd = spec.speed;
+      const origin = this.playerShotOrigin(muzzle, ang, spec, slot);
+      const mx = origin.x;
+      const my = origin.y;
+      const mz = origin.z;
+      const clip = this.playerSightAimWorld(mx, my, mz, ang, undefined, ptr);
+      const dx = clip.x - mx;
+      const dy = clip.y - my;
+      const dz = clip.z - mz;
+      const dist3 = Math.max(8, Math.hypot(dx, dy, dz));
+      const hFrac = Math.hypot(dx, dy) / dist3;
+      const beh = shotBehaviorOf(spec);
+      const grav = launchGravity(spec.launch);
+      const aimVel = this.muzzleAimVelocity({
+        dx,
+        dy,
+        dz,
+        z0: mz,
+        tz: clip.z,
+        spd,
+        vx: Math.cos(ang) * spd * hFrac,
+        vy: Math.sin(ang) * spd * hFrac,
+        grav,
+      });
+      const fromHost = !!spec.payload.callStrike;
+      this.spawnShot({
+        from: "player",
+        id: nextId(),
+        wpnId: wpnIdOf(spec),
+        slot,
+        beh,
+        st: {
+          age: 0,
+          launchAngle: ang,
+          callStrikeFromHost: fromHost || undefined,
+        },
+        x: mx,
+        y: my,
+        z: mz,
+        vx: Math.cos(ang) * spd * hFrac + drone.vx * inherit,
+        vy: Math.sin(ang) * spd * hFrac + drone.vy * inherit,
+        vz: aimVel.vz,
+        angle: ang,
+        life: payloadIsCallStrike(spec.payload) ? spec.life : aimVel.life,
+        blast: beh.blast,
+        dmg: beh.dmg,
+        look: spec.art.look,
+        scale: spec.art.scale * (payloadIsCallStrike(spec.payload) ? 1 : 0.85),
+        fxInterval,
+        energyTrail: exhaustIsEnergy(spec.exhaust) ? [] : undefined,
+        energyTrails:
+          exhaustRibbons(spec.exhaust) > 1
+            ? Array.from({ length: exhaustRibbons(spec.exhaust) }, () => [] as EnergyTrailNode[])
+            : undefined,
+      });
+      if (spec.fire?.muzzleFlash ?? true) {
+        const muzzleMul = playerMuzzleFxMul(spec);
+        this.showMuzzle({
+          life: 0.12,
+          ang,
+          scaleMul: 0.9 * muzzleMul * range(0.9, 1.12),
+          glowMul: 8 * (drone.spec.gunScale ?? 0.55),
+          worldX: mx,
+          worldY: my,
+          worldZ: mz,
+        });
+      }
+    }
+  }
+
+  /** Gravity bomb from a remote bay. */
+  fireRemoteDropShot(
+    drone: RemoteCraft,
+    slot: number,
+    spec: PlayerWpnSpec,
+    ptr: { x: number; y: number }
+  ): void {
+    const launch = spec.launch;
+    if (launch.mode !== "drop") return;
+    const tip = this.remoteFireTips(drone, slot)[0] ?? {
+      x: drone.x,
+      y: drone.y,
+      z: drone.z,
+    };
+    const release = this.remoteBombReleaseVelocity(drone, spec, tip.x, tip.y, ptr, slot);
+    const dropZ = tip.z;
+    const grav = launchGravity(spec.launch);
+    const beh = shotBehaviorOf(spec);
+    const fallT = this.estimateBombFallTime(
+      dropZ,
+      release.vz,
+      groundZ(this.world, ptr.x, ptr.y),
+      grav?.acceleration ?? 210,
+      grav?.terminalVelocity ?? 520
+    );
+    this.spawnShot({
+      from: "player",
+      id: nextId(),
+      wpnId: wpnIdOf(spec),
+      slot,
+      beh,
+      st: {
+        age: 0,
+        launchAngle: release.angle,
+        gx: ptr.x,
+        gy: ptr.y,
+      },
+      x: tip.x,
+      y: tip.y,
+      z: dropZ,
+      vx: release.vx,
+      vy: release.vy,
+      vz: release.vz,
+      angle: release.angle,
+      life: Math.max(spec.life, fallT + 1.2),
+      blast: beh.blast,
+      dmg: beh.dmg,
+      look: spec.art.look,
+      scale: spec.art.scale,
+      fxInterval: spec.fireCd,
+    });
+  }
+
+  /** Photon / hardpoint kick-motor from a remote hull. */
+  fireRemoteKickMotor(
+    drone: RemoteCraft,
+    slot: number,
+    spec: PlayerWpnSpec,
+    aimAng: number
+  ): void {
+    const launch = spec.launch;
+    if (launch.mode !== "kick_motor") return;
+    const beh = shotBehaviorOf(spec);
+    const kick = launch.kickSpeed;
+    const inherit = launch.inheritMomentum;
+    const g = spec.guidance;
+    const lockId =
+      targetingMode(g) === "lock_on" || targetingMode(g) === "steer_commit"
+        ? this.heli.lockTarget?.id
+        : undefined;
+    const side = Math.random() < 0.5 ? -1 : 1;
+    const tips = this.remoteFireTips(drone, slot);
+    for (const muzzle of tips) {
+      this.spawnShot({
+        from: "player",
+        id: nextId(),
+        wpnId: wpnIdOf(spec),
+        slot,
+        beh,
+        st: { age: 0, launchAngle: aimAng },
+        x: muzzle.x,
+        y: muzzle.y,
+        z: muzzle.z,
+        vx: drone.vx * inherit + Math.cos(aimAng) * kick,
+        vy: drone.vy * inherit + Math.sin(aimAng) * kick,
+        vz: drone.vz * inherit,
+        angle: aimAng,
+        life: spec.life,
+        targetId: lockId,
+        blast: beh.blast,
+        dmg: beh.dmg,
+        look: spec.art.look,
+        scale: spec.art.scale,
+        fxInterval: spec.fireCd,
+        povCam: spec.cam.povCam || undefined,
+        motor: -launch.igniteDelay,
+        cruise: spec.speed,
+        loft: launch.softLoft,
+        yaw:
+          side *
+          (launch.yawMul ??
+            (targetingMode(g) === "lock_on" ? 1.05 + Math.random() * 0.45 : 0.42 + Math.random() * 0.22)),
+        tint: spec.art.tint,
+        energyTrail: exhaustIsEnergy(spec.exhaust) ? [] : undefined,
+        energyTrails:
+          exhaustRibbons(spec.exhaust) > 1
+            ? Array.from({ length: exhaustRibbons(spec.exhaust) }, () => [] as EnergyTrailNode[])
+            : undefined,
+      });
+      this.missileMuzzle(
+        muzzle.x,
+        muzzle.y,
+        muzzle.z,
+        aimAng,
+        projectileFxScale("player", spec.fireCd)
+      );
+    }
+  }
+
+  /** World base for a remote whip antenna — sprite UV when the body is posed. */
+  remoteAntennaBase(drone: RemoteCraft): { x: number; y: number; z: number } | undefined {
+    if (!drone.spec.antenna) return undefined;
+    const z = drone.z + drone.spec.height * 0.42;
+    const body = this.remoteBodyImage(drone);
+    const look = body?.visible ? body.texture.key : drone.spec.look;
+    const uv = lookupSpritePoints(look, "antenna")[0];
+    if (body?.visible && uv) {
+      const scr = spriteUvPos(body, uv.x, uv.y);
+      const at = screenToWorldAtZ(scr.x, scr.y, z);
+      return { x: at.x, y: at.y, z };
+    }
+    const aft = drone.spec.radius * 0.72;
+    return {
+      x: drone.x - Math.cos(drone.angle) * aft,
+      y: drone.y - Math.sin(drone.angle) * aft,
+      z,
+    };
+  }
+
+  remoteAntennaRest(
+    drone: RemoteCraft,
+    base: { x: number; y: number; z: number }
+  ): { x: number; y: number; z: number } {
+    const cfg = drone.spec.antenna!;
+    const len = cfg.length ?? 12;
+    const aft = cfg.aft ?? 2;
+    return {
+      x: base.x - Math.cos(drone.angle) * aft,
+      y: base.y - Math.sin(drone.angle) * aft,
+      z: base.z + len,
+    };
+  }
+
+  /** Spring whip — lags thrust / yaw, overshoots rest on stop, then settles. */
+  tickRemoteAntenna(drone: RemoteCraft, dt: number): void {
+    const cfg = drone.spec.antenna;
+    if (!cfg || dt <= 1e-6) return;
+    const base = this.remoteAntennaBase(drone);
+    if (!base) return;
+    const rest = this.remoteAntennaRest(drone, base);
+    let tip = drone.antenna;
+    if (!tip) {
+      drone.antenna = {
+        x: rest.x,
+        y: rest.y,
+        z: rest.z,
+        vx: 0,
+        vy: 0,
+        vz: 0,
+        bx: base.x,
+        by: base.y,
+        bz: base.z,
+        bvx: 0,
+        bvy: 0,
+        angle: drone.angle,
+      };
+      return;
+    }
+    const invDt = 1 / Math.max(1e-4, dt);
+    const bvx = (base.x - tip.bx) * invDt;
+    const bvy = (base.y - tip.by) * invDt;
+    const ax = (bvx - tip.bvx) * invDt;
+    const ay = (bvy - tip.bvy) * invDt;
+    const omega = Phaser.Math.Angle.Wrap(drone.angle - tip.angle) * invDt;
+
+    const k = cfg.stiffness ?? 26;
+    const c = cfg.damping ?? 2.4;
+    const lag = cfg.lag ?? 1.6;
+    const whip = cfg.yawWhip ?? 12;
+    const len = cfg.length ?? 12;
+
+    tip.vx += ((rest.x - tip.x) * k - tip.vx * c) * dt;
+    tip.vy += ((rest.y - tip.y) * k - tip.vy * c) * dt;
+    tip.vz += ((rest.z - tip.z) * k - tip.vz * c) * dt;
+    tip.vx -= ax * lag * dt;
+    tip.vy -= ay * lag * dt;
+    tip.vx += -Math.sin(drone.angle) * omega * whip * len * dt;
+    tip.vy += Math.cos(drone.angle) * omega * whip * len * dt;
+
+    tip.x += tip.vx * dt;
+    tip.y += tip.vy * dt;
+    tip.z += tip.vz * dt;
+
+    {
+      const dx = tip.x - base.x;
+      const dy = tip.y - base.y;
+      const dz = tip.z - base.z;
+      const span = Math.hypot(dx, dy, dz);
+      // Keep the whip short — tip stays near rest length, mild lean only.
+      const maxLen = len * 1.28;
+      if (span > maxLen && span > 1e-4) {
+        const s = maxLen / span;
+        tip.x = base.x + dx * s;
+        tip.y = base.y + dy * s;
+        tip.z = base.z + dz * s;
+        const rv = tip.vx * dx + tip.vy * dy + tip.vz * dz;
+        if (rv > 0) {
+          const inv = 1 / (span * span);
+          tip.vx -= dx * rv * inv;
+          tip.vy -= dy * rv * inv;
+          tip.vz -= dz * rv * inv;
+        }
+      }
+    }
+
+    tip.bx = base.x;
+    tip.by = base.y;
+    tip.bz = base.z;
+    tip.bvx = bvx;
+    tip.bvy = bvy;
+    tip.angle = drone.angle;
+  }
+
+  drawRemoteAntennas(): void {
+    const g = this.remoteAntennaGfx;
+    if (!g) return;
+    g.clear();
+    let depth: number = Layer.WORLD;
+    let drew = false;
+    for (const r of this.remotes) {
+      if (!r.spec.antenna || r.detonate || r.dock) continue;
+      if (!cameraPointVisible(r.z, r.y)) continue;
+      const base = this.remoteAntennaBase(r);
+      const tip = r.antenna;
+      if (!base || !tip) continue;
+      const rest = this.remoteAntennaRest(r, base);
+      // Tip spring is the only sim — draw a visible bend by pulling control
+      // points ~90° off the upright rest spine toward the tip's lean.
+      const leanX = tip.x - rest.x;
+      const leanY = tip.y - rest.y;
+      const leanZ = tip.z - rest.z;
+      // Amplify lateral lean so the curve reads even when tip motion is small.
+      const bend = 1.55;
+      const c1 = {
+        x: base.x + (rest.x - base.x) * 0.35 + leanX * bend * 0.55,
+        y: base.y + (rest.y - base.y) * 0.35 + leanY * bend * 0.55,
+        z: base.z + (rest.z - base.z) * 0.35 + leanZ * bend * 0.25,
+      };
+      const c2 = {
+        x: base.x + (rest.x - base.x) * 0.72 + leanX * bend * 1.05,
+        y: base.y + (rest.y - base.y) * 0.72 + leanY * bend * 1.05,
+        z: base.z + (rest.z - base.z) * 0.72 + leanZ * bend * 0.55,
+      };
+      const segs = 10;
+      const pts: { x: number; y: number }[] = [];
+      for (let i = 0; i <= segs; i++) {
+        const t = i / segs;
+        const u = 1 - t;
+        // Cubic Bezier base → c1 → c2 → tip
+        const wx =
+          u * u * u * base.x +
+          3 * u * u * t * c1.x +
+          3 * u * t * t * c2.x +
+          t * t * t * tip.x;
+        const wy =
+          u * u * u * base.y +
+          3 * u * u * t * c1.y +
+          3 * u * t * t * c2.y +
+          t * t * t * tip.y;
+        const wz =
+          u * u * u * base.z +
+          3 * u * u * t * c1.z +
+          3 * u * t * t * c2.z +
+          t * t * t * tip.z;
+        const at = worldToScreen(wx, wy, wz);
+        pts.push({ x: at.x, y: at.y });
+        depth = Math.min(depth, worldDepth(wz, ZOff.body + 0.55, wy));
+      }
+      if (pts.length < 2) continue;
+      drew = true;
+      const stroke = (color: number, alpha: number, width: number, dy: number) => {
+        g.lineStyle(width, color, alpha);
+        g.beginPath();
+        g.moveTo(pts[0]!.x, pts[0]!.y + dy);
+        for (let i = 1; i < pts.length; i++) g.lineTo(pts[i]!.x, pts[i]!.y + dy);
+        g.strokePath();
+      };
+      // Matte rubber/black whip — no pale metal highlight (that read as a gun barrel).
+      stroke(0x0c0c0e, 0.55, 1.85, 0.45);
+      stroke(0x2a2c28, 0.78, 1.05, 0);
+      stroke(0x3e4238, 0.35, 0.45, -0.3);
+    }
+    if (drew) g.setDepth(depth);
+  }
+
+  /** World XY of an authored UV on the remote's rendered hull (look sprite). */
+  remoteBodyMountWorldPos(
+    drone: RemoteCraft,
+    mount: { x: number; y: number }
+  ): { x: number; y: number } {
+    const bodyIm = this.remoteBodyImage(drone);
+    if (bodyIm?.visible) {
+      const pose = this.remoteBodyDrawPose(bodyIm);
+      const scr = spriteUvPos(pose, mount.x, mount.y);
+      const z = drone.z + drone.spec.height * 0.55;
+      return screenToWorldAtZ(scr.x, scr.y, z);
+    }
+    // Pre-sync fallback: rotate UV offset around craft origin in world space.
+    const key = drone.spec.look;
+    const pivot = lookupSpriteOrigin(key) ?? { x: 0.5, y: 0.5 };
+    const img = this.textures.exists(key)
+      ? (this.textures.get(key).getSourceImage() as { width: number; height: number })
+      : { width: 120, height: 120 };
+    const rotOff = drone.spec.rotOff ?? Math.PI / 2;
+    const hullRot = drone.angle + rotOff;
+    const sc = drone.spec.scale;
+    const mx = (mount.x - pivot.x) * img.width * sc;
+    const my = (mount.y - pivot.y) * img.height * sc;
+    return {
+      x: drone.x + mx * Math.cos(hullRot) - my * Math.sin(hullRot),
+      y: drone.y + mx * Math.sin(hullRot) + my * Math.cos(hullRot),
+    };
+  }
+
+  /**
+   * Socket emit UVs on the remote look sprite (not hull.body — Skiff overrides look).
+   * Same resolver as host craftSocketPoints soft path (`socketPointsOnKey`).
+   */
+  remoteSocketPoints(
+    drone: RemoteCraft,
+    socket: { class: string; points?: { id: string }[] }
+  ): { x: number; y: number; id?: string }[] {
+    return socketPointsOnKey(drone.spec.look, socket);
+  }
+
+  /**
+   * Fire origins for a remote socket — simultaneous / alternate body muzzles,
+   * hardpoint ammo-phase (same as host `hardpointPylon`), or turret tips.
+   */
+  remoteFireTips(
+    drone: RemoteCraft,
+    slot: number
+  ): { x: number; y: number; z: number }[] {
+    const z = drone.z + drone.spec.height * 0.55;
+    const socket = drone.spec.sockets?.[slot];
+    if (socket && (socket.class === "fixed" || socket.class === "hardpoint")) {
+      const authored = this.remoteSocketPoints(drone, socket);
+      if (authored.length) {
+        let uvs = authored;
+        if (socket.class === "hardpoint") {
+          // Match host: remaining-ammo phase (caller may have already spent).
+          uvs = [authored[hardpointAmmoIndex(drone.ammo?.[slot] ?? 0, authored.length)]!];
+        } else if (socket.muzzleFire === "simultaneous") {
+          uvs = authored;
+        } else if (socket.muzzleFire === "alternate") {
+          uvs = [authored[this.playerGunSide++ % authored.length]!];
+        } else {
+          uvs = [authored[0]!];
+        }
+        return uvs.map((uv) => {
+          const p = this.remoteBodyMountWorldPos(drone, uv);
+          return { x: p.x, y: p.y, z };
+        });
+      }
+    }
+    if (socket?.class === "turret") {
+      const gunIm = this.remoteGunImage(drone);
+      const bodyIm = this.remoteBodyImage(drone);
+      if (gunIm && bodyIm?.visible) {
+        const pose = this.remoteBodyDrawPose(bodyIm);
+        this.poseRemoteGun(drone, pose, bodyIm.texture.key, gunIm);
+        const tips = lookupSpriteMuzzles(gunIm.texture.key);
+        if (tips.length > 1 && socket.muzzleFire === "simultaneous") {
+          return tips.map((tipUv) => {
+            const scr = spriteUvPos(gunIm, tipUv.x, tipUv.y);
+            const at = screenToWorldAtZ(scr.x, scr.y, z);
+            return { x: at.x, y: at.y, z };
+          });
+        }
+        if (tips.length > 1 && socket.muzzleFire === "alternate") {
+          const tipUv = tips[this.playerGunSide++ % tips.length]!;
+          const scr = spriteUvPos(gunIm, tipUv.x, tipUv.y);
+          const at = screenToWorldAtZ(scr.x, scr.y, z);
+          return [{ x: at.x, y: at.y, z }];
+        }
+      }
+    }
+    return [this.remoteGunMuzzle(drone)];
+  }
+
+  /**
+   * Sight emit tips for a remote socket — same rules as host craft:
+   * multi-barrel guns collapse to one beam; hardpoints follow ammo phase.
+   */
+  remoteSightOrigins(
+    drone: RemoteCraft,
+    slot: number
+  ): { x: number; y: number; z: number }[] {
+    const z = drone.z + drone.spec.height * 0.55;
+    const socket = drone.spec.sockets?.[slot];
+    if (socket && (socket.class === "fixed" || socket.class === "hardpoint")) {
+      const authored = this.remoteSocketPoints(drone, socket);
+      if (authored.length) {
+        let uvs = authored;
+        if (socket.class === "hardpoint") {
+          uvs = [authored[hardpointAmmoIndex(drone.ammo?.[slot] ?? 0, authored.length)]!];
+        }
+        // fixed (incl. simultaneous duals): all ports, then collapse like cannonSightOrigins
+        const tips = uvs.map((uv) => {
+          const p = this.remoteBodyMountWorldPos(drone, uv);
+          return { x: p.x, y: p.y, z };
+        });
+        return collapseSightTips(tips);
+      }
+    }
+    if (socket?.class === "turret") {
+      const gunIm = this.remoteGunImage(drone);
+      const bodyIm = this.remoteBodyImage(drone);
+      if (gunIm && bodyIm?.visible) {
+        const pose = this.remoteBodyDrawPose(bodyIm);
+        this.poseRemoteGun(drone, pose, bodyIm.texture.key, gunIm);
+        const muzzles = lookupSpriteMuzzles(gunIm.texture.key);
+        if (muzzles.length) {
+          const tips = muzzles.map((tipUv) => {
+            const scr = spriteUvPos(gunIm, tipUv.x, tipUv.y);
+            const at = screenToWorldAtZ(scr.x, scr.y, z);
+            return { x: at.x, y: at.y, z };
+          });
+          return collapseSightTips(tips);
+        }
+      }
+    }
+    return [this.remoteGunMuzzle(drone)];
+  }
+
+  /** Barrel tip for a remote gun — matches the overlay muzzle UV (not a hull-radius offset). */
+  remoteGunMuzzle(drone: RemoteCraft): { x: number; y: number; z: number } {
+    const z = drone.z + drone.spec.height * 0.55;
+    const gunAng = drone.gunAngle ?? drone.angle;
+    const gunIm = this.remoteGunImage(drone);
+    const bodyIm = this.remoteBodyImage(drone);
+    if (gunIm && bodyIm?.visible) {
+      const pose = this.remoteBodyDrawPose(bodyIm);
+      this.poseRemoteGun(drone, pose, bodyIm.texture.key, gunIm);
+      const tips = lookupSpriteMuzzles(gunIm.texture.key);
+      const tipUv = tips[0] ?? { x: 0.5, y: 0.05 };
+      const scr = spriteUvPos(gunIm, tipUv.x, tipUv.y);
+      const at = screenToWorldAtZ(scr.x, scr.y, z);
+      return { x: at.x, y: at.y, z };
+    }
+    // Body muzzle fallback when there is no gun overlay (Raptor fixed nose guns).
+    const bodyMuzzles = lookupSpritePoints(drone.spec.look, "muzzle");
+    if (bodyMuzzles.length) {
+      const p = this.remoteBodyMountWorldPos(drone, bodyMuzzles[0]!);
+      return { x: p.x, y: p.y, z };
+    }
+    // Fallback before the first sprite sync: hub + short barrel reach.
+    const reach = drone.spec.radius * 0.7;
+    return {
+      x: drone.x + Math.cos(gunAng) * reach,
+      y: drone.y + Math.sin(gunAng) * reach,
+      z,
+    };
+  }
+
+  /** Place remote gun overlay on the body hub for the current aim (shared by draw + fire). */
+  poseRemoteGun(
+    drone: RemoteCraft,
+    bodyPose: {
+      x: number;
+      y: number;
+      rotation: number;
+      displayWidth: number;
+      displayHeight: number;
+      originX: number;
+      originY: number;
+    },
+    bodyKey: string,
+    gunIm: Phaser.GameObjects.Image
+  ): void {
+    const gunKey =
+      (drone.spec.gunTex && this.textures.exists(drone.spec.gunTex) && drone.spec.gunTex) ||
+      "gun_minigun";
+    if (gunIm.texture.key !== gunKey) gunIm.setTexture(gunKey);
+    const gOrig = lookupSpriteOrigin(gunKey) ?? { x: 0.5, y: 0.7 };
+    const gunAng = drone.gunAngle ?? drone.angle;
+    const mount = lookupSpritePoints(bodyKey, "gun")[0] ?? { x: 0.5, y: 0.5 };
+    const hub = spriteUvPos(bodyPose, mount.x, mount.y);
+    const at = worldToScreen(drone.x, drone.y, drone.z);
+    gunIm
+      .setVisible(true)
+      .setOrigin(gOrig.x, gOrig.y)
+      .setPosition(hub.x, hub.y)
+      .setRotation(projectHeading(gunAng + Math.PI / 2, drone.x, drone.y, drone.z))
+      .setScale((drone.spec.gunScale ?? 0.55) * at.scale);
+  }
+
+  /** Live body Image for a remote in `remoteG`. */
+  remoteBodyImage(drone: RemoteCraft): Phaser.GameObjects.Image | undefined {
+    const i = this.remotes.indexOf(drone);
+    if (i < 0) return undefined;
+    const nRotors = remoteRotorPoolSize();
+    const stride = 2 + nRotors + 1;
+    const kids = this.remoteG.getChildren() as Phaser.GameObjects.Image[];
+    return kids[i * stride + 1];
+  }
+
+  /** Live gun Image for a remote in `remoteG` (stride: shadow, body, rotors…, gun). */
+  remoteGunImage(drone: RemoteCraft): Phaser.GameObjects.Image | undefined {
+    const i = this.remotes.indexOf(drone);
+    if (i < 0) return undefined;
+    const nRotors = remoteRotorPoolSize();
+    const stride = 2 + nRotors + 1;
+    const kids = this.remoteG.getChildren() as Phaser.GameObjects.Image[];
+    return kids[i * stride + 2 + nRotors];
   }
 
   tickRemoteCamBlend(dt: number): void {
@@ -6488,115 +10515,156 @@ specIsShellGun(spec)
     const toAx = aim.x - drone.x;
     const toAy = aim.y - drone.y;
     const aLen = Math.hypot(toAx, toAy);
-    const spd = Math.hypot(drone.vx, drone.vy);
-    const lead = Phaser.Math.Clamp(100 + spd * 0.28, 100, 220);
+    const remSlot = drone.weapon ?? 0;
+    const remSpec =
+      drone.loadout?.[remSlot] ?? this.hudLoadout()[this.hudWeapon()];
+    const hull = drone.spec.craftLook ? craftOf(drone.spec.craftLook) : undefined;
+    const isPlane = !!hull && craftControlScheme(hull) === "plane";
+    let pull: number;
+    let max: number;
+    if (remSpec) {
+      const look = planeLookCam(remSpec, isPlane);
+      pull = look.pull;
+      max = look.max;
+    } else {
+      // Spectre / no-HUD remotes — speed-based lead (legacy).
+      const spd = Math.hypot(drone.vx, drone.vy);
+      max = Phaser.Math.Clamp(100 + spd * 0.28, 100, 220);
+      pull = 0.7;
+    }
     let lx = 0;
     let ly = 0;
     if (aLen > 12) {
-      const use = Math.min(lead, aLen * 0.7);
-      lx = (toAx / aLen) * use;
-      ly = (toAy / aLen) * use;
+      lx = toAx * pull;
+      ly = toAy * pull;
+      const len = Math.hypot(lx, ly);
+      if (len > max) {
+        lx *= max / len;
+        ly *= max / len;
+      }
     } else {
-      lx = Math.cos(drone.angle) * lead * 0.55;
-      ly = Math.sin(drone.angle) * lead * 0.55;
+      lx = Math.cos(drone.angle) * max * 0.55;
+      ly = Math.sin(drone.angle) * max * 0.55;
     }
     return { x: drone.x + lx - hx, y: drone.y + ly - hy };
   }
 
-  updateRemotes(dt: number): void {
-    let w = 0;
-    for (let i = 0; i < this.remotes.length; i++) {
-      const r = this.remotes[i]!;
-      r.life -= dt;
-      r.x += r.vx * dt;
-      r.y += r.vy * dt;
-      r.z += r.vz * dt;
-      const gnd = groundZ(this.world, r.x, r.y) + 10;
-      if (r.z < gnd) {
-        r.z = gnd;
-        if (r.vz < 0) r.vz = 0;
-      }
-      if (r.life <= 0) r.detonate = true;
-      if (r.detonate) {
-        this.beginImpactCamLinger(r.x, r.y, {
-          // Keep the craft sensor palette (Cyberhawk/Prometheus full-spectrum).
-          thermal: r.spec.thermal ? this.craftSensorPalette() : undefined,
-          hold: 1.65,
-        });
-        this.explode(r.x, r.y, r.z, r.spec.detonateBlast, r.spec.detonateDmg, undefined, r.vx, r.vy, r.vz, false, "guided-missile", 1);
-        continue;
-      }
-      r.rotor += craftRotorFlightSpeed(craftOf("quad_drone")) * dt;
-      this.remotes[w++] = r;
-    }
-    this.remotes.length = w;
-    if (!this.activeRemote()) this.remoteView = false;
-    this.syncRemoteSprites();
-    this.applyThermalMode();
-  }
-
   syncRemoteSprites(): void {
-    const hull = craftOf("quad_drone");
-    const parts = craftComposite(hull);
-    const nRotors = parts.rotors.length;
-    const stride = 2 + nRotors;
-    const rotorSpinKey = hull.rotor ? `${hull.rotor}_spin` : undefined;
-    const useSpin = !!rotorSpinKey && this.textures.exists(rotorSpinKey);
+    const nRotors = remoteRotorPoolSize();
+    const stride = 2 + nRotors + 1; // shadow, body, rotors…, gun
     while (this.remoteG.getLength() < this.remotes.length * stride) {
       this.remoteG.add(this.add.image(0, 0, "fx_shadow"));
-      this.remoteG.add(this.add.image(0, 0, hull.body));
-      for (const part of parts.rotors) {
-        this.remoteG.add(
-          this.add.image(0, 0, part.tex).setOrigin(part.origin.x, part.origin.y)
-        );
+      this.remoteG.add(this.add.image(0, 0, "craft_quad_drone"));
+      for (let ri = 0; ri < nRotors; ri++) {
+        this.remoteG.add(this.add.image(0, 0, "craft_quad_drone_rotor").setOrigin(0.5, 0.5));
       }
+      this.remoteG.add(this.add.image(0, 0, "gun_minigun"));
     }
     const kids = this.remoteG.getChildren() as Phaser.GameObjects.Image[];
-    for (const k of kids) k.setVisible(false);
+    for (const k of kids) {
+      this.unwrapTilt(k);
+      k.setVisible(false);
+    }
     this.remotes.forEach((r, i) => {
       const sh = kids[i * stride]!;
       const im = kids[i * stride + 1]!;
+      const gunIm = kids[i * stride + 2 + nRotors]!;
       if (!cameraPointVisible(r.z, r.y)) return;
+      const key = this.textures.exists(r.spec.look)
+        ? r.spec.look
+        : this.textures.exists("craft_hover_tank")
+          ? "craft_hover_tank"
+          : "craft_quad_drone";
       const scr = worldToScreen(r.x, r.y, r.z);
       const at = { x: scr.x, y: scr.y, scale: scr.scale };
-      const key = this.textures.exists(r.spec.look) ? r.spec.look : hull.body;
       const sc = r.spec.scale;
-      const orig = craftOrigin(hull);
-      const bodyRot = projectHeading(r.angle + hull.rotOff, r.x, r.y, r.z);
-      sh.setVisible(true).setOrigin(orig.x, orig.y);
-      this.applyCastShadow(sh, r.x, r.y, r.z, key, r.angle + hull.rotOff, sc);
-      if (im.texture.key !== key) im.setTexture(key);
-      im.setVisible(true)
-        .setOrigin(orig.x, orig.y)
-        .setPosition(at.x, at.y)
-        .setRotation(bodyRot)
-        .setScale(sc * at.scale)
-        .setDepth(worldDepth(r.z, ZOff.body, r.y));
-      applyThermalHeat(im, this.thermalOn, 0.72);
+      let orig = lookupSpriteOrigin(key) ?? { x: 0.5, y: 0.5 };
+      let rotOff = r.spec.rotOff ?? Math.PI / 2;
+      if (r.spec.craftLook) {
+        const hull = craftOf(r.spec.craftLook);
+        rotOff = hull.rotOff ?? rotOff;
+      }
+      const bodyRot = projectHeading(r.angle + rotOff, r.x, r.y, r.z);
+      const bodyDepth = worldDepth(r.z, ZOff.body, r.y);
       const bodyScale = sc * at.scale;
-      for (let ri = 0; ri < nRotors; ri++) {
-        const rotor = kids[i * stride + 2 + ri];
-        const part = parts.rotors[ri];
-        if (!rotor || !part) continue;
-        const rotorKey = useSpin ? rotorSpinKey! : part.tex;
-        if (rotor.texture.key !== rotorKey) rotor.setTexture(rotorKey);
-        const hub = spriteUvPos(im, part.mount.x, part.mount.y);
-        rotor
+      sh.setVisible(true).setOrigin(orig.x, orig.y);
+      this.applyCastShadow(sh, r.x, r.y, r.z, key, r.angle + rotOff, sc);
+      if (im.texture.key !== key) im.setTexture(key);
+      im.setOrigin(orig.x, orig.y);
+      // Craft-backed plane remotes: same billboard bank as player craft.
+      const hull = r.spec.craftLook ? craftOf(r.spec.craftLook) : undefined;
+      const planeBank = !!hull && craftControlScheme(hull) === "plane" && r.roll != null;
+      if (planeBank) {
+        const wrap = this.ensureTiltWrap(im);
+        const bankAng = (r.roll ?? 0) * 1.05;
+        const wingScale = Math.max(0.24, Math.abs(Math.cos(bankAng)));
+        const alongScale = 1 - Math.abs(r.pitch ?? 0) * 0.08;
+        wrap
           .setVisible(true)
-          .setOrigin(part.origin.x, part.origin.y)
-          .setPosition(hub.x, hub.y)
-          .setRotation((part.spinSign ?? -1) * r.rotor)
-          .setScale(craftCompositePartScale(part, rotor.width, bodyScale))
-          .setDepth(worldDepth(r.z, ZOff.rotor + ri * 0.001, r.y));
+          .setPosition(at.x, at.y)
+          .setRotation(bodyRot)
+          .setScale(bodyScale * wingScale, bodyScale * alongScale)
+          .setDepth(bodyDepth);
+        im.setVisible(true).setPosition(0, 0).setRotation(0).setScale(1);
+      } else {
+        im.setVisible(true)
+          .setPosition(at.x, at.y)
+          .setRotation(bodyRot)
+          .setScale(bodyScale)
+          .setDepth(bodyDepth);
+      }
+      applyThermalHeat(im, this.thermalOn, 0.72);
+      const bodyPose = this.remoteBodyDrawPose(im);
+      const rotorParts = remoteRotorParts(r.spec);
+      for (let ri = 0; ri < rotorParts.length; ri++) {
+        const rotor = kids[i * stride + 2 + ri];
+        const part = rotorParts[ri]!;
+        if (!rotor) continue;
+        const spinKey = part.spinTex;
+        const useSpin = !!spinKey && this.textures.exists(spinKey);
+        const rotorKey = useSpin ? spinKey! : part.tex;
+        if (rotor.texture.key !== rotorKey) rotor.setTexture(rotorKey);
+        const hub = spriteUvPos(bodyPose, part.mount.x, part.mount.y);
+        const along = r.spec.craftLook ? craftRotorAlongScale(craftOf(r.spec.craftLook)) : 1;
+        const rotorSc = craftCompositePartScale(part, rotor.width, bodyScale);
+        if (along < 0.999) {
+          const wrap = this.ensureTiltWrap(rotor);
+          wrap
+            .setVisible(true)
+            .setPosition(hub.x, hub.y)
+            .setRotation(bodyRot)
+            .setScale(rotorSc, rotorSc * along)
+            .setDepth(worldDepth(r.z, ZOff.rotor + ri * 0.001, r.y));
+          rotor.setVisible(true).setPosition(0, 0).setRotation((part.spinSign ?? -1) * r.rotor).setScale(1);
+        } else {
+          this.unwrapTilt(rotor);
+          rotor
+            .setVisible(true)
+            .setOrigin(part.origin.x, part.origin.y)
+            .setPosition(hub.x, hub.y)
+            .setRotation((part.spinSign ?? -1) * r.rotor)
+            .setScale(rotorSc)
+            .setDepth(worldDepth(r.z, ZOff.rotor + ri * 0.001, r.y));
+        }
         applyThermalHeat(rotor, this.thermalOn, 0.48);
       }
+      if (r.spec.gun && gunIm) {
+        this.poseRemoteGun(r, bodyPose, key, gunIm);
+        gunIm.setDepth(worldDepth(r.z, ZOff.body + 0.4, r.y));
+        applyThermalHeat(gunIm, this.thermalOn, 0.55);
+      }
     });
+  }
+
+  /** Screen pose for UV mounts on a remote hull (accounts for bank tilt wrap). */
+  remoteBodyDrawPose(im: Phaser.GameObjects.Image): ReturnType<MissionScene["imageDrawPose"]> {
+    return this.imageDrawPose(im);
   }
 
   teslaMuzzleOrigin(slot: number): { x: number; y: number; z: number } {
     const h = this.heli;
     const socket = h.spec.sockets[slot];
-    const z = h.z + ZOff.shot;
+    const z = this.playerMuzzleZ(slot);
     if (socket?.class === "hardpoint") {
       const p = this.hardpointPylon(slot);
       return { x: p.x, y: p.y, z };
@@ -7203,10 +11271,17 @@ specIsShellGun(spec)
     life: number;
     ang: number;
     scaleMul: number;
+    /** Soft bloom diameter; defaults to max(48, scaleMul×72). */
+    glowMul?: number;
+    slot?: number;
     muzzleUv?: { x: number; y: number };
     gunI?: number;
+    gunMuzzleI?: number;
     localX?: number;
     localY?: number;
+    worldX?: number;
+    worldY?: number;
+    worldZ?: number;
   }): void {
     let index = this.muzzleFlashes.findIndex((f) => f.life <= 0);
     if (index < 0) index = this.muzzleCursor++ % this.muzzlePool.length;
@@ -7216,27 +11291,50 @@ specIsShellGun(spec)
     flash.ang = opt.ang;
     flash.scaleMul = opt.scaleMul;
     // Soft bloom larger than the flash sprite so it reads as light, not a speck.
-    flash.glowMul = Math.max(48, opt.scaleMul * 72);
+    flash.glowMul = opt.glowMul ?? Math.max(48, opt.scaleMul * 72);
     flash.rotJitter = range(-0.1, 0.1);
+    flash.slot = opt.slot;
     flash.muzzleUv = opt.muzzleUv;
     flash.gunI = opt.gunI;
+    flash.gunMuzzleI = opt.gunMuzzleI;
     flash.localX = opt.localX;
     flash.localY = opt.localY;
+    flash.worldX = opt.worldX;
+    flash.worldY = opt.worldY;
+    flash.worldZ = opt.worldZ;
     const muzzle = this.muzzlePool[index] ?? this.muzzle;
     muzzle.setFrame((Math.random() * FX_VARIANTS) | 0);
     this.syncMuzzleFlash(index);
   }
 
+  /** Socket owning a live muzzle flash (above/below Z + depth). */
+  muzzleFlashSlot(flash: (typeof this.muzzleFlashes)[number]): number {
+    if (flash.slot != null) return flash.slot;
+    if (flash.gunI != null) {
+      return craftGunSocketSlots(this.heli.spec)[flash.gunI] ?? this.heli.weapon;
+    }
+    return this.heli.weapon;
+  }
+
   /** World tip for a live muzzle flash slot. */
   muzzleFlashTip(flash: (typeof this.muzzleFlashes)[number]): { x: number; y: number; z: number } {
+    if (flash.worldX != null && flash.worldY != null) {
+      return {
+        x: flash.worldX,
+        y: flash.worldY,
+        z: flash.worldZ ?? this.heli.z + ZOff.shot,
+      };
+    }
     const h = this.heli;
+    const slot = this.muzzleFlashSlot(flash);
+    const z = this.playerMuzzleZ(slot);
     if (flash.muzzleUv) {
       const at = this.craftBodyMountWorldPos(flash.muzzleUv);
-      return { x: at.x, y: at.y, z: h.z };
+      return { x: at.x, y: at.y, z };
     }
     if (flash.gunI != null) {
-      const at = this.gunTip(flash.gunI);
-      return { x: at.x, y: at.y, z: h.z };
+      const at = this.gunTip(flash.gunI, flash.gunMuzzleI ?? 0);
+      return { x: at.x, y: at.y, z };
     }
     const lx = flash.localX ?? 0;
     const ly = flash.localY ?? 0;
@@ -7245,7 +11343,7 @@ specIsShellGun(spec)
     return {
       x: h.x + lx * c - ly * s,
       y: h.y + lx * s + ly * c,
-      z: h.z,
+      z,
     };
   }
 
@@ -7255,8 +11353,12 @@ specIsShellGun(spec)
     const glow = this.muzzleGlowPool[index];
     if (!flash || !muzzle || flash.life <= 0) return;
     const tip = this.muzzleFlashTip(flash);
+    const depthOff =
+      flash.worldX != null
+        ? ZOff.muzzle + 0.15
+        : this.playerMuzzleDepthOff(this.muzzleFlashSlot(flash));
+    const depth = worldDepth(tip.z, depthOff, tip.y);
     const at = worldToScreen(tip.x, tip.y, tip.z);
-    const depth = worldDepth(this.heli.z, ZOff.muzzle + 0.15, this.heli.y);
     const fade = flash.life0 > 1e-4 ? Phaser.Math.Clamp(flash.life / flash.life0, 0, 1) : 0;
     muzzle
       .setVisible(true)
@@ -7465,7 +11567,7 @@ specIsShellGun(spec)
 
   /**
    * Additive cel fireball (toon blast sheet): hot core → rolling smoke.
-   * Buildings get a taller mushroom scale; vehicles sit smaller.
+   * Buildings get a taller scale; vehicles sit smaller.
    */
   spawnToonBlast(
     x: number,
@@ -7473,7 +11575,7 @@ specIsShellGun(spec)
     z: number,
     opts?: { building?: boolean; size01?: number; waveMul?: number }
   ): void {
-    ensureToonBlastAnims(this.anims, this.textures);
+    ensureAllArtGenAnims(this.anims, this.textures);
     const variant = (Math.random() * TOON_BLAST_VARIANTS) | 0;
     const tex = toonBlastKey(variant);
     if (!this.textures.exists(tex)) return;
@@ -7529,7 +11631,7 @@ specIsShellGun(spec)
     return { x: x + n.x, y: y + n.y };
   }
 
-  /** Forward shift so tip-origin art clears the barrel (ox × streak length). */
+  /** Forward shift so tip-origin art’s nose clears the muzzle (not the whole streak). */
   shotTipNudge(
     look: ShotLook,
     angle: number,
@@ -7547,7 +11649,9 @@ specIsShellGun(spec)
     const projectedX = screenVelX(ca, sa, 0, x, y, z);
     const projectedY = screenVelY(sa, 0, z, y);
     const projectedUnit = Math.max(1e-6, Math.hypot(projectedX, projectedY));
-    const screenDistance = SHOT_ORIGIN.x * img.width * scale * at.scale;
+    // Spawn is the tip-biased SHOT_ORIGIN; only push the remaining nose past the barrel.
+    // (Using ox×length parked the whole tracer ahead of long guns like Spooky.)
+    const screenDistance = (1 - SHOT_ORIGIN.x) * img.width * scale * at.scale;
     const d = screenDistance / projectedUnit;
     return { x: ca * d, y: sa * d };
   }
@@ -8193,8 +12297,23 @@ specIsShellGun(spec)
       const a0 = z0 - g0;
       const a1 = s.z - g1;
       let hit = !s.deadfall && s.from !== "enemy" && s.life <= 0;
+      const clusterOpen =
+        !s.deadfall &&
+        !!st &&
+        !st.bomblet &&
+        !st.opened &&
+        payloadIsCluster(beh?.payload);
+      const openAge = clusterOpen ? st!.openAge : undefined;
+
       if (preIgnite && a1 > 0) {
         /* skip ground collision during pre-ignition repel */
+      } else if (openAge != null && (st!.age ?? 0) >= openAge && a1 > 4) {
+        // Mid-air dispense at authored fraction of predicted flight time.
+        hit = true;
+      } else if (openAge != null && a1 <= 0) {
+        // Reached ground before open age — still pop just above so bomblets can spray.
+        s.z = g1 + 14;
+        hit = true;
       } else if (a0 > 0.05 && a1 <= 0) {
         const u = a0 / (a0 - a1);
         s.x = x0 + (s.x - x0) * u;
@@ -8217,7 +12336,22 @@ specIsShellGun(spec)
         s.z >= this.heli.z &&
         this.heli.phase === "flight"
       ) {
-        this.heli.damage(s.dmg * 0.65, s.vx, s.vy);
+        this.heli.damage(
+          s.dmg * 0.65 * (this.reactiveArmorT > 0 ? 0.22 : 1),
+          s.vx,
+          s.vy
+        );
+        if (this.reactiveArmorT > 0) {
+          this.spawnImpactFlash(
+            this.heli.x,
+            this.heli.y,
+            this.heli.z + 8,
+            0xffcc66,
+            48,
+            0.9,
+            140
+          );
+        }
         hit = true;
         hitPlayer = true;
       }
@@ -8330,7 +12464,7 @@ specIsShellGun(spec)
             });
           }
         }
-        // Cluster open at impact
+        // Cluster open at impact / airburst
         if (payloadIsCluster(beh?.payload) && st && !st.bomblet && !st.opened) {
           st.opened = true;
           const cl = beh!.payload.cluster!;
@@ -8343,19 +12477,43 @@ specIsShellGun(spec)
         if (payloadIsSmoke(beh?.payload)) {
           this.spawnSmokePuffs(s.x, s.y, s.z, beh!.payload.smoke!.radius, beh!.payload.smoke!.duration);
         }
+        if (payloadIsCallStrike(beh?.payload) && st && !st.opened && !st.bomblet) {
+          st.opened = true;
+          const cs = { ...beh!.payload.callStrike! };
+          let spawnFrom: { x: number; y: number; z: number } | undefined;
+          let hostWeapon: string | undefined;
+          if (st.callStrikeFromHost) {
+            // POV remote observer — walk the host howitzer onto the mark.
+            const h = this.heli;
+            spawnFrom = {
+              x: h.x,
+              y: h.y,
+              z: Math.max(h.z + 140, 420),
+            };
+            hostWeapon = "heavy_artillery";
+          }
+          this.armCallStrike(s.x, s.y, s.z, cs, spawnFrom, hostWeapon);
+        }
+        // Canister dispense is a light pop — bomblets carry the damage.
+        // Only for mid-air `openAt` dispensers (Rockeye); impact clusters keep full pop.
+        const canisterPop =
+          payloadIsCluster(beh?.payload) &&
+          !!st &&
+          !st.bomblet &&
+          beh!.payload.cluster!.openAt != null;
         this.explode(
           s.x + helixDx,
           s.y + helixDy,
           s.z + helixDz,
-          s.blast,
-          s.dmg,
-          victim,
+          canisterPop ? Math.min(16, s.blast * 0.55) : s.blast,
+          canisterPop ? Math.min(6, s.dmg * 0.55) : s.dmg,
+          canisterPop ? undefined : victim,
           s.vx,
           s.vy,
           s.vz,
-          !!victim || hitPlayer,
+          canisterPop ? false : !!victim || hitPlayer,
           shotKindForExplode(s),
-          projectileFxScale(s.from, s.fxInterval),
+          projectileFxScale(s.from, s.fxInterval) * (canisterPop ? 0.45 : 1),
           s
         );
         continue;
@@ -8376,6 +12534,9 @@ specIsShellGun(spec)
       if (!s.deadfall && exhaustWarpMotes(s.beh?.exhaust)) {
         this.emitWarpTrailFx(s, x0, y0, z0);
       }
+      if (!s.deadfall && exhaustIsSignalFlare(s.beh?.exhaust)) {
+        this.emitSignalFlareTrailFx(s, x0, y0, z0);
+      }
       shots[w++] = s;
     }
     shots.length = w;
@@ -8390,6 +12551,96 @@ specIsShellGun(spec)
       this.syncShotSprites();
       this.syncPhotonFlares();
     }
+  }
+
+  /**
+   * Spider drone: steer toward the mouse at low AGL; if a hostile enters
+   * engage range, latch and dash onto it until contact / blast.
+   */
+  tickSpiderDroneShot(
+    s: Shot,
+    beh: NonNullable<Shot["beh"]>,
+    spider: NonNullable<WeaponPayload["spider"]>,
+    dt: number,
+    ptr: { x: number; y: number }
+  ): void {
+    const flight = beh.guidance?.flight;
+    const loft = flight?.loft;
+    const cruiseAgl =
+      loft && typeof loft.cruise === "object" && "agl" in loft.cruise ? loft.cruise.agl : 5;
+
+    let tx = ptr.x;
+    let ty = ptr.y;
+    let dash = false;
+    let prey: Unit | undefined;
+
+    if (s.targetId != null) {
+      prey = this.unitById(s.targetId);
+      if (!prey || prey.dead) {
+        s.targetId = undefined;
+        prey = undefined;
+      } else {
+        tx = prey.x;
+        ty = prey.y;
+        dash = true;
+      }
+    }
+
+    if (!dash) {
+      let best: Unit | undefined;
+      let bestD = spider.engageRange;
+      for (const u of this.units) {
+        if (u.dead) continue;
+        const d = Math.hypot(u.x - s.x, u.y - s.y);
+        if (d < bestD) {
+          bestD = d;
+          best = u;
+        }
+      }
+      if (best) {
+        s.targetId = best.id;
+        prey = best;
+        tx = best.x;
+        ty = best.y;
+        dash = true;
+      }
+    }
+
+    const want = Math.atan2(ty - s.y, tx - s.x);
+    const turnRate = dash ? 16 : (flight?.turnRate ?? 6.2);
+    const maxA = dash ? Math.PI : (flight?.maxAngle ?? 1.4);
+    const da = Phaser.Math.Angle.Wrap(want - s.angle);
+    s.angle += Phaser.Math.Clamp(Phaser.Math.Clamp(da, -maxA, maxA), -turnRate * dt, turnRate * dt);
+
+    const base = beh.cruiseSpeed;
+    const target = dash ? base * (spider.dashMul ?? 1.5) : base;
+    let spd = Math.hypot(s.vx, s.vy);
+    if (dash) {
+      // Ramp into the pounce — no instant speed snap.
+      const accel = spider.dashAccel ?? 380;
+      if (spd < target) spd = Math.min(target, Math.max(base * 0.85, spd) + accel * dt);
+      else spd = target;
+    } else {
+      spd = target;
+    }
+    s.vx = Math.cos(s.angle) * spd;
+    s.vy = Math.sin(s.angle) * spd;
+
+    const gnd = groundZ(this.world, s.x, s.y);
+    if (dash && prey) {
+      const impactZ = prey.z + heightOf(prey.kind) * 0.35;
+      s.vz = (impactZ - s.z) * 7;
+    } else {
+      const rest = gnd + cruiseAgl;
+      s.vz += (rest - s.z) * 10 * dt;
+      s.vz *= Math.pow(0.12, dt);
+    }
+    const floor = gnd + (loft?.clear?.coast ?? loft?.clear?.near ?? 2.5);
+    if (s.z < floor) {
+      s.z = floor;
+      if (s.vz < 0) s.vz = 0;
+    }
+    s.life = Math.max(s.life, 0.35);
   }
 
   /** Spec-driven motor, gravity, and guidance for player shots with `beh`. */
@@ -8426,6 +12677,13 @@ specIsShellGun(spec)
         s.vx = Math.cos(s.angle) * spd;
         s.vy = Math.sin(s.angle) * spd;
       }
+      return;
+    }
+
+    // Spider drones: mouse crawl + proximity dash onto hostiles.
+    const spider = beh.payload.spider;
+    if (spider && lit) {
+      this.tickSpiderDroneShot(s, beh, spider, dt, ptr);
       return;
     }
 
@@ -8659,6 +12917,25 @@ specIsShellGun(spec)
       s.vx = Math.cos(s.angle) * spd;
       s.vy = Math.sin(s.angle) * spd;
     }
+
+    // Unguided muzzle boost (Hydra / AA rail): accel toward cruise, then coast if burnTime set.
+    if (
+      lit &&
+      !g &&
+      beh.launch.mode === "muzzle" &&
+      beh.launch.acceleration != null
+    ) {
+      const cur = Math.hypot(s.vx, s.vy, s.vz);
+      const spd = motorizedSpeed(s, beh, dt);
+      if (cur > 1) {
+        s.vx = (s.vx / cur) * spd;
+        s.vy = (s.vy / cur) * spd;
+        s.vz = (s.vz / cur) * spd;
+      } else {
+        s.vx = Math.cos(s.angle) * spd;
+        s.vy = Math.sin(s.angle) * spd;
+      }
+    }
   }
 
   /**
@@ -8742,7 +13019,7 @@ specIsShellGun(spec)
             life: arc.life,
             blast: bombletBlast,
             dmg: bombletDmg,
-            look: parent.look,
+            look: beh.payload.cluster!.look,
             scale: (parent.scale ?? 1) * 0.48,
             fxInterval: 0.2,
             energyTrail: [],
@@ -8782,7 +13059,7 @@ specIsShellGun(spec)
         life: 0.7 + Math.random() * 0.45,
         blast: bombletBlast,
         dmg: bombletDmg,
-        look: parent.look,
+        look: beh.payload.cluster!.look,
         scale: (parent.scale ?? 1) * 0.48,
         fxInterval: 0.2,
         energyTrail: [],
@@ -8837,11 +13114,23 @@ specIsShellGun(spec)
     const cluster = beh.payload.cluster;
     const bombletDmg = cluster?.bombletDmg ?? parent.dmg * 0.22;
     const bombletBlast = cluster?.bombletBlast ?? parent.blast * 0.28;
+    const face =
+      Math.hypot(parent.vx, parent.vy) > 12
+        ? Math.atan2(parent.vy, parent.vx)
+        : parent.angle;
+    // Keep some of the canister's motion so the carpet still drifts with the drop.
+    const inherit = 0.45;
     for (let i = 0; i < count; i++) {
-      const a = (i / count) * Math.PI * 2 + Math.random() * 0.4;
-      const r = spread * (0.35 + Math.random() * 0.65);
-      const bx = parent.x + Math.cos(a) * r * 0.15;
-      const by = parent.y + Math.sin(a) * r * 0.15;
+      // Mild heading bias — mostly random eject cone.
+      const bias = (Math.random() + Math.random() - 1);
+      const a = face + bias * Math.PI * 1.15;
+      const eject = spread * (0.22 + Math.random() * 0.38);
+      const bx = parent.x + Math.cos(a) * range(2, 10);
+      const by = parent.y + Math.sin(a) * range(2, 10);
+      const vx = parent.vx * inherit + Math.cos(a) * eject;
+      const vy = parent.vy * inherit + Math.sin(a) * eject;
+      // Randomized loft with an upward bias (arcade bloom before rain).
+      const vz = parent.vz * 0.15 + range(40, 100);
       this.spawnShot({
         from: "player",
         wpnId: parent.wpnId,
@@ -8860,16 +13149,16 @@ specIsShellGun(spec)
         },
         x: bx,
         y: by,
-        z: parent.z + 8,
-        vx: Math.cos(a) * (80 + Math.random() * 120),
-        vy: Math.sin(a) * (80 + Math.random() * 120),
-        vz: 40 + Math.random() * 80,
-        angle: a,
-        life: 0.85 + Math.random() * 0.4,
+        z: parent.z + 6,
+        vx,
+        vy,
+        vz,
+        angle: Math.atan2(vy, vx),
+        life: 2.0 + Math.random() * 0.85,
         blast: bombletBlast,
         dmg: bombletDmg,
-        look: parent.look,
-        scale: (parent.scale ?? 1) * 0.45,
+        look: cluster?.look ?? parent.look,
+        scale: (parent.scale ?? 1) * 0.42,
         fxInterval: 0.2,
       });
     }
@@ -8932,17 +13221,30 @@ specIsShellGun(spec)
     if ((exhaust.size ?? 1) <= 0) return;
     if (s.motor != null && s.motor < 0) return;
     const small = troopMissileTrail(s);
-    const sc = shotTrailScale(s);
+    const smokeSc = shotTrailScale(s);
+    const fireSc =
+      (s.scale ?? 1) *
+      (exhaust.kind === "particles" ? (exhaust.fireSize ?? exhaust.size ?? 1) : 1);
+    const dens = Phaser.Math.Clamp(exhaust.density ?? 1, 0.05, 2.5);
     const t = range(0.2, 0.8);
     const x = x0 + (s.x - x0) * t;
     const y = y0 + (s.y - y0) * t;
     const z = z0 + (s.z - z0) * t;
     if (!cameraPointVisible(z, y)) return;
-    const tail = this.shotUvScreenPos(s, SHOT_TAIL.x, SHOT_TAIL.y, x, y, z);
+    const tailUv = exhaust.emitUv ?? SHOT_TAIL;
+    const tail = this.shotUvScreenPos(s, tailUv.x, tailUv.y, x, y, z);
     const tx = tail.x;
     const ty = tail.y;
-    const fireEm =
-      exhaust.fire === "hotFlame" ? this.hotFlame : exhaust.fire === "burn" ? this.burn : null;
+    const age = s.st?.age ?? 0;
+    const fireWanted =
+      exhaust.fire != null && (exhaust.fireFor == null || age < exhaust.fireFor);
+    const fireEm = !fireWanted
+      ? null
+      : exhaust.fire === "hotFlame"
+        ? this.hotFlame
+        : exhaust.fire === "burn"
+          ? this.burn
+          : null;
     const smokeEm =
       exhaust.smoke === "short"
         ? this.shortTrailSmoke
@@ -8951,24 +13253,61 @@ specIsShellGun(spec)
           : exhaust.smoke === "linger"
             ? this.lingerSmoke
             : null;
-    this.withTrailFx(sc, () => {
-      if (exhaust.align === "heading") {
-        this.shotTrailAngle = projectHeading(s.angle, x, y, z);
+    const emitFireSmoke = (
+      fireProto: Phaser.GameObjects.Particles.ParticleEmitter,
+      smokeProto: Phaser.GameObjects.Particles.ParticleEmitter,
+      nfMul: number,
+      nsMul: number
+    ) => {
+      // Smoke under fire — pairFx pins band depths; emit smoke first.
+      const { fire, smoke } = this.pairFx(z, y, fireProto, smokeProto);
+      const ns = this.fxEmitCount(nsMul * dens);
+      const nf = this.fxEmitCount(nfMul * dens);
+      if (ns) {
+        this.withTrailFx(smokeSc, () => this.emitBudgeted("smoke", smoke, tx, ty, ns));
       }
-      if (fireEm && smokeEm && exhaust.fire === "hotFlame" && exhaust.smoke === "short") {
-        const { fire, smoke } = this.pairFx(z, y, this.hotFlame, this.shortTrailSmoke);
-        const nf = this.fxEmitCount(0.95);
-        const ns = this.fxEmitCount(0.7);
-        if (nf) this.emitBudgeted("fire", fire, tx, ty, nf);
-        if (ns) this.emitBudgeted("smoke", smoke, tx, ty, ns);
-      } else if (small && fireEm && smokeEm) {
-        const { fire, smoke } = this.pairFx(z, y, fireEm, smokeEm);
-        const nf = this.fxEmitCount(0.4);
-        const ns = this.fxEmitCount(0.28);
-        if (nf) this.emitBudgeted("fire", fire, tx, ty, nf);
-        if (ns) this.emitBudgeted("smoke", smoke, tx, ty, ns);
-      } else if (exhaust.smoke === "rocket" && !exhaust.fire) {
-        const ns = this.fxEmitCount(1.2);
+      if (nf) {
+        this.withTrailFx(fireSc, () => this.emitBudgeted("fire", fire, tx, ty, nf));
+      }
+    };
+    if (exhaust.align === "heading") {
+      this.shotTrailAngle = projectHeading(s.angle, x, y, z);
+    }
+    if (exhaust.contrail) {
+      this.withTrailFx(smokeSc, () => {
+        const ang =
+          exhaust.align === "heading"
+            ? this.shotTrailAngle
+            : Math.atan2(
+                screenVelY(s.vy, s.vz, z, y),
+                screenVelX(s.vx, s.vy, s.vz, x, y, z)
+              );
+        this.wingTrailAngle = ang;
+        this.wingTrailTint = 0xf2f6ff;
+        this.wingTrailLife = 1200 + dens * 500;
+        this.wingTrailScaleX = (0.85 + dens * 0.45) * smokeSc * range(1.25, 1.75);
+        this.wingTrailScaleY = (0.16 + dens * 0.08) * smokeSc;
+        this.wingTrailVx = Math.cos(ang + Math.PI) * range(6, 16);
+        this.wingTrailVy = Math.sin(ang + Math.PI) * range(6, 16);
+        const nc = this.fxEmitCount(0.95 * dens + 0.45);
+        if (nc) {
+          this.emitBudgeted(
+            "smoke",
+            this.fxAt(z, y, this.jetWingTrail, ZOff.smoke - 0.15),
+            tx,
+            ty,
+            nc
+          );
+        }
+      });
+    }
+    if (fireEm && smokeEm && exhaust.fire === "hotFlame" && exhaust.smoke === "short") {
+      emitFireSmoke(this.hotFlame, this.shortTrailSmoke, 0.95, 0.7);
+    } else if (small && fireEm && smokeEm) {
+      emitFireSmoke(fireEm, smokeEm, 0.4, 0.28);
+    } else if (exhaust.smoke === "rocket" && !fireEm) {
+      this.withTrailFx(smokeSc, () => {
+        const ns = this.fxEmitCount(1.35 * dens);
         if (ns) {
           this.emitBudgeted(
             "smoke",
@@ -8978,26 +13317,31 @@ specIsShellGun(spec)
             ns
           );
         }
-      } else if (exhaust.smoke === "rocket" && exhaust.fire) {
-        const fire = this.fxAt(z, y, fireEm ?? this.burn, ZOff.fire);
-        const smoke = this.fxAt(z, y, this.rocketSmoke, ZOff.smoke);
-        const nf = this.fxEmitCount(0.42);
-        const ns = this.fxEmitCount(0.7);
-        if (nf) this.emitBudgeted("fire", fire, tx, ty, nf);
-        if (ns) this.emitBudgeted("smoke", smoke, tx, ty, ns);
-      } else {
-        const { fire, smoke } = this.pairFx(
-          z,
-          y,
-          fireEm ?? this.burn,
-          smokeEm ?? this.lingerSmoke
-        );
-        const nf = this.fxEmitCount(0.55);
-        const ns = this.fxEmitCount(0.42);
-        if (nf) this.emitBudgeted("fire", fire, tx, ty, nf);
-        if (ns) this.emitBudgeted("smoke", smoke, tx, ty, ns);
-      }
-    });
+      });
+    } else if (exhaust.smoke === "rocket" && fireEm) {
+      emitFireSmoke(fireEm, this.rocketSmoke, 0.85, 0.85);
+    } else if (fireEm && smokeEm) {
+      // Missiles: denser linger plume under the motor flame.
+      emitFireSmoke(fireEm, smokeEm, 0.55, 1.05);
+    } else if (smokeEm) {
+      this.withTrailFx(smokeSc, () => {
+        const ns = this.fxEmitCount((exhaust.contrail ? 0.55 : 0.85) * dens);
+        if (ns) {
+          this.emitBudgeted(
+            "smoke",
+            this.fxAt(z, y, smokeEm, ZOff.smoke),
+            tx,
+            ty,
+            ns
+          );
+        }
+      });
+    } else if (fireEm) {
+      this.withTrailFx(fireSc, () => {
+        const nf = this.fxEmitCount(0.55 * dens);
+        if (nf) this.emitBudgeted("fire", this.fxAt(z, y, fireEm, ZOff.fire), tx, ty, nf);
+      });
+    }
   }
 
   /** Magenta mote trail + energy orbs + rearward sparks for the warp bomb. */
@@ -9059,6 +13403,64 @@ specIsShellGun(spec)
           stretchMul: 1.15,
         },
         this.warpSparkBurst
+      );
+    }
+  }
+
+  /** Pink/red flame-smoke loft + fast red sparks for the signal-flare gun pellet. */
+  emitSignalFlareTrailFx(s: Shot, x0: number, y0: number, z0: number): void {
+    const ex = s.beh?.exhaust;
+    if (!exhaustIsSignalFlare(ex)) return;
+    const dens = Phaser.Math.Clamp(ex.density ?? 1, 0.05, 2);
+    const sc = (s.scale ?? 1) * (ex.size ?? 1);
+    const t = range(0.15, 0.85);
+    const x = x0 + (s.x - x0) * t;
+    const y = y0 + (s.y - y0) * t;
+    const z = z0 + (s.z - z0) * t;
+    if (!cameraPointVisible(z, y)) return;
+    const at = worldToScreen(x, y, z);
+    this.withTrailFx(sc, () => {
+      const nFlame = this.fxEmitCount(1.15 * dens);
+      if (nFlame) {
+        this.emitBudgeted(
+          "fire",
+          this.fxAt(z, y, this.signalFlareTrail, ZOff.fire + 0.35),
+          at.x,
+          at.y,
+          nFlame
+        );
+      }
+      const nSmoke = this.fxEmitCount(0.95 * dens);
+      if (nSmoke) {
+        this.emitBudgeted(
+          "smoke",
+          this.fxAt(z, y, this.signalFlareSmoke, ZOff.smoke + 0.1),
+          at.x,
+          at.y,
+          nSmoke
+        );
+      }
+    });
+    // Fast red sparks with extra world Y/Z loft so the trail climbs the 2.5D plane.
+    const nSpark = this.fxEmitCount(1.45 * dens);
+    if (nSpark) {
+      this.emitVisualBurst(
+        x,
+        y,
+        z,
+        {
+          n: Math.min(6, nSpark),
+          spdMin: 180,
+          spdMax: 480,
+          bx: range(-0.18, 0.18),
+          by: -0.72,
+          bz: 1.35,
+          tight: 0.28,
+          scaleMul: 0.7 * sc,
+          gravity: 22,
+          depthOff: ZOff.fire + 0.9,
+        },
+        this.signalFlareSpark
       );
     }
   }
@@ -9404,6 +13806,13 @@ specIsShellGun(spec)
     } else if (id === "emp") {
       this.cmCd = spec.cooldown;
       this.fireEmpCountermeasure();
+    } else if (id === "reactive_armor") {
+      this.cmCd = spec.cooldown;
+      this.reactiveArmorT = spec.duration;
+    } else if (id === "smoke_screen") {
+      this.cmCd = spec.cooldown;
+      this.smokeScreenT = spec.duration;
+      this.fireSmokeScreen();
     }
   }
 
@@ -9486,7 +13895,28 @@ specIsShellGun(spec)
         this.beginCmCooldown(0, COUNTERMEASURES.phase_cloak.duration);
       }
     }
+    if (this.reactiveArmorT > 0) this.reactiveArmorT = Math.max(0, this.reactiveArmorT - dt);
+    if (this.smokeScreenT > 0) {
+      this.smokeScreenT = Math.max(0, this.smokeScreenT - dt);
+      if (this.fxChance(0.18)) this.fireSmokeScreen(1);
+    }
     if (this.cmPulseT > 0) this.cmPulseT = Math.max(0, this.cmPulseT - dt);
+  }
+
+  fireSmokeScreen(bursts = 3): void {
+    const h = this.heli;
+    for (let i = 0; i < bursts; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const d = 12 + Math.random() * 48;
+      this.spawnSmokePuffs(
+        h.x + Math.cos(a) * d,
+        h.y + Math.sin(a) * d,
+        h.z - 2,
+        42 + Math.random() * 28,
+        7 + Math.random() * 3,
+        { min: 20, max: 32 }
+      );
+    }
   }
 
   fireFlares(duration: number): void {
@@ -9576,6 +14006,12 @@ specIsShellGun(spec)
       if (u.dead) continue;
       if (isOrganic(u.kind)) continue;
       if (Math.hypot(u.x - h.x, u.y - h.y) > r) continue;
+      // Drones: fry electronics → freefall crash, boom on ground (not a mid-air stun).
+      if (u.kind === "drone") {
+        this.destroyUnit(u, true, true, false, true);
+        this.emitTeslaSparks(u.x, u.y, u.z + 4, 5, 0.45);
+        continue;
+      }
       stunUnit(u, stun);
     }
     for (const s of this.shots) {
@@ -9623,6 +14059,8 @@ specIsShellGun(spec)
     s.wire = undefined;
     s.motor = undefined;
     s.loft = 0;
+    // Pitch up for air time — dump dive, loft into a short arc before freefall.
+    s.vz = Math.max(0, s.vz * 0.25) + range(140, 260);
     s.yaw = s.yaw ?? (Math.random() - 0.5) * 5.5;
     if (s.st) {
       s.st.seeking = false;
@@ -9710,6 +14148,8 @@ specIsShellGun(spec)
     /** When true, only spray impact FX (pierce through already applied hurt). */
     fxOnly = false
   ): void {
+    const markId = shot?.st?.callStrikeMarkId;
+    if (markId != null) this.noteCallStrikeImpact(markId);
     const payload = shot?.beh?.payload;
     if (payloadIsSmoke(payload)) {
       const at = worldToScreen(x, y, z);
@@ -9733,6 +14173,30 @@ specIsShellGun(spec)
       );
       this.shake = Math.min(3.2, this.shake + 0.45);
       if (!fxOnly) this.applyBlastDamage(x, y, z, blast, dmg, direct, dx, dy, dz, true, shot);
+      return;
+    }
+    if (payloadIsCallStrike(payload)) {
+      // Marker rest: soft pink pop only — barrage carries the damage.
+      const at = worldToScreen(x, y, z);
+      this.spawnImpactFlash(at.x, at.y, z, 0xff4068, 28 * at.scale, 0.72, 140);
+      this.emitVisualBurst(
+        x,
+        y,
+        z + 4,
+        {
+          n: 8,
+          spdMin: 40,
+          spdMax: 160,
+          bx: 0,
+          by: -0.55,
+          bz: 1,
+          tight: 0.4,
+          scaleMul: 0.55,
+          gravity: 80,
+        },
+        this.signalFlareSpark
+      );
+      this.shake = Math.min(2.8, this.shake + 0.35);
       return;
     }
     const water = isWater(this.world, x, y);
@@ -9867,6 +14331,8 @@ specIsShellGun(spec)
       const blend = he ? 1 : heBlend;
       const dropHeBomb =
         he && !bomblet && shot?.beh?.launch.mode === "drop" && payloadIsHe(shot.beh.payload);
+      const bigBoom =
+        dropHeBomb || !!(he && shot?.beh?.payload.detonate?.bigBoom);
       if (photonic && !fxOnly) {
         this.emitPhotonImpactSparks(x, y, z, dx, dy, dz, blast);
       }
@@ -9879,10 +14345,10 @@ specIsShellGun(spec)
         dz,
         blast,
         false,
-        dropHeBomb ? 1.18 : photonic ? 1.55 : 1,
-        Phaser.Math.Clamp((blast - 8) / 170, bomblet ? 0.04 : 0.16, 1) *
+        bigBoom ? 1.18 : photonic ? 1.55 : 1,
+        Phaser.Math.Clamp((blast - 8) / 170, bomblet && !bigBoom ? 0.04 : 0.16, 1) *
           blend *
-          (dropHeBomb ? 1.12 : photonic ? 1.45 : 1),
+          (bigBoom ? 1.12 : photonic ? 1.45 : 1),
         1,
         0,
         undefined,
@@ -9899,14 +14365,20 @@ specIsShellGun(spec)
             ? undefined
             : { visMul: 0.35 + blend * 0.45, flashMin: 28 + blend * 40 }
       );
-      // Drop bombs get the cel fireball + their own shockwave (missiles stay particle HE only).
-      if (dropHeBomb) {
+      // Drop bombs / authored big-boom HE get the cel fireball + shockwave.
+      if (bigBoom) {
         const building = !!direct && !!specOf(direct.kind).building;
         this.spawnToonBlast(x, y, z + (building ? 10 : 4), {
           building,
           size01: Phaser.Math.Clamp((blast - 36) / 320, 0.38, 1),
           waveMul: building ? 1.22 : 1.18,
         });
+        if (blast >= 120) {
+          const boomZ = z + (building ? 14 : 6);
+          const boomSize = Phaser.Math.Clamp((blast - 80) / 280, 0.45, 1);
+          this.emitBigBoomSparks(x, y, boomZ, boomSize, dx, dy, dz);
+          this.emitBigBoomDebris(x, y, boomZ, boomSize, dx, dy, dz);
+        }
         // Own ring sized to the weapon blast — not the victim’s body radius.
         this.spawnBlastRing(x, y, z, Math.max(48, blast * 0.32), {
           expand: 3.2,
@@ -9917,15 +14389,16 @@ specIsShellGun(spec)
     }
     if (!water && !objectHit) {
       if (he) {
-        const key = `fx_blast_${(Math.random() * 4) | 0}`;
-        const sc = (blast / 72) * range(0.55, 1.05);
-        this.stampWreck(this.textures.exists(key) ? key : "fx_blast_0", x, y, Math.random() * Math.PI * 2, sc, 1);
+        const raw = (blast / 72) * range(0.55, 1.05);
+        this.stampBlastCrater(x, y, raw);
+        if (shotWantsEmberCrater(shot, kind)) {
+          this.spawnCraterEmbers(x, y, this.softCapBlastCraterScale(raw));
+        }
       } else {
         this.stampCannonScar(x, y, dx, dy, dz);
         if (heBlend > 0.25) {
-          const key = `fx_blast_${(Math.random() * 4) | 0}`;
-          const sc = (blast / 95) * heBlend * range(0.4, 0.75);
-          this.stampWreck(this.textures.exists(key) ? key : "fx_blast_0", x, y, Math.random() * Math.PI * 2, sc, 0.55 + heBlend * 0.35);
+          const raw = (blast / 95) * heBlend * range(0.4, 0.75);
+          this.stampBlastCrater(x, y, raw, 0.55 + heBlend * 0.35);
         }
       }
     }
@@ -10102,7 +14575,8 @@ specIsShellGun(spec)
         expBias: expK,
       };
       this.emitScatteredBurst(body, particleInset, x, y, z + 10, puffN, puffOpt, this.explosionPuff, "fire");
-      this.blastFire.setDepth(worldDepth(z, ZOff.fire + 1, y));
+      // Mid boom stack — above dirt streaks, below boomBit flecks.
+      this.blastFire.setDepth(worldDepth(z, ZOff.fire + 1.2, y));
       // Aim a cone along impact; stronger kills tighten.
       const horiz = Math.hypot(dx, dy);
       if (!soft && horiz > 8) {
@@ -10388,7 +14862,7 @@ specIsShellGun(spec)
     }
   }
 
-  destroyUnit(u: Unit, quiet = false, skipSplash = false, skipAirCrash = false): void {
+  destroyUnit(u: Unit, quiet = false, skipSplash = false, skipAirCrash = false, freefall = false): void {
     if (u.dead) return;
     u.dead = true;
     for (const crew of this.units) {
@@ -10433,12 +14907,20 @@ specIsShellGun(spec)
           mech ? radius(u.kind) : 0,
           body
         );
-        // Dramatic additive mushroom / fireball on vehicles & buildings.
+        // Dramatic additive fireball on vehicles & buildings.
         this.spawnToonBlast(u.x, u.y, hz, {
           building,
           size01: boom,
           waveMul: building ? 1.15 : 1,
         });
+        if (u.hv || building || boom > 0.62) {
+          const boomSize = Math.max(boom, u.hv ? 0.85 : 0.55);
+          const kdx = burst?.dx ?? 0;
+          const kdy = burst?.dy ?? 0;
+          const kdz = burst?.dz ?? 1;
+          this.emitBigBoomSparks(u.x, u.y, hz + 8, boomSize, kdx, kdy, kdz);
+          this.emitBigBoomDebris(u.x, u.y, hz + 8, boomSize, kdx, kdy, kdz);
+        }
       }
       if (building) this.emitDustShock(u.x, u.y, 1);
       // Smoke puffs from a few footprint points, not only the center.
@@ -10539,11 +15021,14 @@ specIsShellGun(spec)
           trailSoft: organic,
         });
       }
-      if (!sp.noCrater) {
-        const key = `fx_blast_${(Math.random() * 4) | 0}`;
+      if (!sp.noCrater && !sp.crashPop) {
         let sc = (radius(u.kind) / 20) * range(0.72, 1.42);
         if (sp.wreckScale != null) sc *= sp.wreckScale;
-        this.stampWreck(this.textures.exists(key) ? key : "fx_blast_0", u.x, u.y, Math.random() * Math.PI * 2, sc, 1);
+        this.stampBlastCrater(u.x, u.y, sc);
+        // Embers only on mech / building death craters — not troops or soft organics.
+        if (mech && !sp.organic) {
+          this.spawnCraterEmbers(u.x, u.y, this.softCapBlastCraterScale(sc));
+        }
       }
     }
     const guns = gunsOf(u);
@@ -10563,8 +15048,9 @@ specIsShellGun(spec)
         camo: u.camo,
         dmgSites: u.dmgSites,
         radius: radius(u.kind),
-        kickDx: u.killDx,
-        kickDy: u.killDy,
+        kickDx: freefall ? 0 : u.killDx,
+        kickDy: freefall ? 0 : u.killDy,
+        freefall,
       });
     } else {
       const throwGuns = !!(sp.throwGuns && guns.length > 0);
@@ -10630,13 +15116,16 @@ specIsShellGun(spec)
             const rk = this.textures.exists(r.hulk ?? "") ? r.hulk! : r.tex;
             const at = this.mountAt(u, resolveSkin(this.textures, textureOf(u.kind), u.camo), r.mount);
             const scale = this.rotorHulkScale(r.tex, rk, r.scale ?? 1);
-            const flamePts = this.sampleSolidLocalPoints(
-              rk,
-              radius(u.kind) / Math.max(scale, 0.01),
-              2 + ((Math.random() * 3) | 0),
-              0.7
-            );
+            // Full heli discs get pin flames; angled props / drone pads do not.
             const heliRotor = r.tex.includes("rotor") && r.tex !== "enemy_drone_rotor";
+            const flamePts = heliRotor
+              ? this.sampleSolidLocalPoints(
+                  rk,
+                  radius(u.kind) / Math.max(scale, 0.01),
+                  2 + ((Math.random() * 3) | 0),
+                  0.7
+                )
+              : [];
             const rotorAng = rotorSpinSign(rotorMounts, ri) * u.rotor;
             if (heliRotor) {
               this.throwRotorHulk({
@@ -10682,6 +15171,37 @@ specIsShellGun(spec)
             trailR: this.texTrailR(dishKey) * scale * 0.4,
             bounces: 0,
           });
+        }
+      } else if (sp.crashPop) {
+        this.spawnLightVehicleCrash(u);
+        if (hasSoftBlood(u.kind) && this.textures.exists("fx_dirt") && !isWater(this.world, u.x, u.y)) {
+          const kdx = u.killDx ?? 0;
+          const kdy = u.killDy ?? 0;
+          const impactAng = (kdx || kdy) ? Math.atan2(kdy, kdx) : u.angle;
+          const nStreaks = 1 + ((Math.random() * 3) | 0);
+          const blood = [0xee2828, 0xdd2020, 0xe83838, 0xcc1a1a];
+          for (let si = 0; si < nStreaks; si++) {
+            const ang = impactAng + range(-0.45, 0.45);
+            const dist = range(4, 12);
+            const ox = Math.cos(ang) * dist;
+            const oy = Math.sin(ang) * dist;
+            const col = blood[(Math.random() * blood.length) | 0]!;
+            const sx = range(1.4, 3.2);
+            const sy = range(0.35, 0.7);
+            this.stampWreck(
+              "fx_dirt",
+              u.x + ox,
+              u.y + oy,
+              ang + range(-0.12, 0.12),
+              sx,
+              range(0.75, 0.95),
+              0.5,
+              0.5,
+              sy,
+              (Math.random() * FX_VARIANTS) | 0,
+              col
+            );
+          }
         }
       } else {
         const hulkKey = resolveSkin(this.textures, hulkOf(u.kind), u.camo);
@@ -10730,6 +15250,48 @@ specIsShellGun(spec)
       }
     }
     this.spawnWheelDebris(u);
+  }
+
+  /**
+   * Light-vehicle death: hulk launches in a spinning flaming arc biased toward
+   * the killing impact, then stamps wreck + crater + embers where it lands.
+   */
+  spawnLightVehicleCrash(u: Unit): void {
+    const sp = specOf(u.kind);
+    const hulkKey = resolveSkin(this.textures, hulkOf(u.kind), u.camo);
+    const key = this.textures.exists(hulkKey) ? hulkKey : "fx_hulk_crater";
+    const burst = this.deathBurstImpulse(u);
+    const reverse = Math.random() < 0.05;
+    const d = biasedDir(burst.dx, burst.dy, burst.dz, 0.9, reverse);
+    const spdMul = Phaser.Math.Linear(0.92, 1.1, Math.min(1, (burst.power - 0.5) / 1.9));
+    const spd = range(70, 130) * spdMul;
+    const jit = 0.1;
+    const vx = d.x * spd + range(-spd * jit, spd * jit);
+    const vy = d.y * spd + range(-spd * jit, spd * jit);
+    const vz = range(140, 220) + Math.max(0, d.z) * 28;
+    let craterSc = (radius(u.kind) / 20) * range(0.78, 1.35);
+    if (sp.wreckScale != null) craterSc *= sp.wreckScale;
+    this.admitDebris({
+      x: u.x,
+      y: u.y,
+      z: u.z + 18,
+      vx,
+      vy,
+      vz,
+      angle: u.angle + Math.PI / 2,
+      spin: range(9, 18) * (Math.random() < 0.5 ? -1 : 1),
+      life: 10,
+      key,
+      settled: false,
+      gravity: true,
+      bounces: 0,
+      trailR: this.texTrailR(key) * 0.62,
+      scale: 1,
+      debrisClass: "critical",
+      linger: true,
+      crashPop: true,
+      crashCraterScale: craterSc,
+    });
   }
 
   spawnWheelDebris(u: Unit): void {
@@ -10983,8 +15545,11 @@ specIsShellGun(spec)
     player?: boolean;
     kickDx?: number;
     kickDy?: number;
+    /** EMP / power-cut: no loft kick, tumble into the ground. */
+    freefall?: boolean;
   }): void {
     const player = !!opts.player;
+    const freefall = !!opts.freefall;
     const sp = opts.kind ? specOf(opts.kind) : undefined;
     const craft = player ? this.heli.spec : undefined;
     const hullKey = player
@@ -10996,19 +15561,20 @@ specIsShellGun(spec)
     const dmgFlames = this.crashDmgFlames(opts.dmgSites, hullKey, opts.radius);
     const spinSign = Math.random() < 0.5 ? -1 : 1;
     const kn = Math.hypot(opts.kickDx ?? 0, opts.kickDy ?? 0);
-    const boost = range(110, 170);
-    const kx = kn > 1 ? ((opts.kickDx ?? 0) / kn) * boost : 0;
-    const ky = kn > 1 ? ((opts.kickDy ?? 0) / kn) * boost : 0;
+    const boost = freefall ? range(8, 28) : range(110, 170);
+    const kx = kn > 1 ? ((opts.kickDx ?? 0) / kn) * boost : freefall ? range(-22, 22) : 0;
+    const ky = kn > 1 ? ((opts.kickDy ?? 0) / kn) * boost : freefall ? range(-22, 22) : 0;
     const hull: Debris = {
       x: opts.x,
       y: opts.y,
       z: opts.z,
-      vx: opts.vx * 0.9 + kx + range(-18, 18),
-      vy: opts.vy * 0.9 + ky + range(-18, 18),
-      vz: range(18, 55),
+      vx: opts.vx * (freefall ? 0.55 : 0.9) + kx + range(-18, 18),
+      vy: opts.vy * (freefall ? 0.55 : 0.9) + ky + range(-18, 18),
+      // Freefall (EMP drones): loft upward first so they hang before the ground boom.
+      vz: freefall ? range(110, 220) : range(18, 55),
       angle: hullAng,
-      spin: spinSign * range(0.85, 1.55),
-      spinAccel: range(2.4, 4.6),
+      spin: spinSign * (freefall ? range(2.4, 4.2) : range(0.85, 1.55)),
+      spinAccel: freefall ? range(3.2, 5.5) : range(2.4, 4.6),
       life: 12,
       key: hullKey,
       settled: false,
@@ -11042,6 +15608,7 @@ specIsShellGun(spec)
           scale: r.scale ?? 1,
         }));
 
+    const propDisc = !!(craft && craftRotorIsProp(craft));
     rotors.forEach((r, ri) => {
       const rk = this.textures.exists(r.hulk) ? r.hulk : r.tex;
       let x = opts.x;
@@ -11086,12 +15653,17 @@ specIsShellGun(spec)
         y = at.y;
       }
       const scale = this.rotorHulkScale(r.tex, rk, r.scale);
-      const flamePts = this.sampleSolidLocalPoints(
-        rk,
-        opts.radius / Math.max(scale, 0.01),
-        2 + ((Math.random() * 3) | 0),
-        0.7
-      );
+      // Full lift discs get pin flames; angled props (plane/orbit foreshorten) / drone pads do not.
+      const fullRotor =
+        !propDisc && r.tex.includes("rotor") && r.tex !== "enemy_drone_rotor";
+      const flamePts = fullRotor
+        ? this.sampleSolidLocalPoints(
+            rk,
+            opts.radius / Math.max(scale, 0.01),
+            2 + ((Math.random() * 3) | 0),
+            0.7
+          )
+        : [];
       const spinMounts =
         player && craft
           ? craftRotorMounts(craft)
@@ -11334,7 +15906,12 @@ specIsShellGun(spec)
       f.angle += f.spin * dt;
       if (f.gravity) {
         f.z += f.vz * dt;
-        if (f.vz > 50) f.vz -= 480 * dt;
+        if (f.boomBit) {
+          // Gentler while rising so loft lasts into the XY arc; snap down after apex.
+          if (f.vz > 50) f.vz -= 220 * dt;
+          else if (f.vz > -40) f.vz -= 95 * dt;
+          else f.vz -= 1280 * dt;
+        } else if (f.vz > 50) f.vz -= 480 * dt;
         else if (f.vz > -40) f.vz -= 70 * dt;
         else f.vz -= 1100 * dt;
         if (f.shellEject) {
@@ -11363,7 +15940,7 @@ specIsShellGun(spec)
             }
           }
         } else {
-          const drag = f.heliCrash ? 0.94 : f.rotorThrow ? 0.88 : 0.78;
+          const drag = f.heliCrash ? 0.94 : f.rotorThrow ? 0.88 : f.boomBit ? 0.82 : 0.78;
           f.vx *= Math.pow(drag, dt);
           f.vy *= Math.pow(drag, dt);
           if (f.z > groundZ(this.world, f.x, f.y) + 2) {
@@ -11372,46 +15949,50 @@ specIsShellGun(spec)
           const g = groundZ(this.world, f.x, f.y);
           if (f.z <= g) {
             f.z = g;
-            if (!f.linger) this.stampDirtSmears(f.x, f.y, f.vx, f.vy);
-            if (f.heliCrash) {
-              this.impactHeliCrash(f);
-              this.settleDebris(f);
-            } else if (f.rotorThrow) {
-              f.spin *= 0.15;
-              f.vx *= 0.2;
-              f.vy *= 0.2;
-              this.settleDebris(f);
-            } else if (f.wheelRoll) {
-              if (f.bounces > 0 && f.vz < -40) {
-                f.bounces--;
-                this.bounceDebrisSlope(f, 1);
-                f.spin *= 0.65;
-                this.stampDirtSmears(f.x, f.y, f.vx, f.vy);
-                const bang = Math.hypot(f.vx, f.vy) > 8 ? Math.atan2(f.vy, f.vx) : f.angle;
-                this.stampWheelTrack(f.x, f.y, bang, range(0.7, 0.95), range(0.32, 0.48));
-              } else {
-                f.rolling = true;
-                f.vz = 0;
-                f.z = g;
-                const hang = Math.hypot(f.vx, f.vy) > 8 ? Math.atan2(f.vy, f.vx) : f.angle;
-                this.stampWheelTrack(f.x, f.y, hang, range(0.65, 0.9), range(0.28, 0.44));
-              }
-            } else if (
-              f.bounces > 0 &&
-              f.vz < -50 &&
-              Math.hypot(f.vx, f.vy, f.vz) > 120
-            ) {
-              const ivx = f.vx;
-              const ivy = f.vy;
-              f.bounces--;
-              // Same elevation bounce as wheels, weaker so flight path barely turns.
-              this.bounceDebrisSlope(f, 0.32);
-              if (!f.key.includes("organic")) this.stampDebrisBounceScorch(f.x, f.y, ivx, ivy);
-              f.spin *= range(0.78, 1.22);
-              f.spin += range(-2.4, 2.4);
-              f.angle += range(-0.28, 0.28);
+            if (f.boomBit) {
+              this.settleBoomBit(f);
             } else {
-              this.settleDebris(f);
+              if (!f.linger) this.stampDirtSmears(f.x, f.y, f.vx, f.vy);
+              if (f.heliCrash) {
+                this.impactHeliCrash(f);
+                this.settleDebris(f);
+              } else if (f.rotorThrow) {
+                f.spin *= 0.15;
+                f.vx *= 0.2;
+                f.vy *= 0.2;
+                this.settleDebris(f);
+              } else if (f.wheelRoll) {
+                if (f.bounces > 0 && f.vz < -40) {
+                  f.bounces--;
+                  this.bounceDebrisSlope(f, 1);
+                  f.spin *= 0.65;
+                  this.stampDirtSmears(f.x, f.y, f.vx, f.vy);
+                  const bang = Math.hypot(f.vx, f.vy) > 8 ? Math.atan2(f.vy, f.vx) : f.angle;
+                  this.stampWheelTrack(f.x, f.y, bang, range(0.7, 0.95), range(0.32, 0.48));
+                } else {
+                  f.rolling = true;
+                  f.vz = 0;
+                  f.z = g;
+                  const hang = Math.hypot(f.vx, f.vy) > 8 ? Math.atan2(f.vy, f.vx) : f.angle;
+                  this.stampWheelTrack(f.x, f.y, hang, range(0.65, 0.9), range(0.28, 0.44));
+                }
+              } else if (
+                f.bounces > 0 &&
+                f.vz < -50 &&
+                Math.hypot(f.vx, f.vy, f.vz) > 120
+              ) {
+                const ivx = f.vx;
+                const ivy = f.vy;
+                f.bounces--;
+                // Same elevation bounce as wheels, weaker so flight path barely turns.
+                this.bounceDebrisSlope(f, 0.32);
+                if (!f.key.includes("organic")) this.stampDebrisBounceScorch(f.x, f.y, ivx, ivy);
+                f.spin *= range(0.78, 1.22);
+                f.spin += range(-2.4, 2.4);
+                f.angle += range(-0.28, 0.28);
+              } else {
+                this.settleDebris(f);
+              }
             }
           }
         }
@@ -11608,10 +16189,10 @@ specIsShellGun(spec)
     this.heFireBurst(f.x, f.y, f.z + 6, 0, 0, 1, blast, false, 1.15, 0.42);
     this.emitDustShock(f.x, f.y, f.impactDust ?? 0.5);
     this.shake = Math.min(10, this.shake + 2.4);
-    const key = `fx_blast_${(Math.random() * 4) | 0}`;
     let sc = Phaser.Math.Linear(0.85, 1.45, f.impactDust ?? 0.5) * range(0.9, 1.2);
     if (f.playerCrash) sc *= 1.12;
-    this.stampWreck(this.textures.exists(key) ? key : "fx_blast_0", f.x, f.y, Math.random() * Math.PI * 2, sc, 1);
+    this.stampBlastCrater(f.x, f.y, sc);
+    this.spawnCraterEmbers(f.x, f.y, this.softCapBlastCraterScale(sc));
     f.simmer = range(2.6, 4.4);
     f.spin = 0;
     f.spinAccel = 0;
@@ -11627,6 +16208,12 @@ specIsShellGun(spec)
     if (f.dishFlat) {
       this.emitDustShock(f.x, f.y, 0.95);
       this.stampDirtSmears(f.x, f.y, f.vx || range(-40, 40), f.vy || range(-40, 40));
+    }
+    if (f.crashPop && !isWater(this.world, f.x, f.y)) {
+      const sc = f.crashCraterScale ?? 0.9;
+      this.stampBlastCrater(f.x, f.y, sc);
+      this.spawnCraterEmbers(f.x, f.y, this.softCapBlastCraterScale(sc));
+      this.emitDustShock(f.x, f.y, 0.55);
     }
     f.settled = true;
     f.vx = 0;
@@ -11662,7 +16249,48 @@ specIsShellGun(spec)
       }
       f.trailOnly = true;
     }
-    if (!f.heliCrash && !f.shellEject) this.beginDebrisTrailFade(f);
+    if (!f.heliCrash && !f.shellEject && !f.boomBit) this.beginDebrisTrailFade(f);
+  }
+
+  /** Tiny mech fleck from a big boom: stamp on land, splash+delete in water. */
+  settleBoomBit(f: Debris): void {
+    f.vx = 0;
+    f.vy = 0;
+    f.vz = 0;
+    if (!f.trailOnly) {
+      if (isWater(this.world, f.x, f.y)) {
+        const sc = Math.max(0.08, f.scale ?? 0.2);
+        const n = Math.max(1, Math.round(2 + sc * 6));
+        this.emitVisualBurst(
+          f.x,
+          f.y,
+          f.z + 2,
+          {
+            n,
+            spdMin: 40,
+            spdMax: 140,
+            bx: 0,
+            by: -0.35,
+            bz: 1,
+            tight: 0.55,
+            scaleMul: 0.35 + sc * 0.9,
+            gravity: 220,
+            depthOff: ZOff.fire + 0.3,
+          },
+          this.splashBurst
+        );
+      } else {
+        const o = this.debrisStampOrigin(f.key);
+        const sc = Math.max(0.05, f.scale ?? 0.08);
+        const hs = this.wreckDrawScale(f.x, f.y, f.z || 0, sc);
+        this.stampWreck(f.key, f.x, f.y, f.angle, hs.sx, 0.78, o.x, o.y, hs.sy);
+      }
+      f.trailOnly = true;
+    }
+    // Not marked settled so the trailOnly+life cull can remove it this tick.
+    f.trailFade = 0;
+    f.life = 0;
+    f.settled = false;
   }
 
   beginDebrisTrailFade(f: Debris): void {
@@ -11705,6 +16333,27 @@ specIsShellGun(spec)
   emitDebrisTrail(f: Debris, dim: number): void {
     if (dim <= 0.02) return;
     if (!cameraPointVisible(f.z, f.y)) return;
+    if (f.boomBit) {
+      // Sparse Hydra-style long smoke — not dense fire trails.
+      const at = worldToScreen(f.x, f.y, f.z);
+      this.shotTrailAngle = Math.atan2(
+        screenVelY(f.vy, f.vz, f.z, f.y),
+        screenVelX(f.vx, f.vy, f.vz, f.x, f.y, f.z)
+      );
+      const n = this.fxEmitCount(0.22 * dim);
+      if (n) {
+        this.withTrailFx(0.55 * (f.scale ?? 0.25) + 0.35, () =>
+          this.emitBudgeted(
+            "smoke",
+            this.fxAt(f.z, f.y, this.rocketSmoke, ZOff.smoke - 0.2),
+            at.x,
+            at.y,
+            n
+          )
+        );
+      }
+      return;
+    }
     const debrisScale = worldToScreen(f.x, f.y, f.z).scale;
     // Trails sit under the debris sprite (body ≈ 0); keep fire above smoke within the pair.
     const trailFire = -0.35;
@@ -12019,15 +16668,26 @@ specIsShellGun(spec)
     }
   }
 
-  driveDrone(u: Unit, dt: number, h: Heli, dist: number, dx: number, dy: number, vision = 1): void {
+  /** Max AGL drones will climb/charge to — covers Lightning/Warthog, excludes Reaper (~620). */
+  static readonly DRONE_KAMIKAZE_AGL = 400;
+
+  driveDrone(u: Unit, dt: number, h: Heli, dist: number, _dx: number, _dy: number, vision = 1): void {
     if (vision > 0 && dist < this.enemyAwareReach(1400, vision) && h.phase === "flight") {
-      const want = Math.atan2(dy, dx);
+      const playerAgl = Math.max(LOW_AGL + 8, h.z - h.gndSmooth);
+      const inAltReach = playerAgl <= MissionScene.DRONE_KAMIKAZE_AGL;
+      // Lead the intercept — Lightning / jets outrun pure pursuit easily.
+      const leadT = Phaser.Math.Clamp(dist / 420, 0.12, 0.55);
+      const tx = h.x + h.vx * leadT;
+      const ty = h.y + h.vy * leadT;
+      const ldx = tx - u.x;
+      const ldy = ty - u.y;
+      const want = Math.atan2(ldy, ldx);
       const err = Math.abs(Phaser.Math.Angle.Wrap(want - u.angle));
       const turn = err > 1.0 ? 5.2 : err > 0.4 ? 3.8 : 2.8;
-      u.angle = Phaser.Math.Angle.RotateTo(u.angle, want, turn * dt);
+      u.angle = this.steerUnitAngle(u.angle, want, turn, dt);
 
       const facing = err < 0.16;
-      if (facing) {
+      if (facing && inAltReach) {
         const fx = Math.cos(u.angle);
         const fy = Math.sin(u.angle);
         const along = u.vx * fx + u.vy * fy;
@@ -12047,19 +16707,28 @@ specIsShellGun(spec)
           u.vy *= maxSpd / s;
         }
         u.aiState = "CHARGE";
+      } else if (facing && !inAltReach) {
+        // Above drone ceiling (e.g. Reaper) — track heading but do not dive-charge.
+        u.vx *= Math.pow(0.42, dt);
+        u.vy *= Math.pow(0.42, dt);
+        u.aiState = "HOLD";
       } else {
         // Coast: no thrust, mild drag so it overshoots then slows while turning
         u.vx *= Math.pow(0.52, dt);
         u.vy *= Math.pow(0.52, dt);
         u.aiState = "TURN";
       }
-      u.aiTx = h.x;
-      u.aiTy = h.y;
-      if (dist < this.heli.spec.radius) {
-        this.heli.damage(38, u.vx, u.vy);
-        // Kamikaze: explode in place — no falling crash hull.
-        this.destroyUnit(u, false, false, true);
-        return;
+      u.aiTx = tx;
+      u.aiTy = ty;
+      // 3D proximity — only when altitude is within kamikaze reach.
+      if (inAltReach) {
+        const dist3 = Math.hypot(h.x - u.x, h.y - u.y, h.z - u.z);
+        if (dist3 < this.heli.spec.radius + radius(u.kind)) {
+          this.heli.damage(38, u.vx, u.vy);
+          // Kamikaze: explode in place — no falling crash hull.
+          this.destroyUnit(u, false, false, true);
+          return;
+        }
       }
     } else {
       u.vx *= Math.pow(0.38, dt);
@@ -12088,19 +16757,19 @@ specIsShellGun(spec)
 
       if (flee) {
         const awayAng = Math.atan2(-dy, -dx);
-        u.angle = Phaser.Math.Angle.RotateTo(u.angle, awayAng, 2.8 * dt);
+        u.angle = this.steerUnitAngle(u.angle, awayAng, 2.8, dt);
         const face = Math.max(0, Math.cos(Phaser.Math.Angle.Wrap(awayAng - u.angle)));
         u.vx += fx * 170 * face * dt;
         u.vy += fy * 170 * face * dt;
       } else if (kite && dist < 900) {
-        u.angle = Phaser.Math.Angle.RotateTo(u.angle, toAng, 3.4 * dt);
+        u.angle = this.steerUnitAngle(u.angle, toAng, 3.4, dt);
         const face = Math.max(0, Math.cos(Phaser.Math.Angle.Wrap(toAng - u.angle)));
         const radial = Phaser.Math.Clamp((dist - prefDist) * 0.4, -100, 100);
         // Main thrust along nose; light strafe only once roughly facing.
         u.vx += (fx * radial + latX * 130 * face) * face * dt;
         u.vy += (fy * radial + latY * 130 * face) * face * dt;
       } else {
-        u.angle = Phaser.Math.Angle.RotateTo(u.angle, toAng, 2.8 * dt);
+        u.angle = this.steerUnitAngle(u.angle, toAng, 2.8, dt);
         const face = Math.max(0, Math.cos(Phaser.Math.Angle.Wrap(toAng - u.angle)));
         const thrust = dist > prefDist ? 155 : 60;
         u.vx += fx * thrust * face * dt;
@@ -12129,7 +16798,7 @@ specIsShellGun(spec)
         const ox = h.x + Math.cos(u.orbit) * ring;
         const oy = h.y + Math.sin(u.orbit) * ring;
         const to = Math.atan2(oy - u.y, ox - u.x);
-        u.angle = Phaser.Math.Angle.RotateTo(u.angle, to, 1.15 * dt);
+        u.angle = this.steerUnitAngle(u.angle, to, 1.15, dt);
         u.vx += Math.cos(u.angle) * 58 * dt;
         u.vy += Math.sin(u.angle) * 58 * dt;
         u.aiState = "ORBIT";
@@ -12166,17 +16835,17 @@ specIsShellGun(spec)
           const ox = h.x + Math.cos(u.orbit) * orbitRing;
           const oy = h.y + Math.sin(u.orbit) * orbitRing;
           const to = Math.atan2(oy - u.y, ox - u.x);
-          u.angle = Phaser.Math.Angle.RotateTo(u.angle, to, 1.6 * dt);
+          u.angle = this.steerUnitAngle(u.angle, to, 1.6, dt);
           u.vx += fx * 78 * dt;
           u.vy += fy * 78 * dt;
         } else if (kite && dist < 700) {
-          u.angle = Phaser.Math.Angle.RotateTo(u.angle, toAng, 1.85 * dt);
+          u.angle = this.steerUnitAngle(u.angle, toAng, 1.85, dt);
           const face = Math.max(0, Math.cos(Phaser.Math.Angle.Wrap(toAng - u.angle)));
           const radial = Phaser.Math.Clamp((dist - closeDist) * 0.3, -65, 65);
           u.vx += (fx * radial + latX * 72 * face) * face * dt;
           u.vy += (fy * radial + latY * 72 * face) * face * dt;
         } else {
-          u.angle = Phaser.Math.Angle.RotateTo(u.angle, toAng, 1.6 * dt);
+          u.angle = this.steerUnitAngle(u.angle, toAng, 1.6, dt);
           const face = Math.max(0, Math.cos(Phaser.Math.Angle.Wrap(toAng - u.angle)));
           const thrust = dist > closeDist ? 85 : 30;
           u.vx += fx * thrust * face * dt;
@@ -12398,7 +17067,7 @@ specIsShellGun(spec)
     return this.mapEdgeSteer(u.x, u.y, dry.x, dry.y);
   }
 
-  /** True when this hull is pressed into another solid — same class as rim jam. */
+  /** True when this hull is pressed into another solid — unlocks wheeled pivot. */
   groundUnitBlocked(u: Unit): boolean {
     const uR = circumRadiusOf(u.kind);
     for (const o of this.units) {
@@ -12415,13 +17084,16 @@ specIsShellGun(spec)
         )
       )
         continue;
+      // Buildings / statics: easier jam. Soft infantry brush needs a deeper press.
+      const solid = osp.building || osp.behavior === "static_hold" || isGroundVehicle(o.kind);
       const pad = osp.building || osp.behavior === "static_hold" ? 10 : 6;
       const maxR = uR + circumRadiusOf(o.kind) + pad + 2;
       const dx = u.x - o.x;
       const dy = u.y - o.y;
       if (dx * dx + dy * dy > maxR * maxR) continue;
       const ov = footprintOverlap(footprintInto(u, 0, 0), footprintInto(o, pad, 1));
-      if (ov.hit && ov.depth > 1.5) return true;
+      const need = solid ? 2.5 : 5;
+      if (ov.hit && ov.depth > need) return true;
     }
     return false;
   }
@@ -12502,17 +17174,23 @@ specIsShellGun(spec)
           u.vy += ny * out * Math.min(1, t * 1.4);
         }
         if (t > 0.25 || outsidePlayable) {
-          u.angle = Phaser.Math.Angle.RotateTo(
+          u.angle = this.steerUnitAngle(
             u.angle,
             Math.atan2(ny, nx),
-            (outsidePlayable ? 3.6 : 2.8) * Math.max(t, outsidePlayable ? 1 : 0) * dt
+            (outsidePlayable ? 3.6 : 2.8) * Math.max(t, outsidePlayable ? 1 : 0),
+            dt
           );
         }
       } else if (isGroundVehicle(u.kind) || sp.behavior === "attack_infantry" || sp.behavior === "flee_infantry") {
-        if (t > 0.28) {
-          u.angle = Phaser.Math.Angle.RotateTo(u.angle, Math.atan2(ny, nx), 2.4 * t * dt);
+        const ground = isGroundVehicle(u.kind);
+        const wheeled = ground && driveOf(u.kind).track !== "tread";
+        const spd = Math.hypot(u.vx, u.vy);
+        const minTurnSpd = sp.minTurnSpd ?? 14;
+        // Wheeled: only yaw at the rim while moving, or when deeply stuck (hard rim).
+        if (t > 0.28 && (!wheeled || spd > minTurnSpd || t > 0.55)) {
+          u.angle = this.steerUnitAngle(u.angle, Math.atan2(ny, nx), 2.4 * t, dt);
         }
-        if (t > 0.4 && Math.hypot(u.vx, u.vy) < 18) {
+        if (t > 0.4 && spd < 18) {
           u.vx += nx * 55 * t * dt;
           u.vy += ny * 55 * t * dt;
         }
@@ -12574,7 +17252,7 @@ specIsShellGun(spec)
     if (!isWater(this.world, u.x, u.y)) {
       const seek = this.terrainSteer(u.x, u.y, u.x + Math.cos(u.angle) * 80, u.y + Math.sin(u.angle) * 80, true, u.angle);
       const want = Math.atan2(seek.y - u.y, seek.x - u.x);
-      u.angle = Phaser.Math.Angle.RotateTo(u.angle, want, yaw * 1.4 * dt);
+      u.angle = this.steerUnitAngle(u.angle, want, yaw * 1.4, dt);
       const step = spd * 0.35 * dt;
       // Stranded: crawl over land toward water (don't require wet cells yet).
       u.x += Math.cos(u.angle) * step;
@@ -12598,7 +17276,7 @@ specIsShellGun(spec)
     }
     const steered = this.terrainSteer(u.x, u.y, u.aiTx ?? u.x, u.aiTy ?? u.y, true, u.angle);
     const want = Math.atan2(steered.y - u.y, steered.x - u.x);
-    u.angle = Phaser.Math.Angle.RotateTo(u.angle, want, yaw * dt);
+    u.angle = this.steerUnitAngle(u.angle, want, yaw, dt);
     const step = spd * dt;
     this.stepOnTerrain(u, Math.cos(u.angle) * step, Math.sin(u.angle) * step, true);
     u.vx = Math.cos(u.angle) * spd;
@@ -12674,25 +17352,33 @@ specIsShellGun(spec)
     }
     const slow = 1 - Math.min(1, spd / Math.max(d.maxSpd, 1));
     const wheeled = d.track !== "tread";
-    // Bikes can't pivot in place — need real forward speed, like trucks (trucks get it from low turn rate).
-    const minTurnSpd = sp.minTurnSpd ?? 7;
+    // Wheeled: need forward speed to yaw (car-like). Default higher than old 7 so
+    // trucks don't spin on a crawl. Motorcycle sets minTurnSpd explicitly.
+    const minTurnSpd = sp.minTurnSpd ?? 14;
     const rim = this.mapEdgeWeight(u.x, u.y);
     const jammed = this.groundUnitBlocked(u);
-    // Unlock in-place turn at the rim or when wedged into other units
-    // (otherwise minTurnSpd + collision brake freezes heading forever).
+    // Pivot only when actually wedged — soft rim alone must not unlock zero-point turn.
+    const stuck = jammed || rim > 0.55;
     const turnDt = Math.min(dt, 1 / 20);
-    if (drive && (!wheeled || spd > minTurnSpd || rim > 0.28 || jammed)) {
-      const turnGate =
-        wheeled && rim < 0.28 && !jammed
-          ? Phaser.Math.Clamp((spd - minTurnSpd) / 18, 0.15, 1)
-          : 1;
-      u.angle = Phaser.Math.Angle.RotateTo(
-        u.angle,
-        want,
-        d.turn * (0.45 + 0.55 * slow) * turnGate * turnDt
-      );
+    if (drive) {
+      if (!wheeled) {
+        // Treads: pivot OK; slightly snappier when slow.
+        u.angle = this.steerUnitAngle(
+          u.angle,
+          want,
+          d.turn * (0.45 + 0.55 * slow),
+          turnDt
+        );
+      } else if (stuck) {
+        // Unwedge: allow in-place yaw so they can face out of a jam / hard rim.
+        u.angle = this.steerUnitAngle(u.angle, want, d.turn, turnDt);
+      } else if (spd > minTurnSpd) {
+        // Turning radius feel: yaw rate scales with speed (ω ∝ v), never while stopped.
+        const turnGate = Phaser.Math.Clamp(spd / Math.max(d.maxSpd * 0.55, minTurnSpd + 10), 0, 1);
+        u.angle = this.steerUnitAngle(u.angle, want, d.turn * turnGate, turnDt);
+      }
     }
-    if (jammed && spd < 18) {
+    if (stuck && spd < 18) {
       u.vx += Math.cos(want) * 50 * dt;
       u.vy += Math.sin(want) * 50 * dt;
     }
@@ -12874,6 +17560,40 @@ specIsShellGun(spec)
             u.z = maxZ;
             if (u.vz > 0) u.vz *= 0.15;
           }
+        } else if (sp.behavior === "suicide_attack_heli") {
+          // Climb toward player only when within kamikaze AGL; otherwise loiter at cruise.
+          const playerAgl = Math.max(LOW_AGL + 8, h.z - h.gndSmooth);
+          const kamikazeCeil = MissionScene.DRONE_KAMIKAZE_AGL;
+          const bob = Math.sin(this.time.now * 0.002 + u.id) * 5;
+          if (playerAgl > kamikazeCeil) {
+            const cruise = g + CRUISE_AGL + 10 + bob;
+            u.z = Phaser.Math.Linear(u.z, cruise, 1 - Math.pow(0.12, dt));
+            u.vz = (u.vz ?? 0) * Math.pow(0.25, dt);
+          } else {
+            const wantZ = g + playerAgl + bob;
+            const charging = u.aiState === "CHARGE";
+            const closeXy = dist < 220;
+            const climbMul = charging ? (closeXy ? 2.4 : 1.55) : 0.95;
+            const err = wantZ - u.z;
+            const thrust = Phaser.Math.Clamp(
+              err * climbMul,
+              charging ? -90 : -42,
+              charging ? 110 : 48
+            );
+            u.vz = (u.vz ?? 0) + thrust * dt;
+            u.vz *= Math.pow(charging ? 0.28 : 0.35, dt);
+            u.vz = Phaser.Math.Clamp(u.vz, charging ? -95 : -55, charging ? 120 : 58);
+            u.z += u.vz * dt;
+            const minZ = g + LOW_AGL + 6;
+            const maxZ = g + kamikazeCeil + 16;
+            if (u.z < minZ) {
+              u.z = minZ;
+              if (u.vz < 0) u.vz *= 0.15;
+            } else if (u.z > maxZ) {
+              u.z = maxZ;
+              if (u.vz > 0) u.vz *= 0.15;
+            }
+          }
         } else {
           const cruise = g + CRUISE_AGL + 10 + Math.sin(this.time.now * 0.002 + u.id) * 6;
           u.z = Phaser.Math.Linear(u.z, cruise, 1 - Math.pow(0.1, dt));
@@ -12931,7 +17651,7 @@ specIsShellGun(spec)
             u.vx = 0;
             u.vy = 0;
             if (vision > 0) {
-              u.turret = Phaser.Math.Angle.RotateTo(u.turret, Math.atan2(dy, dx), 1.8 * aimMul * dt);
+              u.turret = this.steerUnitAngle(u.turret, Math.atan2(dy, dx), 1.8 * aimMul, dt);
               u.aiTx = h.x;
               u.aiTy = h.y;
             } else {
@@ -12958,10 +17678,11 @@ specIsShellGun(spec)
             const twd = Math.hypot(twx, twy);
             const want = twd < 12 ? u.angle : Math.atan2(twy, twx);
             // Invisible base faces / walks the path.
-            u.angle = Phaser.Math.Angle.RotateTo(
+            u.angle = this.steerUnitAngle(
               u.angle,
               want,
-              (fleeing ? 2.4 : 2.1) * Math.min(dt, 1 / 20)
+              fleeing ? 2.4 : 2.1,
+              dt
             );
             const limp = fleeing && wounded && sp.organic;
             const gaitHz = limp ? 0.0044 : fleeing ? 0.0128 : 0.0075;
@@ -13025,16 +17746,38 @@ specIsShellGun(spec)
       const gunI = guns.length ? u.muzzleGun % guns.length : 0;
       const wpn = guns[gunI]?.weapon ?? sp.weapon;
       const atkRange = (wpn?.range ?? 0) * vision;
-      const inRange = !!(atkRange && dist < atkRange && dist > 40 && h.phase === "flight");
+      const elev = h.z - u.z;
+      // Elevation lob limit: troops stay low; tanks can reach jet cruise; dedicated
+      // AA / seekers go higher. Reaper-class cruise (~620) sits above tank/building HE;
+      // enemy drones stay low and cannot lob/kamikaze to it — helis can climb.
+      const aaWpn = /aa|seeker|aam/i.test(wpn?.look ?? "");
+      const elevCeil = sp.aerial
+        ? u.kind === "drone"
+          ? MissionScene.DRONE_KAMIKAZE_AGL
+          : 1e9
+        : aaWpn
+          ? 720
+          : sp.building
+            ? 560
+            : isGroundVehicle(u.kind)
+              ? 360
+              : 130;
+      const inRange = !!(
+        atkRange &&
+        dist < atkRange &&
+        dist > 40 &&
+        h.phase === "flight" &&
+        elev < elevCeil
+      );
       if (guns.length && vision > 0) {
         const trackR = ((guns[0]?.weapon ?? sp.weapon)?.range ?? 0) * vision;
         if (dist < trackR * 1.15) {
-          const trackRate = 1.65 * aimMul * Math.max(0.12, vision) * dt;
+          const trackRate = 1.65 * aimMul * Math.max(0.12, vision);
           for (let gi = 0; gi < guns.length; gi++) {
             const gp = this.gunMountPos(u, gi);
             const want = Math.atan2(h.y - gp.y, h.x - gp.x);
             const cur = u.turrets[gi] ?? 0;
-            u.turrets[gi] = Phaser.Math.Angle.RotateTo(cur, want, trackRate);
+            u.turrets[gi] = this.steerUnitAngle(cur, want, trackRate, dt);
           }
           u.turret = u.turrets[0] ?? u.turret;
         }
@@ -13052,10 +17795,10 @@ specIsShellGun(spec)
           !hullFlee && (inRange || (u.burstLeft ?? 0) > 0 || (sp.organic && u.health <= 1 && u.health < u.max))
             ? aim
             : u.angle;
-        u.turret = Phaser.Math.Angle.RotateTo(u.turret, aimTo, 2.4 * aimMul * Math.max(0.12, vision) * dt);
+        u.turret = this.steerUnitAngle(u.turret, aimTo, 2.4 * aimMul * Math.max(0.12, vision), dt);
       } else if (sp.fixedAim && !guns.length && wpn && inRange && !hullFlee && !strafeHeli) {
         const turn = (sp.behavior === "orbit_attack_heli" || sp.behavior === "kite_attack_heli") ? 1.7 : 2.2;
-        u.angle = Phaser.Math.Angle.RotateTo(u.angle, aim, turn * aimMul * Math.max(0.12, vision) * dt);
+        u.angle = this.steerUnitAngle(u.angle, aim, turn * aimMul * Math.max(0.12, vision), dt);
       }
       if (sp.building || sp.behavior === "static_hold") {
         u.aiState = inRange ? "ENGAGE" : u.aiState ?? "IDLE";
@@ -13321,7 +18064,8 @@ specIsShellGun(spec)
         rot,
         sp.aerial ? 1 : 0.92,
         sp.aerial ? 2 : sp.building ? 8 : 1,
-        u
+        u,
+        drawRot
       );
       im.setVisible(true);
       if (im.texture.key !== tex) im.setTexture(tex);
@@ -13348,7 +18092,8 @@ specIsShellGun(spec)
         worldRot: number,
         depth: number,
         sc = 1,
-        edgeLit = false
+        edgeLit = false,
+        aimKey?: string
       ) => {
         if (!this.textures.exists(texKey)) return;
         this.unwrapTilt(part);
@@ -13356,7 +18101,9 @@ specIsShellGun(spec)
         const my = (mount.y - oy) * im.displayHeight;
         const partRot = texKey.includes("rotor")
           ? worldRot
-          : projectHeading(worldRot, u.x, u.y, u.z);
+          : aimKey
+            ? this.unitAimDrawRot(u, aimKey, worldRot)
+            : drawRot;
         const pd = worldDepth(u.z, depth + zBias, u.y);
         part.setVisible(true);
         if (part.texture.key !== texKey) part.setTexture(texKey);
@@ -13396,7 +18143,8 @@ specIsShellGun(spec)
           gunWorldRot(g.tex, u.turrets[gi] ?? u.turret),
           gunDepth,
           g.scale ?? 1,
-          true
+          true,
+          `gun${gi}`
         );
       });
       sp.rotors.forEach((r, ri) => {
@@ -13516,6 +18264,7 @@ specIsShellGun(spec)
       this.thermalHotspotG.add(
         this.add
           .image(0, 0, "fx_exhaust_glow")
+          .setOrigin(0.5, 0.5)
           .setBlendMode(Phaser.BlendModes.ADD)
           .setTintFill(thermalSignalTint(1))
       );
@@ -13868,7 +18617,9 @@ specIsShellGun(spec)
         ? Layer.WRECK
         : f.shellEject
           ? worldDepth(z, f.shellUnder ? ZOff.shot - 0.4 : ZOff.turret + 0.85, f.y)
-          : worldDepth(z, ZOff.body + (f.pinHost ? 0.55 : 0.35), f.y);
+          : f.boomBit
+            ? worldDepth(z, ZOff.fire + 3.6, f.y)
+            : worldDepth(z, ZOff.body + (f.pinHost ? 0.55 : 0.35), f.y);
       const spd = Math.hypot(f.vx, f.vy);
       // Squash along travel; inner image keeps f.angle spin relative to heading.
       const wheelSquash = !!f.wheelRoll && !f.settled && spd > 8;
@@ -13993,7 +18744,7 @@ specIsShellGun(spec)
     if (h.lockTarget && !this.unitById(h.lockTarget.id)) h.lockTarget = null;
     if (h.lockAcquire && !this.unitById(h.lockAcquire.id)) h.lockAcquire = null;
 
-    const spec = this.loadout[h.weapon]!;
+    const spec = this.hudLoadout()[this.hudWeapon()]!;
     const g = spec.guidance;
     // Pre-fire lock_on only (steer_commit soft-locks in flight).
     if (!g || !guidanceIsLockOn(g)) {
@@ -14253,7 +19004,7 @@ specIsShellGun(spec)
     this.lockTxt.setVisible(false).setText("LOCK").setColor("#ff3a22");
     this.lockInbdTxt.setVisible(false);
 
-    const spec = this.loadout[h.weapon]!;
+    const spec = this.hudLoadout()[this.hudWeapon()]!;
     if (launchIsArcBeam(spec.launch)) {
       this.updateTeslaLock(spec);
       this.drawGpsWaypointMarks();
@@ -14735,7 +19486,13 @@ specIsShellGun(spec)
     const h = this.heli;
     const w = this.loadout[h.weapon]!;
     const ammo = this.ammo[h.weapon]!;
-    const ammoS = this.infAmmo && Number.isFinite(ammo) ? "∞" : Number.isFinite(ammo) ? String(ammo) : "∞";
+    const ammoShown = this.remotePoolDisplayAmmo(h.weapon, ammo);
+    const ammoS =
+      this.infAmmo && Number.isFinite(ammoShown)
+        ? "∞"
+        : Number.isFinite(ammoShown)
+          ? String(ammoShown)
+          : "∞";
     const phase =
       h.phase === "grounded" || h.phase === "spool"
         ? h.spec.rotor
@@ -14912,9 +19669,12 @@ specIsShellGun(spec)
   }
 
   spectreDetonateArmed(): boolean {
+    const remote = this.selectedSlotRemote();
     return (
       this.remoteView &&
-      !!this.activeRemote() &&
+      !!remote &&
+      !remoteGunId(remote.spec) &&
+      !remote.spec.pilotable &&
       payloadIsRemote(this.loadout[this.heli.weapon]?.payload)
     );
   }
@@ -14923,13 +19683,20 @@ specIsShellGun(spec)
     const show =
       !this.mapView &&
       !this.over &&
-      this.remoteView &&
-      !!this.activeRemote();
+      !!this.pilotingRemote() &&
+      !this.povHudRemote();
     this.spectrePrompt.setVisible(show);
     if (!show) return;
     const armed = this.spectreDetonateArmed();
-    this.spectrePrompt.setText(armed ? "LMB  DETONATE\nQ / RMB  EXIT VIEW" : "Q / RMB  EXIT VIEW");
-    const y = slotTop != null ? slotTop - (armed ? 32 : 18) : this.scale.height - 96;
+    const gun = !!this.pilotingRemote()?.spec.gun;
+    this.spectrePrompt.setText(
+      gun
+        ? "HOLD LMB  FIRE\n1–N / Q  RELEASE"
+        : armed
+          ? "LMB  DETONATE\nQ / RMB  EXIT VIEW"
+          : "Q / RMB  EXIT VIEW"
+    );
+    const y = slotTop != null ? slotTop - (armed || gun ? 32 : 18) : this.scale.height - 96;
     const lp = this.hudLocal(this.scale.width / 2, y);
     this.spectrePrompt.setPosition(lp.x, lp.y);
     const blink = 0.72 + 0.28 * (0.5 + 0.5 * Math.sin(this.time.now * 0.006));
@@ -14940,14 +19707,31 @@ specIsShellGun(spec)
     const h = this.heli;
     const g = this.wpnBar;
     g.clear();
+    const pov = this.povHudRemote();
+    const loadout = this.hudLoadout();
+    const ammoArr = this.hudAmmo();
+    const selected = this.hudWeapon();
     const slotW = 168;
     const slotH = 38;
     const gap = 8;
-    const n = this.loadout.length;
-    const total = n * slotW + (n - 1) * gap;
+    const escortOn = !!(pov?.spec.hostEscort);
+    const escortW = escortOn ? 118 : 0;
+    const escortGap = escortOn ? gap : 0;
+    const exitW = pov ? 92 : 0;
+    const exitGap = pov ? gap : 0;
+    const n = loadout.length;
+    this.ensureWpnHudSlots(n);
+    const total =
+      n * slotW +
+      Math.max(0, n - 1) * gap +
+      escortGap +
+      escortW +
+      exitGap +
+      exitW;
     const x0 = this.scale.width / 2 - total / 2;
-    const anyAuto = h.spec.sockets.some((s) => s.controller === "automatic");
-    const cmStripH = 30;
+    const anyAuto =
+      !pov && h.spec.sockets.some((s) => s.controller === "automatic");
+    const cmStripH = pov ? 8 : 30;
     const crewPad = anyAuto ? 15 : 2;
     const y = this.scale.height - 10 - cmStripH - crewPad - slotH;
     const padX = 8;
@@ -14956,20 +19740,33 @@ specIsShellGun(spec)
     const barPad = 6;
 
     for (let i = 0; i < n; i++) {
-      const wp = this.loadout[i]!;
-      const a = this.ammo[i]!;
-      const cap = craftSocketStartingAmmo(wp.ammo, h.spec, i);
+      const wp = loadout[i]!;
+      const reserve = ammoArr[i]!;
+      const a =
+        !pov && payloadIsRemote(wp.payload)
+          ? this.remotePoolDisplayAmmo(i, reserve)
+          : reserve;
+      const hostAmmoId = pov ? this.remoteHostAmmoWeapon(wp) : undefined;
+      const hostSlot = hostAmmoId ? this.hostWeaponSlot(hostAmmoId) : -1;
+      const hostSpec = hostAmmoId ? PLAYER_WPNS[hostAmmoId as WpnId] : undefined;
+      const cap =
+        pov && hostSpec && hostSlot >= 0
+          ? craftSocketStartingAmmo(hostSpec.ammo, h.spec, hostSlot)
+          : pov
+            ? remoteSocketStartingAmmo(wp.ammo, pov.spec, i)
+            : craftSocketStartingAmmo(wp.ammo, h.spec, i);
+      // Launch gate uses hangar reserve; display can include live dockable remotes.
       const empty = !this.infAmmo && Number.isFinite(a) && a <= 0;
       const frac =
         this.infAmmo || !Number.isFinite(a) || !Number.isFinite(cap) || cap <= 0
           ? 1
           : Phaser.Math.Clamp(a / cap, 0, 1);
       const low = !empty && Number.isFinite(a) && frac > 0 && frac <= 0.25;
-      const sel = i === h.weapon;
-      const socket = h.spec.sockets[i];
-      const auto = socket?.controller === "automatic";
+      const sel = i === selected;
+      const socket = pov ? pov.spec.sockets?.[i] : h.spec.sockets[i];
+      const auto = !pov && socket?.controller === "automatic";
       const gunner = auto && !sel;
-      const disabled = this.weaponSlotDisabled(i);
+      const disabled = pov ? false : this.weaponSlotDisabled(i);
       const x = x0 + i * (slotW + gap);
 
       // Slot chrome — disabled is a shared visual (cloak today; other gates later).
@@ -15004,16 +19801,18 @@ specIsShellGun(spec)
       } else {
         g.fillStyle(0x12100c, 0.55);
         g.fillRoundedRect(x, y, slotW, slotH, 3);
+        g.lineStyle(1.2, 0xc4a24a, 0.55);
+        g.strokeRoundedRect(x, y, slotW, slotH, 3);
       }
 
-      // Ammo reserve bar
-      const barX = x + barPad;
-      const barW = slotW - barPad * 2;
-      g.fillStyle(disabled ? 0x000000 : sel ? 0x1c1812 : 0x000000, disabled ? 0.45 : sel ? 0.28 : 0.4);
-      g.fillRect(barX, barY, barW, barH);
-      if (!empty) {
-        const fill = disabled
-          ? 0x5a5a62
+      // Ammo fraction bar
+      {
+        const barX = x + barPad;
+        const barW = slotW - barPad * 2;
+        g.fillStyle(0x000000, sel ? 0.35 : 0.45);
+        g.fillRect(barX, barY, barW, barH);
+        const fill = empty
+          ? 0xff3a2a
           : low
             ? sel
               ? 0x6a2a08
@@ -15037,13 +19836,26 @@ specIsShellGun(spec)
         : this.infAmmo || !Number.isFinite(a)
           ? "∞"
           : String(a | 0);
-      const liveRemote = payloadIsRemote(wp.payload) ? this.activeRemote() : undefined;
-      const liveMark = !!liveRemote && !this.remoteView && !disabled;
-      const mult = craftSocketMultiplicity(h.spec, i);
+      const liveRemotes =
+        !pov && payloadIsRemote(wp.payload)
+          ? this.remotes.filter(
+              (r) => !r.detonate && !r.dock && r.spec.kind === wp.payload!.remote!.kind
+            )
+          : [];
+      const liveRemote = liveRemotes[0];
+      const liveCount = liveRemotes.length;
+      const pilotingThis =
+        !!liveRemote &&
+        this.remoteView &&
+        this.pilotingRemote()?.id === liveRemote.id;
+      const liveMark = liveCount > 0 && !pilotingThis && !disabled;
+      const mult = pov ? 1 : craftSocketMultiplicity(h.spec, i);
       const rawName = liveRemote
-        ? this.remoteView
-          ? `${wp.name}  VIEW`
-          : `${wp.name}  LIVE`
+        ? pilotingThis
+          ? `${wp.name}  CTRL`
+          : liveCount > 1
+            ? `${wp.name}  LIVE ×${liveCount}`
+            : `${wp.name}  LIVE`
         : mult > 1
           ? `${mult}× ${wp.name}`
           : wp.name;
@@ -15128,11 +19940,89 @@ specIsShellGun(spec)
           .setStroke("#12100c", 2)
           .setAlpha(disabled ? 0.45 : player ? 0.95 : 0.85)
           .setFontSize("10px");
+      } else if (liveMark && liveRemote?.spec.kind === "wingman") {
+        const statusLp = this.hudLocal(x + slotW / 2, y + slotH + 3);
+        row.status
+          .setVisible(true)
+          .setPosition(statusLp.x, statusLp.y)
+          .setText("Q RECALL")
+          .setColor(sel ? "#0a4020" : "#3dff88")
+          .setStroke("#12100c", 2)
+          .setAlpha(0.9)
+          .setFontSize("10px");
       } else {
         row.status.setVisible(false).setText("");
       }
     }
-    this.drawCountermeasureHud(y + slotH + crewPad + 2);
+
+    // POV remote: escort FOLLOW/HOLD chrome + Q EXIT (not weapon slots).
+    if (escortOn) {
+      const x = x0 + n * (slotW + gap);
+      const follow = this.hostEscortMode === "follow";
+      g.fillStyle(follow ? 0x142028 : 0x12100c, follow ? 0.82 : 0.62);
+      g.fillRoundedRect(x, y, escortW, slotH, 3);
+      g.lineStyle(1.3, follow ? 0x4aa8e8 : 0x8a8470, follow ? 0.9 : 0.75);
+      g.strokeRoundedRect(x, y, escortW, slotH, 3);
+      const midY = y + slotH / 2;
+      const keyLp = this.hudLocal(x + padX, midY);
+      this.escortHudSlot.key
+        .setVisible(true)
+        .setPosition(keyLp.x, keyLp.y)
+        .setText("F")
+        .setColor(follow ? "#6aa8c8" : "#a89868")
+        .setStroke("#12100c", 3)
+        .setFontSize("12px")
+        .setAlpha(0.9);
+      const nameLp = this.hudLocal(x + padX + this.escortHudSlot.key.width + 6, midY);
+      this.escortHudSlot.name
+        .setVisible(true)
+        .setPosition(nameLp.x, nameLp.y)
+        .setText(follow ? "FOLLOW" : "HOLD")
+        .setColor(follow ? "#7ad0ff" : "#f0d56a")
+        .setStroke("#12100c", 3)
+        .setFontSize("13px")
+        .setAlpha(0.95);
+    } else {
+      this.escortHudSlot.key.setVisible(false);
+      this.escortHudSlot.name.setVisible(false);
+    }
+    if (pov) {
+      const x = x0 + n * (slotW + gap) + escortGap + escortW;
+      g.fillStyle(0x12100c, 0.62);
+      g.fillRoundedRect(x, y, exitW, slotH, 3);
+      g.lineStyle(1.3, 0x8a8470, 0.75);
+      g.strokeRoundedRect(x, y, exitW, slotH, 3);
+      const midY = y + slotH / 2;
+      const keyLp = this.hudLocal(x + padX, midY);
+      this.exitHudSlot.key
+        .setVisible(true)
+        .setPosition(keyLp.x, keyLp.y)
+        .setText("Q")
+        .setColor("#a89868")
+        .setStroke("#12100c", 3)
+        .setFontSize("12px")
+        .setAlpha(0.9);
+      const nameLp = this.hudLocal(x + padX + this.exitHudSlot.key.width + 6, midY);
+      const canDock = !!(pov.spec.dockable && this.remoteNearHost(pov));
+      this.exitHudSlot.name
+        .setVisible(true)
+        .setPosition(nameLp.x, nameLp.y)
+        .setText(canDock ? "DOCK" : "EXIT")
+        .setColor(canDock ? "#3dff88" : "#f0d56a")
+        .setStroke("#12100c", 3)
+        .setFontSize("13px")
+        .setAlpha(0.95);
+    } else {
+      this.exitHudSlot.key.setVisible(false);
+      this.exitHudSlot.name.setVisible(false);
+    }
+
+    if (pov) {
+      this.cmHudLabel?.setVisible(false);
+      this.cmHudTime?.setVisible(false);
+    } else {
+      this.drawCountermeasureHud(y + slotH + crewPad + 2);
+    }
     this.syncSpectrePrompt(y);
     // Hide unused rows if loadout shrank (shouldn't normally).
     for (let i = n; i < this.wpnHudSlots.length; i++) {
@@ -15165,6 +20055,14 @@ specIsShellGun(spec)
       activeT = this.cloakT;
       activeMax = spec.duration;
       barCol = 0xc8d4e8;
+    } else if (id === "reactive_armor" && this.reactiveArmorT > 0) {
+      activeT = this.reactiveArmorT;
+      activeMax = spec.duration;
+      barCol = 0xffb040;
+    } else if (id === "smoke_screen" && this.smokeScreenT > 0) {
+      activeT = this.smokeScreenT;
+      activeMax = spec.duration;
+      barCol = 0xa8a090;
     }
     const cooling = cd > 0;
     const frac = cooling
@@ -15264,12 +20162,29 @@ specIsShellGun(spec)
       x: cx + (x - this.heli.x) * s,
       y: cy + (y - this.heli.y) * s,
     });
+    const inRing = (p: { x: number; y: number }) => Math.hypot(p.x - cx, p.y - cy) <= mapR;
+    const mark = 0xe8b84a;
     for (const u of this.units) {
       if (u.dead) continue;
       const p = toMap(u.x, u.y);
-      if (Math.hypot(p.x - cx, p.y - cy) > mapR) continue;
+      if (!inRing(p)) continue;
       this.miniGfx.fillStyle(u.hv ? 0xff5a3a : 0xc45c28, 1);
       this.miniGfx.fillCircle(p.x, p.y, u.hv ? 3.5 : 2);
+    }
+    for (const r of this.remotes) {
+      if (r.detonate || r.dock) continue;
+      const p = toMap(r.x, r.y);
+      if (!inRing(p)) continue;
+      // Yellow diamond — player drones / remotes only.
+      this.drawMiniDiamond(p.x, p.y, 4.5, mark);
+    }
+    for (const shot of this.shots) {
+      if (!shotShowsOnRadar(shot)) continue;
+      const p = toMap(shot.x, shot.y);
+      if (!inRing(p)) continue;
+      // Player/friendly yellow; enemy red.
+      const shotMark = shot.from === "enemy" ? 0xff5a3a : mark;
+      this.drawMiniMissileTick(p.x, p.y, shot.angle, shotMark);
     }
     this.miniGfx.fillStyle(0xe8b84a, 1);
     this.miniGfx.fillCircle(cx, cy, 3);
@@ -15280,6 +20195,23 @@ specIsShellGun(spec)
       cx + Math.cos(this.heli.angle) * 12,
       cy + Math.sin(this.heli.angle) * 12
     );
+  }
+
+  /** Radar: yellow diamond for player remotes. */
+  drawMiniDiamond(x: number, y: number, r: number, color: number): void {
+    const g = this.miniGfx;
+    g.fillStyle(color, 1);
+    g.fillTriangle(x, y - r, x + r, y, x, y + r);
+    g.fillTriangle(x, y - r, x, y + r, x - r, y);
+  }
+
+  /** Radar: heading tick for in-flight missiles (yellow friendly / red enemy). */
+  drawMiniMissileTick(x: number, y: number, angle: number, color: number): void {
+    const len = 5.5;
+    const ca = Math.cos(angle);
+    const sa = Math.sin(angle);
+    this.miniGfx.lineStyle(2, color, 1);
+    this.miniGfx.lineBetween(x - ca * len * 0.35, y - sa * len * 0.35, x + ca * len * 0.65, y + sa * len * 0.65);
   }
 
   drawHvArrows(): void {
@@ -15631,6 +20563,20 @@ specIsShellGun(spec)
         .setPosition(tipScr.x, tipScr.y - 14)
         .setText(`${dbg.state}  ${range | 0}m${arcTag}`);
     });
+
+    // HOUND host-escort leash — inner (target) + outer (limit) around the remote.
+    for (const r of this.remotes) {
+      if (r.detonate || r.dock || !r.spec.hostEscort) continue;
+      const { innerRadius, outerRadius } = r.spec.hostEscort;
+      const scr = worldToScreen(r.x, r.y, r.z);
+      const follow = this.hostEscortMode === "follow" && this.remoteView;
+      const innerCol = follow ? 0x5ec8ff : 0x8a8470;
+      const outerCol = follow ? 0xff9a3a : 0x8a8470;
+      this.aiGfx.lineStyle(1.4, innerCol, follow ? 0.75 : 0.35);
+      this.aiGfx.strokeCircle(scr.x, scr.y, innerRadius * scr.scale);
+      this.aiGfx.lineStyle(1.6, outerCol, follow ? 0.85 : 0.4);
+      this.aiGfx.strokeCircle(scr.x, scr.y, outerRadius * scr.scale);
+    }
   }
 
   /**
@@ -15814,10 +20760,22 @@ specIsShellGun(spec)
       })
       .setOrigin(0.5);
     const helpCraft = craftOf();
+    const helpComposite = craftComposite(helpCraft);
     this.helpCraftBody = this.add
-      .image(craftX, -halfH + 160, helpCraft.body)
-      .setOrigin(0.5);
-    this.helpCraftRotorParts = craftComposite(helpCraft).rotors;
+      .image(craftX, -halfH + 160, helpComposite.body.tex)
+      .setOrigin(helpComposite.body.origin.x, helpComposite.body.origin.y);
+    this.helpCraftGunParts = helpComposite.guns;
+    const helpGunSlots = craftGunSocketSlots(helpCraft);
+    this.helpCraftGuns = this.helpCraftGunParts.map((part, i) => {
+      const sock = helpCraft.sockets[helpGunSlots[i] ?? -1];
+      const gunSc = (helpCraft.gunOverlayScale ?? 1) * (sock?.gunScale ?? 1);
+      return this.add
+        .image(craftX, -halfH + 160, part.tex)
+        .setOrigin(part.origin.x, part.origin.y)
+        .setRotation(part.heading ?? 0)
+        .setScale(gunSc);
+    });
+    this.helpCraftRotorParts = helpComposite.rotors;
     this.helpCraftRotors = this.helpCraftRotorParts.map((part) => {
       const rotor = this.add
         .image(craftX, -halfH + 160, part.tex)
@@ -15835,6 +20793,7 @@ specIsShellGun(spec)
     this.helpCraftExhaustGlows = this.helpCraftExhaustMounts.map((_, exhaustI) => {
       const glow = this.add
         .image(craftX, -halfH + 160, "fx_exhaust_glow")
+        .setOrigin(0.5, 0)
         .setBlendMode(Phaser.BlendModes.ADD)
         .setTint(craftPreviewExhaustTint(helpCraft.kind));
       this.tweens.add({
@@ -15917,7 +20876,9 @@ specIsShellGun(spec)
         title,
         this.helpCraftName,
         this.helpCraftBody,
+        ...this.helpCraftGuns.filter((_, i) => this.helpCraftGunParts[i]?.layer !== "above"),
         ...this.helpCraftExhaustGlows,
+        ...this.helpCraftGuns.filter((_, i) => this.helpCraftGunParts[i]?.layer === "above"),
         ...this.helpCraftRotors,
         this.helpCraftStats,
         this.helpCraftBars,
@@ -15974,7 +20935,7 @@ specIsShellGun(spec)
     this.missionTips = tipsForKnown({
       ...tipKnownFromSelection(enemies),
       crafts: [this.heli?.spec.kind ?? craftOf().kind],
-      weapons: this.loadout.map((w) => w.id),
+      weapons: this.loadout.map(wpnIdOf),
       cms: [craftCountermeasure(this.heli?.spec.countermeasure ?? craftOf().countermeasure)],
     });
     if (!this.missionTips.length) {
@@ -15986,7 +20947,11 @@ specIsShellGun(spec)
   syncHelp(): void {
     if (!this.helpBody || !this.helpCounter) return;
     const craft = craftOf();
-    if (this.helpCraftBody.texture.key !== craft.body) this.helpCraftBody.setTexture(craft.body);
+    if (this.helpCraftBody.texture.key !== craft.body) {
+      this.helpCraftBody.setTexture(craft.body);
+      const origin = craftOrigin(craft);
+      this.helpCraftBody.setOrigin(origin.x, origin.y);
+    }
     const previewScale = craftPreviewFitScale(
       this.helpCraftBody.width,
       this.helpCraftBody.height,
@@ -15994,6 +20959,19 @@ specIsShellGun(spec)
       165
     );
     this.helpCraftBody.setScale(previewScale);
+    const gunSlots = craftGunSocketSlots(craft);
+    this.helpCraftGuns.forEach((gun, gunI) => {
+      const part = this.helpCraftGunParts[gunI]!;
+      const at = spriteUvPos(this.helpCraftBody, part.mount.x, part.mount.y);
+      const sock = craft.sockets[gunSlots[gunI] ?? -1];
+      const gunSc =
+        (craft.gunOverlayScale ?? 1) * (sock?.gunScale ?? 1) * this.helpCraftBody.scaleX;
+      gun
+        .setPosition(at.x, at.y)
+        .setRotation(part.heading ?? 0)
+        .setScale(gunSc)
+        .setVisible(true);
+    });
     this.helpCraftRotors.forEach((rotor, rotorI) => {
       const part = this.helpCraftRotorParts[rotorI]!;
       const at = spriteUvPos(this.helpCraftBody, part.mount.x, part.mount.y);
@@ -16135,9 +21113,7 @@ specIsShellGun(spec)
 
   /** Craft-owned thermal look (sensor cams + T share this; linger must not override it). */
   craftSensorPalette(): ThermalPalette {
-    return this.heli.spec.kind === "prometheus" || this.heli.spec.kind === "cyberhawk"
-      ? "full_spectrum"
-      : "white_hot";
+    return this.heli.spec.sensorPalette ?? "white_hot";
   }
 
   /** True when a remote or seeker cam wants thermal (palette always craft thermal). */
@@ -17040,6 +22016,10 @@ specIsShellGun(spec)
       this.heliHudWire,
       this.wpnBar,
       ...this.wpnHudSlots.flatMap((s) => [s.key, s.name, s.ammo, s.status]),
+      this.exitHudSlot.key,
+      this.exitHudSlot.name,
+      this.escortHudSlot.key,
+      this.escortHudSlot.name,
       this.cmHudLabel,
       this.cmHudTime,
       this.hvGfx,
@@ -17068,6 +22048,8 @@ specIsShellGun(spec)
     // TOW wire / Tesla / Refractor / energy ribbons stay on the main cam (world depth).
     this.hudSet.delete(this.towWireGfx);
     this.towWireGfx.cameraFilter = this.hudCam.id | this.fieldHudCam.id;
+    this.hudSet.delete(this.remoteAntennaGfx);
+    this.remoteAntennaGfx.cameraFilter = this.hudCam.id | this.fieldHudCam.id;
     this.hudSet.delete(this.teslaGfx);
     this.teslaGfx.cameraFilter = this.hudCam.id | this.fieldHudCam.id;
     this.hudSet.delete(this.energyTrailGfx);
@@ -17221,6 +22203,287 @@ specIsShellGun(spec)
     this.miniMask.fillCircle(this.hudRoot.x + clip.x * hs, this.hudRoot.y + clip.y * hs, 88 * hs);
   }
 
+  /** Project leave-theater peaks with the same 2.5D pose as units / terrain. */
+  syncLeaveTheaterPeaks(): void {
+    if (!this.leaveTheaterPeaks.length) return;
+    for (const p of this.leaveTheaterPeaks) {
+      const at = worldToScreen(p.x, p.y, p.z);
+      p.im.setPosition(at.x, at.y).setScale(p.sx * at.scale, p.sy * at.scale);
+      const depth = worldDepth(p.z, -0.5, p.y);
+      if (p.im.depth !== depth) p.im.setDepth(depth);
+    }
+  }
+
+  createLeaveTheaterSky(): void {
+    for (const im of this.leaveTheaterClouds) im.destroy();
+    for (const p of this.leaveTheaterPeaks) p.im.destroy();
+    this.leaveTheaterClouds = [];
+    this.leaveTheaterPeaks = [];
+    // Outside-map sky is only visible when the chase cam can leave the playable rect.
+    if (craftCameraEdgeLocked(this.heli.spec)) return;
+
+    const keys = ["fx_cloud_1", "fx_cloud_2", "fx_cloud_3", "fx_cloud_4"].filter((k) =>
+      this.textures.exists(k)
+    );
+    if (!keys.length) return;
+
+    const pad = MAP_AIR_SOFT + 900;
+    const lo = -pad;
+    const hi = WORLD + pad;
+    // Behind the map: visible once the camera scrolls past the terrain edge.
+    const skyDepth = Layer.TERRAIN - 2;
+    // Soft fog bank over the hard map cut.
+    const fogDepth = Layer.WRECK + 0.5;
+    const seaZ = waterSurfaceZ();
+    let ki = 0;
+
+    const place = (
+      x: number,
+      y: number,
+      depth: number,
+      alpha: number,
+      scale: number,
+      tint: number,
+      stretchX: number
+    ) => {
+      const key = keys[ki++ % keys.length]!;
+      const im = this.add.image(x, y, key);
+      const flip = Math.random() < 0.5 ? -1 : 1;
+      im.setOrigin(0.5)
+        .setDepth(depth)
+        .setAlpha(alpha)
+        .setScale(scale * stretchX * flip, scale)
+        .setRotation((Math.random() - 0.5) * 0.5);
+      if (tint !== 0xffffff) im.setTint(tint);
+      this.leaveTheaterClouds.push(im);
+    };
+
+    // Cloud sea filling the leave-theater pad (reject samples inside the map).
+    for (let n = 0, tries = 0; n < 90 && tries < 800; tries++) {
+      const x = lo + Math.random() * (hi - lo);
+      const y = lo + Math.random() * (hi - lo);
+      if (x > -40 && x < WORLD + 40 && y > -40 && y < WORLD + 40) continue;
+      place(
+        x,
+        y,
+        skyDepth,
+        range(0.38, 0.72),
+        range(1.35, 2.6),
+        0xc5d4e0,
+        range(1.15, 1.75)
+      );
+      n++;
+    }
+    // Extra cloud banks in the mountain belt so peaks sit in a cloudy range, not empty sky.
+    for (let n = 0; n < 55; n++) {
+      const side = n % 4;
+      const t = Math.random() * WORLD;
+      const out = range(80, 520);
+      let x = 0;
+      let y = 0;
+      if (side === 0) {
+        x = t;
+        y = -out;
+      } else if (side === 1) {
+        x = WORLD + out;
+        y = t;
+      } else if (side === 2) {
+        x = t;
+        y = WORLD + out;
+      } else {
+        x = -out;
+        y = t;
+      }
+      place(
+        x + range(-90, 90),
+        y + range(-90, 90),
+        skyDepth,
+        range(0.4, 0.75),
+        range(1.5, 2.8),
+        0xd0dce8,
+        range(1.2, 1.9)
+      );
+    }
+
+    // Cloudy mountain ranges wrapping the leave-theater pad (projected like units).
+    const peaks = ["fx_mountain_peak_1", "fx_mountain_peak_2", "fx_mountain_peak_3"].filter((k) =>
+      this.textures.exists(k)
+    );
+    if (peaks.length) {
+      let pi = 0;
+      const placePeak = (
+        x: number,
+        y: number,
+        sc: number,
+        zOff: number,
+        tint?: number
+      ) => {
+        const key = peaks[pi++ % peaks.length]!;
+        const flip = Math.random() < 0.5 ? -1 : 1;
+        const im = this.add.image(0, 0, key);
+        im.setOrigin(0.5, 0.82).setAlpha(1);
+        if (tint != null) im.setTint(tint);
+        this.leaveTheaterPeaks.push({
+          im,
+          x,
+          y,
+          z: seaZ + zOff,
+          sx: sc * flip,
+          sy: sc,
+        });
+      };
+
+      // Two depth bands per edge: mid + near (far haze band dropped for density).
+      type Band = { out: number; span: number; step: number; sc: [number, number]; z: [number, number]; tint: number };
+      const bands: Band[] = [
+        { out: 300, span: 120, step: 170, sc: [0.95, 1.55], z: [4, 10], tint: 0xc4d0dc },
+        { out: 140, span: 90, step: 140, sc: [1.2, 2.05], z: [6, 14], tint: 0xffffff },
+      ];
+
+      const alongEdge = (
+        axis: "x" | "y",
+        edge: number,
+        outSign: number,
+        band: Band
+      ) => {
+        for (let t = -200; t <= WORLD + 200; t += band.step) {
+          const j = range(-band.step * 0.35, band.step * 0.35);
+          const out = outSign * (band.out + range(-band.span * 0.4, band.span * 0.6));
+          // Occasional double-stack so ridges look continuous.
+          const n = Math.random() < 0.4 ? 2 : 1;
+          for (let k = 0; k < n; k++) {
+            const ox = range(-70, 70);
+            const oy = range(-55, 55);
+            const sc = range(band.sc[0], band.sc[1]) * (k === 0 ? 1 : range(0.75, 0.95));
+            if (axis === "x") {
+              placePeak(t + j + ox, edge + out + oy, sc, range(band.z[0], band.z[1]), band.tint);
+            } else {
+              placePeak(edge + out + ox, t + j + oy, sc, range(band.z[0], band.z[1]), band.tint);
+            }
+          }
+        }
+      };
+
+      for (const band of bands) {
+        alongEdge("x", 0, -1, band);
+        alongEdge("x", WORLD, 1, band);
+        alongEdge("y", 0, -1, band);
+        alongEdge("y", WORLD, 1, band);
+      }
+
+      // Corner massifs where ranges meet.
+      for (const [cx, cy, sx, sy] of [
+        [0, 0, -1, -1],
+        [WORLD, 0, 1, -1],
+        [0, WORLD, -1, 1],
+        [WORLD, WORLD, 1, 1],
+      ] as const) {
+        for (let i = 0; i < 9; i++) {
+          const dist = range(120, 520);
+          const ang = range(0.15, 1.35); // stay in the outside quadrant
+          placePeak(
+            cx + sx * Math.cos(ang) * dist + range(-40, 40),
+            cy + sy * Math.sin(ang) * dist + range(-40, 40),
+            range(0.9, 2.0),
+            range(3, 14),
+            i < 3 ? 0xa8b8c8 : 0xffffff
+          );
+        }
+      }
+
+      // Light outer-pad scatter so the sea of peaks continues.
+      for (let n = 0, tries = 0; n < 22 && tries < 280; tries++) {
+        const x = lo + Math.random() * (hi - lo);
+        const y = lo + Math.random() * (hi - lo);
+        if (x > -80 && x < WORLD + 80 && y > -80 && y < WORLD + 80) continue;
+        placePeak(x, y, range(0.75, 1.45), range(1, 8), 0xb0c0d0);
+        n++;
+      }
+
+      this.syncLeaveTheaterPeaks();
+    }
+
+    // Fog / cloud bank along each map edge — seam kiss + lighter outer bank.
+    const step = 220;
+    const fogTint = 0xdce6ee;
+    const alongX = (edgeY: number, outSign: number) => {
+      for (let t = -120; t <= WORLD + 120; t += step) {
+        const j = range(-70, 70);
+        // Seam row: small scale so half-sprite barely crosses the edge.
+        place(
+          t + j,
+          edgeY + outSign * range(12, 55),
+          fogDepth,
+          range(0.35, 0.58),
+          range(0.55, 0.95),
+          fogTint,
+          range(1.2, 1.7)
+        );
+        // Outer bank — a bit sparser/softer than the original double row.
+        if (Math.random() < 0.72) {
+          place(
+            t + j * 0.6,
+            edgeY + outSign * range(100, 260),
+            fogDepth,
+            range(0.38, 0.65),
+            range(1.05, 2.0),
+            fogTint,
+            range(1.2, 1.9)
+          );
+        }
+      }
+    };
+    const alongY = (edgeX: number, outSign: number) => {
+      for (let t = -120; t <= WORLD + 120; t += step) {
+        const j = range(-70, 70);
+        place(
+          edgeX + outSign * range(12, 55),
+          t + j,
+          fogDepth,
+          range(0.35, 0.58),
+          range(0.55, 0.95),
+          fogTint,
+          range(1.2, 1.7)
+        );
+        if (Math.random() < 0.72) {
+          place(
+            edgeX + outSign * range(100, 260),
+            t + j * 0.6,
+            fogDepth,
+            range(0.38, 0.65),
+            range(1.05, 2.0),
+            fogTint,
+            range(1.2, 1.9)
+          );
+        }
+      }
+    };
+    alongX(0, -1);
+    alongX(WORLD, 1);
+    alongY(0, -1);
+    alongY(WORLD, 1);
+
+    // Corner puffs stay outside both edges.
+    for (const [cx, cy, sx, sy] of [
+      [0, 0, -1, -1],
+      [WORLD, 0, 1, -1],
+      [0, WORLD, -1, 1],
+      [WORLD, WORLD, 1, 1],
+    ] as const) {
+      for (let i = 0; i < 4; i++) {
+        place(
+          cx + sx * range(70, 230) + range(-10, 10),
+          cy + sy * range(70, 230) + range(-10, 10),
+          fogDepth,
+          range(0.4, 0.68),
+          range(1.0, 1.85),
+          fogTint,
+          range(1.15, 1.75)
+        );
+      }
+    }
+  }
+
   createPlaneCloudParallax(): void {
     this.planeClouds = [];
     const keys = ["fx_cloud_1", "fx_cloud_2", "fx_cloud_3", "fx_cloud_4"].filter((k) =>
@@ -17335,14 +22598,19 @@ specIsShellGun(spec)
     }
   }
 
-  playZoom(): number {
-    const h = this.heli;
+  /** Framing zoom for a craft at altitude / speed (host or remote hull). */
+  craftPlayZoom(
+    spec: ReturnType<typeof craftOf>,
+    z: number,
+    vx: number,
+    vy: number
+  ): number {
     // Perspective keeps chase-focus scale stable; Phaser zoom is framing only.
-    const base = camZoomAt(h.z) * craftCameraScale(h.spec);
-    const spdN = Phaser.Math.Clamp(Math.hypot(h.vx, h.vy) / h.spec.maxSpeed, 0, 1);
-    const planeScheme = craftControlScheme(h.spec) === "plane";
-    const planeish = h.spec.flightModel === "plane" || h.spec.flightModel === "vtol";
-    const speedClass = Math.sqrt(h.spec.maxSpeed / 340);
+    const base = camZoomAt(z) * craftCameraScale(spec);
+    const spdN = Phaser.Math.Clamp(Math.hypot(vx, vy) / Math.max(1, spec.maxSpeed), 0, 1);
+    const planeScheme = craftControlScheme(spec) === "plane";
+    const planeish = spec.flightModel === "plane" || spec.flightModel === "vtol";
+    const speedClass = Math.sqrt(spec.maxSpeed / 340);
     if (planeScheme) {
       // Jets: slightly wider baseline + modest speed pullback (not theater-map zoom).
       const baseMul = 0.9;
@@ -17353,6 +22621,16 @@ specIsShellGun(spec)
       ? Phaser.Math.Clamp(0.22 * speedClass, 0.2, 0.42)
       : Phaser.Math.Clamp(0.1 * speedClass, 0.08, 0.16);
     return base * (1 - spdN * maxPullback);
+  }
+
+  playZoom(): number {
+    const h = this.heli;
+    const hostZoom = this.craftPlayZoom(h.spec, h.z, h.vx, h.vy);
+    const remote = this.activeRemote();
+    if (!remote || this.remoteCamT < 0.001 || !remote.spec.craftLook) return hostZoom;
+    const hull = craftOf(remote.spec.craftLook);
+    const remZoom = this.craftPlayZoom(hull, remote.z, remote.vx, remote.vy);
+    return Phaser.Math.Linear(hostZoom, remZoom, this.remoteCamT);
   }
 
   syncProjectionPose(): void {
@@ -17591,7 +22869,7 @@ specIsShellGun(spec)
       const ox = Phaser.Math.Linear(aimOx, seekOx, handoff);
       const oy = Phaser.Math.Linear(aimOy, seekOy, handoff);
       const ahead = Math.hypot(sensor.x - (hx + this.lookCamX), sensor.y - (hy + this.lookCamY));
-      const baseRate = PLAYER_WPNS[sensor.wpnId ?? ""]?.cam.thermal ? 3.6 : 4.2;
+      const baseRate = sensor.wpnId && PLAYER_WPNS[sensor.wpnId]?.cam.thermal ? 3.6 : 4.2;
       const rate = baseRate + Phaser.Math.Clamp(ahead / 220, 0, 1) * 2.8;
       const k = 1 - Math.exp(-rate * dt);
       this.lookCamX = Phaser.Math.Linear(this.lookCamX, ox, k);
@@ -17601,16 +22879,16 @@ specIsShellGun(spec)
     }
     const p = this.pointerScreen();
     const pointerAtFocus = screenToWorldAtZ(p.x, p.y, this.heli.z);
-    const wpnSpec = this.loadout[this.heli.weapon]!;
-    let look = { ...wpnSpec.cam.look };
-    // Jets fly faster / higher — give hardpoint ordnance a longer aim lead (unless planeLookMul false).
-    if (
-      craftControlScheme(this.heli.spec) === "plane" &&
-      wpnSpec.cam.planeLookMul !== false &&
-      (wpnSpec.guidance != null || wpnSpec.launch.mode === "drop" || !!wpnSpec.exhaust)
-    ) {
-      look = { pull: look.pull * 1.22, max: look.max * 1.28, rate: look.rate };
-    }
+    // While remote POV is active, look pull follows the HUD weapon (not host slot).
+    const wpnSpec =
+      remote && this.remoteCamT > 0.2
+        ? this.hudLoadout()[this.hudWeapon()]!
+        : this.loadout[this.heli.weapon]!;
+    const lookPlane =
+      remote && this.remoteCamT > 0.2 && remote.spec.craftLook
+        ? craftControlScheme(craftOf(remote.spec.craftLook)) === "plane"
+        : craftControlScheme(this.heli.spec) === "plane";
+    const look = planeLookCam(wpnSpec, lookPlane);
     const pull = look.pull;
     const max = look.max;
     let ox = (pointerAtFocus.x - this.heli.x) * pull;
@@ -17661,7 +22939,7 @@ specIsShellGun(spec)
   setHudVisible(on: boolean): void {
     this.hud.setVisible(on);
     this.liftPrompt.setVisible(on && this.heli.phase === "ready");
-    this.spectrePrompt.setVisible(on && this.remoteView && !!this.activeRemote());
+    this.spectrePrompt.setVisible(on && !!this.pilotingRemote() && !this.povHudRemote());
     this.hvHud.setVisible(on);
     for (const t of this.hvRows) t.setVisible(on);
     this.wpnHud.setVisible(on);
@@ -17675,6 +22953,10 @@ specIsShellGun(spec)
       // status visibility is owned by drawWeaponHud (auto stations only)
       if (!on) s.status.setVisible(false);
     }
+    this.exitHudSlot.key.setVisible(false);
+    this.exitHudSlot.name.setVisible(false);
+    this.escortHudSlot.key.setVisible(false);
+    this.escortHudSlot.name.setVisible(false);
     this.playerHud.setVisible(on);
     this.heliHudWireSh.setVisible(on);
     this.heliHudWire.setVisible(on);
@@ -17703,6 +22985,7 @@ specIsShellGun(spec)
       this.lockTxt.setVisible(false);
       this.lockInbdTxt.setVisible(false);
       for (const t of this.gpsDistTxt) if (t.active) t.setVisible(false);
+      for (const t of this.callStrikeEtaTxt) if (t.active) t.setVisible(false);
       this.lockHudTxt.setVisible(false);
       this.lockInbdHudTxt.setVisible(false);
       this.lockArrowGfx.clear();
@@ -18150,6 +23433,8 @@ specIsShellGun(spec)
     const style = job.style ?? "dramatic";
     this.stingerStyle = style;
     this.stingerReleased = false;
+    // Held Space (climb) must release before subtle dismiss can fire.
+    this.stingerSpaceArmed = !this.keySpace?.isDown;
     // Ease from current look / focus altitude (e.g. gunship AGL), never snap 2.5D scale.
     this.stingerCamFromX = this.lookCamX;
     this.stingerCamFromY = this.lookCamY;
@@ -18210,12 +23495,21 @@ specIsShellGun(spec)
 
   tickStinger(wallDt: number): void {
     if (this.stingerT <= 0 || !this.stingerRoot) return;
-    if (
-      this.stingerStyle === "subtle" &&
-      !this.stingerReleased &&
-      Phaser.Input.Keyboard.JustDown(this.keySpace)
-    ) {
-      this.releaseSubtleStingerEarly();
+    const elapsedBefore = this.stingerDuration - this.stingerT;
+    if (this.stingerStyle === "subtle" && !this.stingerReleased) {
+      // Spectre POV: Space is unused by the drone and was eating the focus cam
+      // (mission complete is dramatic → no Space dismiss). Keep focus while remoteView.
+      if (this.remoteView) {
+        this.stingerSpaceArmed = false;
+      } else if (!this.stingerSpaceArmed) {
+        if (!this.keySpace.isDown) this.stingerSpaceArmed = true;
+      } else if (
+        // Let arrive finish before Space can drop the focus.
+        elapsedBefore >= 0.55 &&
+        Phaser.Input.Keyboard.JustDown(this.keySpace)
+      ) {
+        this.releaseSubtleStingerEarly();
+      }
     }
     this.stingerT = Math.max(0, this.stingerT - wallDt);
     const elapsed = this.stingerDuration - this.stingerT;
@@ -18233,6 +23527,7 @@ specIsShellGun(spec)
       this.stingerText = undefined;
       this.stingerTarget = undefined;
       this.stingerReleased = false;
+      this.stingerSpaceArmed = false;
       const done = this.stingerDone;
       this.stingerDone = undefined;
       done?.();
@@ -18334,6 +23629,42 @@ function troopMissileTrail(s: Shot): boolean {
 }
 
 
+/** Muted average of the terrain canvas — minimap fill past the playable map edge. */
+function minimapTerrainBgColor(canvas: HTMLCanvasElement): number {
+  const g = canvas.getContext("2d", { willReadFrequently: true });
+  if (!g) return 0x2a2e28;
+  const w = canvas.width;
+  const h = canvas.height;
+  if (w < 1 || h < 1) return 0x2a2e28;
+  const step = Math.max(12, Math.floor(Math.min(w, h) / 48));
+  const pix = g.getImageData(0, 0, w, h).data;
+  let r = 0;
+  let gg = 0;
+  let b = 0;
+  let n = 0;
+  for (let y = 0; y < h; y += step) {
+    for (let x = 0; x < w; x += step) {
+      const o = (y * w + x) * 4;
+      r += pix[o]!;
+      gg += pix[o + 1]!;
+      b += pix[o + 2]!;
+      n++;
+    }
+  }
+  if (!n) return 0x2a2e28;
+  r /= n;
+  gg /= n;
+  b /= n;
+  const lum = 0.299 * r + 0.587 * gg + 0.114 * b;
+  // Desaturate toward terrain luminance, then darken so the map disc still reads.
+  const mute = 0.45;
+  const dark = 0.58;
+  const nr = Math.round(Math.min(255, Math.max(0, (r * (1 - mute) + lum * mute) * dark)));
+  const ng = Math.round(Math.min(255, Math.max(0, (gg * (1 - mute) + lum * mute) * dark)));
+  const nb = Math.round(Math.min(255, Math.max(0, (b * (1 - mute) + lum * mute) * dark)));
+  return (nr << 16) | (ng << 8) | nb;
+}
+
 /** Legacy explode() kind tag for HE vs kinetic FX when payload is absent. */
 function shotKindForExplode(s: Shot): ShotKind {
   if (shotIsGunOrBeam(s)) return s.beh?.launch.mode === "beam" ? "beam" : "cannon";
@@ -18343,7 +23674,38 @@ function shotKindForExplode(s: Shot): ShotKind {
   return "rocket";
 }
 
+/** Bomb / missile / rocket ground scars get embers; guns and beams do not. */
+function shotWantsEmberCrater(shot: Shot | undefined, kind: ShotKind): boolean {
+  if (shot) {
+    if (shotIsGunOrBeam(shot)) return false;
+    const mode = shot.beh?.launch.mode;
+    if (mode === "beam") return false;
+    if (mode === "drop" || mode === "kick_motor") return true;
+    if (shot.beh?.guidance || shot.motor != null) return true;
+    if (shot.beh?.exhaust) return true;
+    const look = shot.look ?? shot.beh?.art.look ?? "";
+    if (/bomb|rocket|missile|photon|mini_rocket/i.test(look)) return true;
+    if (shot.st?.bomblet && !!shot.beh?.payload?.detonate) return true;
+    return false;
+  }
+  return kind === "rocket" || kind === "lock-on-missile" || kind === "guided-missile";
+}
+
 /** Minimal behavior snapshot so enemy trails / gravity read the new exhaust model. */
+/** Minimap: missiles / rockets / seekers — not gun tracers or beams. */
+function shotShowsOnRadar(s: Shot): boolean {
+  // Call-strike shells are tagged bomblet to skip lock HUD, but should still blip.
+  if (s.st?.callStrikeMarkId != null) return true;
+  if (s.st?.bomblet) return false;
+  if (s.beh?.launch.mode === "beam") return false;
+  if (s.beh?.payload?.remote) return false;
+  if (s.beh?.guidance) return true;
+  if (s.motor != null || s.cruise != null) return true;
+  if (s.beh?.exhaust) return true;
+  const look = s.look ?? s.beh?.art.look ?? "";
+  return /missile|guided|rocket|aam|photon|mini_rocket|artillery/i.test(look);
+}
+
 function enemyShotBeh(wpn: {
   look: ShotLook;
   scale: number;
@@ -18380,6 +23742,7 @@ function enemyShotBeh(wpn: {
             kind: "particles",
             size: wpn.trailScale,
             fire: "burn",
+            ...(wpn.kind === "rocket" ? { fireFor: 0.1 } : {}),
             smoke: wpn.kind === "rocket" ? "rocket" : "linger",
             ...(wpn.kind === "rocket" ? { align: "heading" as const } : {}),
           }
@@ -18396,7 +23759,7 @@ function shotTrailScale(s: Shot): number {
   const vis = s.scale ?? 1;
   const ex = s.beh?.exhaust;
   if (!ex || exhaustIsEnergy(ex)) return 0;
-  if (ex.kind === "particles") return vis * (ex.size ?? 1);
+  if (ex.kind === "particles" || ex.kind === "signalFlare") return vis * (ex.size ?? 1);
   return vis;
 }
 
@@ -18547,7 +23910,7 @@ function norm3(x: number, y: number, z: number): { x: number; y: number; z: numb
   return { x: x / n, y: y / n, z: z / n };
 }
 
-/** Shared rail / kick-motor cruise ramp for powered player missiles. */
+/** Shared rail / kick-motor / Hydra boost cruise ramp for powered player shots. */
 function motorizedSpeed(s: Shot, beh: NonNullable<Shot["beh"]>, dt: number): number {
   const cur = Math.hypot(s.vx, s.vy, s.vz);
   if (beh.launch.mode === "kick_motor" && beh.launch.acceleration === 0) {
@@ -18556,7 +23919,14 @@ function motorizedSpeed(s: Shot, beh: NonNullable<Shot["beh"]>, dt: number): num
   }
   const launch = beh.launch;
   if (launch.mode === "muzzle" && launch.acceleration != null) {
-    const spd = Math.min(beh.cruiseSpeed * 1.2, cur + launch.acceleration * dt);
+    const burnT = launch.burnTime;
+    const age = s.st?.age ?? 0;
+    // Boost-then-coast rockets: hold speed after motor burnout.
+    if (burnT != null && age >= burnT) {
+      s.cruise = beh.cruiseSpeed;
+      return cur;
+    }
+    const spd = Math.min(beh.cruiseSpeed * 1.05, cur + launch.acceleration * dt);
     s.cruise = beh.cruiseSpeed;
     return spd;
   }

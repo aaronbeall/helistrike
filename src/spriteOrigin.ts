@@ -14,7 +14,8 @@ export type SpritePointRole =
   | "hardpoint"
   | "exhaust"
   | "muzzle"
-  | "wingtip";
+  | "wingtip"
+  | "antenna";
 
 export interface SpritePoint {
   role: SpritePointRole;
@@ -75,12 +76,21 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
   craft_apache_rotor_hulk: { origin: uv(0.5, 0.5) },
   // Shared turret gun bodies (barrel-up); no swivel-track art.
   gun_gatling: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.05 }] },
+  gun_dual_chain: {
+    origin: uv(0.499, 0.753),
+    points: [
+      { role: "muzzle", x: 0.294, y: 0.025 },
+      { role: "muzzle", x: 0.693, y: 0.025 },
+    ],
+  },
   gun_minigun: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.05 }] },
   gun_machine: { origin: uv(0.425, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.06 }] },
   gun_artillery: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.04 }] },
   gun_railgun: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.04 }] },
   gun_plasma: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.05 }] },
   gun_tesla: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.05 }] },
+  /** Top-down pilot / observer for flare-gun style mounts (barrel-up). */
+  gun_pilot: { origin: uv(0.5, 0.64), points: [{ role: "muzzle", x: 0.5, y: 0.04 }] },
 
   // —— Selectable craft (stub mounts — tune in sprite/roster rig) ——
   craft_littlebird: {
@@ -223,6 +233,154 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
       { role: "wingtip", x: 0.995, y: 0.747, id: "wingtip_r" },
       ...pts("exhaust", [uv(0.499, 0.913)]),
     ],
+  },
+  craft_airship: {
+    origin: uv(0.5, 0.52),
+    points: [
+      // Deck .50 turrets (composited overlays).
+      { role: "gun", x: 0.357, y: 0.179, id: "bow_l" },
+      { role: "gun", x: 0.638, y: 0.179, id: "bow_r" },
+      { role: "gun", x: 0.178, y: 0.585, id: "flank_l" },
+      { role: "gun", x: 0.815, y: 0.586, id: "flank_r" },
+      // Propeller hubs — blades spun via rotor overlays.
+      { role: "rotor", x: 0.498, y: 0.009, scale: 0.7, id: "bow" },
+      { role: "rotor", x: 0.072, y: 0.329, scale: 0.85, id: "nacelle_l_fwd" },
+      { role: "rotor", x: 0.922, y: 0.329, scale: 0.85, id: "nacelle_r_fwd" },
+      { role: "rotor", x: 0.07, y: 0.537, scale: 0.85, id: "nacelle_l_aft" },
+      { role: "rotor", x: 0.926, y: 0.538, scale: 0.85, id: "nacelle_r_aft" },
+      { role: "rotor", x: 0.498, y: 0.99, scale: 0.75, id: "stern" },
+      // Starstreak tube grid (L/R columns, forward → aft).
+      { role: "hardpoint", x: 0.235, y: 0.697, id: "star_l0" },
+      { role: "hardpoint", x: 0.761, y: 0.697, id: "star_r0" },
+      { role: "hardpoint", x: 0.271, y: 0.71, id: "star_l1" },
+      { role: "hardpoint", x: 0.724, y: 0.711, id: "star_r1" },
+      { role: "hardpoint", x: 0.237, y: 0.728, id: "star_l2" },
+      { role: "hardpoint", x: 0.761, y: 0.729, id: "star_r2" },
+      { role: "hardpoint", x: 0.271, y: 0.744, id: "star_l3" },
+      { role: "hardpoint", x: 0.724, y: 0.743, id: "star_r3" },
+      { role: "hardpoint", x: 0.235, y: 0.762, id: "star_l4" },
+      { role: "hardpoint", x: 0.763, y: 0.76, id: "star_r4" },
+      { role: "hardpoint", x: 0.496, y: 0.728, id: "skiff" },
+      ...pts("exhaust", [uv(0.378, 0.884), uv(0.616, 0.884)]),
+    ],
+  },
+  // Steampunk airship wingman skiff (fixed-wing).
+  craft_skiff: {
+    origin: uv(0.5, 0.52),
+    points: [
+      { role: "muzzle", x: 0.44, y: 0.18 },
+      { role: "muzzle", x: 0.56, y: 0.18 },
+      { role: "rotor", x: 0.5, y: 0.08, id: "prop" },
+      { role: "hardpoint", x: 0.22, y: 0.48, id: "wing_l" },
+      { role: "hardpoint", x: 0.78, y: 0.48, id: "wing_r" },
+      ...pts("exhaust", [uv(0.5, 0.9)]),
+    ],
+  },
+  craft_skiff_hulk: {
+    origin: uv(0.5, 0.52),
+  },
+  // Steampunk Raptor fighter — POV remote.
+  craft_raptor: {
+    origin: uv(0.5, 0.5),
+    points: [
+      { role: "muzzle", x: 0.339, y: 0.238 },
+      { role: "muzzle", x: 0.625, y: 0.238 },
+      { role: "rotor", x: 0.5, y: 0.06, id: "prop" },
+      { role: "hardpoint", x: 0.208, y: 0.533, id: "wing_l" },
+      { role: "hardpoint", x: 0.756, y: 0.533, id: "wing_r" },
+      { role: "hardpoint", x: 0.5, y: 0.62, id: "bay" },
+      { role: "wingtip", x: 0.003, y: 0.744, id: "wingtip_l" },
+      { role: "wingtip", x: 0.955, y: 0.748, id: "wingtip_r" },
+      { role: "exhaust", x: 0.482, y: 0.901 },
+    ],
+  },
+  craft_raptor_hulk: {
+    origin: uv(0.5, 0.5),
+  },
+  craft_biplane: {
+    origin: uv(0.5, 0.5),
+    points: [
+      { role: "muzzle", x: 0.452, y: 0.107 },
+      { role: "muzzle", x: 0.54, y: 0.107 },
+      // Nose tip (sprite nose-up).
+      { role: "rotor", x: 0.5, y: 0.045, id: "prop" },
+      // Lower-wing forward hardpoints.
+      { role: "hardpoint", x: 0.18, y: 0.40, id: "wing_l" },
+      { role: "hardpoint", x: 0.82, y: 0.40, id: "wing_r" },
+      { role: "hardpoint", x: 0.5, y: 0.58, id: "bay" },
+      // Cockpit center — artillery-strike flare gun / observer.
+      { role: "gun", x: 0.5, y: 0.48, id: "cockpit" },
+    ],
+  },
+  craft_reaper: {
+    origin: uv(0.5, 0.48),
+    points: [
+      ...pts("hardpoint", [uv(0.28, 0.52), uv(0.4, 0.5), uv(0.6, 0.5), uv(0.72, 0.52)]),
+      { role: "wingtip", x: 0.02, y: 0.5, id: "wingtip_l" },
+      { role: "wingtip", x: 0.98, y: 0.5, id: "wingtip_r" },
+      ...pts("exhaust", [uv(0.5, 0.88)]),
+    ],
+  },
+  craft_hover_tank: {
+    origin: uv(0.5, 0.55),
+    points: [
+      { role: "muzzle", x: 0.385, y: 0.115 },
+      { role: "muzzle", x: 0.611, y: 0.115 },
+      { role: "gun", x: 0.498, y: 0.517, id: "main" },
+      // Coax .50 sits on the same cupola as the main rail turret.
+      { role: "gun", x: 0.498, y: 0.517, id: "coax" },
+      { role: "hardpoint", x: 0.103, y: 0.425, id: "wing_l" },
+      { role: "hardpoint", x: 0.896, y: 0.425, id: "wing_r" },
+      { role: "exhaust", x: 0.311, y: 0.922 },
+      { role: "exhaust", x: 0.685, y: 0.922 },
+    ],
+  },
+  craft_hover_tank_turret: {
+    origin: uv(0.496, 0.792),
+    points: [
+      { role: "muzzle", x: 0.335, y: 0.028 },
+      { role: "muzzle", x: 0.653, y: 0.028 },
+    ],
+  },
+  // HOUND AGV chassis (gun is a separate overlay).
+  craft_hound: {
+    origin: uv(0.5, 0.55),
+    points: [
+      { role: "gun", x: 0.5, y: 0.5, id: "main" },
+      // Rear deck above the vent row — whip antenna base.
+      { role: "antenna", x: 0.58, y: 0.78, id: "whip" },
+    ],
+  },
+  // Rugged olive + sparse red mil markings; bulky glazed cockpit module.
+  craft_vtol_dropship_v2: {
+    origin: uv(0.5, 0.5),
+    points: [
+      { role: "gun", x: 0.5, y: 0.09, id: "chin" },
+      // Side miniguns L/R under hull; dorsal on the spine.
+      { role: "gun", x: 0.164, y: 0.545, id: "side_l" },
+      { role: "gun", x: 0.838, y: 0.545, id: "side_r" },
+      { role: "gun", x: 0.5, y: 0.358, id: "dorsal" },
+      { role: "gun", x: 0.499, y: 0.617, id: "howitzer" },
+      // Outer pylons, then inner wing pods.
+      { role: "hardpoint", x: 0.05, y: 0.494, id: "wing_l0" },
+      { role: "hardpoint", x: 0.949, y: 0.495, id: "wing_r0" },
+      { role: "hardpoint", x: 0.165, y: 0.458, id: "wing_l1" },
+      { role: "hardpoint", x: 0.835, y: 0.458, id: "wing_r1" },
+      { role: "hardpoint", x: 0.499, y: 0.879, id: "ramp" },
+      { role: "rotor", x: 0.238, y: 0.257, scale: 0.4, id: "fwd_l" },
+      { role: "rotor", x: 0.76, y: 0.255, scale: 0.4, id: "fwd_r" },
+      { role: "rotor", x: 0.271, y: 0.508, scale: 0.6, id: "main_l" },
+      { role: "rotor", x: 0.724, y: 0.508, scale: 0.6, id: "main_r" },
+      { role: "exhaust", x: 0.2, y: 0.666 },
+      { role: "exhaust", x: 0.24, y: 0.666 },
+      { role: "exhaust", x: 0.279, y: 0.665 },
+      { role: "exhaust", x: 0.717, y: 0.665 },
+      { role: "exhaust", x: 0.76, y: 0.665 },
+      { role: "exhaust", x: 0.793, y: 0.665 },
+    ],
+  },
+  craft_vtol_dropship_v2_hulk: {
+    origin: uv(0.5, 0.5),
   },
 
   craft_cyberhawk_rotor: { origin: uv(0.498, 0.459) },

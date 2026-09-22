@@ -7,6 +7,7 @@ import { registerArt } from "./sprites";
  *
  * Reference sequence: hot yellow/orange fire → brown smoke wraps → dust fragments.
  * Hard cel bands, soft outer bloom, crescent cutaways; cools over the clip.
+ * Cel silhouettes get a blur→clamp pass so jagged edges become slight banded curves.
  */
 
 export const TOON_BLAST_KEY = "fx_toon_blast";
@@ -16,17 +17,34 @@ export function toonBlastKey(variant = 0): string {
   return `${TOON_BLAST_KEY}_${variant}`;
 }
 
+export const TOON_EASE_NAMES = ["out", "in", "inOut"] as const;
+export type ToonEaseName = (typeof TOON_EASE_NAMES)[number];
+
 export type ToonBlastParams = {
   // —— explosion ——
   size: number;
   frames: number;
   cutStart: number;
   easePower: number;
+  /** Cluster travel / blob spread. */
+  easeCluster: ToonEaseName;
+  /** Spark streak travel + shrink + wipe. */
+  easeSpark: ToonEaseName;
+  /** Layer cutaway holes. */
+  easeCut: ToonEaseName;
+  /** Fire→smoke→dust cool curve. */
+  easeCool: ToonEaseName;
+  /** Late dust blob stretch. */
+  easeDust: ToonEaseName;
   /** 0 = stays hot; 1 = fully cools to dust by end. */
   coolAmount: number;
   /** Soft bloom strength early in the clip. */
   bloomStrength: number;
   bloomSize: number;
+  /** Blur radius (px) before palette/alpha clamp — softens hard cel outlines. */
+  edgeBlur: number;
+  /** Alpha quantization steps after blur (1 = hard cut, 3–4 = slight banded curves). */
+  edgeBands: number;
 
   // —— cluster ——
   largeClusters: number;
@@ -96,9 +114,16 @@ export const TOON_BLAST_DEFAULTS: ToonBlastParams = {
   frames: 36,
   cutStart: 0.2,
   easePower: 5,
+  easeCluster: "out",
+  easeSpark: "out",
+  easeCut: "out",
+  easeCool: "in",
+  easeDust: "in",
   coolAmount: 1,
   bloomStrength: 0.45,
   bloomSize: 1.35,
+  edgeBlur: 2.2,
+  edgeBands: 3,
 
   largeClusters: 3,
   smallClusters: 3,
@@ -197,6 +222,19 @@ function easeInHeavy(t: number, power: number): number {
   return Math.pow(x, power);
 }
 
+/** Slow → fast mid → slow. Same power family as in/out. */
+function easeInOutHeavy(t: number, power: number): number {
+  const x = Math.max(0, Math.min(1, t));
+  if (x < 0.5) return 0.5 * Math.pow(2 * x, power);
+  return 1 - 0.5 * Math.pow(2 * (1 - x), power);
+}
+
+function easeByName(t: number, power: number, mode: ToonEaseName): number {
+  if (mode === "in") return easeInHeavy(t, power);
+  if (mode === "inOut") return easeInOutHeavy(t, power);
+  return easeOutHeavy(t, power);
+}
+
 export function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
@@ -251,7 +289,7 @@ function layerColor(p: ToonBlastParams, layer: ToonLayerId): number {
 
 /** Global heat 1→0 over the clip (drives fire→smoke→dust). */
 function heatAt(t: number, p: ToonBlastParams): number {
-  return 1 - p.coolAmount * easeInHeavy(t, 1.6);
+  return 1 - p.coolAmount * easeByName(t, 1.6, p.easeCool);
 }
 
 export function makeToonClusters(rng: () => number, p: ToonBlastParams = toonBlastParams): ToonCluster[] {
@@ -408,7 +446,7 @@ function blobAt(
   // —— Sparks: single heavily eased progress drives travel + shrink + wipe ——
   if (cluster.spark) {
     const life = Math.max(0.08, cluster.lifeScale * blob.durScale);
-    const u = easeOutHeavy(Math.min(1, t / life), Math.max(4, p.easePower));
+    const u = easeByName(Math.min(1, t / life), Math.max(4, p.easePower), p.easeSpark);
 
     const tipDist = cluster.dist0 + (cluster.dist1 - cluster.dist0) * u;
     // Base starts at center and catches the tip — length collapses with the same u.
@@ -436,7 +474,11 @@ function blobAt(
     };
   }
 
-  const spread = easeOutHeavy(Math.min(1, t / Math.max(0.05, cluster.motionScale)), p.easePower);
+  const spread = easeByName(
+    Math.min(1, t / Math.max(0.05, cluster.motionScale)),
+    p.easePower,
+    p.easeCluster
+  );
   const dist = cluster.dist0 + (cluster.dist1 - cluster.dist0) * spread;
   const bias = p.clusterVerticalBias * (1 - spread * 0.65);
   const dx = flightX * dist * (1 - bias * 0.25);
@@ -450,7 +492,7 @@ function blobAt(
   const y = ccy + Math.sin(blob.localAng) * blob.localDist * localSpread;
   const scaleMul = p.blobScaleStart + (p.blobScaleEnd - p.blobScaleStart) * spread;
   const r = blob.rMax * scaleMul;
-  const dustStretch = 1 + easeInHeavy(t, 2.2) * 0.35;
+  const dustStretch = 1 + easeByName(t, 2.2, p.easeDust) * 0.35;
   const stretch = blob.stretch * dustStretch;
 
   const towardX = Math.cos(blob.orient);
@@ -463,7 +505,7 @@ function blobAt(
     for (const layer of LAYER_ORDER) {
       const { start, end } = layerCutOf(p, layer);
       const span = Math.max(0.001, end - start);
-      cutT[layer] = easeOutHeavy((local - start) / span, p.easePower);
+      cutT[layer] = easeByName((local - start) / span, p.easePower, p.easeCut);
     }
   }
 
@@ -589,6 +631,72 @@ function drawBloom(
   g.fill();
 }
 
+/**
+ * Blur the cel layer, then snap RGB to the palette and quantize alpha.
+ * Soft transitional pixels at outlines become slight stepped curves instead of jaggies.
+ */
+function smoothCelEdges(c: HTMLCanvasElement, p: ToonBlastParams): void {
+  const blur = Math.max(0, p.edgeBlur);
+  const bands = Math.max(1, Math.round(p.edgeBands));
+  if (blur < 0.05 && bands <= 1) return;
+
+  const w = c.width;
+  const h = c.height;
+  const soft = document.createElement("canvas");
+  soft.width = w;
+  soft.height = h;
+  const gs = soft.getContext("2d", { willReadFrequently: true })!;
+  if (blur >= 0.05) {
+    gs.filter = `blur(${blur.toFixed(2)}px)`;
+    gs.drawImage(c, 0, 0);
+    gs.filter = "none";
+  } else {
+    gs.drawImage(c, 0, 0);
+  }
+
+  const palette = [p.colYellow, p.colOrange, p.colSmoke, p.colShadow].map(unpackRgb);
+  const pix = gs.getImageData(0, 0, w, h);
+  const d = pix.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const a0 = d[i + 3]! / 255;
+    if (a0 < 0.02) {
+      d[i] = d[i + 1] = d[i + 2] = d[i + 3] = 0;
+      continue;
+    }
+    // Quantize coverage into bands — blur creates mid-alphas that become soft steps.
+    const aq = bands <= 1 ? (a0 >= 0.45 ? 1 : 0) : Math.round(a0 * bands) / bands;
+    if (aq < 0.02) {
+      d[i] = d[i + 1] = d[i + 2] = d[i + 3] = 0;
+      continue;
+    }
+    const r = d[i]!;
+    const gch = d[i + 1]!;
+    const b = d[i + 2]!;
+    let best = 0;
+    let bestD = Infinity;
+    for (let k = 0; k < palette.length; k++) {
+      const [pr, pg, pb] = palette[k]!;
+      const dr = r - pr;
+      const dg = gch - pg;
+      const db = b - pb;
+      const dist = dr * dr + dg * dg + db * db;
+      if (dist < bestD) {
+        bestD = dist;
+        best = k;
+      }
+    }
+    const [pr, pg, pb] = palette[best]!;
+    d[i] = pr;
+    d[i + 1] = pg;
+    d[i + 2] = pb;
+    d[i + 3] = Math.round(aq * 255);
+  }
+
+  const g = c.getContext("2d", { willReadFrequently: true })!;
+  g.clearRect(0, 0, w, h);
+  g.putImageData(pix, 0, 0);
+}
+
 export function renderToonBlastFrame(
   clusters: ToonCluster[],
   t: number,
@@ -623,16 +731,23 @@ export function renderToonBlastFrame(
     }
   }
 
-  // Soft bloom behind (fades as it cools).
+  // Soft bloom behind (stays unclamped — only cel bands get blur→snap).
   drawBloom(g, cx, cy, Math.max(24, span * 0.9), p.bloomStrength * heat, p);
 
+  const cel = document.createElement("canvas");
+  cel.width = size;
+  cel.height = size;
+  const gCel = cel.getContext("2d", { willReadFrequently: true })!;
+  gCel.imageSmoothingEnabled = true;
   for (const layer of LAYER_ORDER) {
     for (const state of states) {
       if (drawBlobLayer(scratch, gScratch, state, layer, p, heat)) {
-        g.drawImage(scratch, 0, 0);
+        gCel.drawImage(scratch, 0, 0);
       }
     }
   }
+  smoothCelEdges(cel, p);
+  g.drawImage(cel, 0, 0);
   return c;
 }
 

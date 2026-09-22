@@ -4,10 +4,11 @@
  */
 import type Phaser from "phaser";
 import { PLAYER_WPNS, type PlayerWpnSpec } from "./combat";
-import { allCraftKinds, craftGunTexture, craftOf } from "./craft";
+import { allCraftHullKinds, craftGunTexture, craftOf } from "./craft";
 import { bakeAllArtGens } from "./artGen";
 import { allKinds, gunsOf, specOf, type UnitKind } from "./roster";
 import { bakeShadows, bakeThermalHeatFromDarkness, registerArt, FX_SHEET_SIZE } from "./sprites";
+import { drawTracerShape, type TracerRgb, type TracerShapeOpts } from "./tracerArt";
 
 type Ctx = CanvasRenderingContext2D;
 
@@ -152,151 +153,6 @@ function drawBlastStamp(variant: number, size = 80): HTMLCanvasElement {
   return c;
 }
 
-type TracerRgb = [number, number, number];
-
-function drawTracerShape(opts: {
-  w: number;
-  h: number;
-  core: TracerRgb;
-  mid: TracerRgb;
-  rim: TracerRgb;
-  /** 0 = soft tear tracer, 1 = blunt slug. */
-  blunt?: number;
-  glow?: number;
-  twin?: boolean;
-  shape?: "tear" | "bolt" | "orb";
-}): HTMLCanvasElement {
-  const { w, h, core, mid, rim } = opts;
-  const blunt = opts.blunt ?? 0;
-  const glow = opts.glow ?? 0.55;
-  const shape = opts.shape ?? "tear";
-  const c = canvas(w, h);
-  const g = ctxOf(c);
-  const cy = h / 2;
-  const headX =
-    shape === "orb" ? w * 0.56 : shape === "bolt" ? w * 0.86 : w * (0.76 + blunt * 0.06);
-  const headR =
-    shape === "orb" ? h * 0.34 : shape === "bolt" ? h * 0.16 : h * (0.26 + blunt * 0.08);
-  const tailX = shape === "orb" ? w * 0.18 : w * 0.05;
-  const rgb = (ch: TracerRgb, a: number) => `rgba(${ch[0]},${ch[1]},${ch[2]},${a})`;
-
-  const tear = (scaleX: number, scaleY: number) => {
-    const hx = headX;
-    const hr = headR * scaleY;
-    g.beginPath();
-    g.moveTo(tailX + (1 - scaleX) * (hx - tailX) * 0.15, cy);
-    g.bezierCurveTo(
-      w * 0.3,
-      cy - h * 0.1 * scaleY,
-      hx - hr * 1.35,
-      cy - hr,
-      hx,
-      cy - hr
-    );
-    if (blunt > 0.55) {
-      g.lineTo(hx + hr * (0.55 + blunt * 0.35), cy - hr * 0.35);
-      g.lineTo(hx + hr * (0.55 + blunt * 0.35), cy + hr * 0.35);
-      g.lineTo(hx, cy + hr);
-    } else {
-      g.quadraticCurveTo(hx + hr * 1.2 * scaleX, cy, hx, cy + hr);
-    }
-    g.bezierCurveTo(
-      hx - hr * 1.35,
-      cy + hr,
-      w * 0.3,
-      cy + h * 0.1 * scaleY,
-      tailX + (1 - scaleX) * (hx - tailX) * 0.15,
-      cy
-    );
-    g.closePath();
-  };
-
-  const bolt = (scaleX: number, scaleY: number) => {
-    const half = h * 0.26 * scaleY;
-    const waist = h * 0.12 * scaleY;
-    const nose = w * 0.93 * scaleX + (1 - scaleX) * w * 0.5;
-    const body = w * 0.38;
-    const chin = w * 0.72;
-    const tail = w * 0.07;
-    g.beginPath();
-    g.moveTo(tail, cy);
-    g.lineTo(tail + w * 0.1, cy - waist);
-    g.lineTo(body, cy - half);
-    g.lineTo(chin, cy - half);
-    g.lineTo(nose, cy);
-    g.lineTo(chin, cy + half);
-    g.lineTo(body, cy + half);
-    g.lineTo(tail + w * 0.1, cy + waist);
-    g.closePath();
-  };
-
-  const orb = (scaleX: number, scaleY: number) => {
-    g.beginPath();
-    g.ellipse(w * 0.56, cy, w * 0.34 * scaleX, h * 0.36 * scaleY, 0, 0, Math.PI * 2);
-    g.closePath();
-  };
-
-  const profile = (scaleX: number, scaleY: number) => {
-    if (shape === "bolt") bolt(scaleX, scaleY);
-    else if (shape === "orb") orb(scaleX, scaleY);
-    else tear(scaleX, scaleY);
-  };
-
-  const paint = () => {
-    const along = g.createLinearGradient(tailX, cy, headX + headR, cy);
-    along.addColorStop(0, rgb(rim, shape === "orb" ? 0.15 : 0));
-    along.addColorStop(0.22, rgb(rim, 0.22));
-    along.addColorStop(0.55, rgb(mid, 0.85));
-    along.addColorStop(0.82, rgb(core, 1));
-    along.addColorStop(1, rgb(core, 0.15));
-
-    g.save();
-    profile(1.06, 1.12);
-    g.fillStyle = rgb(rim, 0.28);
-    g.fill();
-    g.restore();
-
-    profile(1, 1);
-    g.fillStyle = along;
-    g.fill();
-
-    const coreGrad = g.createRadialGradient(headX, cy, 0, headX, cy, headR * 1.15);
-    coreGrad.addColorStop(0, rgb(core, 1));
-    coreGrad.addColorStop(0.45, rgb(mid, 0.7));
-    coreGrad.addColorStop(1, rgb(rim, 0));
-    g.beginPath();
-    if (shape === "bolt") {
-      g.moveTo(headX + headR * 1.4, cy);
-      g.lineTo(headX - headR * 0.4, cy - headR);
-      g.lineTo(headX - headR * 0.4, cy + headR);
-      g.closePath();
-    } else {
-      g.arc(headX, cy, headR * 1.05, 0, Math.PI * 2);
-    }
-    g.fillStyle = coreGrad;
-    g.fill();
-
-    g.fillStyle = rgb([255, 255, 255], glow);
-    g.beginPath();
-    g.ellipse(headX + headR * 0.12, cy - headR * 0.12, headR * 0.28, headR * 0.18, -0.4, 0, Math.PI * 2);
-    g.fill();
-  };
-
-  if (opts.twin) {
-    g.save();
-    g.translate(0, -h * 0.18);
-    paint();
-    g.restore();
-    g.save();
-    g.translate(0, h * 0.18);
-    paint();
-    g.restore();
-  } else {
-    paint();
-  }
-  return c;
-}
-
 /** Stable hue/shape seed from weapon id (unique cannon looks without authored PNGs). */
 function hashHue(id: string): number {
   let h = 2166136261;
@@ -307,7 +163,7 @@ function hashHue(id: string): number {
   return (h >>> 0) % 360;
 }
 
-function cannonTracerOpts(spec: PlayerWpnSpec): Parameters<typeof drawTracerShape>[0] {
+function cannonTracerOpts(spec: PlayerWpnSpec): TracerShapeOpts {
   if (spec.art.tracer) return spec.art.tracer;
   const hue = hashHue(spec.id);
   const rgbAt = (h: number, s: number, l: number): TracerRgb => {
@@ -351,7 +207,7 @@ export function bakePlayerCannonLooks(textures: Phaser.Textures.TextureManager):
 
 /** Enemy bullet tracers — replace legacy mini-rocket / AAM placeholder looks. */
 export function bakeEnemyCannonLooks(textures: Phaser.Textures.TextureManager): void {
-  const presets: { key: string; opts: Parameters<typeof drawTracerShape>[0] }[] = [
+  const presets: { key: string; opts: TracerShapeOpts }[] = [
     {
       key: "shot_cannon_enemy_mg",
       opts: {
@@ -626,7 +482,7 @@ function collectArtKeys(): string[] {
       addKey(sp.dish.hulk);
     }
   }
-  for (const kind of allCraftKinds()) {
+  for (const kind of allCraftHullKinds()) {
     const c = craftOf(kind);
     addKey(c.body);
     addKey(c.hulk);

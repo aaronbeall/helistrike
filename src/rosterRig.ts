@@ -38,6 +38,14 @@ import {
   type WeaponSpec,
 } from "./roster";
 import {
+  allRemoteKinds,
+  remoteRotorParts,
+  remoteSpecOf,
+  type RemoteKind,
+  type RemoteSpec,
+} from "./remote";
+import { PLAYER_WPNS, type PlayerWpnSpec } from "./combat";
+import {
   lookupSpriteOrigin,
   lookupSpritePoints,
   rigMuzzleMarkRadius,
@@ -70,8 +78,8 @@ const PART_SLOTS = 16;
 const LABEL_SLOTS = 16;
 const SHOT_SLOTS = 4;
 
-type Filter = "all" | "ground" | "air" | "water" | "building" | "troop";
-const FILTERS: Filter[] = ["all", "ground", "air", "water", "building", "troop"];
+type Filter = "all" | "ground" | "air" | "water" | "building" | "troop" | "remote";
+const FILTERS: Filter[] = ["all", "ground", "air", "water", "building", "troop", "remote"];
 
 type Composition = "assembled" | "separated";
 
@@ -96,12 +104,15 @@ type SpriteHit = {
   py: number;
 };
 
-/** Roster list row — playable craft or enemy unit. */
-type RosterEntry = { cat: "craft"; kind: CraftKind } | { cat: "unit"; kind: UnitKind };
+/** Roster list row — playable craft, enemy unit, or player remote pod. */
+type RosterEntry =
+  | { cat: "craft"; kind: CraftKind }
+  | { cat: "unit"; kind: UnitKind }
+  | { cat: "remote"; kind: RemoteKind };
 
 /**
- * Lazy debug browser for CRAFTS + SPECS — list, live preview (hull + parts),
- * and a stats dump from the real craft / unit sources.
+ * Lazy debug browser for CRAFTS + REMOTE_CRAFTS + SPECS — list, live preview
+ * (hull + parts), and a stats dump from the real craft / remote / unit sources.
  */
 export class RosterRig {
   open = false;
@@ -414,7 +425,7 @@ export class RosterRig {
     const page = this.pageOf(this.idx);
     const start = page * size;
     const slice = entries.slice(start, start + size);
-    const totalN = allCraftKinds().length + allKinds().length;
+    const totalN = allCraftKinds().length + allKinds().length + allRemoteKinds().length;
     this.listTxt.setText(
       [
         `— ${this.filter.toUpperCase()}  ${page + 1} / ${pages}  (${entries.length}/${totalN}) —`,
@@ -425,12 +436,17 @@ export class RosterRig {
             const active = e.kind === craftKind() ? " ★" : "";
             return `${mark} ${c.name.padEnd(16)} PLY${active}`;
           }
+          if (e.cat === "remote") {
+            const r = remoteSpecOf(e.kind);
+            return `${mark} ${r.name.padEnd(16)} REM`;
+          }
           return `${mark} ${labelOf(e.kind).padEnd(16)} ${categoryTag(e.kind)}`;
         }),
       ].join("\n")
     );
 
     if (ent.cat === "craft") this.layoutCraftPreview(craftOf(ent.kind));
+    else if (ent.cat === "remote") this.layoutRemotePreview(remoteSpecOf(ent.kind));
     else this.layoutPreview(ent.kind, specOf(ent.kind));
     syncRigSystemCursor(this.scene, this.uvAt(this.scene.input.activePointer) ? "crosshair" : "default");
   }
@@ -448,15 +464,134 @@ export class RosterRig {
       this.filter === "all" || this.filter === "air"
         ? allCraftKinds().map((kind) => ({ cat: "craft" as const, kind }))
         : [];
+    const remotes: RosterEntry[] = allRemoteKinds()
+      .filter((k) => matchesRemoteFilter(remoteSpecOf(k), this.filter))
+      .map((kind) => ({ cat: "remote" as const, kind }));
     const units: RosterEntry[] = allKinds()
       .filter((k) => matchesFilter(k, this.filter))
       .map((kind) => ({ cat: "unit" as const, kind }));
-    return [...crafts, ...units];
+    // Remotes after crafts (player-side pods), before world units.
+    return [...crafts, ...remotes, ...units];
   }
 
   private refreshPreview(): void {
     if (!this.open || !this.built) return;
     this.update();
+  }
+
+  private layoutRemotePreview(remote: RemoteSpec): void {
+    const w = this.scene.scale.width;
+    const h = this.scene.scale.height;
+    const tex = remote.look;
+    const listRight = LIST_X + LIST_W + 20;
+    const gap = 28;
+    const block = formatRemote(remote);
+    this.pendingStats = block.stats;
+    this.pendingInfo = block.info;
+
+    if (!this.scene.textures.exists(tex)) {
+      this.hull.setVisible(false);
+      for (const p of this.parts) p.setVisible(false);
+      for (const s of this.shots) s.setVisible(false);
+      this.board.clear();
+      this.overlay.clear();
+      for (const t of this.mountLabels) t.setVisible(false);
+      this.statsXY = { x: listRight, y: LIST_Y };
+      this.applyStatsPanel(tex);
+      return;
+    }
+
+    const pivot = lookupSpriteOrigin(tex) ?? spritePivot(tex);
+    const s = this.zoom;
+    const rotOff =
+      remote.rotOff ?? (remote.craftLook ? craftOf(remote.craftLook).rotOff : Math.PI / 2);
+    const parts: PreviewPart[] = [];
+
+    for (const rotor of remoteRotorParts(remote)) {
+      const spinKey = rotor.spinTex;
+      const rotorKey =
+        spinKey && this.scene.textures.exists(spinKey) ? spinKey : rotor.tex;
+      parts.push({
+        tex: rotorKey,
+        origin: rotor.origin,
+        mount: rotor.mount,
+        rot: 0,
+        scale: 1,
+        ...(rotor.drawSpan != null ? { drawSpan: rotor.drawSpan } : {}),
+        layer: rotor.layer,
+      });
+    }
+
+    if (remote.gun && remote.gunTex && this.scene.textures.exists(remote.gunTex)) {
+      const gunPts = lookupSpritePoints(tex, "gun");
+      const mount = gunPts[0] ?? { x: 0.5, y: 0.5 };
+      const gOrig = lookupSpriteOrigin(remote.gunTex) ?? { x: 0.5, y: 0.7 };
+      // In-game: body uses `scale`, gun uses `gunScale` (both × perspective).
+      // Roster hull is at zoom 1× — gun part scale must be gunScale/bodyScale.
+      const bodySc = Math.max(0.01, remote.scale);
+      parts.push({
+        tex: remote.gunTex,
+        origin: gOrig,
+        mount: { x: mount.x, y: mount.y },
+        rot: 0,
+        scale: (remote.gunScale ?? 0.55) / bodySc,
+        layer: "above",
+      });
+    }
+
+    if (this.composition === "separated") {
+      this.layoutSeparated({
+        hullTex: tex,
+        pivot,
+        rotOff,
+        parts,
+        radius: remote.radius,
+        height: remote.height,
+        listRight,
+        gap,
+        w,
+        h,
+        showShots: false,
+        wpns: [],
+        zoom: s,
+      });
+      return;
+    }
+
+    this.hull.setVisible(true).setTexture(tex);
+    this.hull.setOrigin(pivot.x, pivot.y);
+    this.hull.setScale(s);
+    this.hull.setRotation(0);
+
+    const bw = this.hull.displayWidth;
+    const bh = this.hull.displayHeight;
+    const boxW = bw;
+    const boxH = bh;
+    const pad = 10;
+    const cx = listRight + pad + boxW * 0.5;
+    const cy = Math.min(LIST_Y + pad + boxH * 0.5, h - pad - boxH * 0.5);
+    this.hull.setPosition(cx, cy);
+
+    const bx = cx - boxW * 0.5;
+    const by = cy - boxH * 0.5;
+    const statsX = Math.min(bx + boxW + gap, w - STATS_W - 16);
+    this.statsXY = { x: statsX, y: Math.max(LIST_Y, by) };
+    this.applyStatsPanel(tex);
+
+    this.drawPreviewBoard(bx, by, boxW, boxH, pad);
+    this.placeMountedParts(parts, pivot, cx, cy, s);
+    for (const im of this.shots) im.setVisible(false);
+
+    this.drawHullMarks({
+      radius: remote.radius,
+      height: remote.height,
+      rotOff,
+      pivot,
+      cx,
+      cy,
+      s,
+      hullTex: tex,
+    });
   }
 
   private layoutCraftPreview(craft: CraftSpec): void {
@@ -753,6 +888,9 @@ export class RosterRig {
       scale: number;
       boxW: number;
       boxH: number;
+      /** Origin offset from board top-left (handles non-center pivots). */
+      originOffX: number;
+      originOffY: number;
       isHull: boolean;
       squashY?: number;
       part?: PreviewPart;
@@ -764,8 +902,13 @@ export class RosterRig {
     this.hull.setScale(s);
     this.hull.setRotation(0);
     {
-      const boxW = this.hull.displayWidth;
-      const boxH = this.hull.displayHeight;
+      const { boxW, boxH, originOffX, originOffY } = aabbOfAnchored(
+        this.hull.displayWidth,
+        this.hull.displayHeight,
+        opts.pivot.x,
+        opts.pivot.y,
+        0
+      );
       cells.push({
         im: this.hull,
         tex: opts.hullTex,
@@ -774,6 +917,8 @@ export class RosterRig {
         scale: 1,
         boxW,
         boxH,
+        originOffX,
+        originOffY,
         isHull: true,
       });
     }
@@ -797,7 +942,13 @@ export class RosterRig {
         )
         .setRotation(p.rot);
       if (p.squashY != null) part.setScale(part.scaleX, part.scaleY * p.squashY);
-      const { boxW, boxH } = aabbOf(part.displayWidth, part.displayHeight, p.rot);
+      const { boxW, boxH, originOffX, originOffY } = aabbOfAnchored(
+        part.displayWidth,
+        part.displayHeight,
+        p.origin.x,
+        p.origin.y,
+        p.rot
+      );
       cells.push({
         im: part,
         tex: p.tex,
@@ -806,6 +957,8 @@ export class RosterRig {
         scale: p.scale,
         boxW,
         boxH,
+        originOffX,
+        originOffY,
         isHull: false,
         squashY: p.squashY,
         part: p,
@@ -831,8 +984,8 @@ export class RosterRig {
         y += rowH + partGap;
         rowH = 0;
       }
-      const cx = x + pad + cell.boxW * 0.5;
-      const cy = y + pad + cell.boxH * 0.5;
+      const cx = x + pad + cell.originOffX;
+      const cy = y + pad + cell.originOffY;
       cell.im.setPosition(cx, cy);
       this.drawPreviewBoard(x + pad, y + pad, cell.boxW, cell.boxH, pad, false);
       if (cell.isHull) {
@@ -1284,10 +1437,43 @@ function markTexKey(key: string): string {
   return key.endsWith("_spin") ? key.slice(0, -"_spin".length) : key;
 }
 
-function aabbOf(dw: number, dh: number, rot: number): { boxW: number; boxH: number } {
-  const cos = Math.abs(Math.cos(rot));
-  const sin = Math.abs(Math.sin(rot));
-  return { boxW: dw * cos + dh * sin, boxH: dw * sin + dh * cos };
+/**
+ * Axis-aligned bounds of a sprite rotated about its origin (not geometric center).
+ * `originOff*` is where to place the pivot relative to the board’s top-left.
+ */
+function aabbOfAnchored(
+  dw: number,
+  dh: number,
+  ox: number,
+  oy: number,
+  rot: number
+): { boxW: number; boxH: number; originOffX: number; originOffY: number } {
+  const corners: [number, number][] = [
+    [-ox * dw, -oy * dh],
+    [(1 - ox) * dw, -oy * dh],
+    [(1 - ox) * dw, (1 - oy) * dh],
+    [-ox * dw, (1 - oy) * dh],
+  ];
+  const c = Math.cos(rot);
+  const s = Math.sin(rot);
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const [lx, ly] of corners) {
+    const x = lx * c - ly * s;
+    const y = lx * s + ly * c;
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+  }
+  return {
+    boxW: maxX - minX,
+    boxH: maxY - minY,
+    originOffX: -minX,
+    originOffY: -minY,
+  };
 }
 
 function hexColor(n: number): string {
@@ -1300,6 +1486,7 @@ function fmtZoom(z: number): string {
 
 function matchesFilter(kind: UnitKind, filter: Filter): boolean {
   if (filter === "all") return true;
+  if (filter === "remote") return false;
   if (filter === "building") return isBuilding(kind);
   if (filter === "troop") return isInfantry(kind);
   if (filter === "air") return isAerial(kind);
@@ -1310,6 +1497,13 @@ function matchesFilter(kind: UnitKind, filter: Filter): boolean {
   return true;
 }
 
+function matchesRemoteFilter(remote: RemoteSpec, filter: Filter): boolean {
+  if (filter === "all" || filter === "remote") return true;
+  if (filter === "ground") return !!remote.ground;
+  if (filter === "air") return !remote.ground;
+  return false;
+}
+
 function categoryTag(kind: UnitKind): string {
   const sp = specOf(kind);
   if (sp.building) return "BLD";
@@ -1318,6 +1512,10 @@ function categoryTag(kind: UnitKind): string {
   if (sp.water) return "SEA";
   if (isGroundVehicle(kind) || sp.behavior === "orbit_attack_vehicle") return "VEH";
   return sp.behavior.slice(0, 3).toUpperCase();
+}
+
+function launchWeaponsForRemote(kind: RemoteKind): PlayerWpnSpec[] {
+  return Object.values(PLAYER_WPNS).filter((w) => w.payload?.remote?.kind === kind);
 }
 
 function formatCraft(craft: CraftSpec): { stats: string[]; info: string[] } {
@@ -1341,6 +1539,34 @@ function formatCraft(craft: CraftSpec): { stats: string[]; info: string[] } {
       "ENTER select craft — Heli / scenes read craftOf()",
     ],
   };
+}
+
+function formatRemote(remote: RemoteSpec): { stats: string[]; info: string[] } {
+  const launchers = launchWeaponsForRemote(remote.kind);
+  const stats = [
+    ...dumpRig(remote, { format: formatRotOff }),
+    ...dumpRig({
+      origin: lookupSpriteOrigin(remote.look) ?? spritePivot(remote.look),
+      ...(launchers.length
+        ? {
+            launchWeapons: launchers.map((w) => ({
+              id: w.id,
+              ammo: w.ammo,
+              duration: w.payload.remote?.duration,
+            })),
+          }
+        : {}),
+    }),
+  ];
+  const info = [
+    "source: remote.ts REMOTE_DEFS → remoteSpecOf (hull from craftLook)",
+    "launched via combat.ts PLAYER_WPNS payload.remote",
+    "runtime: missionScene.remotes (RemoteCraft) — not roster Units",
+  ];
+  for (const w of launchers) {
+    info.push(`· ${w.id} ammo ${w.ammo} life ${w.payload.remote?.duration ?? "?"}s`);
+  }
+  return { stats, info };
 }
 
 function formatSpec(kind: UnitKind, sp: UnitSpec): { stats: string[]; info: string[] } {

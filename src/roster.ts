@@ -184,7 +184,7 @@ export interface UnitSpec {
   strafeAim?: boolean;
   /** Flee-vehicle awareness radius (motorcycle 1200; default 520). */
   fleeAwareRange?: number;
-  /** Min forward speed required to yaw (motorcycle 24; default 7). */
+  /** Min forward speed required to yaw (motorcycle 24; wheeled default 14). */
   minTurnSpd?: number;
   /** Flee infantry run speed override (officer 36; non-organic default 90). */
   fleeRunSpeed?: number;
@@ -220,6 +220,11 @@ export interface UnitSpec {
   hv?: boolean;
   noCrater?: boolean;
   throwGuns?: boolean;
+  /**
+   * Light-vehicle death: hulk launches in a spinning flaming arc (impact-biased),
+   * then stamps wreck + crater + embers on landing — not an instant on-spot hulk.
+   */
+  crashPop?: boolean;
   /** Spawn 1–2 rolling wheel debris on death (wheeled vehicles). */
   wheels?: number;
   /** Hull/body aim only; cannot traverse a turret. Must face the target to fire. */
@@ -796,6 +801,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     drive: { maxSpd: 138, accel: 72, brake: 48, turn: 2.35, track: "mono", trackGap: 16, trackScale: 0.7 },
     softBlood: true,
     wheels: 2,
+    crashPop: true,
     fleeAwareRange: 1200,
     minTurnSpd: 24,
     wheelDebrisScale: [0.48, 0.58],

@@ -40,7 +40,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
   * [x] Gunship
   * [x] Chinook (flyable; pick-up/drop still TODO)
   * [x] Black Hawk (extra)
-  * [x] Murder Drone (extra)
+  * [x] Murder Hornet (extra)
   * [x] (Secret) Prometheus (cloak)
   * [ ] Steamship (steampunk airship)
 * [ ] Single player progress, mission/vehicle unlocks, weapon/upgrade purchases
@@ -149,6 +149,10 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [ ] Predictive firing (enemy units and craft gunners, fire at predicted location, accuracy of prediction falls off with range and speed)
 * [ ] Lens flare
 * [ ] Stats (mission, all time)
+* [ ] Score
+  * [ ] Kill
+  * [ ] Double/Tripple/Multi kill
+  * [ ] 
 
 ## Fix
 
@@ -168,6 +172,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [ ] Camera change shouldn't change reticle location
 * [ ] Spash down debris/hulks/shells in water should either disappear or become blue and sink to bottom, and not draw craters
 * [ ] Switching from thermal to normal reveals pink graphics
+* [ ] Power lines -- poles and wires that break/fall, lots of sparks
 
 ## Achievements
 
@@ -186,11 +191,15 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
   * Brrrrrt -- kill 5+ enemies with Avenger cannon in a single sustained burst
   * Dark Knight Rises -- kill 5 enemies while blinded from the same smoke bomb
   * Lights Out -- kill 5 enemies who are stunned by the same EMP
-  * Pinned Down -- shoot through 2+ enemies with a single railgun round
-  * Thunder Run -- beat a mission without ever letting go of thrust
-  * Knife Fight -- complete a mission with guns only (no missiles, rockets, bombs or flares)
+  * Kabob -- shoot through and kill 2+ enemies with a single railgun round
+  * Lightning Round -- beat a mission without ever letting go of thrust
+  * Thunder Run -- beat a mission with 90% of time spent firing
+  * Guns Blazing -- complete a mission with guns only (no missiles, rockets, bombs or flares)
+  * Knife Fight -- complete a mission with Little Bird without taking damage
   * Can't Touch This -- dodge 100 locked on missiles
   * Silent Assassin -- kill an armored enemy with whisper cannons while they are blinded
   * Never Saw it Coming -- sneak up and kill an enemy from close range using cover
   * Armeggedon -- wipe out an entire garrison with a single bomb (MOAB, Rockeye, etc)
   * Top Hat Double Tap -- kill a field officer with kinetic slugs
+  * Flying Circus -- beat a mission with the biplane
+  * Red Baron -- beat a mission with the biplane without taking any damage

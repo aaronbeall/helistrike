@@ -29,6 +29,7 @@ import {
 } from "./toonBlast";
 import {
   FX_BLAST_CELLS,
+  FX_BLAST_FIT,
   FX_KINDS,
   FX_SHEET_SIZE,
   FX_VARIANTS,
@@ -84,6 +85,8 @@ export interface CombatEntry {
   tex: string;
   /** Optional gun-mount body texture (player cannons). */
   mountTex?: string;
+  /** Bomblet / call-strike shell art from payload.cluster.look / callStrike.shellLook. */
+  subTex?: string;
   /** Sheet frame count when >1 (fx_* sheets). */
   frames?: number;
   /** Nose-up rotation for projectile previews. */
@@ -115,6 +118,7 @@ export class CombatRig {
   private board!: Phaser.GameObjects.Graphics;
   private preview!: Phaser.GameObjects.Image;
   private mountPreview!: Phaser.GameObjects.Image;
+  private subPreview!: Phaser.GameObjects.Image;
   private overlay!: Phaser.GameObjects.Graphics;
   private listTxt!: Phaser.GameObjects.Text;
   private statsTxt!: Phaser.GameObjects.Text;
@@ -156,6 +160,12 @@ export class CombatRig {
       .setScrollFactor(0)
       .setDepth(DEPTH + 2)
       .setVisible(false);
+    this.subPreview = scene.add
+      .image(0, 0, "__DEFAULT")
+      .setName("rig_combat_sub")
+      .setScrollFactor(0)
+      .setDepth(DEPTH + 2)
+      .setVisible(false);
     this.overlay = scene.add.graphics().setScrollFactor(0).setDepth(DEPTH + 3).setVisible(false);
     this.listTxt = makeRigText(scene, DEPTH + 4, { fontSize: "13px", lineSpacing: 3, color: PAPER });
     this.listTxt.setPosition(LIST_X, LIST_Y);
@@ -175,6 +185,7 @@ export class CombatRig {
       this.board,
       this.mountPreview,
       this.preview,
+      this.subPreview,
       this.overlay,
       this.listTxt,
       this.statsTxt,
@@ -245,6 +256,7 @@ export class CombatRig {
     this.board.setVisible(this.open);
     this.preview.setVisible(this.open);
     this.mountPreview.setVisible(this.open);
+    this.subPreview.setVisible(this.open);
     this.overlay.setVisible(this.open);
     this.listTxt.setVisible(this.open);
     this.statsTxt.setVisible(this.open);
@@ -349,7 +361,8 @@ export class CombatRig {
     this.layoutPreview(e, dt);
     const over =
       (this.preview.visible && this.hoverUvOn(this.preview)) ||
-      (this.mountPreview.visible && this.hoverUvOn(this.mountPreview));
+      (this.mountPreview.visible && this.hoverUvOn(this.mountPreview)) ||
+      (this.subPreview.visible && this.hoverUvOn(this.subPreview));
     syncRigSystemCursor(this.scene, over ? "crosshair" : "default");
   }
 
@@ -385,18 +398,20 @@ export class CombatRig {
     const s = this.zoom;
     const hasShot = this.scene.textures.exists(e.tex);
     const hasMount = !!(e.mountTex && this.scene.textures.exists(e.mountTex));
+    const hasSub = !!(e.subTex && this.scene.textures.exists(e.subTex));
 
     this.board.clear();
     this.overlay.clear();
 
-    if (!hasShot && !hasMount) {
+    if (!hasShot && !hasMount && !hasSub) {
       this.preview.setVisible(false);
       this.mountPreview.setVisible(false);
+      this.subPreview.setVisible(false);
       setStatsAndInfo(this.statsTxt, this.infoTxt, e.stats, e.info, listRight, LIST_Y);
       return;
     }
 
-    type Panel = { spr: Phaser.GameObjects.Image; boxW: number; boxH: number; rot: number };
+    type Panel = { spr: Phaser.GameObjects.Image; boxW: number; boxH: number; rot: number; kind: "mount" | "shot" | "sub" };
     const panels: Panel[] = [];
 
     if (hasMount) {
@@ -409,6 +424,7 @@ export class CombatRig {
         boxW: this.mountPreview.displayWidth,
         boxH: this.mountPreview.displayHeight,
         rot: 0,
+        kind: "mount",
       });
     } else {
       this.mountPreview.setVisible(false);
@@ -437,9 +453,32 @@ export class CombatRig {
         boxW: bw * cos + bh * sin,
         boxH: bw * sin + bh * cos,
         rot,
+        kind: "shot",
       });
     } else {
       this.preview.setVisible(false);
+    }
+
+    if (hasSub) {
+      this.subPreview.setVisible(true).setTexture(e.subTex!);
+      this.subPreview.setFrame(0);
+      this.subPreview.setOrigin(0.5, 0.5);
+      this.subPreview.setScale(s);
+      const rot = Math.PI / 2;
+      this.subPreview.setRotation(rot);
+      const bw = this.subPreview.displayWidth;
+      const bh = this.subPreview.displayHeight;
+      const cos = Math.abs(Math.cos(rot));
+      const sin = Math.abs(Math.sin(rot));
+      panels.push({
+        spr: this.subPreview,
+        boxW: bw * cos + bh * sin,
+        boxH: bw * sin + bh * cos,
+        rot,
+        kind: "sub",
+      });
+    } else {
+      this.subPreview.setVisible(false);
     }
 
     const totalW = panels.reduce((sum, p) => sum + p.boxW, 0) + panelGap * (panels.length - 1);
@@ -471,16 +510,18 @@ export class CombatRig {
     );
 
     if (e.cat !== "fx" && this.showMarks) {
-      if (hasShot) {
-        const shot = panels[panels.length - 1]!;
-        const shotLeft = listRight + pad + (hasMount ? panels[0]!.boxW + panelGap : 0);
-        const shotTop = cy - shot.boxH * 0.5;
-        this.drawShotMarks(shot.rot, shotLeft, shotTop, shot.boxW, shot.boxH);
+      const shot = panels.find((p) => p.kind === "shot");
+      if (shot) {
+        this.drawShotMarks(shot.rot, shot.spr.x - shot.boxW * 0.5, shot.spr.y - shot.boxH * 0.5, shot.boxW, shot.boxH);
         const blast = parseBlast(e);
         if (blast > 0) {
           this.overlay.lineStyle(1.2, 0xff6a22, 0.65);
           this.overlay.strokeCircle(shot.spr.x, shot.spr.y, blast * s * 0.35);
         }
+      }
+      const sub = panels.find((p) => p.kind === "sub");
+      if (sub) {
+        this.drawShotMarks(sub.rot, sub.spr.x - sub.boxW * 0.5, sub.spr.y - sub.boxH * 0.5, sub.boxW, sub.boxH);
       }
       if (hasMount) this.drawMountMarks(panels[0]!.spr, e.mountTex!);
     }
@@ -620,6 +661,7 @@ export function buildCombatCatalog(): CombatEntry[] {
 function playerEntries(): CombatEntry[] {
   return Object.values(PLAYER_WPNS).map((w) => {
     const block = formatPlayer(w);
+    const subTex = w.payload?.callStrike?.shellLook ?? w.payload?.cluster?.look;
     return {
       id: `player_${w.id}`,
       cat: "player" as const,
@@ -628,6 +670,7 @@ function playerEntries(): CombatEntry[] {
       tags: weaponTypeTags(playerShotKind(w), w.launch.mode),
       tex: w.art.look,
       ...(w.art.mount ? { mountTex: w.art.mount } : {}),
+      ...(subTex ? { subTex } : {}),
       rotOff: 0,
       stats: block.stats,
       info: block.info,
@@ -732,7 +775,7 @@ function fxEntries(): CombatEntry[] {
       kind: "blast",
       tex: `fx_blast_0..${FX_BLAST_CELLS - 1}`,
       cells: FX_BLAST_CELLS,
-      bake: "fit 88 from src_blasts 2×2",
+      bake: `fit ${FX_BLAST_FIT} from src_blasts 2×2`,
     }),
     info: ["source: sprites.ts prepareArt / src_blasts"],
   });

@@ -267,10 +267,11 @@ export class Terrain25D extends Phaser.GameObjects.GameObject {
     this.webglRenderer.pipelines.clear();
     try {
       for (const chunk of this.chunks) {
-        const tx0 = (chunk.x0 / this.cells) * TEX;
-        const ty0 = (chunk.y0 / this.cells) * TEX;
-        const tx1 = ((chunk.x0 + chunk.cellsX) / this.cells) * TEX;
-        const ty1 = ((chunk.y0 + chunk.cellsY) / this.cells) * TEX;
+        // Skirt chunks share rim texels — clamp AABB into TEX for dirty tests.
+        const tx0 = Phaser.Math.Clamp((chunk.x0 / this.cells) * TEX, 0, TEX);
+        const ty0 = Phaser.Math.Clamp((chunk.y0 / this.cells) * TEX, 0, TEX);
+        const tx1 = Phaser.Math.Clamp(((chunk.x0 + chunk.cellsX) / this.cells) * TEX, 0, TEX);
+        const ty1 = Phaser.Math.Clamp(((chunk.y0 + chunk.cellsY) / this.cells) * TEX, 0, TEX);
         if (tx1 < loX || ty1 < loY || tx0 > hiX || ty0 > hiY) continue;
         this.fillChunkVertices(chunk);
         if (chunk.vertexBuffer && !this.webglRenderer.contextLost) {

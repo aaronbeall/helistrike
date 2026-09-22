@@ -129,6 +129,7 @@ export class MenuScene extends Phaser.Scene {
       const exhaustGlows = exhaustMounts.map((_, exhaustI) => {
         const glow = this.add
           .image(x, 181, "fx_exhaust_glow")
+          .setOrigin(0.5, 0)
           .setBlendMode(Phaser.BlendModes.ADD)
           .setTint(exhaustTint)
           .setDepth(8.5)

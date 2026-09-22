@@ -4,6 +4,7 @@ import { craftHasForcedUTurn } from "./heli";
 import {
   craftCountermeasure,
   playerLoadoutFromSockets,
+  wpnIdOf,
   type CountermeasureId,
   type WpnId,
 } from "./combat";
@@ -80,7 +81,7 @@ export function tipKnownFromSelection(enemies?: readonly UnitKind[]): TipKnown {
   const mission = missionOf();
   return {
     crafts: [craft.kind],
-    weapons: playerLoadoutFromSockets(craft.sockets).map((w) => w.id),
+    weapons: playerLoadoutFromSockets(craft.sockets).map(wpnIdOf),
     cms: [craftCountermeasure(craft.countermeasure)],
     forceMixes: [mission.profile.forceMix],
     enemies: enemies?.length ? enemies : undefined,
@@ -138,7 +139,7 @@ export const TACTICAL_TIPS: TacticalTip[] = [
   },
   {
     id: "craft_gunship",
-    text: "Gunship orbit: W/S trim speed, hold A/D to turn, mouse aims the side guns.",
+    text: "Orbit loiter: W/S trim speed, hold A/D to turn, mouse aims weapons.",
     context: {
       forCraft: (c) => craftControlScheme(craftOf(c)) === "orbit",
     },
@@ -167,7 +168,7 @@ export const TACTICAL_TIPS: TacticalTip[] = [
   },
   {
     id: "cm_emp",
-    text: "EMP stuns mech on screen and kills airborne missiles. Troops keep moving — finish stunned armor with Whisper or rockets.",
+    text: "EMP stuns mech on screen, drops enemy drones into freefall, and kills airborne missiles. Troops keep moving — finish stunned armor with Whisper or rockets.",
     context: { cms: ["emp"] },
   },
 
@@ -221,6 +222,26 @@ export const TACTICAL_TIPS: TacticalTip[] = [
     context: { weapons: ["laser_rocket"] },
   },
   {
+    id: "wpn_spider_drone",
+    text: "Spider Drones crawl toward the mouse — get them near a hostile and they dash onto it and detonate.",
+    context: { weapons: ["spider_drone"] },
+  },
+  {
+    id: "wpn_agv_drop",
+    text: "HOUND drops from the rear ramp, then locks to the dirt. Select its slot to take its own loadout HUD (minigun, Photon, Howitzer spot, artillery strike) — same orbit drive as a player craft; F toggles dropship FOLLOW/HOLD (default HOLD); Q exits back to the bird.",
+    context: { weapons: ["agv_drop"] },
+  },
+  {
+    id: "wpn_skiff",
+    text: "Skiffs are Leviathan’s AI wingmen — launch several (LIVE ×N). They orbit wide, strafe enemies spotted by the airship / Skiffs / Raptor, and Q recalls them all to dock.",
+    context: { weapons: ["wingman_drone"] },
+  },
+  {
+    id: "wpn_raptor",
+    text: "Raptor is a force-forward fighter with its own POV loadout. Q exits (docks when near the Leviathan). Unpiloted, it escorts like a Skiff; Skiffs idle-orbit a live Raptor.",
+    context: { weapons: ["fighter_pod"] },
+  },
+  {
     id: "wpn_micros",
     text: "Micros gently steer toward the reticle and arc into the ground — walk the pair into soft targets, not heavy armor.",
     context: { weapons: ["guided_rockets"] },
@@ -257,13 +278,18 @@ export const TACTICAL_TIPS: TacticalTip[] = [
   },
   {
     id: "wpn_cluster",
-    text: "Rockeye’s dispenser pop is light — the kill is the bomblet carpet. Drop over soft clusters, not single hard points.",
+    text: "Rockeye’s canister pops ~60% of the way along the drop path — bomblets spray forward along the trajectory. Drop over soft clusters, not single hard points.",
     context: { weapons: ["cluster_bomb"] },
   },
   {
     id: "wpn_hydra",
     text: "Hydras shred soft clusters — dump a ripple into infantry, trucks, and light armor, not dug-in tanks.",
     context: { weapons: ["rocket"] },
+  },
+  {
+    id: "wpn_incendiary",
+    text: "Incendiary rockets spray wild — fat fireballs that cook troops and air, not armor. Lead wide and accept the scatter.",
+    context: { weapons: ["incendiary_rocket"] },
   },
   {
     id: "wpn_hellfire",
@@ -279,6 +305,16 @@ export const TACTICAL_TIPS: TacticalTip[] = [
     id: "wpn_howitzer",
     text: "Howitzer rounds lob on an arc — lead the fall; don’t expect sniper precision.",
     context: { weapons: ["heavy_artillery"] },
+  },
+  {
+    id: "wpn_artillery_strike",
+    text: "Artillery strike: plant the flare and clear out — shells start walking immediately; watch the ETA on the mark.",
+    context: { weapons: ["artillery_strike"] },
+  },
+  {
+    id: "wpn_remote_howitzer",
+    text: "HOUND’s Howitzer and Artillery Strike both fire the Marauder’s real howitzer and share its ammo — spot is one shell; strike flares then walks the same cannon onto the mark.",
+    context: { weapons: ["remote_howitzer", "artillery_strike"] },
   },
   {
     id: "wpn_photon",

@@ -5,6 +5,7 @@ import {
   craftCompositePartScale,
   craftExhaustFlameHue,
   craftExhaustMounts,
+  craftGunSocketSlots,
   craftOf,
   craftPreviewExhaustScale,
   craftPreviewExhaustTint,
@@ -20,6 +21,8 @@ import { generateWorldAsync, type WorldData } from "./world";
 
 export class LoadScene extends Phaser.Scene {
   private body!: Phaser.GameObjects.Image;
+  private guns: Phaser.GameObjects.Image[] = [];
+  private gunParts: CraftComposite["guns"] = [];
   private rotors: Phaser.GameObjects.Image[] = [];
   private rotorDiscs: Phaser.GameObjects.Image[] = [];
   private rotorParts: CraftComposite["rotors"] = [];
@@ -55,6 +58,19 @@ export class LoadScene extends Phaser.Scene {
       .image(hx, this.heliY, composite.body.tex)
       .setOrigin(composite.body.origin.x, composite.body.origin.y)
       .setScale(zs);
+    this.gunParts = composite.guns;
+    const gunSlots = craftGunSocketSlots(craft);
+    this.guns = this.gunParts.map((part, i) => {
+      const at = spriteUvPos(this.body, part.mount.x, part.mount.y);
+      const sock = craft.sockets[gunSlots[i] ?? -1];
+      const gunSc = (craft.gunOverlayScale ?? 1) * (sock?.gunScale ?? 1) * zs;
+      return this.add
+        .image(at.x, at.y, part.tex)
+        .setOrigin(part.origin.x, part.origin.y)
+        .setRotation(part.heading ?? 0)
+        .setScale(gunSc)
+        .setDepth(this.body.depth + (part.layer === "above" ? 0.4 : -0.2) + i * 0.05);
+    });
     this.add
       .text(hx, this.heliY - this.body.displayHeight * composite.body.origin.y - 18, craft.fullName.toUpperCase(), {
         fontFamily: "Share Tech Mono, monospace",
@@ -106,6 +122,7 @@ export class LoadScene extends Phaser.Scene {
       const glowSc = craftPreviewExhaustScale(zs);
       const glow = this.add
         .image(at.x, at.y, "fx_exhaust_glow")
+        .setOrigin(0.5, 0)
         .setBlendMode(Phaser.BlendModes.ADD)
         .setTint(exhaustTint)
         .setScale(glowSc.x, glowSc.y)
@@ -222,6 +239,18 @@ export class LoadScene extends Phaser.Scene {
     const disc = Phaser.Math.Clamp((this.rotorSpd - flight * 0.3) / Math.max(1, flight * 0.7), 0, 1);
     const bob = Math.sin(_t / 420) * 1.6;
     this.body.y = this.heliY + bob;
+    const craft = craftOf();
+    const gunSlots = craftGunSocketSlots(craft);
+    this.guns.forEach((gun, i) => {
+      const part = this.gunParts[i]!;
+      const at = spriteUvPos(this.body, part.mount.x, part.mount.y);
+      const sock = craft.sockets[gunSlots[i] ?? -1];
+      const gunSc = (craft.gunOverlayScale ?? 1) * (sock?.gunScale ?? 1) * this.body.scaleX;
+      gun
+        .setPosition(at.x, at.y)
+        .setRotation(part.heading ?? 0)
+        .setScale(gunSc);
+    });
     this.rotors.forEach((rotor, i) => {
       const part = this.rotorParts[i]!;
       const at = spriteUvPos(this.body, part.mount.x, part.mount.y);
@@ -250,10 +279,10 @@ export class LoadScene extends Phaser.Scene {
     });
     const frameStep = Math.floor(_t / 55);
     const zs = this.body.scaleX;
-    const glowSc = craftPreviewExhaustScale(zs);
     this.exhaustGlows.forEach((glow, exhaustI) => {
       const mount = this.exhaustMounts[exhaustI]!;
       const at = spriteUvPos(this.body, mount.x, mount.y);
+      const glowSc = craftPreviewExhaustScale(zs);
       glow.setPosition(at.x, at.y).setScale(glowSc.x, glowSc.y);
     });
     this.exhaustFlames.forEach((flame, i) => {

@@ -7,6 +7,7 @@
 import type Phaser from "phaser";
 import {
   TOON_BLAST_DEFAULTS,
+  TOON_EASE_NAMES,
   bakeToonBlast,
   ensureToonBlastAnims,
   makeToonClusters,
@@ -17,6 +18,7 @@ import {
   type ToonCluster,
 } from "./toonBlast";
 import { bakeThermalHeatFromAlpha, registerArt } from "./sprites";
+import { drawTracerShape, type TracerShapeOpts } from "./tracerArt";
 
 // ─── Registry ───────────────────────────────────────────────────────────────
 
@@ -30,11 +32,23 @@ export type ArtGenParamMeta = {
   hex?: boolean;
   /** Soft clamp after nudge (rare — most params stay unbounded). */
   clamp?: boolean;
+  /** Named enum — param value is a string; ←→ cycles choices. */
+  choices?: readonly string[];
   desc: string;
 };
 
-export type ArtGenParamMap = Record<string, number>;
+export type ArtGenParamMap = Record<string, number | string>;
 export type ArtGenMetaMap = Record<string, ArtGenParamMeta>;
+
+/** Coerce a param to number (choice strings stay out of numeric math). */
+export function artGenNum(v: number | string | undefined, fallback = 0): number {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
+  }
+  return fallback;
+}
 
 export type ArtGenBakeCtx = {
   textures: Phaser.Textures.TextureManager;
@@ -47,10 +61,16 @@ export type ArtGenDef = {
   blurb: string;
   animated: boolean;
   loopSec?: number;
+  /** Preferred preview zoom when this gen is selected (art gen rig). */
+  defaultZoom?: number;
   params: ArtGenParamMap;
   defaults: ArtGenParamMap;
   meta: ArtGenMetaMap;
-  prepare?: (seed: number, params: ArtGenParamMap) => unknown;
+  prepare?: (
+    seed: number,
+    params: ArtGenParamMap,
+    textures?: Phaser.Textures.TextureManager
+  ) => unknown;
   render: (
     t: number,
     seed: number,
@@ -93,19 +113,32 @@ export function resetArtGen(def: ArtGenDef): void {
 
 export function formatArtGenValue(def: ArtGenDef, key: string): string {
   const meta = def.meta[key];
-  const v = def.params[key] ?? 0;
-  if (!meta) return String(v);
-  if (meta.hex) return `#${(v >>> 0).toString(16).padStart(6, "0")}`;
-  if (meta.decimals != null) return v.toFixed(meta.decimals);
-  if (Number.isInteger(meta.step) && meta.decimals == null) return String(Math.round(v));
-  return v.toFixed(2);
+  const v = def.params[key];
+  if (!meta) return String(v ?? "");
+  if (meta.choices) return String(v ?? meta.choices[0] ?? "");
+  const n = typeof v === "number" ? v : Number(v) || 0;
+  if (meta.hex) return `#${(n >>> 0).toString(16).padStart(6, "0")}`;
+  if (meta.decimals != null) return n.toFixed(meta.decimals);
+  if (Number.isInteger(meta.step) && meta.decimals == null) return String(Math.round(n));
+  return n.toFixed(2);
 }
 
 export function nudgeArtGenParam(def: ArtGenDef, key: string, dir: number, fast: boolean): void {
   const meta = def.meta[key];
   if (!meta || !(key in def.params)) return;
+  if (meta.choices?.length) {
+    const list = meta.choices;
+    const cur = String(def.params[key] ?? list[0]);
+    let i = list.indexOf(cur);
+    if (i < 0) i = 0;
+    const step = (fast ? Math.max(1, Math.round(meta.stepFast)) : 1) * dir;
+    i = ((i + step) % list.length + list.length) % list.length;
+    def.params[key] = list[i]!;
+    def.afterNudge?.(key, def.params);
+    return;
+  }
   const step = (fast ? meta.stepFast : meta.step) * dir;
-  let next = def.params[key]! + step;
+  let next = (typeof def.params[key] === "number" ? (def.params[key] as number) : 0) + step;
   if (meta.hex) next = (next >>> 0) & 0xffffff;
   else if (Number.isInteger(meta.step) && meta.decimals == null) next = Math.round(next);
   if (meta.clamp) next = Math.min(meta.max, Math.max(meta.min, next));
@@ -116,6 +149,10 @@ export function nudgeArtGenParam(def: ArtGenDef, key: string, dir: number, fast:
 export function randomizeArtGen(def: ArtGenDef): void {
   for (const key of Object.keys(def.meta)) {
     const meta = def.meta[key]!;
+    if (meta.choices?.length) {
+      def.params[key] = meta.choices[(Math.random() * meta.choices.length) | 0]!;
+      continue;
+    }
     const lo = Math.min(meta.min, meta.max);
     const hi = Math.max(meta.min, meta.max);
     let v = lo + Math.random() * (hi - lo);
@@ -179,10 +216,52 @@ const TOON_META = {
   size: { step: 8, stepFast: 32, min: 64, max: 320, desc: "Explosion bake/preview canvas size (px)." },
   frames: { step: 1, stepFast: 4, min: 8, max: 64, desc: "Spritesheet frame count when baking." },
   cutStart: { step: 0.02, stepFast: 0.08, min: 0, max: 0.8, decimals: 2, desc: "Time when blob layer cutaways begin (0–1)." },
-  easePower: { step: 0.5, stepFast: 1, min: 1, max: 10, decimals: 1, desc: "Ease-out exponent for cluster motion and cuts." },
+  easePower: { step: 0.5, stepFast: 1, min: 1, max: 10, decimals: 1, desc: "Exponent shared by cluster / spark / cut easings (higher = punchier)." },
+  easeCluster: {
+    step: 1,
+    stepFast: 1,
+    min: 0,
+    max: 2,
+    choices: TOON_EASE_NAMES,
+    desc: "Cluster travel / blob spread: out | in | inOut.",
+  },
+  easeSpark: {
+    step: 1,
+    stepFast: 1,
+    min: 0,
+    max: 2,
+    choices: TOON_EASE_NAMES,
+    desc: "Spark travel + shrink + wipe: out | in | inOut.",
+  },
+  easeCut: {
+    step: 1,
+    stepFast: 1,
+    min: 0,
+    max: 2,
+    choices: TOON_EASE_NAMES,
+    desc: "Layer cutaway holes: out | in | inOut.",
+  },
+  easeCool: {
+    step: 1,
+    stepFast: 1,
+    min: 0,
+    max: 2,
+    choices: TOON_EASE_NAMES,
+    desc: "Fire→smoke cool curve: out | in | inOut.",
+  },
+  easeDust: {
+    step: 1,
+    stepFast: 1,
+    min: 0,
+    max: 2,
+    choices: TOON_EASE_NAMES,
+    desc: "Late dust blob stretch: out | in | inOut.",
+  },
   coolAmount: { step: 0.05, stepFast: 0.15, min: 0, max: 1.5, decimals: 2, desc: "How fast fire cools into smoke then dust (0=hot, 1=full cool)." },
   bloomStrength: { step: 0.02, stepFast: 0.1, min: 0, max: 1, decimals: 2, desc: "Soft outer glow early; fades as the blast cools." },
   bloomSize: { step: 0.05, stepFast: 0.15, min: 0.8, max: 2, decimals: 2, desc: "Bloom radius relative to blob span." },
+  edgeBlur: { step: 0.1, stepFast: 0.5, min: 0, max: 6, decimals: 1, desc: "Blur before palette clamp — softens hard cel outlines into curves." },
+  edgeBands: { step: 1, stepFast: 1, min: 1, max: 6, desc: "Alpha steps after blur (1=hard cut, 3=slight banded rim)." },
 
   largeClusters: { step: 1, stepFast: 1, min: 0, max: 8, desc: "Count of large clusters in the explosion." },
   smallClusters: { step: 1, stepFast: 1, min: 0, max: 8, desc: "Count of small clusters / late dust lobes." },
@@ -241,8 +320,8 @@ const TOON_META = {
 } satisfies ArtGenMetaMap & Record<keyof ToonBlastParams, ArtGenMetaMap[string]>;
 
 function syncBlobBounds(p: ArtGenParamMap): void {
-  if ((p.blobsMax ?? 0) < (p.blobsMin ?? 0)) {
-    const t = p.blobsMin!;
+  if (artGenNum(p.blobsMax) < artGenNum(p.blobsMin)) {
+    const t = p.blobsMin;
     p.blobsMin = p.blobsMax;
     p.blobsMax = t;
   }
@@ -260,7 +339,7 @@ registerArtGen({
   prepare: (seed, params) => makeToonClusters(mulberry32(seed), params as unknown as ToonBlastParams),
   render: (t, _seed, params, canvas, g, prepared) => {
     const clusters = (prepared as ToonCluster[] | undefined) ?? [];
-    const size = Math.max(32, Math.round(params.size ?? 192));
+    const size = Math.max(32, Math.round(artGenNum(params.size, 192)));
     return renderToonBlastFrame(clusters, t, size, params as unknown as ToonBlastParams, canvas, g);
   },
   bake: ({ textures }) => bakeToonBlast(textures),
@@ -356,11 +435,11 @@ registerArtGen({
     height: { step: 2, stepFast: 8, min: 12, max: 48, desc: "Canvas height (px)." },
   },
   render: (_t, _seed, params, dest) => {
-    const kind = TRACK_KINDS[Math.max(0, Math.min(TRACK_KINDS.length - 1, Math.round(params.kind ?? 0)))]!;
+    const kind = TRACK_KINDS[Math.max(0, Math.min(TRACK_KINDS.length - 1, Math.round(artGenNum(params.kind))))]!;
     const art = drawTrack(kind, {
-      w: Math.max(8, Math.round(params.width ?? 32)),
-      h: Math.max(8, Math.round(params.height ?? 22)),
-      alpha: params.alpha ?? 0.5,
+      w: Math.max(8, Math.round(artGenNum(params.width, 32))),
+      h: Math.max(8, Math.round(artGenNum(params.height, 22))),
+      alpha: artGenNum(params.alpha, 0.5),
     });
     dest.width = art.width;
     dest.height = art.height;
@@ -444,7 +523,7 @@ registerArtGen({
     variant: { step: 1, stepFast: 1, min: 0, max: 4, clamp: true, desc: "Brass palette variant (0–4)." },
   },
   render: (_t, _seed, params, dest) => {
-    const art = drawShell(Math.round(params.variant ?? 0));
+    const art = drawShell(Math.round(artGenNum(params.variant)));
     dest.width = art.width;
     dest.height = art.height;
     const g = dest.getContext("2d")!;
@@ -491,23 +570,27 @@ const roadParams = { ...ROAD_DEFAULTS };
 
 /** Dirt road stamp used when painting terrain roads. */
 export function drawRoadStamp(p: ArtGenParamMap = roadParams): HTMLCanvasElement {
-  const w = Math.max(16, Math.round(p.width ?? 64));
-  const h = Math.max(8, Math.round(p.height ?? 20));
+  const w = Math.max(16, Math.round(artGenNum(p.width, 64)));
+  const h = Math.max(8, Math.round(artGenNum(p.height, 20)));
   const c = canvas(w, h);
   const g = ctxOf(c);
   const pad = Math.max(1, Math.round(h * 0.1));
-  g.fillStyle = cssRgb(p.dirtDark ?? ROAD_DEFAULTS.dirtDark);
+  g.fillStyle = cssRgb(artGenNum(p.dirtDark, ROAD_DEFAULTS.dirtDark));
   g.fillRect(0, pad, w, h - pad * 2);
-  g.fillStyle = cssRgb(p.dirtMid ?? ROAD_DEFAULTS.dirtMid);
+  g.fillStyle = cssRgb(artGenNum(p.dirtMid, ROAD_DEFAULTS.dirtMid));
   g.fillRect(0, pad * 2, w, h - pad * 4);
-  const n = Math.max(0, Math.round(p.speckCount ?? 48));
+  const n = Math.max(0, Math.round(artGenNum(p.speckCount, 48)));
   for (let i = 0; i < n; i++) {
     const x = (i * 17 + 3) % w;
     const y = pad * 2 + ((i * 9) % Math.max(1, h - pad * 4));
-    g.fillStyle = cssRgb(i % 3 === 0 ? (p.speckDark ?? ROAD_DEFAULTS.speckDark) : (p.speckLight ?? ROAD_DEFAULTS.speckLight));
+    g.fillStyle = cssRgb(
+      i % 3 === 0
+        ? artGenNum(p.speckDark, ROAD_DEFAULTS.speckDark)
+        : artGenNum(p.speckLight, ROAD_DEFAULTS.speckLight)
+    );
     g.fillRect(x, y, 2, 2);
   }
-  g.fillStyle = `rgba(30, 22, 14,${p.edgeAlpha ?? 0.35})`;
+  g.fillStyle = `rgba(30, 22, 14,${artGenNum(p.edgeAlpha, 0.35)})`;
   g.fillRect(0, pad, w, 1);
   g.fillRect(0, h - pad - 1, w, 1);
   return c;
@@ -556,25 +639,29 @@ const bridgeParams = { ...BRIDGE_DEFAULTS };
 
 /** Plank bridge stamp for water road segments. */
 export function drawBridgeStamp(p: ArtGenParamMap = bridgeParams): HTMLCanvasElement {
-  const w = Math.max(24, Math.round(p.width ?? 72));
-  const h = Math.max(12, Math.round(p.height ?? 24));
+  const w = Math.max(24, Math.round(artGenNum(p.width, 72)));
+  const h = Math.max(12, Math.round(artGenNum(p.height, 24)));
   const c = canvas(w, h);
   const g = ctxOf(c);
   const pad = Math.max(2, Math.round(h * 0.12));
-  g.fillStyle = cssRgb(p.deck ?? BRIDGE_DEFAULTS.deck);
+  g.fillStyle = cssRgb(artGenNum(p.deck, BRIDGE_DEFAULTS.deck));
   g.fillRect(0, pad, w, h - pad * 2);
-  const n = Math.max(2, Math.round(p.planks ?? 9));
+  const n = Math.max(2, Math.round(artGenNum(p.planks, 9)));
   const plankW = w / n;
   for (let i = 0; i < n; i++) {
-    g.fillStyle = cssRgb(i % 2 === 0 ? (p.plankA ?? BRIDGE_DEFAULTS.plankA) : (p.plankB ?? BRIDGE_DEFAULTS.plankB));
+    g.fillStyle = cssRgb(
+      i % 2 === 0
+        ? artGenNum(p.plankA, BRIDGE_DEFAULTS.plankA)
+        : artGenNum(p.plankB, BRIDGE_DEFAULTS.plankB)
+    );
     g.fillRect(i * plankW, pad + 2, Math.max(1, plankW - 1), h - pad * 2 - 4);
     g.fillStyle = "rgba(20, 14, 8, 0.35)";
     g.fillRect(i * plankW + plankW - 1, pad + 2, 1, h - pad * 2 - 4);
   }
-  g.fillStyle = cssRgb(p.rail ?? BRIDGE_DEFAULTS.rail);
+  g.fillStyle = cssRgb(artGenNum(p.rail, BRIDGE_DEFAULTS.rail));
   g.fillRect(0, pad, w, 2);
   g.fillRect(0, h - pad - 2, w, 2);
-  g.fillStyle = cssRgb(p.highlight ?? BRIDGE_DEFAULTS.highlight);
+  g.fillStyle = cssRgb(artGenNum(p.highlight, BRIDGE_DEFAULTS.highlight));
   g.fillRect(1, pad - 1, w - 2, 1);
   g.fillRect(1, h - pad, w - 2, 1);
   return c;
@@ -607,4 +694,81 @@ registerArtGen({
     return dest;
   },
   bake: ({ textures }) => putCanvas(textures, FX_BRIDGE, drawBridgeStamp(bridgeParams)),
+});
+
+// ─── Cannon tracers ─────────────────────────────────────────────────────────
+
+export const TRACER_SHAPES = ["tear", "bolt", "orb"] as const;
+
+/** M62 7.62 defaults — same recipe as combat.ts TRACER_762. */
+const TRACER_DEFAULTS = {
+  w: 44,
+  h: 6,
+  core: 0xffdcaa,
+  mid: 0xff822d,
+  rim: 0xbe3c16,
+  blunt: 0,
+  glow: 0.36,
+  twin: 0,
+  shape: 0,
+};
+const tracerParams = { ...TRACER_DEFAULTS };
+
+export function tracerOptsFromParams(p: ArtGenParamMap = tracerParams): TracerShapeOpts {
+  const shapeIdx = Math.max(0, Math.min(TRACER_SHAPES.length - 1, Math.round(artGenNum(p.shape))));
+  return {
+    w: Math.max(8, Math.round(artGenNum(p.w, TRACER_DEFAULTS.w))),
+    h: Math.max(2, Math.round(artGenNum(p.h, TRACER_DEFAULTS.h))),
+    core: unpackRgb(artGenNum(p.core, TRACER_DEFAULTS.core)),
+    mid: unpackRgb(artGenNum(p.mid, TRACER_DEFAULTS.mid)),
+    rim: unpackRgb(artGenNum(p.rim, TRACER_DEFAULTS.rim)),
+    blunt: artGenNum(p.blunt, TRACER_DEFAULTS.blunt),
+    glow: artGenNum(p.glow, TRACER_DEFAULTS.glow),
+    twin: artGenNum(p.twin) >= 0.5,
+    shape: TRACER_SHAPES[shapeIdx],
+  };
+}
+
+/** Live preview / bake of a procedural cannon tracer streak. */
+export function drawTracerStamp(p: ArtGenParamMap = tracerParams): HTMLCanvasElement {
+  return drawTracerShape(tracerOptsFromParams(p));
+}
+
+registerArtGen({
+  id: "tracer",
+  label: "TRACER",
+  blurb: "Procedural cannon streak (shot_cannon_* / combat art.tracer)",
+  animated: false,
+  defaultZoom: 8,
+  params: tracerParams,
+  defaults: { ...TRACER_DEFAULTS },
+  meta: {
+    w: { step: 2, stepFast: 8, min: 16, max: 160, desc: "Canvas width (px) — streak length." },
+    h: { step: 1, stepFast: 2, min: 3, max: 36, desc: "Canvas height (px) — streak thickness." },
+    core: { step: 0x010101, stepFast: 0x101010, min: 0, max: 0xffffff, hex: true, desc: "Hot nose / core color." },
+    mid: { step: 0x010101, stepFast: 0x101010, min: 0, max: 0xffffff, hex: true, desc: "Mid-body color." },
+    rim: { step: 0x010101, stepFast: 0x101010, min: 0, max: 0xffffff, hex: true, desc: "Tail / rim glow color." },
+    blunt: { step: 0.05, stepFast: 0.15, min: 0, max: 1, decimals: 2, desc: "0 = soft tear tip, 1 = blunt slug." },
+    glow: { step: 0.05, stepFast: 0.15, min: 0, max: 1.5, decimals: 2, desc: "White highlight strength on the nose." },
+    twin: { step: 1, stepFast: 1, min: 0, max: 1, clamp: true, desc: "0 = single streak, 1 = twin stacked." },
+    shape: {
+      step: 1,
+      stepFast: 1,
+      min: 0,
+      max: 2,
+      clamp: true,
+      desc: "0 tear · 1 bolt (rail) · 2 orb (plasma).",
+    },
+  },
+  render: (_t, _seed, params, dest) => {
+    const art = drawTracerStamp(params);
+    dest.width = art.width;
+    dest.height = art.height;
+    const g = dest.getContext("2d")!;
+    g.clearRect(0, 0, dest.width, dest.height);
+    g.drawImage(art, 0, 0);
+    return dest;
+  },
+  // Preview-only — weapon tracers bake from combat.ts art.tracer at boot.
+  bake: () => {},
 });

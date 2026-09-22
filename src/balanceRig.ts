@@ -1193,7 +1193,8 @@ function buildBalanceCatalog(): BalancePoint[] {
       const w = PLAYER_WPNS[socket.weapon];
       if (!w) continue;
       const streams = craftSocketFireStreams(c, i);
-      const dps = playerWeaponDps(w) * streams;
+      const rateMul = socket.fireRateMul ?? 1;
+      const dps = playerWeaponDps(w) * streams * rateMul;
       const key = `loadout.${socket.weapon}`;
       loadoutVals[key] = (loadoutVals[key] ?? 0) + dps;
       firepower += dps;
@@ -1233,6 +1234,8 @@ function buildBalanceCatalog(): BalancePoint[] {
   }
 
   for (const w of Object.values(PLAYER_WPNS)) {
+    // Host-fire spotters (e.g. HOUND → dropship howitzer) are not separate weapons for balance.
+    if (w.payload?.hostFire) continue;
     const tags = weaponTypeTags(playerShotKind(w), w.launch.mode);
     const kindGroup = tags[0] ?? "missile";
     const salvoN = w.fire?.salvo?.count ?? 1;
