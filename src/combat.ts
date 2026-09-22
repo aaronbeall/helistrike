@@ -127,6 +127,12 @@ export type HeDetonate = {
   bigBoom?: boolean;
 };
 
+/**
+ * Host weapons a POV remote may trigger. Keep assignable to `WpnId` once the
+ * catalog exists (see assert below) — avoids circular WeaponPayload ↔ WpnId.
+ */
+export type HostFireWeaponId = "heavy_artillery";
+
 export type WeaponPayload = {
   penetration?: number;
   dustMul?: number;
@@ -189,8 +195,9 @@ export type WeaponPayload = {
   /**
    * POV remote spot — one click fires `weapon` from the host craft mount
    * (e.g. HOUND calling the dropship howitzer onto aim).
+   * Narrow id union (assignable to `WpnId`) — avoids circular `WpnId` ↔ catalog defs.
    */
-  hostFire?: { weapon: string };
+  hostFire?: { weapon: HostFireWeaponId };
 };
 
 export type WeaponFire = {
@@ -1147,6 +1154,12 @@ const PLAYER_WPNS_DEFS = {
 
 /** Player loadout identity — literal union of PLAYER_WPNS keys. */
 export type WpnId = keyof typeof PLAYER_WPNS_DEFS;
+
+/** Compile-time: every host-fire id is a real catalog weapon. */
+const _hostFireIsWpnId: Record<HostFireWeaponId, WpnId> = {
+  heavy_artillery: "heavy_artillery",
+};
+void _hostFireIsWpnId;
 
 /** Homogeneous catalog (keys stay literal via WpnId). */
 export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = PLAYER_WPNS_DEFS;

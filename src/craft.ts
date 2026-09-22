@@ -926,6 +926,36 @@ const CRAFTS_DEFS = {
     countermeasure: "smoke_screen",
     enemySeekerMul: 0.72,
   },
+  // Leviathan wingman — remote-only hull (not hangar-selectable).
+  skiff: {
+    kind: "skiff",
+    name: "Skiff",
+    fullName: "SKIFF Wingman",
+    role: "AI Wingman",
+    playable: false,
+    flightModel: "plane",
+    controlScheme: "plane",
+    sizeM: 6.4,
+    ammoScale: 0.55,
+    health: 36,
+    radius: 14,
+    height: 5,
+    body: "craft_skiff",
+    hulk: "craft_skiff_hulk",
+    rotor: "craft_osprey_rotor",
+    rotorHulk: "craft_osprey_rotor_hulk",
+    rotorScale: 0.14,
+    rotorInertia: 0.2,
+    rotOff: Math.PI / 2,
+    // Faster boom-and-zoom than the hangar biplane.
+    forwardThrust: 520, reverseThrust: 360, strafeThrust: 0, maxSpeed: 380, minSpeed: 110, yawRate: 3.2, yawAccel: 13.5, drag: 1.3,
+    verticalThrust: 120, cruiseThrust: 22, cruiseAgl: 160, maxAgl: 320,
+    sockets: [
+      { id: "nose_guns", class: "fixed", controller: "pilot", weapon: "machine_gun", muzzleFire: "simultaneous" },
+    ],
+    countermeasure: "smoke_screen",
+    enemySeekerMul: 0.72,
+  },
   // Steampunk fighter pod — same plane scheme as biplane; launched from Leviathan.
   // Not hangar-selectable — remote roster owns lifecycle (`REMOTE_CRAFTS.fighter`).
   raptor: {

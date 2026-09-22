@@ -214,6 +214,7 @@ import {
   initRemoteLoadout,
   remoteGunId,
   remoteHasPovHud,
+  remoteHull,
   remoteRotorParts,
   remoteRotorPoolSize,
   remoteSocketStartingAmmo,
@@ -1041,7 +1042,7 @@ export class MissionScene extends Phaser.Scene {
      * When set (HOUND / POV observer), each round fires this host craft weapon
      * at the mark instead of a synthetic off-map shell.
      */
-    hostWeapon?: string;
+    hostWeapon?: WpnId;
     /** Host-walk aim oscillator (seconds). */
     wobbleT?: number;
     /** Live slew/fire point — wobbles around the mark for host howitzer walks. */
@@ -6322,7 +6323,7 @@ craftBodyMountWorldPos(mount: { x: number; y: number }): { x: number; y: number 
     // with the weapon's normal control mode. Unselected autos fire from tickAutomaticStations.
     if (socket.controller === "automatic") {
       // Call-strike walk owns this station — no manual howitzer during barrage.
-      if (this.hostWeaponStrikeActive(spec.id)) {
+      if (this.hostWeaponStrikeActive(wpnIdOf(spec))) {
         this.pointerWasDown = down;
         return;
       }
@@ -6559,7 +6560,7 @@ craftBodyMountWorldPos(mount: { x: number; y: number }): { x: number; y: number 
     z: number,
     spec: NonNullable<WeaponPayload["callStrike"]>,
     spawnFrom?: { x: number; y: number; z: number },
-    hostWeapon?: string
+    hostWeapon?: WpnId
   ): void {
     const markZ = Math.max(z, groundZ(this.world, x, y));
     // Default: inbound from one map-width to the right. Host-spawn = dropship fire support.
@@ -6567,7 +6568,7 @@ craftBodyMountWorldPos(mount: { x: number; y: number }): { x: number; y: number 
     const spawnY = spawnFrom?.y ?? y;
     const spawnZ = spawnFrom?.z ?? 1500;
     const delayT = Math.max(0, spec.delay ?? 0);
-    const hostSpec = hostWeapon ? PLAYER_WPNS[hostWeapon as WpnId] : undefined;
+    const hostSpec = hostWeapon ? PLAYER_WPNS[hostWeapon] : undefined;
     const shellSpeed = hostSpec?.speed ?? spec.shellSpeed ?? 400;
     const interval = hostSpec
       ? Math.max(0.12, hostSpec.fireCd)
@@ -8436,7 +8437,7 @@ specIsShellGun(spec)
   }
 
   /** Catalog weapon id whose host ammo a POV remote slot spends, if any. */
-  remoteHostAmmoWeapon(wp: PlayerWpnSpec): string | undefined {
+  remoteHostAmmoWeapon(wp: PlayerWpnSpec): WpnId | undefined {
     if (payloadIsHostFire(wp.payload)) return wp.payload!.hostFire!.weapon;
     // HOUND artillery observer — barrage is the dropship howitzer.
     if (payloadIsCallStrike(wp.payload)) return "heavy_artillery";
@@ -8468,7 +8469,7 @@ specIsShellGun(spec)
   }
 
   /** True while a host-weapon call-strike barrage still has rounds left. */
-  hostWeaponStrikeActive(wpnId?: string): boolean {
+  hostWeaponStrikeActive(wpnId?: WpnId): boolean {
     return this.callStrikeMarks.some(
       (m) =>
         !!m.hostWeapon &&
@@ -8486,14 +8487,14 @@ specIsShellGun(spec)
     return cds;
   }
 
-  hostStationFireReady(wpnId: string): boolean {
+  hostStationFireReady(wpnId: WpnId): boolean {
     const slot = this.hostWeaponSlot(wpnId);
     if (slot < 0) return false;
     return (this.ensureStationFireCd(slot)[0] ?? 0) <= 0;
   }
 
   /** Barrel close enough to aim point for a host strike / spot shot. */
-  hostStationAlignedTo(wpnId: string, aim: { x: number; y: number }): boolean {
+  hostStationAlignedTo(wpnId: WpnId, aim: { x: number; y: number }): boolean {
     const slot = this.hostWeaponSlot(wpnId);
     if (slot < 0) return false;
     const gunI = this.gunVisualIndexForSlot(slot);
@@ -8506,13 +8507,13 @@ specIsShellGun(spec)
     return Math.abs(Phaser.Math.Angle.Wrap(want - ang)) <= AUTO_GUN_ALIGN_TOL * 1.6;
   }
 
-  hostWeaponSlot(wpnId: string): number {
+  hostWeaponSlot(wpnId: WpnId): number {
     let slot = this.loadout.findIndex((w) => w.id === wpnId);
     if (slot < 0) slot = this.heli.spec.sockets.findIndex((s) => s.weapon === wpnId);
     return slot;
   }
 
-  hostWeaponAmmoLeft(wpnId: string): number | undefined {
+  hostWeaponAmmoLeft(wpnId: WpnId): number | undefined {
     const slot = this.hostWeaponSlot(wpnId);
     if (slot < 0) return undefined;
     return this.ammo[slot];
@@ -8872,12 +8873,13 @@ specIsShellGun(spec)
     const sp = Math.sin(pitchOff);
     const kick = remoteSpec.launchSpeed;
     const gnd = groundZ(this.world, pylon.x, pylon.y);
+    const hull = remoteHull(remoteSpec);
     this.remotes.push({
       id: nextId(),
       spec: remoteSpec,
       x: pylon.x,
       y: pylon.y,
-      z: reverseDrop ? h.z : remoteSpec.ground ? gnd + remoteSpec.cruiseAgl : (at?.z ?? h.z + ZOff.shot),
+      z: reverseDrop ? h.z : remoteSpec.ground ? gnd + hull.cruiseAgl : (at?.z ?? h.z + ZOff.shot),
       vx: h.vx * (reverseDrop ? 0.55 : 0.85) + Math.cos(ang) * kick * cp,
       vy: h.vy * (reverseDrop ? 0.55 : 0.85) + Math.sin(ang) * kick * cp,
       vz: reverseDrop ? h.vz * 0.35 - 30 : remoteSpec.ground ? 0 : h.vz * 0.4 + kick * sp,
@@ -9289,7 +9291,7 @@ specIsShellGun(spec)
     }
 
     // Soft climb toward host altitude band (Heli seeks hull cruiseAgl; AI biases to host).
-    const band = host.z + Phaser.Math.Clamp(spec.cruiseAgl - 30, -20, 40);
+    const band = host.z + Phaser.Math.Clamp(remoteHull(spec).cruiseAgl - 30, -20, 40);
     drone.vz += (band - drone.z) * 1.8 * dt;
     drone.vz *= Math.pow(0.25, dt);
 
@@ -9406,7 +9408,7 @@ specIsShellGun(spec)
     drone.vz *= Math.pow(0.3, dt);
     if (dist < 110) {
       const pull = 1 - Math.exp(-5 * dt);
-      const along = drone.spec.maxSpeed * (0.45 + approach * 0.4) * 0.9;
+      const along = remoteHull(drone.spec).maxSpeed * (0.45 + approach * 0.4) * 0.9;
       drone.vx = Phaser.Math.Linear(drone.vx, (dx / dist) * along, pull);
       drone.vy = Phaser.Math.Linear(drone.vy, (dy / dist) * along, pull);
     }
@@ -9485,15 +9487,15 @@ specIsShellGun(spec)
    * Airborne drops fall under gravity and thud-land with no bounce.
    */
   snapRemoteGround(drone: RemoteCraft, dt: number): void {
-    const spec = drone.spec;
+    const hull = remoteHull(drone.spec);
     const gnd = groundZ(this.world, drone.x, drone.y);
-    if (!spec.ground) {
-      const rest = gnd + spec.cruiseAgl;
+    if (!drone.spec.ground) {
+      const rest = gnd + hull.cruiseAgl;
       drone.vz += (rest - drone.z) * 2.4 * dt;
       drone.vz *= Math.pow(0.2, dt);
       return;
     }
-    const pad = gnd + spec.cruiseAgl;
+    const pad = gnd + hull.cruiseAgl;
     if (drone.airborne) {
       drone.vz -= 620 * dt;
       if (drone.z <= pad) {
@@ -9561,7 +9563,7 @@ specIsShellGun(spec)
     drone.vx *= Math.pow(0.08, dt);
     drone.vy *= Math.pow(0.08, dt);
     const gnd = groundZ(this.world, drone.x, drone.y);
-    const rest = gnd + drone.spec.cruiseAgl;
+    const rest = gnd + remoteHull(drone.spec).cruiseAgl;
     drone.vz += (rest - drone.z) * 2.4 * dt;
     drone.vz *= Math.pow(0.2, dt);
   }
@@ -9725,13 +9727,11 @@ specIsShellGun(spec)
     const body = this.remoteBodyImage(r);
     if (!body?.visible) return;
     const spd = Math.hypot(r.vx, r.vy);
-    const hull = r.spec.craftLook ? craftOf(r.spec.craftLook) : undefined;
-    const min = hull?.minSpeed ?? r.spec.minSpeed ?? 120;
+    const hull = remoteHull(r.spec);
+    const min = hull.minSpeed || 120;
     if (spd < min * 0.55) return;
 
-    const tips = hull
-      ? craftWingTipMounts(hull)
-      : lookupSpritePoints(r.spec.look, "wingtip");
+    const tips = craftWingTipMounts(hull);
     if (tips.length) {
       if (!r.wingTrailPrevScreen) r.wingTrailPrevScreen = [];
       const state = {
@@ -9758,11 +9758,12 @@ specIsShellGun(spec)
       r.wingTrailMountCursor = state.mountCursor;
     }
 
-    const profile = hull?.exhaustProfile;
-    const mounts = hull
-      ? craftExhaustMounts(hull)
+    const profile = hull.exhaustProfile;
+    const hullMounts = craftExhaustMounts(hull);
+    const mounts = hullMounts.length
+      ? hullMounts
       : lookupSpritePoints(r.spec.look, "exhaust");
-    const power = Phaser.Math.Clamp(spd / Math.max(1, hull?.maxSpeed ?? r.spec.maxSpeed), 0.2, 1);
+    const power = Phaser.Math.Clamp(spd / Math.max(1, hull.maxSpeed), 0.2, 1);
     if (profile && mounts.length) {
       const pose = this.remoteBodyDrawPose(body);
       const bodyDepth =
@@ -9771,7 +9772,7 @@ specIsShellGun(spec)
       const jetAng = projectHeading(r.angle + Math.PI, r.x, r.y, r.z);
       const zs = worldToScreen(r.x, r.y, r.z).scale;
       const glowAng = profile.glowFollowsHull ? pose.rotation : jetAng - Math.PI / 2;
-      const flameHue = profile.flameHue ?? (hull ? craftExhaustFlameHue(hull.kind) : undefined);
+      const flameHue = profile.flameHue ?? craftExhaustFlameHue(hull.kind);
       for (let mi = 0; mi < mounts.length; mi++) {
         const mount = mounts[mi]!;
         const { flame, glow } = this.ensureRemoteExhaustVisual(this.remoteExhaustVisCursor++);
@@ -9868,7 +9869,8 @@ specIsShellGun(spec)
     }
     if (!cameraPointVisible(r.z, r.y)) return;
     // Don't starve high-maxSpeed planes (Skiff 380) — scale against cruise, not top speed.
-    const powerRef = Math.max(90, (r.spec.minSpeed ?? 0) * 1.15, r.spec.maxSpeed * 0.4);
+    const hull = remoteHull(r.spec);
+    const powerRef = Math.max(90, hull.minSpeed * 1.15, hull.maxSpeed * 0.4);
     const power = Phaser.Math.Clamp(spd / powerRef, 0.35, 1);
     r.exhaustCarry = (r.exhaustCarry ?? 0) + cfg.rate * power * dt;
     const n = Math.floor(r.exhaustCarry);
@@ -10138,7 +10140,7 @@ specIsShellGun(spec)
         if (!this.hostStationFireReady(hostWpn)) return;
         const ok = this.fireHostWeaponAt(hostWpn, ptr);
         if (ok) {
-          const hostSpec = PLAYER_WPNS[hostWpn as WpnId];
+          const hostSpec = PLAYER_WPNS[hostWpn];
           drone.fireCd = hostSpec?.fireCd ?? spec.fireCd;
         }
         return;
@@ -10160,11 +10162,11 @@ specIsShellGun(spec)
    * `ptr` is the ballistic aim point (reticle / call-strike wobble).
    */
   fireHostWeaponAt(
-    wpnId: string,
+    wpnId: WpnId,
     ptr: { x: number; y: number },
     opts?: { fromStrike?: boolean }
   ): boolean {
-    const hostSpec = PLAYER_WPNS[wpnId as WpnId];
+    const hostSpec = PLAYER_WPNS[wpnId];
     if (!hostSpec) return false;
     const slot = this.hostWeaponSlot(wpnId);
     if (slot < 0) return false;
@@ -12931,7 +12933,7 @@ specIsShellGun(spec)
           st.opened = true;
           const cs = { ...beh!.payload.callStrike! };
           let spawnFrom: { x: number; y: number; z: number } | undefined;
-          let hostWeapon: string | undefined;
+          let hostWeapon: WpnId | undefined;
           if (st.callStrikeFromHost) {
             // POV remote observer — walk the host howitzer onto the mark.
             const h = this.heli;

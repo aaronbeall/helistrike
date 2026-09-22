@@ -6,7 +6,6 @@
  * (scale, look art, fragile health, skiff skin, …).
  */
 import {
-  craftControlScheme,
   craftOf,
   rotorDrawSpan,
   rotorSpinSign,
@@ -25,12 +24,10 @@ import { lookupSpriteOrigin, lookupSpritePoints } from "./spriteOrigin";
 
 export type RemoteKind = "spectre" | "wingman" | "fighter" | "agv";
 
-/** Pilot steer model — aim faces mouse; orbit is tank; plane is force-forward. */
-export type RemoteControl = "aim" | "orbit" | "plane";
-
 /**
  * Resolved remote — always complete for gameplay.
  * Built by `remoteSpecOf` from authored defs + optional craft hull.
+ * Flight / control scheme live on `craftLook` (`craftOf`).
  */
 export interface RemoteSpec {
   kind: RemoteKind;
@@ -38,12 +35,6 @@ export interface RemoteSpec {
   health: number;
   radius: number;
   height: number;
-  maxSpeed: number;
-  thrust: number;
-  strafe: number;
-  yawRate: number;
-  climbRate: number;
-  cruiseAgl: number;
   life: number;
   detonateDmg: number;
   detonateBlast: number;
@@ -85,10 +76,6 @@ export interface RemoteSpec {
   /** Gun sprite key (defaults to weapon mount art). */
   gunTex?: string;
   gunScale?: number;
-  /** Tank-style A/D yaw + W/S thrust, or plane force-forward. */
-  control?: RemoteControl;
-  /** Plane remotes — keep this much forward speed (world units/s). */
-  minSpeed?: number;
   /** Ground track prints. */
   track?: TrackKind;
   trackGap?: number;
@@ -175,12 +162,6 @@ type RemoteDef = {
   health?: number;
   radius?: number;
   height?: number;
-  maxSpeed?: number;
-  thrust?: number;
-  strafe?: number;
-  yawRate?: number;
-  climbRate?: number;
-  cruiseAgl?: number;
   thermal?: boolean;
   ai?: boolean;
   pilotable?: boolean;
@@ -195,8 +176,6 @@ type RemoteDef = {
   gun?: WpnId;
   gunTex?: string;
   gunScale?: number;
-  control?: RemoteControl;
-  minSpeed?: number;
   track?: TrackKind;
   trackGap?: number;
   trackScale?: number;
@@ -368,16 +347,8 @@ export function remoteRotorPoolSize(): number {
   return n;
 }
 
-function controlFromHull(hull: CraftSpec): RemoteControl {
-  const scheme = craftControlScheme(hull);
-  if (scheme === "orbit") return "orbit";
-  if (scheme === "plane") return "plane";
-  return "aim";
-}
-
 function mergeRemoteDef(def: RemoteDef): RemoteSpec {
   const hull = craftOf(def.craftLook);
-  const control = def.control ?? controlFromHull(hull);
   // POV loadout: pilotable remotes inherit hull sockets unless overridden.
   const sockets =
     def.sockets ?? (def.pilotable ? hull.sockets : undefined);
@@ -388,12 +359,6 @@ function mergeRemoteDef(def: RemoteDef): RemoteSpec {
     health: def.health ?? hull.health,
     radius: def.radius ?? hull.radius,
     height: def.height ?? hull.height,
-    maxSpeed: def.maxSpeed ?? hull.maxSpeed,
-    thrust: def.thrust ?? hull.forwardThrust,
-    strafe: def.strafe ?? hull.strafeThrust,
-    yawRate: def.yawRate ?? hull.yawRate,
-    climbRate: def.climbRate ?? hull.verticalThrust,
-    cruiseAgl: def.cruiseAgl ?? hull.cruiseAgl,
     life: def.life,
     detonateDmg: def.detonateDmg,
     detonateBlast: def.detonateBlast,
@@ -415,8 +380,6 @@ function mergeRemoteDef(def: RemoteDef): RemoteSpec {
     gun: def.gun ?? turret?.weapon,
     gunTex: def.gunTex ?? turret?.gunTex,
     gunScale: def.gunScale ?? turret?.gunScale,
-    control,
-    minSpeed: def.minSpeed ?? hull.minSpeed,
     track: def.track ?? hull.track,
     trackGap: def.trackGap ?? hull.trackGap,
     trackScale: def.trackScale ?? hull.trackScale,
@@ -432,6 +395,14 @@ function mergeRemoteDef(def: RemoteDef): RemoteSpec {
     craftLook: def.craftLook,
     rotOff: def.rotOff ?? hull.rotOff,
   };
+}
+
+/**
+ * CraftSpec for a remote — always the `craftLook` hull.
+ * Prefer this over reading kinematics off RemoteSpec.
+ */
+export function remoteHull(spec: RemoteSpec): CraftSpec & { kind: CraftKind } {
+  return craftOf(spec.craftLook);
 }
 
 /**
@@ -461,9 +432,7 @@ const REMOTE_DEFS: Record<RemoteKind, RemoteDef> = {
     detonateBlast: 48,
     launchSpeed: 200,
     scale: 0.55,
-    // Biplane flight; Skiff skin.
-    craftLook: "biplane",
-    look: "craft_skiff",
+    craftLook: "skiff",
     ai: true,
     dockable: true,
     attackPass: true,
@@ -471,8 +440,6 @@ const REMOTE_DEFS: Record<RemoteKind, RemoteDef> = {
     orbitPreferRemote: true,
     recallWithQ: true,
     gun: "machine_gun",
-    maxSpeed: 380,
-    thrust: 520,
     orbitRange: 160,
     awareRange: 560,
     escortRange: 200,
