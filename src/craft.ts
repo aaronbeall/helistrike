@@ -124,6 +124,7 @@ export interface CraftExhaustProfile {
   sx: number;
   sy: number;
   life: number;
+  /** Nozzle flame scale. 0 = smoke only; a pale `smoke` tint uses the light sheet. */
   flame: number;
   gap: number;
   /** Degrees from warm exhaust art; 0 keeps source orange. */
@@ -609,6 +610,31 @@ const CRAFTS_DEFS = {
     ],
     countermeasure: "emp",
   },
+  // Kamikaze pod. Same quad-drone art as Murder Hornet, own slower flight. Not hangar-selectable.
+  spectre: {
+    kind: "spectre",
+    name: "Spectre",
+    fullName: "SPECTRE DRONE",
+    role: "Kamikaze Drone",
+    playable: false,
+    flightModel: "heli",
+    sizeM: 1.9,
+    ammoScale: 0.65,
+    health: 28,
+    radius: 7,
+    height: 4,
+    body: "craft_quad_drone",
+    hulk: "craft_quad_drone_hulk",
+    rotor: "craft_quad_drone_rotor",
+    rotorHulk: "craft_quad_drone_rotor_hulk",
+    rotorScale: 0.26,
+    rotOff: Math.PI / 2,
+    // Same thrust / cap / yaw as the old remote. Drag matches its per-frame bleed
+    // (v *= 0.12^dt) so W cruises near 260 instead of sitting on the 360 cap.
+    forwardThrust: 560, strafeThrust: 500, maxSpeed: 360, minSpeed: 0, yawRate: 5.4, yawAccel: 29, drag: 2.12,
+    verticalThrust: 300, cruiseThrust: 40, cruiseAgl: 26, maxAgl: 90,
+    sockets: [],
+  },
   lightning_ii: {
     kind: "lightning_ii",
     name: "Lightning II",
@@ -829,7 +855,7 @@ const CRAFTS_DEFS = {
         traverse: 240,
         gunLayer: "above",
         gunScale: 1.05,
-        bombDrop: { momentum: 0.2, maxBoost: 290, loft: 150, loftMax: 270 },
+        bombDrop: { momentum: 0.2, maxBoost: 180, loft: 150, loftMax: 270 },
       },
       // Four deck .50s — one HUD slot; each barrel aims/fires independently.
       {
@@ -962,6 +988,10 @@ const CRAFTS_DEFS = {
     // Faster boom-and-zoom than the hangar biplane.
     forwardThrust: 520, reverseThrust: 360, strafeThrust: 0, maxSpeed: 380, minSpeed: 110, yawRate: 3.2, yawAccel: 13.5, drag: 1.3,
     verticalThrust: 120, cruiseThrust: 22, cruiseAgl: 160, maxAgl: 320,
+    // White linger cloud off the aft exhaust UV. No nozzle flame.
+    exhaustProfile: {
+      rate: 16, speed: 24, tint: 0xffffff, smoke: 0xffffff, sx: 0.32, sy: 0.27, life: 1100, flame: 0, gap: 4,
+    },
     sockets: [
       { id: "nose_guns", class: "fixed", controller: "pilot", weapon: "machine_gun", muzzleFire: "simultaneous" },
     ],
@@ -1034,6 +1064,8 @@ const CRAFTS_DEFS = {
     ],
     countermeasure: "smoke_screen",
     enemySeekerMul: 0.68,
+    // Small POV pod — baseline harder to spot/chase than the host airship.
+    enemyAwareMul: 0.62,
   },
   reaper: {
     kind: "reaper",
@@ -1170,6 +1202,10 @@ const CRAFTS_DEFS = {
     // Orbit yaw + forward thrust; dirt-hugger (pad AGL enforced by remote snap).
     forwardThrust: 300, reverseThrust: 220, strafeThrust: 0, maxSpeed: 130, maxReverseSpeed: 70, minSpeed: 0, yawRate: 2.4, yawAccel: 12, drag: 1.85,
     verticalThrust: 200, cruiseThrust: 40, cruiseAgl: 3.5, maxAgl: 14,
+    // Dark dust cloud off the rear grille. No nozzle flame.
+    exhaustProfile: {
+      rate: 7, speed: 16, tint: 0x5c5c58, smoke: 0x5c5c58, sx: 0.36, sy: 0.32, life: 3200, flame: 0, gap: 6,
+    },
     sockets: [
       {
         id: "turret",
@@ -1203,6 +1239,9 @@ const CRAFTS_DEFS = {
       },
     ],
     countermeasure: "smoke_screen",
+    // Dirt runner — harder to spot than the dropship; seekers already ignore ground focus.
+    enemyAwareMul: 0.7,
+    enemySeekerMul: 0.78,
   },
   vtol_dropship: {
     kind: "vtol_dropship",
@@ -1649,19 +1688,40 @@ export function craftGunTexture(c: CraftSpec = craftOf()): string | undefined {
   return sock ? sock.gunTex ?? weaponMountTex(sock.weapon) : undefined;
 }
 
-/** Socket indices that own a visible gun overlay (matches `craftComposite(...).guns` order).
- * Multi-barrel turret sockets repeat their slot index once per barrel.
- * Fixed / hardpoint stations never contribute — hull-baked muzzles have no overlay. */
-export function craftGunSocketSlots(c: CraftSpec = craftOf()): number[] {
-  const out: number[] = [];
+/** Stable key for a body gun UV — id when authored, else quantized xy. */
+function craftGunMountKey(p: { x: number; y: number; id?: string }): string {
+  return p.id ?? `${p.x.toFixed(5)},${p.y.toFixed(5)}`;
+}
+
+/**
+ * Overlay barrels: one gun art per body gun mount, first turret socket wins.
+ * Later turrets that resolve to an already-claimed UV (e.g. Cyber Hawk Tesla on chin)
+ * are skipped so previews don't stack mount art.
+ */
+function craftGunOverlayBarrels(
+  c: CraftSpec
+): { slot: number; x: number; y: number }[] {
+  const claimed = new Set<string>();
+  const out: { slot: number; x: number; y: number }[] = [];
   for (let i = 0; i < c.sockets.length; i++) {
     const s = c.sockets[i]!;
-    if ((s.class === "turret") && (s.gunTex || weaponMountTex(s.weapon))) {
-      const n = craftSocketBarrelCount(c, i);
-      for (let b = 0; b < n; b++) out.push(i);
+    if (s.class !== "turret" || !(s.gunTex || weaponMountTex(s.weapon))) continue;
+    for (const p of craftSocketGunPoints(c, i)) {
+      const key = craftGunMountKey(p);
+      if (claimed.has(key)) continue;
+      claimed.add(key);
+      out.push({ slot: i, x: p.x, y: p.y });
     }
   }
   return out;
+}
+
+/** Socket indices that own a visible gun overlay (matches `craftComposite(...).guns` order).
+ * Multi-barrel turret sockets repeat their slot index once per barrel.
+ * Fixed / hardpoint stations never contribute — hull-baked muzzles have no overlay.
+ * Each body gun UV is claimed once (first socket in loadout order). */
+export function craftGunSocketSlots(c: CraftSpec = craftOf()): number[] {
+  return craftGunOverlayBarrels(c).map((b) => b.slot);
 }
 
 /**
@@ -1678,7 +1738,7 @@ export function craftSocketBarrelCount(c: CraftSpec, socketIndex: number): numbe
 /**
  * Resolved body gun UVs for a socket (overlay / fire order).
  * - `points` listed → those gun ids in list order.
- * - Else → all `role: "gun"` points (multiple turrets may share them).
+ * - Else → all `role: "gun"` points (overlay dedupes via `craftGunOverlayBarrels`).
  */
 export function craftSocketGunPoints(
   c: CraftSpec,
@@ -1692,14 +1752,10 @@ export function craftSocketGunPoints(
   return lookupSpritePoints(c.body, "gun").map((p) => ({ x: p.x, y: p.y, id: p.id }));
 }
 
-/** Every authored player gun mount, in firing / overlay order (socket groups). */
+/** Every authored player gun mount, in firing / overlay order (socket groups).
+ * One entry per body UV — first turret socket that claims it wins. */
 export function craftGunMounts(c: CraftSpec = craftOf()): { x: number; y: number }[] {
-  const ordered: { x: number; y: number }[] = [];
-  for (let i = 0; i < c.sockets.length; i++) {
-    for (const p of craftSocketGunPoints(c, i)) {
-      ordered.push({ x: p.x, y: p.y });
-    }
-  }
+  const ordered = craftGunOverlayBarrels(c).map((b) => ({ x: b.x, y: b.y }));
   if (ordered.length) return ordered;
   return mountsOf(c.body, "gun");
 }

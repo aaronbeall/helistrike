@@ -82,22 +82,6 @@ export interface RemoteSpec {
   trackGap?: number;
   trackScale?: number;
   /**
-   * Soft linger smoke from the tail while moving (HOUND ground plume, Skiff trail).
-   * Rate scales with speed / maxSpeed — idle = no plume.
-   * Prefer authored `exhaust` UVs on `look` when the body is posed.
-   */
-  exhaustSmoke?: {
-    /** Particles / sec at full speed. */
-    rate: number;
-    /** Emitter scale (linger puff size). */
-    size?: number;
-    tint?: number;
-    /** World units behind center along −heading. Omit → radius × 0.75. */
-    aft?: number;
-    /** When true, emit while airborne (Skiff). Default: ground only (HOUND). */
-    airborne?: boolean;
-  };
-  /**
    * Elastic whip antenna — base UV role `antenna` on `look`.
    * Tip springs upright (Z + slight aft) and wobbles with thrust / yaw.
    */
@@ -185,7 +169,6 @@ type RemoteDef = {
   track?: TrackKind;
   trackGap?: number;
   trackScale?: number;
-  exhaustSmoke?: RemoteSpec["exhaustSmoke"];
   antenna?: RemoteSpec["antenna"];
   engageRange?: number;
   orbitRange?: number;
@@ -393,7 +376,6 @@ function mergeRemoteDef(def: RemoteDef): RemoteSpec {
     track: def.track ?? hull.track,
     trackGap: def.trackGap ?? hull.trackGap,
     trackScale: def.trackScale ?? hull.trackScale,
-    exhaustSmoke: def.exhaustSmoke,
     antenna: def.antenna,
     engageRange: def.engageRange,
     orbitRange: def.orbitRange,
@@ -432,7 +414,7 @@ const REMOTE_DEFS: Record<RemoteKind, RemoteDef> = {
     launchSpeed: 280,
     scale: 0.42,
     thermal: true,
-    craftLook: "quad_drone",
+    craftLook: "spectre",
   },
   wingman: {
     kind: "wingman",
@@ -454,8 +436,6 @@ const REMOTE_DEFS: Record<RemoteKind, RemoteDef> = {
     orbitRange: 160,
     awareRange: 560,
     escortRange: 200,
-    // Small white engine smoke off the aft UV on craft_skiff.
-    exhaustSmoke: { rate: 16, size: 0.28, tint: 0xffffff, aft: 10, airborne: true },
   },
   fighter: {
     kind: "fighter",
@@ -488,7 +468,6 @@ const REMOTE_DEFS: Record<RemoteKind, RemoteDef> = {
     ai: true,
     pilotable: true,
     ground: true,
-    exhaustSmoke: { rate: 7, size: 0.32, tint: 0x5c5c58, aft: 11 },
     antenna: { length: 11, aft: 1.8, stiffness: 28, damping: 2.8, yawWhip: 10, lag: 1.6 },
     engageRange: 320,
     orbitRange: 95,

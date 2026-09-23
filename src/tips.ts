@@ -232,6 +232,11 @@ export const TACTICAL_TIPS: TacticalTip[] = [
     context: { weapons: ["agv_drop"] },
   },
   {
+    id: "wpn_agv_aa",
+    text: "HOUND runs under the AA envelope — SAMs and AA guns will not target the ground pod. Draw fire with the bird, then push the HOUND into soft targets.",
+    context: { weapons: ["agv_drop"] },
+  },
+  {
     id: "wpn_skiff",
     text: "Skiffs auto-launch from the Leviathan when enemies enter awareness (cooldown between launches, max 6). They orbit wide, strafe targets spotted by the airship / Skiffs / Raptor, and Q recalls them all to dock.",
     context: { weapons: ["wingman_drone"] },

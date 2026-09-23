@@ -70,7 +70,8 @@ export type WeaponArt = {
 export type ExhaustTrail =
   | {
       kind: "particles";
-      fire?: "burn" | "hotFlame";
+      /** Motor flame, or cyanSpark for railgun forward spit (no smoke). */
+      fire?: "burn" | "hotFlame" | "cyanSpark";
       /**
        * Emit fire only for this many seconds after launch (motor flash),
        * then continue with smoke alone. Omit = fire for the whole flight.
@@ -486,7 +487,7 @@ const ordArt = (
 const particleTrail = (
   size: number,
   opts: {
-    fire?: "burn" | "hotFlame";
+    fire?: "burn" | "hotFlame" | "cyanSpark";
     fireFor?: number;
     fireSize?: number;
     smoke?: "linger" | "short" | "rocket";
@@ -682,7 +683,7 @@ const PLAYER_WPNS_DEFS = {
     id: "heavy_bomb", name: "MOAB", fullName: "MASSIVE ORDNANCE AIR BLAST", designation: "GBU-43/B MASSIVE ORDNANCE AIR BLAST", ammo: 2, fireCd: 2.4, speed: 165,
     dmg: 980, blast: 280, life: 7.5,
     art: ordArt("bomb", 1.15, "velocity"),
-    exhaust: particleTrail(0.52, { smoke: "short", density: 0.55 }),
+    exhaust: particleTrail(0.42, { density: 0.45, contrail: true }),
     cam: CAM_DROP, control: CLICK, launch: DROP, payload: HE_FIRE,
     fits: FIT_HARDPOINT,
     dmgMul: { building: 1.35, vehicle: 1.15, troop: 0.9, air: 0.25 },
@@ -692,7 +693,7 @@ const PLAYER_WPNS_DEFS = {
     id: "cluster_bomb", name: "ROCKEYE", fullName: "ROCKEYE CLUSTER BOMB", designation: "CBU-100 ROCKEYE II CLUSTER BOMB", ammo: 5, fireCd: 1.35, speed: 185,
     dmg: 12, blast: 28, life: 6.8,
     art: ordArt("canister", 1.65, "velocity"),
-    exhaust: particleTrail(0.48, { smoke: "short", density: 0.5 }),
+    exhaust: particleTrail(0.42, { density: 0.45, contrail: true }),
     cam: CAM_DROP, control: CLICK, launch: DROP,
     payload: {
       cluster: {
@@ -765,11 +766,13 @@ const PLAYER_WPNS_DEFS = {
     notes: ["low-signature heat seeker — air punch, soft AG"],
   },
   railgun: {
-    id: "railgun", name: "RAILGUN", fullName: "RAILGUN", designation: "RG-40 HYPERVELOCITY RAILGUN", ammo: 180, fireCd: 0.4, speed: 1850,
-    // Half the old cadence (0.2→0.4); dmg doubled so sustained DPS stays the same.
-    dmg: 104, blast: 12, life: 0.16,
+    id: "railgun", name: "RAILGUN", fullName: "RAILGUN", designation: "RG-40 HYPERVELOCITY RAILGUN", ammo: 180, fireCd: 0.5, speed: 1850,
+    // One-shots drones (24) and scout helis (112). CD keeps catalog DPS at 260.
+    dmg: 130, blast: 12, life: 0.16,
     art: gunArt("railgun", 0.82, { w: 128, h: 12, core: [255, 255, 255], mid: [120, 220, 255], rim: [40, 120, 255], glow: 1.05, shape: "bolt" }, MOUNT_RAILGUN),
-    cam: CAM_GUN, fire: FIRE_GUN, control: HOLD, launch: MUZZLE,
+    // Tip glow like Tesla (no orange flash); cyan spark spit along the bolt path.
+    cam: CAM_GUN, fire: { muzzleFlash: false, jitter: 0.02 }, control: HOLD, launch: MUZZLE,
+    exhaust: particleTrail(0.42, { fire: "cyanSpark", density: 0.85, align: "heading" }),
     payload: { penetration: 1.4 },
     fits: FIT_GUN, notes: ["hypervelocity penetrator; deliberate automatic fire"],
   },
@@ -1505,6 +1508,11 @@ export function exhaustIsEnergy(
   e: ExhaustTrail | undefined
 ): e is Extract<ExhaustTrail, { kind: "energy" }> {
   return e?.kind === "energy";
+}
+
+/** Railgun-style cyan spit — still a gun for hit FX / deadfall, but leaves a spark trail. */
+export function exhaustIsGunSpark(e: ExhaustTrail | undefined): boolean {
+  return e?.kind === "particles" && e.fire === "cyanSpark";
 }
 
 /** Parallel ribbon count for energy exhaust (default 1 when energy). */

@@ -352,6 +352,8 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     origin: uv(0.5, 0.55),
     points: [
       { role: "gun", x: 0.5, y: 0.5, id: "main" },
+      // Rear grille — dust plume.
+      { role: "exhaust", x: 0.5, y: 0.88 },
       // Rear deck above the vent row — whip antenna base.
       { role: "antenna", x: 0.58, y: 0.78, id: "whip" },
     ],
