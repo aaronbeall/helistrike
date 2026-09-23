@@ -243,7 +243,7 @@ import {
   toonBlastKey,
 } from "./toonBlast";
 import { ensureAllArtGenAnims } from "./artGen";
-import { isAerial, isGroundVehicle, isOrganic, hasSoftBlood, specOf, driveOf, spawnAngle, pickTroop, labelOf, allKinds, gunsOf, rollParts, crewOf, muzzlesOfGun, type ShotKind, type ShotLook } from "./roster";
+import { isAerial, isGroundVehicle, isHeliBehavior, isInfantry, isOrganic, hasSoftBlood, specOf, driveOf, spawnAngle, pickTroop, labelOf, allKinds, gunsOf, rollParts, crewOf, muzzlesOfGun, type ShotKind, type ShotLook } from "./roster";
 import {
   circumRadiusOf,
   closestOnFootprint,
@@ -256,7 +256,7 @@ import {
   type Footprint,
 } from "./footprint";
 import { lookupSpriteMuzzles, lookupSpriteOrigin, lookupSpritePoints } from "./spriteOrigin";
-import { allCrafts, craftAgility, craftAimsWithTurret, craftBombDrop, craftCameraScale, craftCloudParallax, craftComposite, craftCompositePartScale, craftCrewHudTag, craftExhaustFlameHue, craftExhaustFlameSheet, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftGunPreferDegrees, craftGunPreferOffset, craftGunSocketSlots, craftHardpointMounts, craftControlScheme, craftLoadoutLabel, craftOf, craftOrigin, craftPreviewExhaustScale, craftPreviewExhaustTint, craftPreviewFitScale, craftRotorAlongScale, craftRotorFlightSpeed, craftRotorIsProp, craftRotorMounts, craftRotorPreviewSpinMs, craftRotorTiltMul, craftSocketBarrelCount, craftSocketFireCd, craftSocketIsPrimary, craftSocketMultiplicity, craftSocketPoints, craftSocketStartingAmmo, craftWingTipMounts, rotorDrawSpan, rotorMountsOf, rotorSpinSign, socketPointsOnKey, type CraftBombDrop, type CraftComposite } from "./craft";
+import { allCrafts, craftAgility, craftAimsWithTurret, craftBombDrop, craftCameraScale, craftCloudParallax, craftComposite, craftCompositePartScale, craftCrewHudTag, craftExhaustFlameHue, craftExhaustFlameSheet, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftGunPreferDegrees, craftGunPreferOffset, craftGunSocketSlots, craftHardpointMounts, craftControlScheme, craftLoadoutLabel, craftOf, craftOrigin, craftPreviewExhaustScale, craftPreviewExhaustTint, craftPreviewFitScale, craftRotorAlongScale, craftRotorFlightSpeed, craftRotorIsProp, craftRotorMounts, craftRotorPreviewSpinMs, craftRotorTiltMul, craftSocketBarrelCount, craftSocketFireCd, craftSocketIsPrimary, craftSocketMultiplicity, craftSocketPoints, craftSocketStartingAmmo, craftWingTipMounts, craftRotorDrawSpan, rotorDrawSpan, rotorMountsOf, rotorSpinSign, socketPointsOnKey, type CraftBombDrop, type CraftComposite, type CraftSpec } from "./craft";
 import { missionOf } from "./mission";
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
 import { rigsAnyOpen, installRigHotkeys } from "./rigs";
@@ -18325,7 +18325,107 @@ specIsShellGun(spec)
     }
   }
 
+  /**
+   * Infantry under a moving Wraith or Hound hull, or under a lift-rotor disc
+   * low enough to reach them.
+   */
+  tickRoadkill(): void {
+    const h = this.heli;
+    if (h.phase === "flight") this.roadkillCraft(h.x, h.y, h.z, h.vx, h.vy, h.spec, 1);
+    for (const r of this.remotes) {
+      if (r.detonate || r.dock || r.airborne || !r.spec.craftLook) continue;
+      this.roadkillCraft(r.x, r.y, r.z, r.vx, r.vy, remoteHull(r.spec), r.spec.scale);
+    }
+    for (const u of this.units) {
+      if (u.dead || !isAerial(u.kind)) continue;
+      const sp = specOf(u.kind);
+      if (!isHeliBehavior(sp.behavior) || sp.behavior === "suicide_attack_heli") continue;
+      const rotor = sp.rotors[0];
+      if (!rotor) continue;
+      const span = rotorDrawSpan(rotor.tex, rotor.scale ?? 1);
+      this.roadkillBlades(u.x, u.y, u.z, u.vx, u.vy, sp.height, span * 0.5);
+    }
+  }
+
+  roadkillCraft(
+    x: number,
+    y: number,
+    z: number,
+    vx: number,
+    vy: number,
+    spec: CraftSpec,
+    drawScale: number
+  ): void {
+    const crush = spec.kind === "hover_tank" || spec.kind === "hound";
+    const blades =
+      spec.flightModel === "heli" && !!spec.rotor && !craftRotorIsProp(spec);
+    if (crush) {
+      const hullR = Math.max(spec.radius, this.spriteHalf(spec.body) * drawScale * 0.72);
+      const spd = Math.hypot(vx, vy);
+      if (spd > 32) this.roadkillSweep(x, y, z, vx, vy, hullR, spec.cruiseAgl + 8);
+    }
+    if (blades) {
+      this.roadkillBlades(x, y, z, vx, vy, spec.height, craftRotorDrawSpan(spec) * 0.5 * drawScale);
+    }
+  }
+
+  /** Disc strikes when the hub is within reach of a standing troop. */
+  roadkillBlades(
+    x: number,
+    y: number,
+    z: number,
+    vx: number,
+    vy: number,
+    hullHeight: number,
+    discR: number
+  ): void {
+    const reachBelowHub = 20;
+    for (const u of this.units) {
+      if (u.dead || !isInfantry(u.kind)) continue;
+      const sp = specOf(u.kind);
+      const agl = z - groundZ(this.world, u.x, u.y);
+      if (agl + hullHeight > sp.height + reachBelowHub) continue;
+      if (Math.hypot(u.x - x, u.y - y) > discR + sp.radius) continue;
+      this.roadkillTroop(u, vx, vy);
+    }
+  }
+
+  /** Hull sweep. `maxAgl` is the highest belly altitude that still runs troops over. */
+  roadkillSweep(
+    x: number,
+    y: number,
+    z: number,
+    vx: number,
+    vy: number,
+    hullR: number,
+    maxAgl: number
+  ): void {
+    for (const u of this.units) {
+      if (u.dead || !isInfantry(u.kind)) continue;
+      const sp = specOf(u.kind);
+      const agl = z - groundZ(this.world, u.x, u.y);
+      if (agl > maxAgl) continue;
+      if (Math.hypot(u.x - x, u.y - y) > hullR + sp.radius) continue;
+      this.roadkillTroop(u, vx, vy);
+    }
+  }
+
+  roadkillTroop(u: Unit, vx: number, vy: number): void {
+    u.killDx = vx;
+    u.killDy = vy;
+    u.killDz = 80;
+    u.killDmg = u.max;
+    this.hurt(u, u.health + 1);
+  }
+
+  spriteHalf(key: string): number {
+    if (!this.textures.exists(key)) return 18;
+    const src = this.textures.get(key).getSourceImage() as { width: number; height: number };
+    return Math.max(src.width, src.height) * 0.5;
+  }
+
   updateUnits(dt: number): void {
+    this.tickRoadkill();
     for (const u of this.units) {
       if (u.dead) continue;
       const prevAngle = u.angle;

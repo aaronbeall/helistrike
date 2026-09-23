@@ -180,7 +180,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     points: [
       { role: "rotor", x: 0.502, y: 0.538, spin: -1 },
       { role: "rotor", x: 0.497, y: 0.9, scale: 0.34, id: "tail", spin: 1 },
-      { role: "gun", x: 0.5, y: 0.17, id: "chin" },
+      { role: "gun", x: 0.492, y: 0.271, id: "chin" },
       ...pts("hardpoint", [uv(0.18, 0.48), uv(0.82, 0.48)]),
       ...pts("exhaust", [uv(0.372, 0.646), uv(0.63, 0.647)]),
     ],
