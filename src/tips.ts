@@ -1,6 +1,7 @@
 import type { CraftKind } from "./craft";
-import { craftOf } from "./craft";
+import { craftOf, craftRotorIsProp } from "./craft";
 import {
+  COUNTERMEASURES,
   craftCountermeasure,
   playerLoadoutFromSockets,
   wpnIdOf,
@@ -32,9 +33,28 @@ export interface TipContext {
   forForceMix?: (mix: ForceMix) => boolean;
 }
 
+/**
+ * Args passed to a `text` callback: the ids that actually matched this tip's
+ * context for the current screen (whitelist overlap ∪ predicate hits), pre-joined
+ * into readable names, plus `list` to format a custom subset the same way.
+ */
+export interface TipArgs {
+  weapons: readonly WpnId[];
+  crafts: readonly CraftKind[];
+  enemies: readonly UnitKind[];
+  cms: readonly CountermeasureId[];
+  /** Matched weapon names, e.g. "Chain Gun", "Chain Gun and Sidewinder". */
+  weaponNames: string;
+  craftNames: string;
+  enemyNames: string;
+  cmNames: string;
+  /** "X" / "X and Y" / "X, Y, and Z" — for a caller-picked subset of names. */
+  list(names: readonly string[]): string;
+}
+
 export interface TacticalTip {
   id: string;
-  text: string;
+  text: string | ((args: TipArgs) => string);
   context?: TipContext;
 }
 
@@ -58,6 +78,62 @@ function dimOk<T>(
   }
   if (tipCheck && !have.some(tipCheck)) return false;
   return true;
+}
+
+/** Items from `have` this tip's context actually keys on (whitelist ∪ predicate hits). */
+function dimMatched<T>(
+  tipList: readonly T[] | undefined,
+  tipCheck: ((x: T) => boolean) | undefined,
+  have: readonly T[] | undefined
+): T[] {
+  if (have == null || (tipList == null && tipCheck == null)) return [];
+  return have.filter((x) => (tipList?.includes(x) ?? false) || !!tipCheck?.(x));
+}
+
+/** "X" / "X and Y" / "X, Y, and Z". */
+function listNames(names: readonly string[]): string {
+  if (names.length === 0) return "";
+  if (names.length === 1) return names[0]!;
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+}
+
+/** Catalog rows use HUD-style ALL CAPS names — title-case for prose, keep known acronyms. */
+const NAME_ACRONYMS = new Set(["AA", "EMP", "FOB", "HE", "JDAM", "LAV", "LMG", "MG", "MOAB", "PT", "RPG", "SAM", "TOW"]);
+function prettyName(raw: string): string {
+  return raw
+    .split(" ")
+    .map((word) =>
+      word
+        .split("-")
+        .map((tok) => (NAME_ACRONYMS.has(tok) ? tok : tok.charAt(0) + tok.slice(1).toLowerCase()))
+        .join("-")
+    )
+    .join(" ");
+}
+
+function tipArgs(tip: TacticalTip, known: TipKnown): TipArgs {
+  const t = tip.context ?? {};
+  const weapons = dimMatched(t.weapons, t.forWeapon, known.weapons);
+  const crafts = dimMatched(t.crafts, t.forCraft, known.crafts);
+  const enemies = dimMatched(t.enemies, t.forEnemy, known.enemies);
+  const cms = dimMatched(t.cms, t.forCm, known.cms);
+  return {
+    weapons,
+    crafts,
+    enemies,
+    cms,
+    weaponNames: listNames(weapons.map((id) => prettyName(wpnOf(id).name))),
+    craftNames: listNames(crafts.map((id) => craftOf(id).name)),
+    enemyNames: listNames(enemies.map((id) => prettyName(specOf(id).label))),
+    cmNames: listNames(cms.map((id) => prettyName(COUNTERMEASURES[id].name))),
+    list: listNames,
+  };
+}
+
+/** Resolve a tip's display text for the current screen (runs `text` callbacks). */
+export function tipText(tip: TacticalTip, known: TipKnown): string {
+  return typeof tip.text === "function" ? tip.text(tipArgs(tip, known)) : tip.text;
 }
 
 export function tipMatches(tip: TacticalTip, known: TipKnown): boolean {
@@ -95,6 +171,11 @@ export function pickRandomTip(known: TipKnown, catalog: readonly TacticalTip[] =
 }
 
 export const TACTICAL_TIPS: TacticalTip[] = [
+  // —— General ——
+  {
+    id: "obj_hv",
+    text: "High-value objectives (HV) are marked distinctly on the map and HUD.",
+  },
   // —— Flight / theater ——
   {
     id: "flight_popup",
@@ -131,6 +212,18 @@ export const TACTICAL_TIPS: TacticalTip[] = [
       forCraft: (c) => craftOf(c).flightModel === "heli"
     }
   },
+  {
+    id: "roadkill_rotor",
+    text: "Flying low enough for the rotor disc to reach standing troops will mow them down.",
+    context: {
+      forCraft: (c) => craftOf(c).flightModel === "heli" && !!craftOf(c).rotor && !craftRotorIsProp(craftOf(c)),
+    },
+  },
+  {
+    id: "roadkill_hull",
+    text: (t) => `${t.craftNames} kills infantry just by driving over them.`,
+    context: { forCraft: (c) => !!craftOf(c).crushesInfantry },
+  },
 
   // —— Countermeasures ——
   {
@@ -153,8 +246,80 @@ export const TACTICAL_TIPS: TacticalTip[] = [
     text: "EMP stuns mech on screen, drops enemy drones into freefall, and kills airborne missiles.",
     context: { cms: ["emp"] },
   },
+  {
+    id: "cm_reactive_armor",
+    text: "Reactive Armor cuts incoming damage to a fraction for its duration — pop it before you eat a hit you can't dodge.",
+    context: { cms: ["reactive_armor"] },
+  },
+  {
+    id: "cm_smoke_screen",
+    text: "Smoke Screen blinds nearby gun lines and cuts their range — lay it and keep moving through the cloud.",
+    context: { cms: ["smoke_screen"] },
+  },
 
   // —— Special weapon behavior / tactics ——
+  {
+    id: "wpn_anti_armor",
+    text: (t) => `${t.weaponNames} ${t.weapons.length > 1 ? "tear" : "tears"} into vehicles and buildings — troops take a lot less of the hit.`,
+    context: {
+      forWeapon: (w) => {
+        const d = wpnOf(w).dmgMul;
+        return !!d && (d.vehicle ?? 1) > 1 && (d.building ?? 1) > 1 && (d.troop ?? 1) < 1;
+      },
+    },
+  },
+  {
+    id: "wpn_anti_air",
+    text: (t) => `Airborne targets are where ${t.weaponNames} really ${t.weapons.length > 1 ? "shine" : "shines"} — vehicles take noticeably less damage.`,
+    context: {
+      forWeapon: (w) => {
+        const d = wpnOf(w).dmgMul;
+        return !!d && (d.air ?? 1) > 1 && (d.vehicle ?? 1) < 1;
+      },
+    },
+  },
+  {
+    id: "wpn_anti_soft",
+    text: (t) => `${t.weaponNames} ${t.weapons.length > 1 ? "cut" : "cuts"} down infantry fast, but armor eats a lot more of the impact.`,
+    context: {
+      forWeapon: (w) => {
+        const d = wpnOf(w).dmgMul;
+        return !!d && (d.troop ?? 1) > 1 && (d.vehicle ?? 1) < 1;
+      },
+    },
+  },
+  {
+    id: "wpn_penetration",
+    text: (t) => `${t.weaponNames} punches through — line up a row of infantry or light vehicles and let one shot walk the whole file.`,
+    // Sub-1 penetration is armor-effectiveness flavor only; the shot needs a whole
+    // point to survive a hit and continue (missionScene pierce check: `pierce >= 1`).
+    context: { forWeapon: (w) => (wpnOf(w).payload.penetration ?? 0) >= 1 },
+  },
+  {
+    id: "wpn_guided_lock",
+    text: (t) => `Hold the lock box on target with ${t.weaponNames} until it locks, then look elsewhere — it flies itself in from there.`,
+    context: { forWeapon: (w) => wpnOf(w).guidance?.targeting.mode === "lock_on" },
+  },
+  {
+    id: "wpn_guided_wire",
+    text: (t) => `Fire ${t.weaponNames} and it curves toward your cursor for the whole flight — there's no ballistic mode, just keep aiming.`,
+    context: { forWeapon: (w) => wpnOf(w).guidance?.targeting.mode === "steer" },
+  },
+  {
+    id: "wpn_guided_commit",
+    text: (t) => `Soft-lock with ${t.weaponNames}, then commit the dive with a second click — keep it honest before you send it.`,
+    context: { forWeapon: (w) => wpnOf(w).guidance?.targeting.mode === "steer_commit" },
+  },
+  {
+    id: "wpn_guided_waypoint",
+    text: (t) => `Click a ground point for ${t.weaponNames} and it steers itself there on the way down.`,
+    context: { forWeapon: (w) => wpnOf(w).guidance?.targeting.mode === "waypoint" },
+  },
+  {
+    id: "wpn_remote_general",
+    text: (t) => `Piloting ${t.weaponNames}? Q always drops you back to the host aircraft. Left alone, autonomous remotes fight and return to the bay on their own.`,
+    context: { forWeapon: (w) => !!wpnOf(w).payload.remote },
+  },
   {
     id: "wpn_whisper",
     text: "Stunned or smoke-blinded enemies take extra damage from Whisper — EMP or smoke first, then hose them.",
@@ -184,11 +349,6 @@ export const TACTICAL_TIPS: TacticalTip[] = [
     },
   },
   {
-    id: "wpn_spike",
-    text: "Spike soft-locks, then a second click commits the dive — keep the diamond honest before you send it.",
-    context: { weapons: ["tv_missile"] },
-  },
-  {
     id: "wpn_smoke",
     text: "Smoke bombs blind enemy vision and fire range, and amplify damage from Whisper rounds.",
     context: { weapons: ["smoke_bomb"] },
@@ -214,23 +374,18 @@ export const TACTICAL_TIPS: TacticalTip[] = [
     context: { weapons: ["fighter_pod"] },
   },
   {
-    id: "wpn_micros",
-    text: "Micros gently steer toward the reticle and arc into the ground.",
-    context: { weapons: ["guided_rockets"] },
-  },
-  {
     id: "wpn_warp",
     text: "The Warp Bomb nearly stops time while in flight.",
     context: { weapons: ["warp_bomb"] },
   },
   {
     id: "wpn_griffin",
-    text: "Griffin Missiles are hold-to-steer. Extra effective against air targets.",
+    text: "Griffin does extra work against aircraft — prioritize helis and jets whenever you've got the lock.",
     context: { weapons: ["gps_missile"] },
   },
   {
     id: "wpn_maverick",
-    text: "Maverick Missiles only locks vehicles and buildings — it will not lock air or troops.",
+    text: "Maverick will only lock vehicles and buildings — don't waste time trying it on aircraft or troops.",
     context: { weapons: ["heavy_guided_missile"] },
   },
   {
@@ -248,7 +403,7 @@ export const TACTICAL_TIPS: TacticalTip[] = [
   },
   {
     id: "wpn_hellfire",
-    text: "Hellfires can target both air and ground, but are ideal for armor and emplacements — lock, fire, and forget.",
+    text: "Hellfires can hit both air and ground, but they're built for armor and emplacements — save them for the tough stuff.",
     context: { weapons: ["hellfire_missile", "mini_hellfire_missile"] },
   },
   {
@@ -268,7 +423,7 @@ export const TACTICAL_TIPS: TacticalTip[] = [
   },
   {
     id: "wpn_photon",
-    text: "Photon Missiles are both beautiful and never misses.",
+    text: "Photon missiles are both gorgeous, and they never miss.",
     context: { weapons: ["photon_missile"] },
   },
 
@@ -300,7 +455,7 @@ export const TACTICAL_TIPS: TacticalTip[] = [
   },
   {
     id: "enemy_tank",
-    text: "Tanks shrug small-caliber fire — use Hellfires, Spike, Railgun, or heavy bombs, not mag dumps.",
+    text: (t) => `${t.enemyNames} shrug small-caliber fire — use Hellfires, Spike, Railgun, or heavy bombs, not mag dumps.`,
     context: { forEnemy: (k) => specOf(k).behavior === "orbit_attack_vehicle" },
   },
   {

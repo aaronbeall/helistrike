@@ -266,7 +266,7 @@ import { setGlitchPipeline } from "./glitch";
 import { setWarpDistortPipeline } from "./warpDistort";
 import { setCloakFxPipeline } from "./cloakFx";
 import { createTerrain25D, type Terrain25D } from "./terrain25d";
-import { tipKnownFromSelection, tipsForKnown, type TacticalTip } from "./tips";
+import { tipKnownFromSelection, tipsForKnown, tipText, type TacticalTip, type TipKnown } from "./tips";
 import { extractBiomeTiles, bakeHeliHudWireTexture, heliHudWireUv, shadowAlpha, shadowKey, spriteUvPos, FX_SHEET_SIZE, FX_VARIANTS, FX_BLAST_CELLS, registerArt, nameGameTexture, spritePivot, muzzleGlowKey, ensureExhaustGlow, type HeliHudWireBake } from "./sprites";
 import { createControlLegend } from "./menuChrome";
 import {
@@ -1112,6 +1112,7 @@ export class MissionScene extends Phaser.Scene {
   helpPage = 0;
   /** Tips filtered to the current craft / loadout / mission enemies. */
   missionTips: TacticalTip[] = [];
+  missionTipsKnown: TipKnown = {};
   helpRoot!: Phaser.GameObjects.Container;
   helpBody!: Phaser.GameObjects.Text;
   helpAbout!: Phaser.GameObjects.Text;
@@ -21164,9 +21165,17 @@ specIsShellGun(spec)
     for (const r of this.remotes) {
       if (r.detonate || r.dock) continue;
       const p = toMap(r.x, r.y);
-      if (!inRing(p)) continue;
-      // Yellow diamond — player drones / remotes only.
-      this.drawMiniDiamond(p.x, p.y, 4.5, mark);
+      // Yellow diamond — player drones / remotes only. Off-radar stays locked to
+      // the rim on heading, shrinking with range instead of disappearing.
+      if (inRing(p)) {
+        this.drawMiniDiamond(p.x, p.y, 4.5, mark);
+      } else {
+        const ang = Math.atan2(p.y - cy, p.x - cx);
+        const rim = { x: cx + Math.cos(ang) * (mapR - 6), y: cy + Math.sin(ang) * (mapR - 6) };
+        const over = Math.hypot(r.x - this.heli.x, r.y - this.heli.y) - span / 2;
+        const size = Phaser.Math.Clamp(4.5 - over / 150, 1.5, 4.5);
+        this.drawMiniDiamond(rim.x, rim.y, size, mark);
+      }
     }
     for (const shot of this.shots) {
       if (!shotShowsOnRadar(shot)) continue;
@@ -21999,14 +22008,16 @@ specIsShellGun(spec)
     const enemies = this.units.length
       ? [...new Set(this.units.filter((u) => !u.dead).map((u) => u.kind))]
       : undefined;
-    this.missionTips = tipsForKnown({
+    this.missionTipsKnown = {
       ...tipKnownFromSelection(enemies),
       crafts: [this.heli?.spec.kind ?? craftOf().kind],
       weapons: this.loadout.map(wpnIdOf),
       cms: [craftCountermeasure(this.heli?.spec.countermeasure ?? craftOf().countermeasure)],
-    });
+    };
+    this.missionTips = tipsForKnown(this.missionTipsKnown);
     if (!this.missionTips.length) {
-      this.missionTips = tipsForKnown({ forceMixes: [missionOf().profile.forceMix] });
+      this.missionTipsKnown = { forceMixes: [missionOf().profile.forceMix] };
+      this.missionTips = tipsForKnown(this.missionTipsKnown);
     }
     this.helpPage = Phaser.Math.Clamp(this.helpPage, 0, Math.max(0, this.missionTips.length - 1));
   }
@@ -22098,7 +22109,8 @@ specIsShellGun(spec)
       }
     });
     this.helpAbout.setText(craft.description ?? "");
-    this.helpBody.setText(this.missionTips[this.helpPage]?.text ?? "");
+    const curTip = this.missionTips[this.helpPage];
+    this.helpBody.setText(curTip ? tipText(curTip, this.missionTipsKnown) : "");
     this.helpCounter.setText(
       `${this.helpPage + 1} / ${Math.max(1, this.missionTips.length)}   ← →`
     );
