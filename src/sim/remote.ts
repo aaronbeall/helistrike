@@ -21,7 +21,7 @@ import {
   type WpnId,
 } from "./combat";
 import type { TrackKind } from "./roster";
-import { lookupSpriteOrigin, lookupSpritePoints } from "./spriteOrigin";
+import { lookupSpriteOrigin, lookupSpritePoints } from "../art/spriteOrigin";
 
 export type RemoteKind = "spectre" | "wingman" | "fighter" | "agv";
 

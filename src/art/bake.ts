@@ -3,12 +3,12 @@
  * Unit/building art comes from PNG sheets via prepareArt — not from here.
  */
 import type Phaser from "phaser";
-import { PLAYER_WPNS, type PlayerWpnSpec } from "./combat";
-import { allCraftHullKinds, craftGunTexture, craftOf } from "./craft";
+import { PLAYER_WPNS, type PlayerWpnSpec } from "../sim/combat";
+import { allCraftHullKinds, craftGunTexture, craftOf } from "../sim/craft";
 import { bakeAllArtGens } from "./artGen";
-import { allKinds, gunsOf, specOf, type UnitKind } from "./roster";
+import { allKinds, gunsOf, specOf, type UnitKind } from "../sim/roster";
 import { bakeShadows, bakeThermalHeatFromDarkness, registerArt, FX_SHEET_SIZE } from "./sprites";
-import { drawTracerShape, type TracerRgb, type TracerShapeOpts } from "./tracerArt";
+import { drawTracerShape, type TracerRgb, type TracerShapeOpts } from "../render/tracerArt";
 
 type Ctx = CanvasRenderingContext2D;
 

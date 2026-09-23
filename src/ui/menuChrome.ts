@@ -1,7 +1,7 @@
 import Phaser from "phaser";
-import { craftControlScheme, craftOf, type CraftSpec } from "./craft";
-import { allMissions } from "./mission";
-import { fbm } from "./noise";
+import { craftControlScheme, craftOf, type CraftSpec } from "../sim/craft";
+import { allMissions } from "../sim/mission";
+import { fbm } from "../worldgen/noise";
 
 export function ensureMissionPreviews(textures: Phaser.Textures.TextureManager): void {
   const width = 160;

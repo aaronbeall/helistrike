@@ -4,7 +4,7 @@
  */
 
 import Phaser from "phaser";
-import { specOf, type UnitKind } from "./roster";
+import { specOf, type UnitKind } from "../sim/roster";
 
 export type FootprintCircle = {
   shape: "circle";

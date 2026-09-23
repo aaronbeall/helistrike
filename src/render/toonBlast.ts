@@ -1,5 +1,5 @@
 import type Phaser from "phaser";
-import { registerArt } from "./sprites";
+import { registerArt } from "../art/sprites";
 
 /**
  * Cel-shaded blast hierarchy (top → bottom):

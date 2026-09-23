@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { camoForBiome, resolveSkin } from "./camo";
+import { camoForBiome, resolveSkin } from "../render/camo";
 import {
   debrisKeys,
   heightOf,
@@ -56,7 +56,7 @@ import {
   type ShotBehavior,
   heatClassScore,
   heatClassCategory,
-} from "./combat";
+} from "../sim/combat";
 
 /** Gravity from drop / lobbed muzzle launch. */
 function launchGravity(launch: WeaponLaunch | undefined): WeaponGravity | undefined {
@@ -223,7 +223,7 @@ import {
   remoteSocketStartingAmmo,
   remoteSpecOf,
   type RemoteCraft,
-} from "./remote";
+} from "../sim/remote";
 import {
   aimInStationArc,
   clampAimToStationArc,
@@ -233,17 +233,17 @@ import {
   smokeCoverAt,
   smokeVisionMul,
   type StationTraverse,
-} from "./weaponRuntime";
-import { Layer, ZOff, Z_GRAVITY, worldDepth } from "./depth";
-import { range } from "./rng";
-import { CRUISE_AGL, Heli, JET_GUN_MAX_DEPRESS, JET_GUN_MAX_ELEV, LOW_AGL, MAX_AGL, MAP_AIR_SOFT, craftCameraEdgeLocked } from "./heli";
+} from "../sim/weaponRuntime";
+import { Layer, ZOff, Z_GRAVITY, worldDepth } from "../render/depth";
+import { range } from "../util/rng";
+import { CRUISE_AGL, Heli, JET_GUN_MAX_DEPRESS, JET_GUN_MAX_ELEV, LOW_AGL, MAX_AGL, MAP_AIR_SOFT, craftCameraEdgeLocked } from "../sim/heli";
 import {
   TOON_BLAST_VARIANTS,
   toonBlastAnimKey,
   toonBlastKey,
-} from "./toonBlast";
-import { ensureAllArtGenAnims } from "./artGen";
-import { isAerial, isGroundVehicle, isHeliBehavior, isInfantry, isOrganic, hasSoftBlood, specOf, driveOf, spawnAngle, pickTroop, labelOf, allKinds, gunsOf, rollParts, crewOf, muzzlesOfGun, type ShotKind, type ShotLook } from "./roster";
+} from "../render/toonBlast";
+import { ensureAllArtGenAnims } from "../art/artGen";
+import { isAerial, isGroundVehicle, isHeliBehavior, isInfantry, isOrganic, hasSoftBlood, specOf, driveOf, spawnAngle, pickTroop, labelOf, allKinds, gunsOf, rollParts, crewOf, muzzlesOfGun, type ShotKind, type ShotLook } from "../sim/roster";
 import {
   circumRadiusOf,
   closestOnFootprint,
@@ -254,21 +254,21 @@ import {
   pointInFootprint,
   randomInFootprint,
   type Footprint,
-} from "./footprint";
-import { lookupSpriteMuzzles, lookupSpriteOrigin, lookupSpritePoints } from "./spriteOrigin";
-import { allCrafts, craftAgility, craftAimsWithTurret, craftBombDrop, craftCameraScale, craftCloudParallax, craftComposite, craftCompositePartScale, craftCrewHudTag, craftExhaustFlameHue, craftExhaustFlameSheet, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftGunPreferDegrees, craftGunPreferOffset, craftGunSocketSlots, craftHardpointMounts, craftControlScheme, craftLoadoutLabel, craftOf, craftOrigin, craftPreviewExhaustScale, craftPreviewExhaustTint, craftPreviewFitScale, craftRotorAlongScale, craftRotorFlightSpeed, craftRotorIsProp, craftRotorMounts, craftRotorPreviewSpinMs, craftRotorTiltMul, craftSocketBarrelCount, craftSocketFireCd, craftSocketIsPrimary, craftSocketMultiplicity, craftSocketPoints, craftSocketStartingAmmo, craftWingTipMounts, craftRotorDrawSpan, rotorDrawSpan, rotorMountsOf, rotorSpinSign, socketPointsOnKey, type CraftBombDrop, type CraftComposite, type CraftSpec } from "./craft";
-import { missionOf } from "./mission";
-import { HEIGHT_BRUSHES, bakeHeightBrushes } from "./brushes";
-import { rigsAnyOpen, installRigHotkeys } from "./rigs";
-import { applyEdgeLight, clearEdgeLight, ensureEdgeLightPipeline } from "./edgeLight";
-import { setThermalPipeline, type ThermalPalette } from "./thermal";
-import { setGlitchPipeline } from "./glitch";
-import { setWarpDistortPipeline } from "./warpDistort";
-import { setCloakFxPipeline } from "./cloakFx";
-import { createTerrain25D, type Terrain25D } from "./terrain25d";
-import { tipKnownFromSelection, tipsForKnown, tipText, type TacticalTip, type TipKnown } from "./tips";
-import { extractBiomeTiles, bakeHeliHudWireTexture, heliHudWireUv, shadowAlpha, shadowKey, spriteUvPos, FX_SHEET_SIZE, FX_VARIANTS, FX_BLAST_CELLS, registerArt, nameGameTexture, spritePivot, muzzleGlowKey, ensureExhaustGlow, type HeliHudWireBake } from "./sprites";
-import { createControlLegend } from "./menuChrome";
+} from "../render/footprint";
+import { lookupSpriteMuzzles, lookupSpriteOrigin, lookupSpritePoints } from "../art/spriteOrigin";
+import { allCrafts, craftAgility, craftAimsWithTurret, craftBombDrop, craftCameraScale, craftCloudParallax, craftComposite, craftCompositePartScale, craftCrewHudTag, craftExhaustFlameHue, craftExhaustFlameSheet, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftGunPreferDegrees, craftGunPreferOffset, craftGunSocketSlots, craftHardpointMounts, craftControlScheme, craftLoadoutLabel, craftOf, craftOrigin, craftPreviewExhaustScale, craftPreviewExhaustTint, craftPreviewFitScale, craftRotorAlongScale, craftRotorFlightSpeed, craftRotorIsProp, craftRotorMounts, craftRotorPreviewSpinMs, craftRotorTiltMul, craftSocketBarrelCount, craftSocketFireCd, craftSocketIsPrimary, craftSocketMultiplicity, craftSocketPoints, craftSocketStartingAmmo, craftWingTipMounts, craftRotorDrawSpan, rotorDrawSpan, rotorMountsOf, rotorSpinSign, socketPointsOnKey, type CraftBombDrop, type CraftComposite, type CraftSpec } from "../sim/craft";
+import { missionOf } from "../sim/mission";
+import { HEIGHT_BRUSHES, bakeHeightBrushes } from "../worldgen/brushes";
+import { rigsAnyOpen, installRigHotkeys } from "../rigs/rigs";
+import { applyEdgeLight, clearEdgeLight, ensureEdgeLightPipeline } from "../render/edgeLight";
+import { setThermalPipeline, type ThermalPalette } from "../render/thermal";
+import { setGlitchPipeline } from "../render/glitch";
+import { setWarpDistortPipeline } from "../render/warpDistort";
+import { setCloakFxPipeline } from "../render/cloakFx";
+import { createTerrain25D, type Terrain25D } from "../render/terrain25d";
+import { tipKnownFromSelection, tipsForKnown, tipText, type TacticalTip, type TipKnown } from "../sim/tips";
+import { extractBiomeTiles, bakeHeliHudWireTexture, heliHudWireUv, shadowAlpha, shadowKey, spriteUvPos, FX_SHEET_SIZE, FX_VARIANTS, FX_BLAST_CELLS, registerArt, nameGameTexture, spritePivot, muzzleGlowKey, ensureExhaustGlow, type HeliHudWireBake } from "../art/sprites";
+import { createControlLegend } from "../ui/menuChrome";
 import {
   generateWorld,
   worldFromGen,
@@ -303,7 +303,7 @@ import {
   type HvSpec,
   type WorldData,
   type Biome,
-} from "./world";
+} from "../worldgen/world";
 
 type FxClass = "short" | "fire" | "smoke" | "dust";
 /** Player chin / cabin traverse rate (rad/s) — also used by crew-served auto stations. */

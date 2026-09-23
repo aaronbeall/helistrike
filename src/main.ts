@@ -1,10 +1,10 @@
 import "./style.css";
 import Phaser from "phaser";
-import { BootScene } from "./bootScene";
-import { LoadScene } from "./loadScene";
-import { MenuScene } from "./menuScene";
-import { MissionScene } from "./missionScene";
-import { RigsScene } from "./rigs";
+import { BootScene } from "./scenes/bootScene";
+import { LoadScene } from "./scenes/loadScene";
+import { MenuScene } from "./scenes/menuScene";
+import { MissionScene } from "./scenes/missionScene";
+import { RigsScene } from "./rigs/rigs";
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,

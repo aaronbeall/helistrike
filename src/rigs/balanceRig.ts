@@ -1,7 +1,7 @@
 import Phaser from "phaser";
-import { PLAYER_WPNS, type PlayerWpnSpec, type UnitClass } from "./combat";
+import { PLAYER_WPNS, type PlayerWpnSpec, type UnitClass } from "../sim/combat";
 import { RIG_INFO, RIG_VALUE, makeRigText, row, setStackedTexts, syncRigSystemCursor } from "./rigUi";
-import { allCrafts, craftSocketFireStreams, craftSocketIsPrimary } from "./craft";
+import { allCrafts, craftSocketFireStreams, craftSocketIsPrimary } from "../sim/craft";
 import {
   ENEMY_WPNS,
   allKinds,
@@ -11,8 +11,8 @@ import {
   type UnitKind,
   type UnitSpec,
   type WeaponSpec,
-} from "./roster";
-import { nameGameTexture } from "./sprites";
+} from "../sim/roster";
+import { nameGameTexture } from "../art/sprites";
 
 const DEPTH = 9500;
 const MONO = "Share Tech Mono, monospace";

@@ -1,4 +1,4 @@
-import type { WorldGenProfile } from "./world";
+import type { WorldGenProfile } from "../worldgen/world";
 
 export type MissionKind = "river_run" | "island_chain" | "highland_siege" | "custom";
 

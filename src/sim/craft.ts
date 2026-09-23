@@ -1,4 +1,4 @@
-import { lookupSpriteMuzzles, lookupSpriteOrigin, lookupSpritePoints, mountsOf, spritePointLabel } from "./spriteOrigin";
+import { lookupSpriteMuzzles, lookupSpriteOrigin, lookupSpritePoints, mountsOf, spritePointLabel } from "../art/spriteOrigin";
 import {
   type HullMount,
   type HullMountRole,

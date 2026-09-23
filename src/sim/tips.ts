@@ -11,7 +11,7 @@ import {
 } from "./combat";
 import { missionOf } from "./mission";
 import { isInfantry, specOf, type UnitKind } from "./roster";
-import type { WorldGenProfile } from "./world";
+import type { WorldGenProfile } from "../worldgen/world";
 
 export type ForceMix = WorldGenProfile["forceMix"];
 

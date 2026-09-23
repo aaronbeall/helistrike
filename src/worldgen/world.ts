@@ -1,7 +1,7 @@
 import { fbm } from "./noise";
-import { Rng } from "./rng";
-import { pickTroop, type UnitKind } from "./roster";
-import { drawBridgeStamp, drawRoadStamp } from "./artGen";
+import { Rng } from "../util/rng";
+import { pickTroop, type UnitKind } from "../sim/roster";
+import { drawBridgeStamp, drawRoadStamp } from "../art/artGen";
 
 export const WORLD = 5600;
 export const TEX = 1800;

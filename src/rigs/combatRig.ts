@@ -7,9 +7,9 @@ import {
   SHOT_ORIGIN,
   SHOT_TAIL,
   type PlayerWpnSpec,
-} from "./combat";
-import { allCrafts } from "./craft";
-import { ENEMY_WPNS, usesOfWeapon, type ShotKind } from "./roster";
+} from "../sim/combat";
+import { allCrafts } from "../sim/craft";
+import { ENEMY_WPNS, usesOfWeapon, type ShotKind } from "../sim/roster";
 import {
   RIG_INFO,
   RIG_VALUE,
@@ -19,14 +19,14 @@ import {
   setStatsAndInfo,
   syncRigSystemCursor,
 } from "./rigUi";
-import { lookupSpriteMuzzles, lookupSpriteOrigin, rigMuzzleMarkRadius } from "./spriteOrigin";
+import { lookupSpriteMuzzles, lookupSpriteOrigin, rigMuzzleMarkRadius } from "../art/spriteOrigin";
 import {
   TOON_BLAST_FRAMES,
   TOON_BLAST_KEY,
   TOON_BLAST_SIZE,
   TOON_BLAST_VARIANTS,
   toonBlastKey,
-} from "./toonBlast";
+} from "../render/toonBlast";
 import {
   FX_BLAST_CELLS,
   FX_BLAST_FIT,
@@ -35,7 +35,7 @@ import {
   FX_VARIANTS,
   nameGameTexture,
   type FxKind,
-} from "./sprites";
+} from "../art/sprites";
 
 const DEPTH = 9300;
 const MONO = "Share Tech Mono, monospace";

@@ -1,4 +1,4 @@
-import { Camera25D, camDepth } from "./world";
+import { Camera25D, camDepth } from "../worldgen/world";
 
 export const Layer = {
   TERRAIN: 0,

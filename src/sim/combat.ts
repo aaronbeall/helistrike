@@ -1,6 +1,6 @@
 import { specOf, type DebrisCat, type ShotLook, type UnitKind, type PartMount } from "./roster";
 import type { SocketClass } from "./craft";
-import type { CamoKind } from "./camo";
+import type { CamoKind } from "../render/camo";
 import type { RemoteKind } from "./remote";
 
 export type { DebrisCat, UnitKind } from "./roster";

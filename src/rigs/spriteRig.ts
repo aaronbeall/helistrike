@@ -1,6 +1,6 @@
 import Phaser from "phaser";
-import { craftOf } from "./craft";
-import { HULL_MOUNT_COLOR, usesOfTexture, type HullMountRole } from "./roster";
+import { craftOf } from "../sim/craft";
+import { HULL_MOUNT_COLOR, usesOfTexture, type HullMountRole } from "../sim/roster";
 import {
   lookupSpriteOrigin,
   lookupSpritePoints,
@@ -8,7 +8,7 @@ import {
   spritePointLabel,
   spriteSpecOf,
   type SpritePointRole,
-} from "./spriteOrigin";
+} from "../art/spriteOrigin";
 import {
   makeRigText,
   setStackedTexts,
@@ -19,7 +19,7 @@ import {
   drawRigSpritePreviewGuides,
   syncRigSystemCursor,
 } from "./rigUi";
-import { artSourceOf, isCatalogArt, isUuidTexture, nameGameTexture } from "./sprites";
+import { artSourceOf, isCatalogArt, isUuidTexture, nameGameTexture } from "../art/sprites";
 
 const DEPTH = 9200;
 const MONO = "Share Tech Mono, monospace";

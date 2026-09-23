@@ -6,9 +6,9 @@ import {
   randomizeArtGen,
   resetArtGen,
   type ArtGenDef,
-} from "./artGen";
+} from "../art/artGen";
 import { RIG_INFO, RIG_VALUE, drawRigSpritePreviewGuides, makeRigText, syncRigSystemCursor } from "./rigUi";
-import { nameGameTexture } from "./sprites";
+import { nameGameTexture } from "../art/sprites";
 
 const DEPTH = 9450;
 const MONO = "Share Tech Mono, monospace";

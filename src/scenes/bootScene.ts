@@ -1,7 +1,7 @@
 import Phaser from "phaser";
-import { bakeAll, bakeRosterArt } from "./bake";
-import { bakeCamo } from "./camo";
-import { preloadArt, prepareArt } from "./sprites";
+import { bakeAll, bakeRosterArt } from "../art/bake";
+import { bakeCamo } from "../render/camo";
+import { preloadArt, prepareArt } from "../art/sprites";
 
 export class BootScene extends Phaser.Scene {
   private bootSub!: Phaser.GameObjects.Text;

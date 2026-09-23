@@ -7,7 +7,7 @@ import {
   WORLD,
   Z_SCALE_NEAR,
   type WorldData,
-} from "./world";
+} from "../worldgen/world";
 
 export type Terrain25DTexture =
   | string

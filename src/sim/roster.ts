@@ -1,5 +1,5 @@
-import type { CamoKind } from "./camo";
-import { lookupSpriteMuzzles, lookupSpriteOrigin, mountOf, mountsOf } from "./spriteOrigin";
+import type { CamoKind } from "../render/camo";
+import { lookupSpriteMuzzles, lookupSpriteOrigin, mountOf, mountsOf } from "../art/spriteOrigin";
 
 export type UnitKind =
   | "tank"

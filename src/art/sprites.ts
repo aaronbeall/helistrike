@@ -1,5 +1,5 @@
 import type Phaser from "phaser";
-import { craftOf, craftPivot, EXHAUST_TRAIL_FLAME_HUES } from "./craft";
+import { craftOf, craftPivot, EXHAUST_TRAIL_FLAME_HUES } from "../sim/craft";
 import { lookupSpriteOrigin, setSpriteOrigin } from "./spriteOrigin";
 
 const SRC = {

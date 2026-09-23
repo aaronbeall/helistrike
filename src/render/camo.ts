@@ -1,6 +1,6 @@
 import type Phaser from "phaser";
-import type { Biome } from "./world";
-import { registerArt, type ArtSource } from "./sprites";
+import type { Biome } from "../worldgen/world";
+import { registerArt, type ArtSource } from "../art/sprites";
 
 export type CamoKind = "woodland" | "desert" | "urban" | "snow" | "digital";
 

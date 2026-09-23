@@ -5,7 +5,7 @@ import { ArtGenRig } from "./artGenRig";
 import { RosterRig } from "./rosterRig";
 import { SpriteRig } from "./spriteRig";
 import { syncRigSystemCursor } from "./rigUi";
-import { spritePivot } from "./sprites";
+import { spritePivot } from "../art/sprites";
 
 /**
  * Overlay scene for sprite / roster / combat / art-gen / balance rigs.

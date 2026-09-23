@@ -4,7 +4,7 @@ import {
   craftCountermeasure,
   countermeasureTimingLabel,
   playerLoadoutFromSockets,
-} from "./combat";
+} from "../sim/combat";
 import {
   allCrafts,
   craftAgility,
@@ -20,11 +20,11 @@ import {
   craftRotorPreviewSpinMs,
   craftSocketStartingAmmo,
   selectCraft,
-} from "./craft";
-import { allMissions, missionOf, selectMission } from "./mission";
-import { installRigHotkeys } from "./rigs";
-import { ensureExhaustGlow, spriteUvPos } from "./sprites";
-import { ensureMissionPreviews } from "./menuChrome";
+} from "../sim/craft";
+import { allMissions, missionOf, selectMission } from "../sim/mission";
+import { installRigHotkeys } from "../rigs/rigs";
+import { ensureExhaustGlow, spriteUvPos } from "../art/sprites";
+import { ensureMissionPreviews } from "../ui/menuChrome";
 
 export class MenuScene extends Phaser.Scene {
   constructor() {

@@ -16,9 +16,9 @@ import {
   toonBlastParams,
   type ToonBlastParams,
   type ToonCluster,
-} from "./toonBlast";
+} from "../render/toonBlast";
 import { bakeThermalHeatFromAlpha, registerArt } from "./sprites";
-import { drawTracerShape, type TracerShapeOpts } from "./tracerArt";
+import { drawTracerShape, type TracerShapeOpts } from "../render/tracerArt";
 
 // ─── Registry ───────────────────────────────────────────────────────────────
 

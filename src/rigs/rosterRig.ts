@@ -16,7 +16,7 @@ import {
   selectCraft,
   type CraftKind,
   type CraftSpec,
-} from "./craft";
+} from "../sim/craft";
 import {
   allKinds,
   gunsForPartsRollOption,
@@ -36,23 +36,23 @@ import {
   type UnitKind,
   type UnitSpec,
   type WeaponSpec,
-} from "./roster";
+} from "../sim/roster";
 import {
   allRemoteKinds,
   remoteRotorParts,
   remoteSpecOf,
   type RemoteKind,
   type RemoteSpec,
-} from "./remote";
-import { PLAYER_WPNS, type PlayerWpnSpec } from "./combat";
+} from "../sim/remote";
+import { PLAYER_WPNS, type PlayerWpnSpec } from "../sim/combat";
 import {
   lookupSpriteOrigin,
   lookupSpritePoints,
   rigMuzzleMarkRadius,
   spritePointLabel,
-} from "./spriteOrigin";
-import { footprintOf, strokeFootprint } from "./footprint";
-import { nameGameTexture, spritePivot } from "./sprites";
+} from "../art/spriteOrigin";
+import { footprintOf, strokeFootprint } from "../render/footprint";
+import { nameGameTexture, spritePivot } from "../art/sprites";
 import {
   RIG_INFO,
   RIG_LIVE,

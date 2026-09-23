@@ -12,12 +12,12 @@ import {
   craftRotorAlongScale,
   craftRotorFlightSpeed,
   type CraftComposite,
-} from "./craft";
-import { drawControlLegend } from "./menuChrome";
-import { pickRandomTip, tipKnownFromSelection } from "./tips";
-import { ensureExhaustGlow, extractBiomeTiles, FX_VARIANTS, spriteUvPos } from "./sprites";
-import { missionOf } from "./mission";
-import { generateWorldAsync, type WorldData } from "./world";
+} from "../sim/craft";
+import { drawControlLegend } from "../ui/menuChrome";
+import { pickRandomTip, tipKnownFromSelection } from "../sim/tips";
+import { ensureExhaustGlow, extractBiomeTiles, FX_VARIANTS, spriteUvPos } from "../art/sprites";
+import { missionOf } from "../sim/mission";
+import { generateWorldAsync, type WorldData } from "../worldgen/world";
 
 export class LoadScene extends Phaser.Scene {
   private body!: Phaser.GameObjects.Image;

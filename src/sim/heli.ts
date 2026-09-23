@@ -10,7 +10,7 @@ import {
   type CraftKind,
   type CraftSpec,
 } from "./craft";
-import { groundZ, WORLD, type WorldData } from "./world";
+import { groundZ, WORLD, type WorldData } from "../worldgen/world";
 
 export interface Stick {
   up: boolean;
