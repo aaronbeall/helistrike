@@ -142,6 +142,8 @@ export interface CraftSpec {
   fullName: string;
   /** Short fantasy combat identity shown on the craft profile (hangar / help). */
   role: string;
+  /** Player-facing blurb. What the aircraft is, not a control how-to. */
+  description?: string;
   /**
    * Hangar / mission-select roster. Omit or true → playable player craft.
    * False → hull used by remotes / pods only (still `craftOf`-able for Heli).
@@ -150,6 +152,8 @@ export interface CraftSpec {
   flightModel: "heli" | "vtol" | "plane" | "ground";
   /** Player hull-steer mapping; omit → aim. */
   controlScheme?: ControlScheme;
+  /** Hull sweep kills standing troops it drives/flies through at low AGL (roadkill). */
+  crushesInfantry?: boolean;
   /** Cannon muzzle impulse inherits craft velocity. */
   cannonInherit?: boolean;
   /** Chin/turret overlay draw scale (cobra/viper 0.42). */
@@ -261,6 +265,7 @@ const CRAFTS_DEFS = {
     name: "Apache",
     fullName: "AH-64E Apache",
     role: "Heavy Gunship",
+    description: "The baseline gunship. Stable enough to sit in a fight, armed from troops up through armor.",
     flightModel: "heli",
     sizeM: 14.7,
     ammoScale: 1,
@@ -286,6 +291,7 @@ const CRAFTS_DEFS = {
     name: "Little Bird",
     fullName: "AH-6 Little Bird",
     role: "Knife Fighter",
+    description: "A knife fighter. Small, quick, and happiest inside the enemy's gun range.",
     flightModel: "heli",
     sizeM: 9.94,
     ammoScale: 0.7,
@@ -311,7 +317,8 @@ const CRAFTS_DEFS = {
     kind: "cobra",
     name: "Cobra",
     fullName: "AH-1 Cobra",
-    role: "Classic Striker",
+    role: "Agile Striker",
+    description: "An older striker built for a diving pass: a fast chin gun and a deep rocket load.",
     flightModel: "heli",
     // IRL AH-1 shorter than Apache; keep under Apache's sizeM baseline.
     sizeM: 13.4,
@@ -344,6 +351,7 @@ const CRAFTS_DEFS = {
     name: "Viper",
     fullName: "AH-1Z Viper",
     role: "Modern Striker",
+    description: "The Cobra's successor. Same kind of pass, with guided anti-tank on the wing.",
     flightModel: "heli",
     // Same silhouette class as Cobra; under Apache sizeM.
     sizeM: 13.4,
@@ -374,6 +382,7 @@ const CRAFTS_DEFS = {
     name: "Black Hawk",
     fullName: "UH-60M Black Hawk",
     role: "Assault Transport",
+    description: "An assault transport that shoots back. Wing guns for the run, a crew gun on the cabin.",
     flightModel: "heli",
     sizeM: 19.76,
     ammoScale: 1.3,
@@ -413,7 +422,8 @@ const CRAFTS_DEFS = {
     kind: "chinook",
     name: "Chinook",
     fullName: "CH-47F Chinook",
-    role: "Heavy Lift",
+    role: "Heavy Ordnance",
+    description: "A heavy lifter. Slow, big, and carrying the bombs the helicopters can't.",
     flightModel: "heli",
     sizeM: 30.1,
     ammoScale: 1.6,
@@ -474,7 +484,8 @@ const CRAFTS_DEFS = {
     kind: "osprey",
     name: "Osprey",
     fullName: "MV-22B Osprey",
-    role: "Tiltrotor Assault",
+    role: "Hybrid Assault",
+    description: "A tiltrotor. Faster than the helicopters, and it can still hover a gun run.",
     flightModel: "vtol",
     sizeM: 25.8,
     ammoScale: 1.4,
@@ -517,7 +528,8 @@ const CRAFTS_DEFS = {
     kind: "stealthhawk",
     name: "Stealth Hawk",
     fullName: "XH-60 Stealth Hawk",
-    role: "Stealth Striker",
+    role: "Stealth Attack",
+    description: "Built to arrive unseen. Harder to spot in the weeds, and the cannon punishes targets that are already blind or stunned.",
     flightModel: "heli",
     sizeM: 14.7,
     ammoScale: 1,
@@ -547,7 +559,8 @@ const CRAFTS_DEFS = {
     kind: "cyberhawk",
     name: "Cyber Hawk",
     fullName: "XH-88 Cyber Hawk",
-    role: "Tech Gunship",
+    role: "High-tech Offensive",
+    description: "An experimental gunship. Energy weapons, a drone in the bay, and timewarp instead of flares.",
     flightModel: "heli",
     sizeM: 14.7,
     ammoScale: 1.05,
@@ -580,6 +593,7 @@ const CRAFTS_DEFS = {
     name: "Murder Hornet",
     fullName: "MQ-27 Murder Hornet",
     role: "Kill Drone",
+    description: "A pocket gunship. Fast, fragile, and mean at knife range.",
     flightModel: "heli",
     sizeM: 1.9,
     ammoScale: 0.65,
@@ -616,6 +630,7 @@ const CRAFTS_DEFS = {
     name: "Spectre",
     fullName: "SPECTRE DRONE",
     role: "Kamikaze Drone",
+    description: "A bomb with rotors. You fly it in from the cockpit and detonate it.",
     playable: false,
     flightModel: "heli",
     sizeM: 1.9,
@@ -640,6 +655,7 @@ const CRAFTS_DEFS = {
     name: "Lightning II",
     fullName: "F-35B Lightning II",
     role: "Fast Attack",
+    description: "A fast jet that can stop. Make the pass and leave before the turn runs out of airspeed.",
     flightModel: "vtol",
     controlScheme: "plane",
     cannonInherit: true,
@@ -677,6 +693,7 @@ const CRAFTS_DEFS = {
     name: "Warthog",
     fullName: "A-10C Warthog",
     role: "Tank Buster",
+    description: "A flying gun. It has to keep its speed, and the cannon is the point of the aircraft.",
     flightModel: "plane",
     controlScheme: "plane",
     cannonInherit: true,
@@ -719,6 +736,7 @@ const CRAFTS_DEFS = {
     name: "Gunship",
     fullName: "AC-130 Gunship",
     role: "Loiter Gunship",
+    description: "A circling battery. You hold the orbit and the mouse lays the side guns.",
     flightModel: "plane",
     controlScheme: "orbit",
     sizeM: 39.7,
@@ -775,7 +793,8 @@ const CRAFTS_DEFS = {
     kind: "prometheus",
     name: "Prometheus",
     fullName: "XV-99 Prometheus",
-    role: "Phase Striker",
+    role: "Alien Superweapon",
+    description: "An exotic striker. Beams and a cloak, not a rocket truck.",
     flightModel: "vtol",
     sizeM: 14.7,
     ammoScale: 1.2,
@@ -808,6 +827,7 @@ const CRAFTS_DEFS = {
     name: "Leviathan",
     fullName: "Leviathan Airship",
     role: "Sky Fortress",
+    description: "A ship in the sky. It fights by launching the craft in its bays as much as by its own guns.",
     // Gunship-style loiter: A/D yaw, W/S trim, mouse aims stores.
     flightModel: "plane",
     controlScheme: "orbit",
@@ -916,6 +936,7 @@ const CRAFTS_DEFS = {
     name: "Red Baron",
     fullName: "Fokker Dr.I",
     role: "Dogfighter",
+    description: "A turn fighter. Nose guns and incendiaries up close, iron bombs below, and an observer who can call the guns.",
     flightModel: "plane",
     controlScheme: "plane",
     sizeM: 7.2,
@@ -970,6 +991,7 @@ const CRAFTS_DEFS = {
     name: "Skiff",
     fullName: "SKIFF Wingman",
     role: "AI Wingman",
+    description: "An unmanned wingman. It launches itself, makes a gun pass, and comes back to the bay.",
     playable: false,
     flightModel: "plane",
     controlScheme: "plane",
@@ -1005,6 +1027,7 @@ const CRAFTS_DEFS = {
     name: "Raptor",
     fullName: "Raptor Fighter",
     role: "Escort Fighter",
+    description: "An escort fighter you can borrow. Leave it and it stays with the ship; take the stick and it is yours.",
     playable: false,
     flightModel: "plane",
     controlScheme: "plane",
@@ -1072,6 +1095,7 @@ const CRAFTS_DEFS = {
     name: "Reaper",
     fullName: "MQ-9 Reaper",
     role: "Loiter Hunter",
+    description: "Circles high and hunts with guided weapons, harder to spot than a gunship down in the weeds.",
     flightModel: "plane",
     controlScheme: "orbit",
     sizeM: 20,
@@ -1102,9 +1126,11 @@ const CRAFTS_DEFS = {
     kind: "hover_tank",
     name: "Wraith",
     fullName: "MHT-7 Wraith",
-    role: "Loiter Assault",
+    role: "Heavy Ground Assault",
+    description: "A tank that hovers. It fights from the deck, and driving through infantry kills them.",
     flightModel: "vtol",
     controlScheme: "orbit",
+    crushesInfantry: true,
     sizeM: 9.5,
     ammoScale: 1.15,
     health: 220,
@@ -1180,10 +1206,12 @@ const CRAFTS_DEFS = {
     name: "Hound",
     fullName: "HOUND AGV",
     role: "Ground Escort",
+    description: "A ground vehicle you drop off the ramp. Air defenses do not shoot it, it runs troops over, and it can throw a smoke screen.",
     playable: false,
     // Heading-locked tank drive (A/D yaw, W/S along nose — no slide).
     flightModel: "ground",
     controlScheme: "orbit",
+    crushesInfantry: true,
     sizeM: 4.2,
     ammoScale: 0.85,
     health: 140,
@@ -1247,7 +1275,8 @@ const CRAFTS_DEFS = {
     kind: "vtol_dropship",
     name: "Marauder",
     fullName: "UD-92 Marauder",
-    role: "Heavy Dropship",
+    role: "Heavy Air/Drop Assault",
+    description: "A heavy dropship. Crew guns down the sides, a howitzer on the roof, and a Hound in the bay.",
     flightModel: "vtol",
     sizeM: 16,
     ammoScale: 1.5,

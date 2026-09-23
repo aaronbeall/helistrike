@@ -399,6 +399,16 @@ export class MenuScene extends Phaser.Scene {
     );
     const cmRow = makeLoadoutRow(loadoutRow0 + maxLoadoutSlots * 20, maxLoadoutSlots % 2 === 1);
 
+    const craftDescTxt = this.add
+      .text(w / 2, 616, "", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "12px",
+        color: "#cfc7b1",
+        align: "center",
+        wordWrap: { width: Math.min(980, w - 80) },
+      })
+      .setOrigin(0.5)
+      .setDepth(3);
     const detailTxt = this.add
       .text(w / 2, 542, "", {
         fontFamily: "Share Tech Mono, monospace",
@@ -652,6 +662,7 @@ export class MenuScene extends Phaser.Scene {
       const weapons = playerLoadoutFromSockets(craft.sockets);
       drawStatBars(craft);
       roleTxt.setText(craft.role.toUpperCase());
+      craftDescTxt.setText(craft.description ?? "");
       weaponRows.forEach((row, i) => {
         const weapon = weapons[i];
         const on = !!weapon;

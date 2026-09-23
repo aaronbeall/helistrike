@@ -443,6 +443,3 @@ export class ArtGenRig {
     return { x: lp.x / spr.width, y: lp.y / spr.height };
   }
 }
-
-/** @deprecated Alias — backtick cycle still says “toon blast”; now the Art Gen rig. */
-export { ArtGenRig as ToonBlastRig };

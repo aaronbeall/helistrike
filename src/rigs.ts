@@ -19,10 +19,6 @@ export class RigsScene extends Phaser.Scene {
   rosterRig!: RosterRig;
   combatRig!: CombatRig;
   artGenRig!: ArtGenRig;
-  /** @deprecated Alias of artGenRig. */
-  get toonBlastRig(): ArtGenRig {
-    return this.artGenRig;
-  }
   balanceRig!: BalanceRig;
   /** True after create() finishes constructing tools. */
   ready = false;

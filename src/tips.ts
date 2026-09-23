@@ -1,10 +1,10 @@
 import type { CraftKind } from "./craft";
-import { craftControlScheme, craftOf } from "./craft";
-import { craftHasForcedUTurn } from "./heli";
+import { craftOf } from "./craft";
 import {
   craftCountermeasure,
   playerLoadoutFromSockets,
   wpnIdOf,
+  wpnOf,
   type CountermeasureId,
   type WpnId,
 } from "./combat";
@@ -94,30 +94,19 @@ export function pickRandomTip(known: TipKnown, catalog: readonly TacticalTip[] =
   return list[(Math.random() * list.length) | 0] ?? catalog[0]!;
 }
 
-/** @deprecated Prefer `TACTICAL_TIPS` + `tipsForKnown`. Flat strings for legacy callers. */
-export const LOAD_TIPS: string[] = [];
-
 export const TACTICAL_TIPS: TacticalTip[] = [
   // —— Flight / theater ——
   {
     id: "flight_popup",
-    text: "Pop-up (SPACE) to dodge incoming fire — climb, slide, drop back into cover.",
+    text: "Pop-up (SPACE) or dive (SHIFT) to dodge incoming fire.",
   },
   {
     id: "flight_ridge",
-    text: "Use pop-up to clear ridgelines and hit targets tucked behind terrain.",
+    text: "Use pop-up (SHIFT) to clear ridgelines and hit targets tucked behind terrain.",
   },
   {
     id: "flight_noe",
     text: "Nap-of-earth (SHIFT) through ravines and river beds to break enemy line of sight.",
-  },
-  {
-    id: "flight_strafe",
-    text: "Diving (SHIFT) is a good way to dodge incoming fire.",
-  },
-  {
-    id: "map_mark",
-    text: "M opens the theater map. Mark high-value sites before you commit to a gun run.",
   },
   {
     id: "laser_sight",
@@ -131,44 +120,37 @@ export const TACTICAL_TIPS: TacticalTip[] = [
     },
   },
   {
-    id: "craft_plane",
-    text: "Fixed-wing birds need airspeed — don’t stall the turn while lining a gun run.",
-    context: {
-      forCraft: (c) => craftHasForcedUTurn(craftOf(c)),
-    },
-  },
-  {
-    id: "craft_gunship",
-    text: "Orbit loiter: W/S trim speed, hold A/D to turn, mouse aims weapons.",
-    context: {
-      forCraft: (c) => craftControlScheme(craftOf(c)) === "orbit",
-    },
-  },
-  {
     id: "craft_stealth",
     text: "Stealth Hawk cuts spot and chase range — hug the dirt for an extra awareness cut before you EMP or smoke.",
     context: { crafts: ["stealthhawk"] },
+  },
+  {
+    id: "craft_low_profile",
+    text: "Hovering low to the ground (SHIFT) reduces your visibility to enemy radar and line-of-sight weapons.",
+    context: {
+      forCraft: (c) => craftOf(c).flightModel === "heli"
+    }
   },
 
   // —— Countermeasures ——
   {
     id: "cm_flares",
-    text: "E dumps flares — heat seekers peel off the decoys. Stay mobile while the cloud burns.",
+    text: "Flares redirect heat seekers. Stay mobile while the cloud burns.",
     context: { cms: ["flares"] },
   },
   {
     id: "cm_timewarp",
-    text: "Timewarp slows the battlefield. Hit E again to drop out early — cooldown only charges for the time you used.",
+    text: "Timewarp slows the battlefield. You can exit and resume at will.",
     context: { cms: ["timewarp"] },
   },
   {
     id: "cm_cloak",
-    text: "Phase Cloak lets rounds pass through you, but primary guns stay dark until it ends — hardpoints still fire. Cancel early with E to save cooldown.",
+    text: "Phase Cloak lets rounds pass through you, but primary guns stay dark until it ends — hardpoints still fire. You can enter and exit cloaking at will.",
     context: { cms: ["phase_cloak"] },
   },
   {
     id: "cm_emp",
-    text: "EMP stuns mech on screen, drops enemy drones into freefall, and kills airborne missiles. Troops keep moving — finish stunned armor with Whisper or rockets.",
+    text: "EMP stuns mech on screen, drops enemy drones into freefall, and kills airborne missiles.",
     context: { cms: ["emp"] },
   },
 
@@ -185,7 +167,7 @@ export const TACTICAL_TIPS: TacticalTip[] = [
   },
   {
     id: "wpn_spectre",
-    text: "While flying the Spectre, you can still switch weapons and fire from the bird. Q or RMB drops the camera; select Spectre again to return, or LMB in its view to detonate.",
+    text: "While observing the enemy from the Spectre you can switch to heli weapons and fire from a distance.",
     context: { weapons: ["attack_drone"] },
   },
   {
@@ -208,112 +190,70 @@ export const TACTICAL_TIPS: TacticalTip[] = [
   },
   {
     id: "wpn_smoke",
-    text: "Smoke bombs blind enemy vision and fire range — stack puffs, then push Whisper or close for Tesla.",
+    text: "Smoke bombs blind enemy vision and fire range, and amplify damage from Whisper rounds.",
     context: { weapons: ["smoke_bomb"] },
   },
   {
     id: "wpn_tesla",
-    text: "Tesla stun lingers after the arc leaves — a tap is ~1s; a long cook builds toward several seconds of freeze.",
+    text: "Tesla stun lingers after the arc leaves.",
     context: { weapons: ["tesla_beam"] },
   },
   {
-    id: "wpn_refractor",
-    text: "Refractor forks about a third of the way to the reticle into child beams — ground hits shatter those into smaller beams in random directions.",
-    context: { weapons: ["laser_rocket"] },
-  },
-  {
-    id: "wpn_spider_drone",
-    text: "Spider Drones force thermal seeker cam — crawl toward the mouse, get near a hostile, and they dash onto it and detonate.",
-    context: { weapons: ["spider_drone"] },
-  },
-  {
-    id: "wpn_agv_drop",
-    text: "HOUND drops from the rear ramp, then locks to the dirt. Select its slot to take its own loadout HUD (minigun, Photon, Howitzer spot, artillery strike) — same orbit drive as a player craft; F toggles dropship FOLLOW/HOLD (default HOLD); Q exits back to the bird.",
-    context: { weapons: ["agv_drop"] },
-  },
-  {
     id: "wpn_agv_aa",
-    text: "HOUND runs under the AA envelope — SAMs and AA guns will not target the ground pod. Draw fire with the bird, then push the HOUND into soft targets.",
+    text: "HOUND runs under the AA envelope — SAMs and AA guns will not target the ground pod.",
     context: { weapons: ["agv_drop"] },
   },
   {
     id: "wpn_skiff",
-    text: "Skiffs auto-launch from the Leviathan when enemies enter awareness (cooldown between launches, max 6). They orbit wide, strafe targets spotted by the airship / Skiffs / Raptor, and Q recalls them all to dock.",
+    text: "Skiffs auto-launch from the Leviathan when enemies enter awareness. They share observations and follow the Airship or Raptor.",
     context: { weapons: ["wingman_drone"] },
   },
   {
     id: "wpn_raptor",
-    text: "Raptor is a force-forward fighter with its own POV loadout. Q exits (docks when near the Leviathan). Unpiloted, it escorts like a Skiff; Skiffs idle-orbit a live Raptor.",
+    text: "Skiffs follow the Raptor when in flight.",
     context: { weapons: ["fighter_pod"] },
   },
   {
     id: "wpn_micros",
-    text: "Micros gently steer toward the reticle and arc into the ground — walk the pair into soft targets, not heavy armor.",
+    text: "Micros gently steer toward the reticle and arc into the ground.",
     context: { weapons: ["guided_rockets"] },
   },
   {
-    id: "wpn_starscream",
-    text: "Starscream is a jittered dart hose — walk the neon stream onto a target and let the bomblets finish the spray.",
-    context: { weapons: ["swarm_missile"] },
-  },
-  {
-    id: "wpn_banshee",
-    text: "Banshee pops straight up on a neon ribbon, then pitches over and crashes onto the reticle — deeper belt, no bomblets.",
-    context: { weapons: ["banshee"] },
-  },
-  {
-    id: "wpn_grenade",
-    text: "Grenade launcher lobs 40mm on an iron-bomb arc — heavy throw boost, light HE splash. Lead the fall like a howitzer.",
-    context: { weapons: ["grenade_launcher"] },
-  },
-  {
-    id: "wpn_plasma",
-    text: "Plasma Helix fires a quick three-round burst — each strand rides a phase-offset helix so they braid with depth.",
-    context: { weapons: ["plasma_cannon"] },
-  },
-  {
     id: "wpn_warp",
-    text: "Warp Bomb flies the Spike path — soft-lock, second-click commit. The blast slows time in the pocket while it flies.",
+    text: "The Warp Bomb nearly stops time while in flight.",
     context: { weapons: ["warp_bomb"] },
   },
   {
     id: "wpn_griffin",
-    text: "Griffin is hold-to-steer — walk it onto helis and other movers. Extra effective against air targets.",
+    text: "Griffin Missiles are hold-to-steer. Extra effective against air targets.",
     context: { weapons: ["gps_missile"] },
   },
   {
     id: "wpn_maverick",
-    text: "Maverick only soft-locks vehicles and buildings — it will not lock air or troops.",
+    text: "Maverick Missiles only locks vehicles and buildings — it will not lock air or troops.",
     context: { weapons: ["heavy_guided_missile"] },
   },
   {
-    id: "wpn_gps",
-    text: "GPS bombs and Pyros latch an aim point on click — designate, release, and don’t babysit the drop.",
-    context: { weapons: ["gps_bomb", "light_gps_missile"] },
-  },
-  {
-    id: "wpn_cluster",
-    text: "Rockeye’s canister pops ~60% of the way along the drop path — bomblets spray forward along the trajectory. Drop over soft clusters, not single hard points.",
-    context: { weapons: ["cluster_bomb"] },
+    id: "bomb_drop",
+    text: "Bombs drop with an arc, inheriting the velocity of the aircraft with limited range.",
+    context: {
+      // Only bomb-drop-style weapons — excludes agv_drop (vehicle deploy, not ordnance).
+      forWeapon: (w) => wpnOf(w).launch.mode === "drop" && !wpnOf(w).payload.remote,
+    },
   },
   {
     id: "wpn_hydra",
-    text: "Hydras shred soft clusters — dump a ripple into infantry, trucks, and light armor, not dug-in tanks.",
+    text: "Hydras are pound for pound one of the best weapons for quickly shredding clusters of enemies.",
     context: { weapons: ["rocket"] },
   },
   {
-    id: "wpn_incendiary",
-    text: "Incendiary rockets spray wild — fat fireballs that cook troops and air, not armor. Lead wide and accept the scatter.",
-    context: { weapons: ["incendiary_rocket"] },
-  },
-  {
     id: "wpn_hellfire",
-    text: "Hellfires for armor and emplacements — keep the lock box steady, then let them run.",
+    text: "Hellfires can target both air and ground, but are ideal for armor and emplacements — lock, fire, and forget.",
     context: { weapons: ["hellfire_missile", "mini_hellfire_missile"] },
   },
   {
     id: "wpn_avenger",
-    text: "Avenger combat mix is four API and one HEI — commit to the run; every fifth round kicks a real splash.",
+    text: "The Avenger cannon fires 1 HE round for every 4 AP rounds, shredding whatever your heart desires.",
     context: { weapons: ["heavy_cannon"] },
   },
   {
@@ -322,25 +262,20 @@ export const TACTICAL_TIPS: TacticalTip[] = [
     context: { weapons: ["heavy_artillery"] },
   },
   {
-    id: "wpn_artillery_strike",
-    text: "Artillery strike: plant the flare and clear out — shells start walking immediately; watch the ETA on the mark.",
-    context: { weapons: ["artillery_strike"] },
-  },
-  {
     id: "wpn_remote_howitzer",
-    text: "HOUND’s Howitzer and Artillery Strike both fire the Marauder’s real howitzer and share its ammo — spot is one shell; strike flares then walks the same cannon onto the mark.",
+    text: "HOUND’s Howitzer and Artillery Strike both fire the Marauder’s howitzer. Sneak up with the HOUND and bombard from a safe distance.",
     context: { weapons: ["remote_howitzer", "artillery_strike"] },
   },
   {
     id: "wpn_photon",
-    text: "Photon kicks then burns at extreme speed — lock, fire, and let the neon ribbons track the kill.",
+    text: "Photon Missiles are both beautiful and never misses.",
     context: { weapons: ["photon_missile"] },
   },
 
   // —— Enemies / force mix ——
   {
     id: "enemy_infantry",
-    text: "Wounded infantry crawl and bleed out if left alone — or finish them before they dig in and return fire.",
+    text: "Wounded infantry crawl and bleed out — finish them before they dig in and return fire.",
     context: { forEnemy: isInfantry },
   },
   {
@@ -355,12 +290,12 @@ export const TACTICAL_TIPS: TacticalTip[] = [
   },
   {
     id: "enemy_heli",
-    text: "Enemy helis orbit and shoot — don’t sit under their ring; pop up, trade, then NOE out.",
+    text: "Enemy helis orbit and shoot guns and missiles.",
     context: { enemies: ["heli", "heli_small", "heli_heavy"] },
   },
   {
     id: "enemy_aa",
-    text: "SAMs and AA LAVs own open sky — kill them with stand-off (TOWs, Hellfires) before you linger.",
+    text: "SAMs and AA LAVs guard the open sky — kill them with stand-off (TOWs, Hellfires) or sneak up using terrain coverage.",
     context: { enemies: ["lav_aa", "sam", "stinger", "tower"] },
   },
   {
@@ -370,19 +305,7 @@ export const TACTICAL_TIPS: TacticalTip[] = [
   },
   {
     id: "enemy_soft_road",
-    text: "Trucks, pickups, and bikes flee when they spot you — cut them off early or they’ll scatter into cover.",
+    text: "Trucks, pickups, and bikes flee when they spot you — take them out before they can escape.",
     context: { enemies: ["truck", "pickup", "motorcycle", "tanker"] },
   },
-  {
-    id: "enemy_naval_mix",
-    text: "Island Chain means water fights — PT boats and battleships, plus coastal AA. Stay off the deck guns’ noses.",
-    context: { forceMixes: ["naval"] },
-  },
-  {
-    id: "enemy_heavy_mix",
-    text: "Highland Siege stacks armor and emplacements — plan pop-up shots and don’t cruise over SAMs.",
-    context: { forceMixes: ["heavy"] },
-  },
 ];
-
-LOAD_TIPS.push(...TACTICAL_TIPS.map((t) => t.text));

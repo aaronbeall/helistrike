@@ -219,6 +219,8 @@ export interface UnitSpec {
   softBlood?: boolean;
   hv?: boolean;
   noCrater?: boolean;
+  /** EMP fries electronics outright (freefall crash + boom) instead of a mid-air stun. */
+  empCrashes?: boolean;
   throwGuns?: boolean;
   /**
    * Light-vehicle death: hulk launches in a spinning flaming arc (impact-biased),
@@ -1139,6 +1141,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     behavior: "suicide_attack_heli",
     aerial: true,
     noCrater: true,
+    empCrashes: true,
     rotorSpinRate: 42,
     guns: [],
     rotors: mountsOf("enemy_drone", "rotor").map((m) => ({

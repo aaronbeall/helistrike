@@ -707,6 +707,7 @@ function rangeForWeapon(wpnId: string): string | undefined {
 function formatPlayer(w: PlayerWpnSpec): { stats: string[]; info: string[] } {
   const crafts = craftsUsingWeapon(w.id);
   const info = [
+    ...(w.description ? [w.description] : []),
     ...w.notes.map((n) => `· ${n}`),
     crafts.length ? `used by: ${crafts.join(" · ")}` : "used by: —",
     "source: combat.ts PLAYER_WPNS / SHOT_ORIGIN / SHOT_TAIL",

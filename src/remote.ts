@@ -213,6 +213,10 @@ export interface RemoteCraft {
   track?: number;
   /** Exhaust smoke emit accumulator (fractional particles). */
   exhaustCarry?: number;
+  /** POV countermeasure cooldown (HOUND smoke screen). */
+  cmCd?: number;
+  /** POV smoke-screen time remaining. */
+  smokeT?: number;
   /** Spring whip antenna tip (world) + velocity. */
   antenna?: {
     x: number;
@@ -471,8 +475,8 @@ const REMOTE_DEFS: Record<RemoteKind, RemoteDef> = {
     antenna: { length: 11, aft: 1.8, stiffness: 28, damping: 2.8, yawWhip: 10, lag: 1.6 },
     engageRange: 320,
     orbitRange: 95,
-    mouseStopRange: 48,
-    mouseLeashRange: 200,
+    mouseStopRange: 90,
+    mouseLeashRange: 220,
     hostEscort: { innerRadius: 140, outerRadius: 260 },
   },
 };

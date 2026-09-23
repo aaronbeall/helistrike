@@ -831,10 +831,11 @@ export class MissionScene extends Phaser.Scene {
     key: Phaser.GameObjects.Text;
     name: Phaser.GameObjects.Text;
   };
-  /** POV remotes with host escort — F toggles FOLLOW / HOLD. */
+  /** POV remotes with host escort — F toggles FOLLOW / HOLD. `status` names the host. */
   escortHudSlot!: {
     key: Phaser.GameObjects.Text;
     name: Phaser.GameObjects.Text;
+    status: Phaser.GameObjects.Text;
   };
   /** Countermeasure prompt under the weapon slots. */
   cmHudLabel!: Phaser.GameObjects.Text;
@@ -1113,6 +1114,7 @@ export class MissionScene extends Phaser.Scene {
   missionTips: TacticalTip[] = [];
   helpRoot!: Phaser.GameObjects.Container;
   helpBody!: Phaser.GameObjects.Text;
+  helpAbout!: Phaser.GameObjects.Text;
   helpCounter!: Phaser.GameObjects.Text;
   helpCraftBody!: Phaser.GameObjects.Image;
   helpCraftGuns: Phaser.GameObjects.Image[] = [];
@@ -3066,6 +3068,7 @@ export class MissionScene extends Phaser.Scene {
       this.escortHudSlot = {
         key: mk("12px", "#a89868", 0),
         name: mk("13px", "#f0d56a", 0),
+        status: mk("10px", "#8ec8e8", 0.5).setOrigin(0.5, 0),
       };
     }
     this.wpnHud = this.add.text(0, 0, "").setVisible(false);
@@ -6331,11 +6334,6 @@ cannonSightOrigins(slot = this.heli.weapon): { x: number; y: number }[] {
   return collapseSightTips(tips);
 }
 
-  /** @deprecated Prefer cannonSightOrigins — kept for single-tip call sites. */
-  cannonSightOrigin(slot = this.heli.weapon): { x: number; y: number } {
-    return this.cannonSightOrigins(slot)[0] ?? { x: this.heli.x, y: this.heli.y };
-  }
-
 /** World position of an authored mount UV on the active craft body (live draw pose). */
 craftBodyMountWorldPos(mount: { x: number; y: number }): { x: number; y: number } {
   const h = this.heli;
@@ -8378,7 +8376,8 @@ specIsShellGun(spec)
           acquire,
           trav,
           !trav,
-          prefer
+          prefer,
+          !!spec.groundOnly
         );
         if (!tgt) {
           pushDbg(b, origin, {
@@ -8537,6 +8536,8 @@ specIsShellGun(spec)
   }
 
   craftCmId() {
+    const pov = this.povHudRemote();
+    if (pov?.spec.craftLook) return craftCountermeasure(remoteHull(pov.spec).countermeasure);
     return craftCountermeasure(this.heli.spec.countermeasure);
   }
 
@@ -9329,9 +9330,9 @@ specIsShellGun(spec)
   }
 
   tickRemoteAi(drone: RemoteCraft, dt: number): void {
-    // Ground AGV AI (HOUND) — orbit/shoot; same shadow Heli as piloted.
+    // Ground + turret AI (currently just HOUND) — orbit/shoot; same shadow Heli as piloted.
     if (drone.spec.ground && drone.spec.gun) {
-      this.tickHoundAi(drone, dt);
+      this.tickGroundGunAi(drone, dt);
       return;
     }
     // Sensor-net air AI (Skiff boom-pass / Raptor strafe) — not Spectre orbit.
@@ -9616,12 +9617,10 @@ specIsShellGun(spec)
   /** Host bay world pos for dockable remotes — socket whose weapon launches this kind. */
   remoteDockBayPos(drone: RemoteCraft): { x: number; y: number; z: number } {
     const h = this.heli;
-    const socket =
-      h.spec.sockets.find((s) => {
-        const w = PLAYER_WPNS[s.weapon as WpnId];
-        return w?.payload?.remote?.kind === drone.spec.kind;
-      }) ??
-      h.spec.sockets.find((s) => s.id.includes("bay") || s.id.includes("skiff"));
+    const socket = h.spec.sockets.find((s) => {
+      const w = PLAYER_WPNS[s.weapon as WpnId];
+      return w?.payload?.remote?.kind === drone.spec.kind;
+    });
     if (socket) {
       const pts = craftSocketPoints(h.spec, socket);
       if (pts[0]) {
@@ -9665,10 +9664,11 @@ specIsShellGun(spec)
   }
 
   /**
-   * HOUND autonomous: orbit/shoot hostiles near the reticle; if leashed too far
-   * from the mouse, drive back while the turret keeps firing.
+   * Ground + turret remote autonomous (currently just HOUND): orbit/shoot hostiles
+   * near the reticle; if leashed too far from the mouse, drive back while the turret
+   * keeps firing.
    */
-  tickHoundAi(drone: RemoteCraft, dt: number): void {
+  tickGroundGunAi(drone: RemoteCraft, dt: number): void {
     const spec = drone.spec;
     const ptr = this.worldPointer();
     const engage = spec.engageRange ?? 320;
@@ -9741,17 +9741,26 @@ specIsShellGun(spec)
       throttle = near < 36 ? 0.35 : 0.75;
     } else {
       // Return to a standoff ring around the reticle — never drive onto the cursor.
+      // Coasting at full speed eats ~maxSpeed/drag before it stops, so ease off (and
+      // brake if still hot) across that band instead of gunning it to the ring edge.
+      const spd = Math.hypot(drone.vx, drone.vy);
+      const coast = Math.max(30, hull.maxSpeed / Math.max(0.1, hull.drag ?? 1));
       if (toMouse > stopR) {
         const ux = (drone.x - ptr.x) / toMouse;
         const uy = (drone.y - ptr.y) / toMouse;
         const tx = ptr.x + ux * stopR;
         const ty = ptr.y + uy * stopR;
         want = Math.atan2(ty - drone.y, tx - drone.x);
-        const near = Math.hypot(tx - drone.x, ty - drone.y);
-        throttle = near < 28 ? 0.3 : toMouse < leashR ? 0.55 : 0.75;
+        const remain = toMouse - stopR;
+        if (remain < coast) {
+          const safeSpeed = (remain / coast) * hull.maxSpeed;
+          throttle = spd > safeSpeed + 12 ? -0.6 : 0;
+        } else {
+          throttle = toMouse < leashR ? 0.55 : 0.75;
+        }
       } else {
         want = Math.atan2(ptr.y - drone.y, ptr.x - drone.x);
-        throttle = 0;
+        throttle = spd > 12 ? -0.6 : 0;
       }
     }
     const { stick, aim } = this.remoteAiStickAim(drone, want, throttle);
@@ -11913,6 +11922,7 @@ specIsShellGun(spec)
    * Prefer threats by class, gun-placement heading, and proximity for automatic stations.
    * Range / proximity use `fromX/Y` (per-barrel heading-biased origin). Traverse arcs use
    * craft→target vs `heading`. `preferHeading` scores angular preference from the acquire origin.
+   * `groundOnly` skips aircraft — howitzer crew never slews or fires at them.
    */
   pickAutoTarget(
     fromX: number,
@@ -11923,12 +11933,13 @@ specIsShellGun(spec)
     maxR: number,
     traverse?: StationTraverse,
     unrestricted = false,
-    preferHeading = heading
+    preferHeading = heading,
+    groundOnly = false
   ): Unit | undefined {
     let best: Unit | undefined;
     let bestScore = -1e9;
     for (const u of this.units) {
-      if (u.dead) continue;
+      if (u.dead || (groundOnly && isAerial(u.kind))) continue;
       const d = Math.hypot(u.x - fromX, u.y - fromY);
       if (d > maxR || d < 35) continue;
       const aimCraft = Math.atan2(u.y - craftY, u.x - craftX);
@@ -14601,6 +14612,11 @@ specIsShellGun(spec)
 
   tryCountermeasure(): void {
     if (this.heli.phase !== "flight" || !this.canFire || this.debugOpen || this.helpOpen || this.exitOpen) return;
+    const pov = this.povHudRemote();
+    if (pov) {
+      this.tryRemoteCountermeasure(pov);
+      return;
+    }
     const id = this.craftCmId();
     const spec = COUNTERMEASURES[id];
     if (id === "timewarp" && this.timewarpT > 0) {
@@ -14718,11 +14734,29 @@ specIsShellGun(spec)
       this.smokeScreenT = Math.max(0, this.smokeScreenT - dt);
       if (this.fxChance(0.18)) this.fireSmokeScreen(1);
     }
+    for (const r of this.remotes) {
+      if (r.detonate || r.dock) continue;
+      if ((r.cmCd ?? 0) > 0) r.cmCd = Math.max(0, (r.cmCd ?? 0) - dt);
+      if ((r.smokeT ?? 0) > 0) {
+        r.smokeT = Math.max(0, (r.smokeT ?? 0) - dt);
+        if (r.smokeT > 0 && this.fxChance(0.18)) this.fireSmokeScreen(1, r);
+      }
+    }
     if (this.cmPulseT > 0) this.cmPulseT = Math.max(0, this.cmPulseT - dt);
   }
 
-  fireSmokeScreen(bursts = 3): void {
-    const h = this.heli;
+  /** Smoke screen on a piloted remote (HOUND). Own cooldown, cloud stays on the vehicle. */
+  tryRemoteCountermeasure(r: RemoteCraft): void {
+    const id = craftCountermeasure(remoteHull(r.spec).countermeasure);
+    if (id !== "smoke_screen" || (r.cmCd ?? 0) > 0 || (r.smokeT ?? 0) > 0) return;
+    const spec = COUNTERMEASURES.smoke_screen;
+    r.cmCd = spec.cooldown;
+    r.smokeT = spec.duration;
+    this.fireSmokeScreen(3, r);
+  }
+
+  fireSmokeScreen(bursts = 3, at?: { x: number; y: number; z: number }): void {
+    const h = at ?? this.heli;
     for (let i = 0; i < bursts; i++) {
       const a = Math.random() * Math.PI * 2;
       const d = 12 + Math.random() * 48;
@@ -14824,8 +14858,8 @@ specIsShellGun(spec)
       if (u.dead) continue;
       if (isOrganic(u.kind)) continue;
       if (Math.hypot(u.x - h.x, u.y - h.y) > r) continue;
-      // Drones: fry electronics → freefall crash, boom on ground (not a mid-air stun).
-      if (u.kind === "drone") {
+      // Fried electronics → freefall crash, boom on ground (not a mid-air stun).
+      if (specOf(u.kind).empCrashes) {
         this.destroyUnit(u, true, true, false, true);
         this.emitTeslaSparks(u.x, u.y, u.z + 4, 5, 0.45);
         continue;
@@ -18356,7 +18390,7 @@ specIsShellGun(spec)
     spec: CraftSpec,
     drawScale: number
   ): void {
-    const crush = spec.kind === "hover_tank" || spec.kind === "hound";
+    const crush = !!spec.crushesInfantry;
     const blades =
       spec.flightModel === "heli" && !!spec.rotor && !craftRotorIsProp(spec);
     if (crush) {
@@ -18685,7 +18719,7 @@ specIsShellGun(spec)
       // AA / seekers go higher. Reaper-class cruise (~620) sits above tank/building HE;
       // enemy drones stay low and cannot lob/kamikaze to it — helis can climb.
       const elevCeil = sp.aerial
-        ? u.kind === "drone"
+        ? sp.behavior === "suicide_attack_heli"
           ? MissionScene.DRONE_KAMIKAZE_AGL
           : 1e9
         : aaWpn
@@ -20674,8 +20708,10 @@ specIsShellGun(spec)
     const x0 = this.scale.width / 2 - total / 2;
     const anyAuto =
       !pov && h.spec.sockets.some((s) => s.controller === "automatic");
-    const cmStripH = pov ? 8 : 30;
-    const crewPad = anyAuto ? 15 : 2;
+    const povCm = pov ? remoteHull(pov.spec).countermeasure : undefined;
+    const showCm = !pov || !!povCm;
+    const cmStripH = showCm ? 30 : 8;
+    const crewPad = anyAuto || escortOn ? 15 : 2;
     const y = this.scale.height - 10 - cmStripH - crewPad - slotH;
     const padX = 8;
     const barH = 3;
@@ -20925,9 +20961,19 @@ specIsShellGun(spec)
         .setStroke("#12100c", 3)
         .setFontSize("13px")
         .setAlpha(0.95);
+      const statusLp = this.hudLocal(x + escortW / 2, y + slotH + 2);
+      this.escortHudSlot.status
+        .setVisible(true)
+        .setPosition(statusLp.x, statusLp.y)
+        .setText(h.spec.name.toUpperCase())
+        .setColor(follow ? "#7ad0ff" : "#c4b48a")
+        .setStroke("#12100c", 2)
+        .setFontSize("10px")
+        .setAlpha(0.9);
     } else {
       this.escortHudSlot.key.setVisible(false);
       this.escortHudSlot.name.setVisible(false);
+      this.escortHudSlot.status.setVisible(false);
     }
     if (pov) {
       const x = x0 + n * (slotW + gap) + escortGap + escortW;
@@ -20960,11 +21006,11 @@ specIsShellGun(spec)
       this.exitHudSlot.name.setVisible(false);
     }
 
-    if (pov) {
+    if (showCm) {
+      this.drawCountermeasureHud(y + slotH + crewPad + 2);
+    } else {
       this.cmHudLabel?.setVisible(false);
       this.cmHudTime?.setVisible(false);
-    } else {
-      this.drawCountermeasureHud(y + slotH + crewPad + 2);
     }
     this.syncRemotePrompt(y);
     // Hide unused rows if loadout shrank (shouldn't normally).
@@ -20979,31 +21025,32 @@ specIsShellGun(spec)
 
   drawCountermeasureHud(y: number): void {
     const g = this.wpnBar;
+    const pov = this.povHudRemote();
     const id = this.craftCmId();
     if (!this.cmHudLabel) {
       this.cmHudTime?.setVisible(false);
       return;
     }
     const spec = COUNTERMEASURES[id];
-    const cd = this.cmCd;
+    const cd = pov ? (pov.cmCd ?? 0) : this.cmCd;
     const cx = this.scale.width / 2;
     let activeT = 0;
     let activeMax = 0;
     let barCol = 0xc4a24a;
-    if (id === "timewarp" && this.timewarpT > 0 && this.timewarpMax > 0) {
+    if (!pov && id === "timewarp" && this.timewarpT > 0 && this.timewarpMax > 0) {
       activeT = this.timewarpT;
       activeMax = this.timewarpMax;
       barCol = 0x5ce8ff;
-    } else if (id === "phase_cloak" && this.cloakT > 0) {
+    } else if (!pov && id === "phase_cloak" && this.cloakT > 0) {
       activeT = this.cloakT;
       activeMax = spec.duration;
       barCol = 0xc8d4e8;
-    } else if (id === "reactive_armor" && this.reactiveArmorT > 0) {
+    } else if (!pov && id === "reactive_armor" && this.reactiveArmorT > 0) {
       activeT = this.reactiveArmorT;
       activeMax = spec.duration;
       barCol = 0xffb040;
-    } else if (id === "smoke_screen" && this.smokeScreenT > 0) {
-      activeT = this.smokeScreenT;
+    } else if (id === "smoke_screen" && (pov ? (pov.smokeT ?? 0) : this.smokeScreenT) > 0) {
+      activeT = pov ? (pov.smokeT ?? 0) : this.smokeScreenT;
       activeMax = spec.duration;
       barCol = 0xa8a090;
     }
@@ -21762,7 +21809,7 @@ specIsShellGun(spec)
     const helpCraft = craftOf();
     const helpComposite = craftComposite(helpCraft);
     this.helpCraftBody = this.add
-      .image(craftX, -halfH + 160, helpComposite.body.tex)
+      .image(craftX, -halfH + 146, helpComposite.body.tex)
       .setOrigin(helpComposite.body.origin.x, helpComposite.body.origin.y);
     this.helpCraftGunParts = helpComposite.guns;
     const helpGunSlots = craftGunSocketSlots(helpCraft);
@@ -21770,7 +21817,7 @@ specIsShellGun(spec)
       const sock = helpCraft.sockets[helpGunSlots[i] ?? -1];
       const gunSc = (helpCraft.gunOverlayScale ?? 1) * (sock?.gunScale ?? 1);
       return this.add
-        .image(craftX, -halfH + 160, part.tex)
+        .image(craftX, -halfH + 146, part.tex)
         .setOrigin(part.origin.x, part.origin.y)
         .setRotation(part.heading ?? 0)
         .setScale(gunSc);
@@ -21778,7 +21825,7 @@ specIsShellGun(spec)
     this.helpCraftRotorParts = helpComposite.rotors;
     this.helpCraftRotors = this.helpCraftRotorParts.map((part) => {
       const rotor = this.add
-        .image(craftX, -halfH + 160, part.tex)
+        .image(craftX, -halfH + 146, part.tex)
         .setOrigin(part.origin.x, part.origin.y);
       this.tweens.add({
         targets: rotor,
@@ -21792,7 +21839,7 @@ specIsShellGun(spec)
     this.helpCraftExhaustMounts = craftExhaustMounts(helpCraft);
     this.helpCraftExhaustGlows = this.helpCraftExhaustMounts.map((_, exhaustI) => {
       const glow = this.add
-        .image(craftX, -halfH + 160, "fx_exhaust_glow")
+        .image(craftX, -halfH + 146, "fx_exhaust_glow")
         .setOrigin(0.5, 0)
         .setBlendMode(Phaser.BlendModes.ADD)
         .setTint(craftPreviewExhaustTint(helpCraft.kind));
@@ -21807,33 +21854,51 @@ specIsShellGun(spec)
       return glow;
     });
     this.helpCraftStats = this.add
-      .text(-halfW + 54, -halfH + 265, "", {
+      .text(-halfW + 54, -halfH + 228, "", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "11px",
         color: "#d8d0ba",
-        lineSpacing: 9,
+        lineSpacing: 5,
+        wordWrap: { width: halfW - 78 },
       })
       .setOrigin(0, 0);
     this.helpCraftBars = this.add.graphics();
     const divider = this.add.graphics();
     divider.lineStyle(1, 0x6f6244, 0.6).lineBetween(0, -halfH + 68, 0, halfH - 166);
+    const aboutTitle = this.add
+      .text(panelW * 0.25, -halfH + 78, "AIRFRAME", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "12px",
+        color: "#e8b84a",
+      })
+      .setOrigin(0.5);
+    this.helpAbout = this.add
+      .text(panelW * 0.25, -halfH + 98, "", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "14px",
+        color: "#d8d0ba",
+        align: "center",
+        lineSpacing: 5,
+        wordWrap: { width: panelW * 0.42 },
+      })
+      .setOrigin(0.5, 0);
     const tipTitle = this.add
-      .text(panelW * 0.25, -halfH + 78, "TACTICAL TIP", {
+      .text(panelW * 0.25, -halfH + 196, "TACTICAL TIP", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "12px",
         color: "#e8b84a",
       })
       .setOrigin(0.5);
     this.helpBody = this.add
-      .text(panelW * 0.25, -halfH + 185, "", {
+      .text(panelW * 0.25, -halfH + 218, "", {
         fontFamily: "Share Tech Mono, monospace",
-        fontSize: "18px",
+        fontSize: "16px",
         color: "#f0e6c8",
         align: "center",
-        lineSpacing: 8,
+        lineSpacing: 6,
         wordWrap: { width: panelW * 0.42 },
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5, 0);
     const controls = createControlLegend(this, panelW - 32, halfH - 120);
     const tipNavY = -halfH + 372;
     const tipCenterX = panelW * 0.25;
@@ -21883,6 +21948,8 @@ specIsShellGun(spec)
         this.helpCraftStats,
         this.helpCraftBars,
         divider,
+        aboutTitle,
+        this.helpAbout,
         tipTitle,
         this.helpBody,
         ...controls,
@@ -21955,8 +22022,8 @@ specIsShellGun(spec)
     const previewScale = craftPreviewFitScale(
       this.helpCraftBody.width,
       this.helpCraftBody.height,
-      170,
-      165
+      150,
+      120
     );
     this.helpCraftBody.setScale(previewScale);
     const gunSlots = craftGunSocketSlots(craft);
@@ -22004,7 +22071,11 @@ specIsShellGun(spec)
     const loadoutLines = [
       "",
       "LOADOUT",
-      ...weapons.map((w, i) => `${i + 1}  ${craftLoadoutLabel(craft, i, w.fullName)}`),
+      ...weapons.flatMap((w, i) => {
+        const lines = [`${i + 1}  ${craftLoadoutLabel(craft, i, w.name)}`];
+        if (w.description) lines.push(`    ${w.description}`);
+        return lines;
+      }),
       `E  ${cm.name}  ${countermeasureTimingLabel(cm)}`,
     ];
     this.helpCraftStats.setText(
@@ -22017,15 +22088,16 @@ specIsShellGun(spec)
     const panelW = Math.min(960, this.scale.width - 40);
     const panelH = Math.min(620, this.scale.height - 30);
     const x0 = -panelW / 2 + 160;
-    const y0 = -panelH / 2 + 269;
+    const y0 = -panelH / 2 + 232;
     this.helpCraftBars.clear();
     stats.forEach((stat, row) => {
       const filled = Math.max(1, Math.round((stat.value / stat.max) * 8));
       for (let i = 0; i < 8; i++) {
         this.helpCraftBars.fillStyle(i < filled ? 0xe8b84a : 0x302b22, i < filled ? 0.96 : 0.82);
-        this.helpCraftBars.fillRoundedRect(x0 + i * 13, y0 + row * 20, 10, 6, 2);
+        this.helpCraftBars.fillRoundedRect(x0 + i * 13, y0 + row * 16, 10, 6, 2);
       }
     });
+    this.helpAbout.setText(craft.description ?? "");
     this.helpBody.setText(this.missionTips[this.helpPage]?.text ?? "");
     this.helpCounter.setText(
       `${this.helpPage + 1} / ${Math.max(1, this.missionTips.length)}   ← →`
@@ -23020,6 +23092,7 @@ specIsShellGun(spec)
       this.exitHudSlot.name,
       this.escortHudSlot.key,
       this.escortHudSlot.name,
+      this.escortHudSlot.status,
       this.cmHudLabel,
       this.cmHudTime,
       this.hvGfx,
@@ -23958,6 +24031,7 @@ specIsShellGun(spec)
     this.exitHudSlot.name.setVisible(false);
     this.escortHudSlot.key.setVisible(false);
     this.escortHudSlot.name.setVisible(false);
+    this.escortHudSlot.status.setVisible(false);
     this.playerHud.setVisible(on);
     this.heliHudWireSh.setVisible(on);
     this.heliHudWire.setVisible(on);
