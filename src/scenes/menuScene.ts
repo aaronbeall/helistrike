@@ -47,15 +47,16 @@ export class MenuScene extends Phaser.Scene {
         .setDepth(1);
     }
     this.add
-      .text(w / 2, 54, "HELISTRIKE", {
+      .text(w / 2, 42, "HELISTRIKE", {
         fontFamily: "Black Ops One, Impact, sans-serif",
-        fontSize: "54px",
+        fontSize: "42px",
         color: "#e8b84a",
         stroke: "#1c1812",
         strokeThickness: 5,
       })
       .setOrigin(0.5)
       .setDepth(2);
+
     const crafts = allCrafts();
     const missions = allMissions();
     let craftIndex = Math.max(0, crafts.findIndex((c) => c.kind === craftOf().kind));
@@ -63,10 +64,19 @@ export class MenuScene extends Phaser.Scene {
     let row = 0;
     let customParamIndex = 0;
 
+    // —— Two-column layout: AIRFRAME (left) / OPERATION (right) — never share a row. ——
+    const craftX = 300;
+    const missionX = 970;
+    const dividerX = 636;
+    const headerY = 92;
+    const cardY = 196;
+
+    this.add.graphics().setDepth(2).lineStyle(1, 0x554c39, 0.55).lineBetween(dividerX, 82, dividerX, 616);
+
     const craftHeader = this.add
-      .text(w / 2, 111, "AIRFRAME", {
+      .text(craftX, headerY, "AIRFRAME", {
         fontFamily: "Share Tech Mono, monospace",
-        fontSize: "13px",
+        fontSize: "14px",
         color: "#e8b84a",
         stroke: "#1c1812",
         strokeThickness: 3,
@@ -74,9 +84,9 @@ export class MenuScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(2);
     const missionHeader = this.add
-      .text(w / 2, 374, "OPERATION", {
+      .text(missionX, headerY, "OPERATION", {
         fontFamily: "Share Tech Mono, monospace",
-        fontSize: "13px",
+        fontSize: "14px",
         color: "#e8e0cc",
         stroke: "#1c1812",
         strokeThickness: 3,
@@ -84,18 +94,18 @@ export class MenuScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(2);
 
-    const craftW = 112;
-    const craftH = 108;
+    const craftW = 148;
+    const craftH = 128;
     const craftCards = crafts.map((craft, i) => {
-      const x = w / 2;
+      const x = craftX;
       const frame = this.add
-        .rectangle(x, 190, craftW, craftH, 0x0c0b09, 0.82)
+        .rectangle(x, cardY, craftW, craftH, 0x0c0b09, 0.82)
         .setStrokeStyle(1, 0x5d5544, 0.8)
         .setDepth(2)
         .setInteractive({ useHandCursor: true });
-      const art = this.add.image(x, 181, craft.body).setDepth(3);
+      const art = this.add.image(x, cardY - 8, craft.body).setDepth(3);
       // Fit the card box; never upscale past native 1:1 (keeps drones crisp).
-      const artScale = craftPreviewFitScale(art.width, art.height, 104, 82);
+      const artScale = craftPreviewFitScale(art.width, art.height, 138, 106);
       art.setScale(artScale);
       const composite = craftComposite(craft);
       const rotors = composite.rotors.map((part) => {
@@ -106,13 +116,13 @@ export class MenuScene extends Phaser.Scene {
           .setDepth(4);
         const host =
           along < 0.999
-            ? this.add.container(x, 181).setDepth(4).add(rotor)
+            ? this.add.container(x, cardY - 8).setDepth(4).add(rotor)
             : rotor;
         if (along < 0.999) {
           rotor.setData("tiltWrap", host);
           (host as Phaser.GameObjects.Container).setScale(1, along);
         } else {
-          rotor.setPosition(x, 181);
+          rotor.setPosition(x, cardY - 8);
         }
         const sign = part.spinSign ?? -1;
         this.tweens.add({
@@ -128,7 +138,7 @@ export class MenuScene extends Phaser.Scene {
       const exhaustTint = craftPreviewExhaustTint(craft.kind);
       const exhaustGlows = exhaustMounts.map((_, exhaustI) => {
         const glow = this.add
-          .image(x, 181, "fx_exhaust_glow")
+          .image(x, cardY - 8, "fx_exhaust_glow")
           .setOrigin(0.5, 0)
           .setBlendMode(Phaser.BlendModes.ADD)
           .setTint(exhaustTint)
@@ -145,7 +155,7 @@ export class MenuScene extends Phaser.Scene {
         return glow;
       });
       const label = this.add
-        .text(x, 229, craft.name.toUpperCase(), {
+        .text(x, cardY + craftH / 2 + 24, craft.name.toUpperCase(), {
           fontFamily: "Share Tech Mono, monospace",
           fontSize: "11px",
           color: "#cfc7b1",
@@ -171,24 +181,25 @@ export class MenuScene extends Phaser.Scene {
       };
     });
 
-    const missionW = 134;
-    const missionH = 134;
+    const missionW = 156;
+    const missionH = 156;
     const missionCards = missions.map((mission, i) => {
-      const x = w / 2;
+      const x = missionX;
       const frame = this.add
-        .rectangle(x, 450, missionW, missionH, 0x0b0a08, 0.88)
+        .rectangle(x, cardY, missionW, missionH, 0x0b0a08, 0.88)
         .setStrokeStyle(1, 0x5d5544, 0.8)
         .setDepth(2)
         .setInteractive({ useHandCursor: true });
       const art = this.add
-        .image(x, 450, `menu_mission_preview_${mission.kind}`)
+        .image(x, cardY, `menu_mission_preview_${mission.kind}`)
         .setDisplaySize(missionW - 8, missionH - 8)
         .setDepth(3);
       const artScaleX = art.scaleX;
       const artScaleY = art.scaleY;
-      const strip = this.add.rectangle(x, 497, missionW - 8, 28, 0x090908, 0.88).setDepth(3);
+      const stripY = cardY + missionH / 2 - 15;
+      const strip = this.add.rectangle(x, stripY, missionW - 8, 28, 0x090908, 0.88).setDepth(3);
       const label = this.add
-        .text(x, 497, mission.label, {
+        .text(x, stripY, mission.label, {
           fontFamily: "Share Tech Mono, monospace",
           fontSize: "14px",
           color: "#d8d0ba",
@@ -200,7 +211,7 @@ export class MenuScene extends Phaser.Scene {
         missionIndex = i;
         refreshSelection();
       });
-      return { frame, art, strip, label, artScaleX, artScaleY };
+      return { frame, art, strip, label, artScaleX, artScaleY, stripY };
     });
 
     const carouselArrow = (x: number, y: number, dir: -1 | 1, targetRow: 0 | 1) => {
@@ -223,16 +234,22 @@ export class MenuScene extends Phaser.Scene {
       });
       return arrow;
     };
-    carouselArrow(w / 2 - 112, 179, -1, 0);
-    carouselArrow(w / 2 + 112, 179, 1, 0);
-    carouselArrow(w / 2 - 112, 450, -1, 1);
-    carouselArrow(w / 2 + 112, 450, 1, 1);
+    carouselArrow(craftX - craftW / 2 - 32, cardY - 8, -1, 0);
+    carouselArrow(craftX + craftW / 2 + 32, cardY - 8, 1, 0);
+    carouselArrow(missionX - missionW / 2 - 32, cardY, -1, 1);
+    carouselArrow(missionX + missionW / 2 + 32, cardY, 1, 1);
 
-    const carouselDots = (count: number, y: number, targetRow: 0 | 1) =>
+    const craftLabelY = cardY + craftH / 2 + 24;
+    const missionLabelY = cardY + missionH / 2 - 15;
+    const craftDotsY = craftLabelY + 18;
+    const missionDotsY = missionLabelY + 26;
+
+    const carouselDots = (count: number, cx: number, y: number, targetRow: 0 | 1) =>
       Array.from({ length: count }, (_, i) => {
-        const x = w / 2 + (i - (count - 1) / 2) * 14;
+        const spacing = Math.min(13, 320 / Math.max(1, count - 1));
+        const x = cx + (i - (count - 1) / 2) * spacing;
         const dot = this.add
-          .circle(x, y, 3.5, 0x5d5544, 0.9)
+          .circle(x, y, 3, 0x5d5544, 0.9)
           .setStrokeStyle(1, 0x1c1812, 0.9)
           .setDepth(8)
           .setInteractive({ useHandCursor: true });
@@ -244,35 +261,64 @@ export class MenuScene extends Phaser.Scene {
         });
         return dot;
       });
-    const craftDots = carouselDots(crafts.length, 242, 0);
-    const missionDots = carouselDots(missions.length, 524, 1);
+    const craftDots = carouselDots(crafts.length, craftX, craftDotsY, 0);
+    const missionDots = carouselDots(missions.length, missionX, missionDotsY, 1);
 
+    // —— Left column, stacked below the craft carousel: flight profile, then loadout. ——
     const statDefs = [
       { label: "SPEED", max: Math.max(...crafts.map((craft) => craft.maxSpeed)), value: (craft: (typeof crafts)[number]) => craft.maxSpeed },
       { label: "AGILITY", max: 1, value: (craft: (typeof crafts)[number]) => craftAgility(craft) },
       { label: "SIZE", max: Math.max(...crafts.map((craft) => craft.sizeM)), value: (craft: (typeof crafts)[number]) => craft.sizeM },
       { label: "ARMOR", max: Math.max(...crafts.map((craft) => craft.health)), value: (craft: (typeof crafts)[number]) => craft.health },
     ];
-    const loadoutRow0 = 271;
-    const maxWeaponSlots = Math.max(4, ...crafts.map((c) => c.sockets.length));
-    const infoTop = 248;
     const profileRows = statDefs.length + 1; // + ROLE
-    const infoBottom = Math.max(
-      loadoutRow0 + (maxWeaponSlots + 1) * 20 + 14,
-      271 + profileRows * 20 + 14
-    );
-    const infoH = infoBottom - infoTop;
-    const infoCy = (infoTop + infoBottom) / 2;
+    const statsHeaderY = craftDotsY + 34;
+    const statsRow0 = statsHeaderY + 18;
+    const statsBottom = statsRow0 + (profileRows - 1) * 20 + 10;
+
+    const maxWeaponSlots = Math.max(4, ...crafts.map((c) => c.sockets.length));
+    const loadoutHeaderY = statsBottom + 28;
+    const loadoutRow0 = loadoutHeaderY + 18;
+    const loadoutBottom = loadoutRow0 + maxWeaponSlots * 20 + 10;
+
+    const panelPad = 16;
     this.add
-      .rectangle(w / 2, infoCy, 700, infoH, 0x0b0a08, 0.76)
+      .rectangle(
+        craftX,
+        (statsHeaderY - panelPad + loadoutBottom) / 2,
+        craftW + 260,
+        loadoutBottom - (statsHeaderY - panelPad),
+        0x0b0a08,
+        0.76
+      )
       .setStrokeStyle(1, 0x554c39, 0.65)
       .setDepth(2);
-    const infoRule = this.add.graphics().setDepth(3);
-    infoRule.lineStyle(1, 0x554c39, 0.7).lineBetween(w / 2 + 20, 256, w / 2 + 20, infoBottom - 8);
-    const statLabelX = w / 2 - 315;
-    const statBarX = w / 2 - 205;
+
+    // —— Field manual button, pinned to the panel's top-right corner (popup content comes later) ——
+    const panelTop = statsHeaderY - panelPad;
+    const panelRight = craftX + (craftW + 260) / 2;
+    const infoBtn = this.add
+      .circle(panelRight - 18, panelTop + 18, 13, 0x0b0a08, 0.9)
+      .setStrokeStyle(1.5, 0xe8b84a, 0.9)
+      .setDepth(4)
+      .setInteractive({ useHandCursor: true });
     this.add
-      .text(statLabelX, 253, "FLIGHT PROFILE", {
+      .text(panelRight - 18, panelTop + 18, "?", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "14px",
+        color: "#e8b84a",
+      })
+      .setOrigin(0.5)
+      .setDepth(5);
+    infoBtn.on("pointerdown", () => {
+      // TODO: open the field manual once it exists.
+    });
+
+    const colHalf = (craftW + 260) / 2 - 14;
+    const statLabelX = craftX - colHalf;
+    const statBarX = statLabelX + 122;
+    this.add
+      .text(statLabelX, statsHeaderY, "FLIGHT PROFILE", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "9px",
         color: "#aaa28f",
@@ -282,7 +328,7 @@ export class MenuScene extends Phaser.Scene {
       .setDepth(3);
     statDefs.forEach((stat, i) => {
       this.add
-        .text(statLabelX, 271 + i * 20, stat.label, {
+        .text(statLabelX, statsRow0 + i * 20, stat.label, {
           fontFamily: "Share Tech Mono, monospace",
           fontSize: "10px",
           color: "#d8d0ba",
@@ -293,7 +339,7 @@ export class MenuScene extends Phaser.Scene {
         .setDepth(3);
     });
     this.add
-      .text(statLabelX, 271 + statDefs.length * 20, "ROLE", {
+      .text(statLabelX, statsRow0 + statDefs.length * 20, "ROLE", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "10px",
         color: "#d8d0ba",
@@ -303,7 +349,7 @@ export class MenuScene extends Phaser.Scene {
       .setOrigin(0, 0.5)
       .setDepth(3);
     const roleTxt = this.add
-      .text(statBarX, 271 + statDefs.length * 20, "", {
+      .text(statBarX, statsRow0 + statDefs.length * 20, "", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "10px",
         color: "#f2d579",
@@ -321,7 +367,7 @@ export class MenuScene extends Phaser.Scene {
       const segmentGap = 3;
       statDefs.forEach((stat, statI) => {
         const filled = Math.max(1, Math.round((stat.value(craft) / stat.max) * segments));
-        const y = 268 + statI * 20;
+        const y = statsRow0 - 3 + statI * 20;
         for (let segment = 0; segment < segments; segment++) {
           const x = statBarX + segment * (segmentW + segmentGap);
           statBars.fillStyle(segment < filled ? 0xe8b84a : 0x302b22, segment < filled ? 0.96 : 0.82);
@@ -332,9 +378,9 @@ export class MenuScene extends Phaser.Scene {
       });
     };
 
-    const weaponX = w / 2 + 50;
+    const weaponX = craftX - colHalf;
     this.add
-      .text(weaponX, 253, "LOADOUT", {
+      .text(weaponX, loadoutHeaderY, "LOADOUT", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "9px",
         color: "#aaa28f",
@@ -343,7 +389,7 @@ export class MenuScene extends Phaser.Scene {
       })
       .setDepth(3);
     this.add
-      .text(weaponX + 255, 253, "AMMO", {
+      .text(weaponX + colHalf * 2, loadoutHeaderY, "AMMO", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "9px",
         color: "#aaa28f",
@@ -352,10 +398,10 @@ export class MenuScene extends Phaser.Scene {
       })
       .setOrigin(1, 0)
       .setDepth(3);
-    const maxLoadoutSlots = maxWeaponSlots;
+    const rowW = colHalf * 2;
     const makeLoadoutRow = (y: number, alt: boolean) => {
       const frame = this.add
-        .rectangle(weaponX + 128, y, 270, 17, alt ? 0x15120d : 0x1b1710, 0.78)
+        .rectangle(weaponX + rowW / 2, y, rowW, 17, alt ? 0x15120d : 0x1b1710, 0.78)
         .setDepth(3);
       const slot = this.add
         .text(weaponX + 7, y, "", {
@@ -385,7 +431,7 @@ export class MenuScene extends Phaser.Scene {
         .setDepth(4)
         .setVisible(false);
       const ammo = this.add
-        .text(weaponX + 255, y, "", {
+        .text(weaponX + rowW, y, "", {
           fontFamily: "Share Tech Mono, monospace",
           fontSize: "10px",
           color: "#f2d579",
@@ -394,33 +440,26 @@ export class MenuScene extends Phaser.Scene {
         .setDepth(4);
       return { frame, slot, name, crew, ammo };
     };
+    const maxLoadoutSlots = maxWeaponSlots;
     const weaponRows = Array.from({ length: maxLoadoutSlots }, (_, i) =>
       makeLoadoutRow(loadoutRow0 + i * 20, i % 2 === 1)
     );
     const cmRow = makeLoadoutRow(loadoutRow0 + maxLoadoutSlots * 20, maxLoadoutSlots % 2 === 1);
 
-    const craftDescTxt = this.add
-      .text(w / 2, 616, "", {
+    // —— Right column, stacked below the mission carousel: briefing, then custom params. ——
+    const briefingY = missionDotsY + 36;
+    const detailTxt = this.add
+      .text(missionX, briefingY, "", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "12px",
-        color: "#cfc7b1",
-        align: "center",
-        wordWrap: { width: Math.min(980, w - 80) },
-      })
-      .setOrigin(0.5)
-      .setDepth(3);
-    const detailTxt = this.add
-      .text(w / 2, 542, "", {
-        fontFamily: "Share Tech Mono, monospace",
-        fontSize: "11px",
         color: "#d8d0ba",
         align: "center",
-        lineSpacing: 3,
-        wordWrap: { width: Math.min(1120, w - 80) },
+        lineSpacing: 5,
+        wordWrap: { width: 420 },
         stroke: "#1c1812",
         strokeThickness: 3,
       })
-      .setOrigin(0.5)
+      .setOrigin(0.5, 0)
       .setDepth(2);
 
     const customMission = missions.find((mission) => mission.kind === "custom")!;
@@ -494,14 +533,15 @@ export class MenuScene extends Phaser.Scene {
         },
       },
     ];
+    const customParamsY0 = briefingY + 96;
     const customParamCards = customParams.map((param, i) => {
-      const col = i % 5;
-      const line = (i / 5) | 0;
-      const x = w / 2 - 425 + col * 170 + 85;
-      const y = 564 + line * 27;
-      const frame = this.add.rectangle(x, y, 162, 23, 0x0b0a08, 0.86).setDepth(2);
+      const col = i % 3;
+      const line = (i / 3) | 0;
+      const x = missionX - 168 + col * 168;
+      const y = customParamsY0 + line * 27;
+      const frame = this.add.rectangle(x, y, 158, 23, 0x0b0a08, 0.86).setDepth(2);
       const minus = this.add
-        .text(x - 66, y, "−", {
+        .text(x - 64, y, "−", {
           fontFamily: "Share Tech Mono, monospace",
           fontSize: "16px",
           color: "#e8b84a",
@@ -512,13 +552,13 @@ export class MenuScene extends Phaser.Scene {
       const value = this.add
         .text(x, y, "", {
           fontFamily: "Share Tech Mono, monospace",
-          fontSize: "11px",
+          fontSize: "10px",
           color: "#d8d0ba",
         })
         .setOrigin(0.5)
         .setDepth(3);
       const plus = this.add
-        .text(x + 66, y, "+", {
+        .text(x + 64, y, "+", {
           fontFamily: "Share Tech Mono, monospace",
           fontSize: "16px",
           color: "#e8b84a",
@@ -570,14 +610,14 @@ export class MenuScene extends Phaser.Scene {
         const selected = i === craftIndex;
         card.frame
           .setVisible(selected)
-          .setPosition(w / 2, 179)
+          .setPosition(craftX, cardY)
           .setScale(1.05)
           .setDepth(7)
           .setFillStyle(0x241e10, 0.96)
           .setStrokeStyle(row === 0 ? 3 : 2, 0xe8b84a, 1);
         card.art
           .setVisible(selected)
-          .setPosition(w / 2, 170)
+          .setPosition(craftX, cardY - 8)
           .setScale(Math.min(1, card.artScale * 1.05))
           .setDepth(8)
           .setAlpha(1);
@@ -616,7 +656,7 @@ export class MenuScene extends Phaser.Scene {
         });
         card.label
           .setVisible(selected)
-          .setPosition(w / 2, 220)
+          .setPosition(craftX, craftLabelY)
           .setScale(1)
           .setDepth(10)
           .setColor("#f2d579");
@@ -630,26 +670,26 @@ export class MenuScene extends Phaser.Scene {
         const selected = i === missionIndex;
         card.frame
           .setVisible(selected)
-          .setPosition(w / 2, 450)
+          .setPosition(missionX, cardY)
           .setScale(1)
           .setDepth(7)
           .setFillStyle(0x241e10, 0.96)
           .setStrokeStyle(row === 1 ? 3 : 2, 0xe8b84a, 1);
         card.art
           .setVisible(selected)
-          .setPosition(w / 2, 450)
+          .setPosition(missionX, cardY)
           .setScale(card.artScaleX, card.artScaleY)
           .setDepth(8)
           .setAlpha(1);
         card.strip
           .setVisible(selected)
-          .setPosition(w / 2, 497)
+          .setPosition(missionX, card.stripY)
           .setScale(1)
           .setDepth(8)
           .setAlpha(0.94);
         card.label
           .setVisible(selected)
-          .setPosition(w / 2, 497)
+          .setPosition(missionX, card.stripY)
           .setScale(1)
           .setDepth(9)
           .setColor("#f2d579");
@@ -662,7 +702,6 @@ export class MenuScene extends Phaser.Scene {
       const weapons = playerLoadoutFromSockets(craft.sockets);
       drawStatBars(craft);
       roleTxt.setText(craft.role.toUpperCase());
-      craftDescTxt.setText(craft.description ?? "");
       weaponRows.forEach((row, i) => {
         const weapon = weapons[i];
         const on = !!weapon;
@@ -688,12 +727,12 @@ export class MenuScene extends Phaser.Scene {
       });
       const cm = COUNTERMEASURES[craftCountermeasure(craft.countermeasure)];
       const cmY = loadoutRow0 + weapons.length * 20;
-      cmRow.frame.setVisible(true).setPosition(weaponX + 128, cmY);
+      cmRow.frame.setVisible(true).setPosition(weaponX + rowW / 2, cmY);
       cmRow.slot.setVisible(true).setPosition(weaponX + 7, cmY).setText("E").setColor("#7ad0ff");
       cmRow.name.setVisible(true).setPosition(weaponX + 23, cmY).setText(cm.name).setColor("#c8d4e8");
       cmRow.crew.setVisible(false).setText("");
-      cmRow.ammo.setVisible(true).setPosition(weaponX + 255, cmY).setText(countermeasureTimingLabel(cm)).setColor("#8ec8e8");
-      detailTxt.setText(`${mission.label}  ·  ${mission.briefing}`);
+      cmRow.ammo.setVisible(true).setPosition(weaponX + rowW, cmY).setText(countermeasureTimingLabel(cm)).setColor("#8ec8e8");
+      detailTxt.setText(mission.briefing);
       syncCustomParams();
     };
 
@@ -706,7 +745,7 @@ export class MenuScene extends Phaser.Scene {
     refreshSelection();
 
     const go = this.add
-      .text(w / 2, 650, "[  DEPLOY  ]", {
+      .text(w / 2, 672, "[  DEPLOY  ]", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "22px",
         color: "#1c1812",
