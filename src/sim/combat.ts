@@ -744,7 +744,7 @@ const PLAYER_WPNS_DEFS = {
     fits: FIT_GUN, notes: ["crew-served .50 — readable slugs you can walk onto a target"],
   },
   heavy_cal_pod: {
-    id: "heavy_cal_pod", name: "HEAVY CAL POD", fullName: ".50 CAL GATLING POD", description: "A wing-mounted rotary beast that delivers relentless, high-caliber kinetic punishment.", designation: "GAU-19/A .50 CAL GATLING POD", ammo: 300, fireCd: 0.048, speed: 860,
+    id: "heavy_cal_pod", name: "HEAVY CAL POD", fullName: ".50 CAL GATLING POD", description: "A wing-mounted rotary beast that delivers relentless, high-caliber kinetic punishment.", designation: "GAU-19/A .50 CAL GATLING POD", ammo: 300, fireCd: 0.072, speed: 860,
     dmg: 20, blast: 22, life: 0.13,
     art: gunArt("heavy_cal_pod", 0.68, { w: 62, h: 9, core: [255, 235, 190], mid: [255, 145, 50], rim: [210, 75, 28], blunt: 0.22, glow: 0.52 }, MOUNT_CAL_POD),
     cam: CAM_GUN, fire: FIRE_GUN, control: HOLD, launch: MUZZLE,
@@ -1765,7 +1765,7 @@ export const COUNTERMEASURES_DEFS = {
   timewarp: { id: "timewarp", name: "TIMEWARP", duration: 14, cooldown: 6 },
   phase_cloak: { id: "phase_cloak", name: "PHASE CLOAK", duration: 5.5, cooldown: 16 },
   emp: { id: "emp", name: "EMP", duration: 4, cooldown: 11 },
-  reactive_armor: { id: "reactive_armor", name: "REACTIVE ARMOR", duration: 3.5, cooldown: 10 },
+  reactive_armor: { id: "reactive_armor", name: "REACTIVE ARMOR", duration: 6, cooldown: 10 },
   smoke_screen: { id: "smoke_screen", name: "SMOKE SCREEN", duration: 8, cooldown: 12 },
 } satisfies Record<string, CountermeasureSpec>;
 
