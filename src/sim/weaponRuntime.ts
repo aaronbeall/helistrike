@@ -35,6 +35,11 @@ export function holdProgress(holdT: number, requiredT: number): number {
   return requiredT > 0 ? Phaser.Math.Clamp(holdT / requiredT, 0, 1) : 1;
 }
 
+/** Accumulate aim-hold time while still tracking the same target; reset to 0 the instant tracking breaks. */
+export function advanceAimHold(prevT: number, dt: number, continueHolding: boolean): number {
+  return continueHolding ? prevT + dt : 0;
+}
+
 /** Whether a lock acquire category list accepts this unit. */
 export function heatCategoryOk(
   u: Unit,

@@ -102,6 +102,47 @@ export function threeRegionNorm(value: number, scale: ThreeRegionScale): number 
   return 3 + Phaser.Math.Clamp(t, 0, 1) * 4;
 }
 
+/**
+ * Draws a segmented three-region stat bar (`threeRegionNorm` fill against `statHeatColor` heat)
+ * at `(x, y)`, `y` centered on the bar's height. Shared by the menu's FLIGHT PROFILE and the
+ * Field Manual's craft/remote stat rows so the fill math and segment styling stay in one place.
+ */
+export function drawThreeRegionBar(
+  gfx: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  value: number,
+  scale: ThreeRegionScale,
+  opts: {
+    segW: number;
+    segments?: number;
+    segGap?: number;
+    segH?: number;
+    radius?: number;
+    emptyColor?: number;
+    stroke?: boolean;
+  }
+): void {
+  const segments = opts.segments ?? 10;
+  const segGap = opts.segGap ?? 2;
+  const segH = opts.segH ?? 6;
+  const radius = opts.radius ?? 2;
+  const emptyColor = opts.emptyColor ?? 0x302b22;
+  const norm = threeRegionNorm(value, scale);
+  const filled = Math.max(1, Math.round((norm / 10) * segments));
+  for (let seg = 0; seg < segments; seg++) {
+    const sx = x + seg * (opts.segW + segGap);
+    const sy = y - segH / 2;
+    const heat = statHeatColor(seg / (segments - 1));
+    gfx.fillStyle(seg < filled ? heat : emptyColor, seg < filled ? 0.96 : 0.82);
+    gfx.fillRoundedRect(sx, sy, opts.segW, segH, radius);
+    if (opts.stroke) {
+      gfx.lineStyle(1, seg < filled ? heat : 0x5d5544, seg < filled ? 0.9 : 0.7);
+      gfx.strokeRoundedRect(sx, sy, opts.segW, segH, radius);
+    }
+  }
+}
+
 export function ensureMissionPreviews(textures: Phaser.Textures.TextureManager): void {
   const width = 160;
   const height = 160;

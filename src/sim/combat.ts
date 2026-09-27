@@ -792,7 +792,7 @@ const PLAYER_WPNS_DEFS = {
     dmg: 130, blast: 12, life: 0.16,
     art: gunArt("railgun", 0.82, { w: 128, h: 12, core: [255, 255, 255], mid: [120, 220, 255], rim: [40, 120, 255], glow: 1.05, shape: "bolt" }, MOUNT_RAILGUN),
     // Tip glow like Tesla (no orange flash); cyan spark spit along the bolt path.
-    cam: CAM_GUN, fire: { muzzleFlash: false, jitter: 0.02 }, control: HOLD, launch: MUZZLE,
+    cam: CAM_GUN, fire: { muzzleFlash: false, jitter: 0.04 }, control: HOLD, launch: MUZZLE,
     exhaust: particleTrail(0.42, { fire: "cyanSpark", density: 0.85, align: "heading" }),
     payload: { penetration: 1.4 },
     fits: FIT_GUN, notes: ["hypervelocity penetrator; deliberate automatic fire"],

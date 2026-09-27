@@ -22,10 +22,9 @@ import { ensureExhaustGlow } from "../art/sprites";
 import {
   adjustThreeRegionMadMul,
   computeThreeRegionScale,
+  drawThreeRegionBar,
   ensureMissionPreviews,
   getThreeRegionMadMul,
-  statHeatColor,
-  threeRegionNorm,
 } from "../ui/menuChrome";
 import { FieldManual } from "../ui/fieldManual";
 import { buildCraftPreviewOverlay, type CraftPreviewOverlay } from "../ui/craftPreview";
@@ -632,16 +631,12 @@ export class MenuScene extends Phaser.Scene {
       statDefs.forEach((stat, i) => {
         const y = statsRow0 + i * statRowH;
         statValueTexts[i]!.setText(stat.fmt(stat.value(craft)));
-        const norm = threeRegionNorm(stat.value(craft), statScales[i]!);
-        const filled = Math.max(1, Math.round((norm / 10) * segments));
-        for (let segment = 0; segment < segments; segment++) {
-          const x = statBarX0 + segment * (segW + segGap);
-          const heat = statHeatColor(segment / (segments - 1));
-          statBars.fillStyle(segment < filled ? heat : 0x302b22, segment < filled ? 0.96 : 0.82);
-          statBars.fillRoundedRect(x, y - 3, segW, 6, 2);
-          statBars.lineStyle(1, segment < filled ? heat : 0x5d5544, segment < filled ? 0.9 : 0.7);
-          statBars.strokeRoundedRect(x, y - 3, segW, 6, 2);
-        }
+        drawThreeRegionBar(statBars, statBarX0, y, stat.value(craft), statScales[i]!, {
+          segW,
+          segments,
+          segGap,
+          stroke: true,
+        });
       });
     };
 

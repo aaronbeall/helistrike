@@ -224,6 +224,7 @@ import {
   type RemoteCraft,
 } from "../sim/remote";
 import {
+  advanceAimHold,
   aimInStationArc,
   aimNarrowTime,
   aimPrecisionSpread,
@@ -973,6 +974,10 @@ export class MissionScene extends Phaser.Scene {
   remoteG!: Phaser.GameObjects.Group;
   teslaZapPool: Phaser.GameObjects.Image[] = [];
   teslaZaps: { im: Phaser.GameObjects.Image; t: number; max: number }[] = [];
+  /** One-shot flash stamps for a unit's non-primary tips on a simultaneous-fire volley (the unit's
+   *  own pooled `flash` sprite in `syncUnitSprites` already covers the primary tip). */
+  extraMuzzleFlashPool: Phaser.GameObjects.Image[] = [];
+  extraMuzzleFlashes: { im: Phaser.GameObjects.Image; t: number; max: number }[] = [];
   teslaSegPool: Phaser.GameObjects.Image[] = [];
   teslaGlowPool: Phaser.GameObjects.Image[] = [];
   teslaHeadZapPool: Phaser.GameObjects.Image[] = [];
@@ -1280,6 +1285,7 @@ export class MissionScene extends Phaser.Scene {
     this.hostEscortSeeking = false;
     this.flares = [];
     this.teslaZaps = [];
+    this.extraMuzzleFlashes = [];
     this.teslaLive = null;
     this.teslaHead = null;
     this.teslaLockId = undefined;
@@ -1548,6 +1554,12 @@ export class MissionScene extends Phaser.Scene {
     for (let i = 0; i < 28; i++) {
       this.teslaZapPool.push(
         this.add.image(0, 0, "fx_zap", 0).setVisible(false).setBlendMode(Phaser.BlendModes.ADD)
+      );
+    }
+    this.extraMuzzleFlashPool = [];
+    for (let i = 0; i < 6; i++) {
+      this.extraMuzzleFlashPool.push(
+        this.add.image(0, 0, "fx_muzzle", 0).setVisible(false).setBlendMode(Phaser.BlendModes.ADD)
       );
     }
     this.teslaSegPool = [];
@@ -4001,6 +4013,7 @@ export class MissionScene extends Phaser.Scene {
         this.updateRemotes(dt);
         this.updateFlares(dt);
         this.tickTeslaZaps(dt);
+        this.tickExtraMuzzleFlashes(dt);
         timings[2] = performance.now() - t;
 
         t = performance.now();
@@ -4075,6 +4088,7 @@ export class MissionScene extends Phaser.Scene {
         this.updateRemotes(dt);
         this.updateFlares(dt);
         this.tickTeslaZaps(dt);
+        this.tickExtraMuzzleFlashes(dt);
         this.updateUnits(dt);
         this.updateShots(dt);
         if (this.player.phase === "dead" && !this.playerCrashStarted) this.beginPlayerCrash();
@@ -8702,11 +8716,9 @@ specIsShellGun(spec)
         }
         // Aim precision: narrows the longer this barrel has held aim on the same target,
         // resetting to max spread the instant it acquires a new one or loses the old one.
-        if (holdTargets[b] !== tgt.id) {
-          holdTs[b] = 0;
-          holdTargets[b] = tgt.id;
-        }
-        holdTs[b] = (holdTs[b] ?? 0) + dt;
+        const sameTarget = holdTargets[b] === tgt.id;
+        holdTargets[b] = tgt.id;
+        holdTs[b] = advanceAimHold(holdTs[b] ?? 0, dt, sameTarget);
         let aim = barrels[b] ?? h.angle;
         aim = Phaser.Math.Angle.RotateTo(aim, want, GUN_STATION_TURN_RATE * dt);
         if (trav) aim = clampAimToStationArc(aim, h.angle, trav);
@@ -10530,11 +10542,9 @@ specIsShellGun(spec)
     // AI (not player-piloted POV): aim jitter narrows the longer it's held on the same target.
     const isAi = aimAt != null;
     if (isAi) {
-      if (drone.aimHoldTargetId !== drone.aiTargetId) {
-        drone.aimHoldT = 0;
-        drone.aimHoldTargetId = drone.aiTargetId;
-      }
-      drone.aimHoldT = (drone.aimHoldT ?? 0) + dt;
+      const sameTarget = drone.aimHoldTargetId === drone.aiTargetId;
+      drone.aimHoldTargetId = drone.aiTargetId;
+      drone.aimHoldT = advanceAimHold(drone.aimHoldT ?? 0, dt, sameTarget);
     }
     drone.gunCd = (drone.gunCd ?? 0) - dt;
     if (drone.gunCd > 0) return;
@@ -12282,6 +12292,44 @@ specIsShellGun(spec)
       this.teslaZaps[w++] = z;
     }
     this.teslaZaps.length = w;
+  }
+
+  /** One-shot flash for a simultaneous-fire tip other than the unit's primary (pooled) muzzle sprite. */
+  spawnExtraMuzzleFlash(x: number, y: number, z: number, ang: number, scale: number): void {
+    let im = this.extraMuzzleFlashPool.find((spr) => !spr.visible);
+    if (!im) {
+      im = this.add.image(0, 0, "fx_muzzle", 0).setVisible(false).setBlendMode(Phaser.BlendModes.ADD);
+      this.extraMuzzleFlashPool.push(im);
+    }
+    const scr = worldToScreen(x, y, z);
+    const frame = (Math.random() * FX_VARIANTS) | 0;
+    const jitR = (Math.random() - 0.5) * 0.2;
+    const jitS = range(0.9, 1.12);
+    const life = 0.07;
+    im.setTexture("fx_muzzle", frame)
+      .setVisible(true)
+      .setOrigin(0.15, 0.5)
+      .setPosition(scr.x, scr.y)
+      .setRotation(ang + jitR)
+      .setScale(scale * scr.scale * jitS)
+      .setAlpha(1)
+      .setDepth(worldDepth(z, ZOff.muzzle + 0.4, y));
+    this.extraMuzzleFlashes.push({ im, t: life, max: life });
+  }
+
+  tickExtraMuzzleFlashes(dt: number): void {
+    let w = 0;
+    for (let i = 0; i < this.extraMuzzleFlashes.length; i++) {
+      const f = this.extraMuzzleFlashes[i]!;
+      f.t -= dt;
+      if (f.t <= 0) {
+        f.im.setVisible(false);
+        continue;
+      }
+      f.im.setAlpha(Phaser.Math.Clamp(f.t / f.max, 0, 1));
+      this.extraMuzzleFlashes[w++] = f;
+    }
+    this.extraMuzzleFlashes.length = w;
   }
 
   /**
@@ -19182,7 +19230,7 @@ specIsShellGun(spec)
       // target (reset the moment it stops engaging) — harder-to-spot target craft (enemyAwareMul)
       // narrow slower. Seeker weapons instead gate on a separate lock-on hold below.
       const engaging = !!wpn && !soldierFlee && !scoutFlee && vision > 0 && (inRange || continueBurst);
-      u.aimHoldT = engaging ? (u.aimHoldT ?? 0) + dt : 0;
+      u.aimHoldT = advanceAimHold(u.aimHoldT ?? 0, dt, engaging);
       const isSeekerWpn = wpn?.kind === "lock-on-missile";
       if (isSeekerWpn) {
         const tracking = engaging && facingOk;
@@ -19242,6 +19290,11 @@ specIsShellGun(spec)
                 wpn.jitter ?? 0
               );
           const muzzle = this.enemyMuzzle(u, gunI, tip);
+          // Simultaneous multi-tip fire: the unit's own pooled flash sprite tracks tipI (below),
+          // so any other tip firing this volley needs its own one-shot flash to actually show.
+          if (simultaneous && tip !== tipI) {
+            this.spawnExtraMuzzleFlash(muzzle.x, muzzle.y, u.z, barrelAng, sp.organic ? 0.7 : 1.15);
+          }
           const fireAng = barrelAng + jitter;
           // Flight time from post-nudge tip (spawnShot advances by SHOT_ORIGIN).
           const spawn = this.shotSpawnXY(muzzle.x, muzzle.y, fireAng, muzzleZ, wpn.look, wpn.scale);

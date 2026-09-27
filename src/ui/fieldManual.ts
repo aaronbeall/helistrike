@@ -54,8 +54,7 @@ import {
   adjustThreeRegionMadMul,
   computeThreeRegionScale,
   createControlLegend,
-  statHeatColor,
-  threeRegionNorm,
+  drawThreeRegionBar,
 } from "./menuChrome";
 import { buildCraftPreviewOverlay, type CraftPreviewOverlay } from "./craftPreview";
 import {
@@ -88,7 +87,6 @@ const CREAM = "#d8d0ba";
 const BRIGHT = "#f0e6c8";
 const DIM = "#8a8470";
 const DIM_N = 0x4a4436;
-const BAR_EMPTY_N = 0x302b22;
 /** Loadout row name color for weapons that launch a remote craft instead of firing a shot. */
 const REMOTE_LABEL = "#f2c94e";
 
@@ -753,12 +751,10 @@ export class FieldManual {
     statRaw.forEach((stat, i) => {
       const y = statsY0 + i * this.statRowH;
       this.craftStatLabels[i]!.setPosition(-this.halfW + 40, y);
-      const norm = threeRegionNorm(stat.value, computeThreeRegionScale(stat.values));
-      const filled = Math.max(1, Math.round(norm));
-      for (let seg = 0; seg < 10; seg++) {
-        this.craftStatBars.fillStyle(seg < filled ? statHeatColor(seg / 9) : BAR_EMPTY_N, seg < filled ? 0.96 : 0.82);
-        this.craftStatBars.fillRoundedRect(statBarX + seg * 10, y - 3, 8, 6, 2);
-      }
+      drawThreeRegionBar(this.craftStatBars, statBarX, y, stat.value, computeThreeRegionScale(stat.values), {
+        segW: 8,
+        segGap: 2,
+      });
     });
     const roleY = statsY0 + statRaw.length * this.statRowH + 4;
     this.craftRoleLabel.setPosition(-this.halfW + 40, roleY);
@@ -1731,12 +1727,11 @@ export class FieldManual {
     stats.forEach((stat, i) => {
       const sy = y + i * rowH;
       this.addDetail(scene.add.text(labelX, sy, stat.label, { fontFamily: MONO, fontSize: "10px", color: CREAM }).setOrigin(0, 0.5));
-      const norm = threeRegionNorm(stat.value, computeThreeRegionScale(stat.values));
-      const filled = Math.max(1, Math.round(norm));
-      for (let seg = 0; seg < segments; seg++) {
-        bars.fillStyle(seg < filled ? statHeatColor(seg / (segments - 1)) : BAR_EMPTY_N, seg < filled ? 0.96 : 0.82);
-        bars.fillRoundedRect(barX + seg * 10, sy - 3, 8, 6, 2);
-      }
+      drawThreeRegionBar(bars, barX, sy, stat.value, computeThreeRegionScale(stat.values), {
+        segW: 8,
+        segments,
+        segGap: 2,
+      });
     });
     const roleY = y + stats.length * rowH + 4;
     this.addDetail(scene.add.text(labelX, roleY, "ROLE", { fontFamily: MONO, fontSize: "10px", color: CREAM }).setOrigin(0, 0.5));
