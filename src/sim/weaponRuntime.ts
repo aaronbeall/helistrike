@@ -11,6 +11,30 @@ export function heatClassOf(u: Unit): HeatClass {
   return "vehicle";
 }
 
+/**
+ * AI gun-aim precision: jitter spread narrows from `wide` toward `tight` (eased) as `holdT`
+ * (seconds continuously tracking the same target) approaches `narrowTime`.
+ */
+export function aimPrecisionSpread(holdT: number, narrowTime: number, wide: number, tight: number): number {
+  const t = Phaser.Math.Clamp(narrowTime > 0 ? holdT / narrowTime : 1, 0, 1);
+  return Phaser.Math.Linear(wide, tight, t * t);
+}
+
+/** Seconds of narrow-time for gun-aim precision, scaled by a craft's awareness mul (harder to spot narrows slower). */
+export function aimNarrowTime(base: number, awareMul: number): number {
+  return base / Math.max(0.05, awareMul);
+}
+
+/** Seconds required to charge missile lock, scaled by a craft's seeker mul (harder to lock takes longer). */
+export function lockAcquireTime(base: number, seekerMul: number): number {
+  return base / Math.max(0.05, seekerMul);
+}
+
+/** 0..1 progress toward a hold-time threshold (aim narrowing or lock charge), for debug/HUD display. */
+export function holdProgress(holdT: number, requiredT: number): number {
+  return requiredT > 0 ? Phaser.Math.Clamp(holdT / requiredT, 0, 1) : 1;
+}
+
 /** Whether a lock acquire category list accepts this unit. */
 export function heatCategoryOk(
   u: Unit,

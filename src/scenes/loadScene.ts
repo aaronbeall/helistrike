@@ -12,9 +12,9 @@ import {
   craftRotorAlongScale,
   craftRotorFlightSpeed,
   type CraftComposite,
-} from "../sim/craft";
+} from "../sim/crafts";
 import { drawControlLegend } from "../ui/menuChrome";
-import { pickRandomTip, tipKnownFromSelection } from "../sim/tips";
+import { pickRandomTip, tipKnownFromSelection, tipText } from "../sim/tips";
 import { ensureExhaustGlow, extractBiomeTiles, FX_VARIANTS, spriteUvPos } from "../art/sprites";
 import { missionOf } from "../sim/mission";
 import { generateWorldAsync, type WorldData } from "../worldgen/world";
@@ -171,7 +171,8 @@ export class LoadScene extends Phaser.Scene {
     const barX = w / 2 - barW / 2;
     const barY = h * 0.6;
     const bar = this.add.graphics();
-    const tip = pickRandomTip(tipKnownFromSelection()).text;
+    const known = tipKnownFromSelection();
+    const tip = tipText(pickRandomTip(known), known);
     this.add
       .text(w / 2, h * 0.72, `TIP  ·  ${tip}`, {
         fontFamily: "Share Tech Mono, monospace",

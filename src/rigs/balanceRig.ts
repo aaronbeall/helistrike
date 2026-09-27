@@ -1,7 +1,7 @@
 import Phaser from "phaser";
-import { PLAYER_WPNS, type PlayerWpnSpec, type UnitClass } from "../sim/combat";
+import { PLAYER_WPNS, playerWeaponClassMul, playerWeaponDps, sustainedDps, type PlayerWpnSpec, type UnitClass } from "../sim/combat";
 import { RIG_INFO, RIG_VALUE, makeRigText, row, setStackedTexts, syncRigSystemCursor } from "./rigUi";
-import { allCrafts, craftSocketFireStreams, craftSocketIsPrimary } from "../sim/craft";
+import { allCrafts, craftSocketFireStreams, craftSocketIsPrimary } from "../sim/crafts";
 import {
   ENEMY_WPNS,
   allKinds,
@@ -134,6 +134,8 @@ const WEAPON_AXES: AxisDef[] = [
   { id: "dps.vehicle" },
   { id: "dps.building" },
   { id: "dps.troop" },
+  { id: "dmg" },
+  { id: "fireCd" },
   { id: "blast" },
   { id: "speed" },
   { id: "range", highlight: ["life"] },
@@ -966,30 +968,9 @@ function weaponTypeTags(kind: ShotKind, launchMode?: string): string[] {
   return ["guided", "missile"];
 }
 
-/** Burst/salvo-aware sustained DPS matching enemy fire cadence. */
-function sustainedDps(
-  dmg: number,
-  fireCd: number,
-  count = 1,
-  gap = 0
-): number {
-  const n = Math.max(1, count);
-  const cycle = fireCd + (n - 1) * Math.max(0, gap);
-  return cycle > 0 ? (dmg * n) / cycle : 0;
-}
-
 function enemyWeaponDps(w: WeaponSpec | undefined): number {
   if (!w) return 0;
   return sustainedDps(w.dmg, w.fireCd, w.burst ?? 1, w.burstGap ?? 0);
-}
-
-/** Unmodified player weapon DPS (no dmgMul). */
-function playerWeaponDps(w: PlayerWpnSpec): number {
-  return sustainedDps(w.dmg, w.fireCd, w.fire?.salvo?.count ?? 1, w.fire?.salvo?.interval ?? 0);
-}
-
-function playerClassMul(w: PlayerWpnSpec, cls: UnitClass): number {
-  return w.dmgMul?.[cls] ?? 1;
 }
 
 /** Per-class DPS values keyed as `prefix` / `prefix.air` / … Base key is unmodified. */
@@ -1201,7 +1182,7 @@ function buildBalanceCatalog(): BalancePoint[] {
       if (craftSocketIsPrimary(socket)) primaryFirepower += dps;
       else secondaryFirepower += dps;
       for (const cls of UNIT_CLASSES) {
-        classFp[cls] += dps * playerClassMul(w, cls);
+        classFp[cls] += dps * playerWeaponClassMul(w, cls);
       }
     }
     out.push({
@@ -1249,7 +1230,7 @@ function buildBalanceCatalog(): BalancePoint[] {
       color: colorOf(kindGroup),
       tags,
       values: {
-        ...classDpsValues(baseDps, (cls) => playerClassMul(w, cls), "dps"),
+        ...classDpsValues(baseDps, (cls) => playerWeaponClassMul(w, cls), "dps"),
         dmg: w.dmg,
         blast: w.blast,
         fireCd: w.fireCd,

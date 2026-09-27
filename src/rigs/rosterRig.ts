@@ -16,7 +16,7 @@ import {
   selectCraft,
   type CraftKind,
   type CraftSpec,
-} from "../sim/craft";
+} from "../sim/crafts";
 import {
   allKinds,
   gunsForPartsRollOption,
@@ -1536,7 +1536,7 @@ function formatCraft(craft: CraftSpec): { stats: string[]; info: string[] } {
     stats,
     info: [
       "source: craft.ts CRAFTS",
-      "ENTER select craft — Heli / scenes read craftOf()",
+      "ENTER select craft — Craft / scenes read craftOf()",
     ],
   };
 }

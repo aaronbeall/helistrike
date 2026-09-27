@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { craftOf } from "../sim/craft";
+import { craftOf } from "../sim/crafts";
 import { HULL_MOUNT_COLOR, usesOfTexture, type HullMountRole } from "../sim/roster";
 import {
   lookupSpriteOrigin,

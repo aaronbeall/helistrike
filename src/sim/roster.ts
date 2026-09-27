@@ -101,8 +101,11 @@ export interface WeaponSpec {
   burst?: number;
   burstGap?: number;
   jitter?: number;
-  /** Explicitly cycle authored muzzle tips; omitted weapons fire from the first tip. */
-  muzzleFire?: "alternate";
+  /**
+   * Explicit muzzle-tip firing pattern; omitted weapons fire from the first tip.
+   * "alternate" cycles one tip per shot; "simultaneous" fires every tip at once.
+   */
+  muzzleFire?: "alternate" | "simultaneous";
 }
 
 /**
@@ -388,7 +391,7 @@ export const ENEMY_WPNS: { id: EnemyWpnId; label: string; w: WeaponSpec }[] = [
       kind: "lock-on-missile",
       fireCd: 2.8,
       range: 820,
-      speed: 300,
+      speed: 350,
       dmg: 18,
       blast: 22,
       look: "shot_laser_guided",
@@ -1180,9 +1183,9 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
       look: "shot_cannon_enemy_mg",
       scale: 0.42,
       jitter: 0.04,
-      muzzleFire: "alternate"
+      muzzleFire: "simultaneous"
     }),
-    // Fixed wing guns are baked into the hull; body muzzles alternate L/R.
+    // Fixed wing guns are baked into the hull; body muzzles fire both L/R together.
     guns: [],
     rotors: [
       {

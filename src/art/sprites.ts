@@ -1,5 +1,5 @@
 import type Phaser from "phaser";
-import { craftOf, craftPivot, EXHAUST_TRAIL_FLAME_HUES } from "../sim/craft";
+import { craftOf, craftPivot, EXHAUST_TRAIL_FLAME_HUES } from "../sim/crafts";
 import { lookupSpriteOrigin, setSpriteOrigin } from "./spriteOrigin";
 
 const SRC = {
@@ -106,7 +106,9 @@ export const PLAYER_GUN_MOUNT_ART: readonly { key: string; size: number; procedu
   { key: "gun_gatling", size: 52 },
   { key: "gun_dual_chain", size: 56 },
   { key: "gun_minigun", size: 40 },
+  { key: "gun_cal_pod", size: 52 },
   { key: "gun_machine", size: 38 },
+  { key: "gun_silenced_cannon", size: 52 },
   { key: "gun_artillery", size: 56 },
   { key: "gun_grenade_launcher", size: 58 },
   { key: "gun_railgun", size: 52 },
@@ -183,8 +185,8 @@ const CRAFT_ART: { key: string; file: string; fit: number; rotor?: boolean; keyP
   { key: "craft_hover_tank_hulk", file: "sprites/craft/hover-tank-hulk.png", fit: 110 },
   { key: "craft_hover_tank_turret", file: "sprites/craft/hover-tank-turret.png", fit: 64 },
   { key: "craft_hound", file: "sprites/craft/hound.png", fit: 72 },
-  { key: "craft_vtol_dropship_v2", file: "sprites/craft/vtol-dropship-v2.png", fit: 140 },
-  { key: "craft_vtol_dropship_v2_hulk", file: "sprites/craft/vtol-dropship-v2-hulk.png", fit: 140 },
+  { key: "craft_vtol_dropship_v2", file: "sprites/craft/vtol-dropship-v2.png", fit: 178 },
+  { key: "craft_vtol_dropship_v2_hulk", file: "sprites/craft/vtol-dropship-v2-hulk.png", fit: 178 },
 ];
 
 export const BIOME_TILE_NAMES = ["water", "sand", "grass", "forest", "rock", "peak"] as const;

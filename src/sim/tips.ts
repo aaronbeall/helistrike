@@ -1,5 +1,5 @@
-import type { CraftKind } from "./craft";
-import { craftOf, craftRotorIsProp } from "./craft";
+import type { CraftKind } from "./crafts";
+import { craftOf, craftRotorIsProp } from "./crafts";
 import {
   COUNTERMEASURES,
   craftCountermeasure,
@@ -151,6 +151,64 @@ export function tipsForKnown(known: TipKnown, catalog: readonly TacticalTip[] = 
   return catalog.filter((tip) => tipMatches(tip, known));
 }
 
+/**
+ * Tips explicitly scoped to this weapon (whitelist or `forWeapon` matched it) —
+ * unlike `tipsForKnown`, generic tips with no weapon context are excluded rather
+ * than passing vacuously. For a weapon's own "related tips" list.
+ */
+export function tipsForWeapon(id: WpnId, catalog: readonly TacticalTip[] = TACTICAL_TIPS): TacticalTip[] {
+  return catalog.filter((tip) => !!tip.context?.weapons?.includes(id) || !!tip.context?.forWeapon?.(id));
+}
+
+/** Flavor description for a countermeasure — reuses its tip text (single source of truth). */
+export function cmDescription(id: CountermeasureId, catalog: readonly TacticalTip[] = TACTICAL_TIPS): string {
+  const tip = catalog.find((t) => t.context?.cms?.includes(id));
+  return tip ? tipText(tip, {}) : COUNTERMEASURES[id].name;
+}
+
+// —— Weapon system classification — shared by the tip catalog and the field manual's badges. ——
+
+export type GuidedFamily = "lock_on" | "steer" | "steer_commit" | "waypoint";
+
+/** Guidance family for the weapon's control style, if any. */
+export function wpnGuidedFamily(id: WpnId): GuidedFamily | undefined {
+  return wpnOf(id).guidance?.targeting.mode;
+}
+
+/** Bonus vs. vehicles and buildings, and a matching penalty vs. troops. */
+export function wpnIsAntiArmor(id: WpnId): boolean {
+  const d = wpnOf(id).dmgMul;
+  return !!d && (d.vehicle ?? 1) > 1 && (d.building ?? 1) > 1 && (d.troop ?? 1) < 1;
+}
+
+/** Bonus vs. aircraft, and a matching penalty vs. vehicles. */
+export function wpnIsAntiAir(id: WpnId): boolean {
+  const d = wpnOf(id).dmgMul;
+  return !!d && (d.air ?? 1) > 1 && (d.vehicle ?? 1) < 1;
+}
+
+/** Bonus vs. troops, and a matching penalty vs. vehicles. */
+export function wpnIsAntiSoft(id: WpnId): boolean {
+  const d = wpnOf(id).dmgMul;
+  return !!d && (d.troop ?? 1) > 1 && (d.vehicle ?? 1) < 1;
+}
+
+/** Rounds punch through to a second target (sub-1 penetration is armor-effectiveness flavor only). */
+export function wpnPierces(id: WpnId): boolean {
+  return (wpnOf(id).payload.penetration ?? 0) >= 1;
+}
+
+/** Dropped ordnance (arcs with the aircraft's velocity) — excludes vehicle/drone deploys. */
+export function wpnIsBombDrop(id: WpnId): boolean {
+  const w = wpnOf(id);
+  return w.launch.mode === "drop" && !w.payload.remote;
+}
+
+/** Deploys a pilotable/AI remote (drone, Hound, Skiff, Raptor) rather than firing ordnance. */
+export function wpnIsRemoteDeploy(id: WpnId): boolean {
+  return !!wpnOf(id).payload.remote;
+}
+
 /** Selection + mission profile. Pass `enemies` only when kinds are known. */
 export function tipKnownFromSelection(enemies?: readonly UnitKind[]): TipKnown {
   const craft = craftOf();
@@ -261,64 +319,47 @@ export const TACTICAL_TIPS: TacticalTip[] = [
   {
     id: "wpn_anti_armor",
     text: (t) => `${t.weaponNames} ${t.weapons.length > 1 ? "tear" : "tears"} into vehicles and buildings — troops take a lot less of the hit.`,
-    context: {
-      forWeapon: (w) => {
-        const d = wpnOf(w).dmgMul;
-        return !!d && (d.vehicle ?? 1) > 1 && (d.building ?? 1) > 1 && (d.troop ?? 1) < 1;
-      },
-    },
+    context: { forWeapon: wpnIsAntiArmor },
   },
   {
     id: "wpn_anti_air",
     text: (t) => `Airborne targets are where ${t.weaponNames} really ${t.weapons.length > 1 ? "shine" : "shines"} — vehicles take noticeably less damage.`,
-    context: {
-      forWeapon: (w) => {
-        const d = wpnOf(w).dmgMul;
-        return !!d && (d.air ?? 1) > 1 && (d.vehicle ?? 1) < 1;
-      },
-    },
+    context: { forWeapon: wpnIsAntiAir },
   },
   {
     id: "wpn_anti_soft",
     text: (t) => `${t.weaponNames} ${t.weapons.length > 1 ? "cut" : "cuts"} down infantry fast, but armor eats a lot more of the impact.`,
-    context: {
-      forWeapon: (w) => {
-        const d = wpnOf(w).dmgMul;
-        return !!d && (d.troop ?? 1) > 1 && (d.vehicle ?? 1) < 1;
-      },
-    },
+    context: { forWeapon: wpnIsAntiSoft },
   },
   {
     id: "wpn_penetration",
     text: (t) => `${t.weaponNames} punches through — line up a row of infantry or light vehicles and let one shot walk the whole file.`,
-    // Sub-1 penetration is armor-effectiveness flavor only; the shot needs a whole
-    // point to survive a hit and continue (missionScene pierce check: `pierce >= 1`).
-    context: { forWeapon: (w) => (wpnOf(w).payload.penetration ?? 0) >= 1 },
+    context: { forWeapon: wpnPierces },
   },
   {
     id: "wpn_guided_lock",
     text: (t) => `Hold the lock box on target with ${t.weaponNames} until it locks, then look elsewhere — it flies itself in from there.`,
-    context: { forWeapon: (w) => wpnOf(w).guidance?.targeting.mode === "lock_on" },
+    context: { forWeapon: (w) => wpnGuidedFamily(w) === "lock_on" },
   },
   {
     id: "wpn_guided_wire",
     text: (t) => `Fire ${t.weaponNames} and it curves toward your cursor for the whole flight — there's no ballistic mode, just keep aiming.`,
-    context: { forWeapon: (w) => wpnOf(w).guidance?.targeting.mode === "steer" },
+    context: { forWeapon: (w) => wpnGuidedFamily(w) === "steer" },
   },
   {
     id: "wpn_guided_commit",
     text: (t) => `Soft-lock with ${t.weaponNames}, then commit the dive with a second click — keep it honest before you send it.`,
-    context: { forWeapon: (w) => wpnOf(w).guidance?.targeting.mode === "steer_commit" },
+    context: { forWeapon: (w) => wpnGuidedFamily(w) === "steer_commit" },
   },
   {
     id: "wpn_guided_waypoint",
     text: (t) => `Click a ground point for ${t.weaponNames} and it steers itself there on the way down.`,
-    context: { forWeapon: (w) => wpnOf(w).guidance?.targeting.mode === "waypoint" },
+    context: { forWeapon: (w) => wpnGuidedFamily(w) === "waypoint" },
   },
   {
     id: "wpn_remote_general",
     text: (t) => `Piloting ${t.weaponNames}? Q always drops you back to the host aircraft. Left alone, autonomous remotes fight and return to the bay on their own.`,
-    context: { forWeapon: (w) => !!wpnOf(w).payload.remote },
+    context: { forWeapon: wpnIsRemoteDeploy },
   },
   {
     id: "wpn_whisper",
@@ -391,10 +432,7 @@ export const TACTICAL_TIPS: TacticalTip[] = [
   {
     id: "bomb_drop",
     text: "Bombs drop with an arc, inheriting the velocity of the aircraft with limited range.",
-    context: {
-      // Only bomb-drop-style weapons — excludes agv_drop (vehicle deploy, not ordnance).
-      forWeapon: (w) => wpnOf(w).launch.mode === "drop" && !wpnOf(w).payload.remote,
-    },
+    context: { forWeapon: wpnIsBombDrop },
   },
   {
     id: "wpn_hydra",

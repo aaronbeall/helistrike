@@ -5,10 +5,14 @@ export type Uv = { x: number; y: number };
 /**
  * Points on a texture. Roles match hull/rig vocabulary;
  * `muzzle` is emit tip on gun (or fixed-aim body) textures.
+ * `rotor` = top-down lift disc (viewed from above, full scale); `prop` = forward-facing
+ * propeller (foreshortened so it reads as a tilted disc, not a top-down pad) — explicit per
+ * mount point rather than inferred from the craft's flight model.
  */
 export type SpritePointRole =
   | "gun"
   | "rotor"
+  | "prop"
   | "dish"
   | "troop"
   | "hardpoint"
@@ -84,7 +88,9 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     ],
   },
   gun_minigun: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.05 }] },
+  gun_cal_pod: { origin: uv(0.5, 0.58), points: [{ role: "muzzle", x: 0.5, y: 0.04 }] },
   gun_machine: { origin: uv(0.425, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.06 }] },
+  gun_silenced_cannon: { origin: uv(0.5, 0.74), points: [{ role: "muzzle", x: 0.5, y: 0.06 }] },
   gun_artillery: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.04 }] },
   gun_grenade_launcher: { origin: uv(0.5, 0.72), points: [{ role: "muzzle", x: 0.5, y: 0.04 }] },
   gun_railgun: { origin: uv(0.5, 0.7), points: [{ role: "muzzle", x: 0.5, y: 0.04 }] },
@@ -101,6 +107,11 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
       ...pts("muzzle", [uv(0.24, 0.38), uv(0.76, 0.38)], "wing"),
       // Stub-wing pylons only (no center store — matches typical AH-6 racks).
       ...pts("hardpoint", [uv(0.043, 0.386), uv(0.949, 0.384)]),
+      // Same pylon UVs, authored again as `muzzle` points — the heavy cal pods are a fixed,
+      // continuously-firing twin gun (like the wing minigun), not one-shot ordnance, so they need
+      // a `fixed`-class socket (which reads `muzzle` role) at the pylon position, not `hardpoint`.
+      { role: "muzzle", x: 0.043, y: 0.386, id: "pod_l" },
+      { role: "muzzle", x: 0.949, y: 0.384, id: "pod_r" },
     ],
   },
   craft_quad_drone: {
@@ -203,7 +214,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
       { role: "gun", x: 0.418, y: 0.219, id: "spooky" },
       { role: "gun", x: 0.415, y: 0.312, id: "bofors" },
       { role: "gun", x: 0.417, y: 0.564, id: "howitzer" },
-      ...pts("rotor", [uv(0.185, 0.284), uv(0.322, 0.284), uv(0.671, 0.286), uv(0.811, 0.286)], "prop"),
+      ...pts("prop", [uv(0.185, 0.284), uv(0.322, 0.284), uv(0.671, 0.286), uv(0.811, 0.286)], "prop"),
       // Wing PGM pylon (modern AC-130 style).
       { role: "hardpoint", x: 0.28, y: 0.45, id: "wing" },
     ],
@@ -246,12 +257,12 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
       { role: "gun", x: 0.178, y: 0.585, id: "flank_l" },
       { role: "gun", x: 0.815, y: 0.586, id: "flank_r" },
       // Propeller hubs — blades spun via rotor overlays.
-      { role: "rotor", x: 0.498, y: 0.009, scale: 0.7, id: "bow" },
-      { role: "rotor", x: 0.072, y: 0.329, scale: 0.85, id: "nacelle_l_fwd" },
-      { role: "rotor", x: 0.922, y: 0.329, scale: 0.85, id: "nacelle_r_fwd" },
-      { role: "rotor", x: 0.07, y: 0.537, scale: 0.85, id: "nacelle_l_aft" },
-      { role: "rotor", x: 0.926, y: 0.538, scale: 0.85, id: "nacelle_r_aft" },
-      { role: "rotor", x: 0.498, y: 0.99, scale: 0.75, id: "stern" },
+      { role: "prop", x: 0.498, y: 0.009, scale: 0.7, id: "bow" },
+      { role: "prop", x: 0.072, y: 0.329, scale: 0.85, id: "nacelle_l_fwd" },
+      { role: "prop", x: 0.922, y: 0.329, scale: 0.85, id: "nacelle_r_fwd" },
+      { role: "prop", x: 0.07, y: 0.537, scale: 0.85, id: "nacelle_l_aft" },
+      { role: "prop", x: 0.926, y: 0.538, scale: 0.85, id: "nacelle_r_aft" },
+      { role: "prop", x: 0.498, y: 0.99, scale: 0.75, id: "stern" },
       // Starscream tube grid (L/R columns, forward → aft).
       { role: "hardpoint", x: 0.235, y: 0.697, id: "star_l0" },
       { role: "hardpoint", x: 0.761, y: 0.697, id: "star_r0" },
@@ -273,7 +284,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     points: [
       { role: "muzzle", x: 0.44, y: 0.18 },
       { role: "muzzle", x: 0.56, y: 0.18 },
-      { role: "rotor", x: 0.5, y: 0.08, id: "prop" },
+      { role: "prop", x: 0.5, y: 0.08, id: "prop" },
       { role: "hardpoint", x: 0.22, y: 0.48, id: "wing_l" },
       { role: "hardpoint", x: 0.78, y: 0.48, id: "wing_r" },
       ...pts("exhaust", [uv(0.5, 0.9)]),
@@ -288,7 +299,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     points: [
       { role: "muzzle", x: 0.339, y: 0.238 },
       { role: "muzzle", x: 0.625, y: 0.238 },
-      { role: "rotor", x: 0.5, y: 0.06, id: "prop" },
+      { role: "prop", x: 0.5, y: 0.06, id: "prop" },
       { role: "hardpoint", x: 0.208, y: 0.533, id: "wing_l" },
       { role: "hardpoint", x: 0.756, y: 0.533, id: "wing_r" },
       { role: "hardpoint", x: 0.5, y: 0.62, id: "bay" },
@@ -306,7 +317,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
       { role: "muzzle", x: 0.452, y: 0.107 },
       { role: "muzzle", x: 0.54, y: 0.107 },
       // Nose tip (sprite nose-up).
-      { role: "rotor", x: 0.5, y: 0.045, id: "prop" },
+      { role: "prop", x: 0.5, y: 0.045, id: "prop" },
       // Lower-wing forward hardpoints.
       { role: "hardpoint", x: 0.18, y: 0.40, id: "wing_l" },
       { role: "hardpoint", x: 0.82, y: 0.40, id: "wing_r" },

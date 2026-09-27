@@ -4,7 +4,7 @@
  */
 import type Phaser from "phaser";
 import { PLAYER_WPNS, type PlayerWpnSpec } from "../sim/combat";
-import { allCraftHullKinds, craftGunTexture, craftOf } from "../sim/craft";
+import { allCraftHullKinds, craftGunTexture, craftOf } from "../sim/crafts";
 import { bakeAllArtGens } from "./artGen";
 import { allKinds, gunsOf, specOf, type UnitKind } from "../sim/roster";
 import { bakeShadows, bakeThermalHeatFromDarkness, registerArt, FX_SHEET_SIZE } from "./sprites";

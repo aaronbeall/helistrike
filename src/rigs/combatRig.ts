@@ -8,7 +8,7 @@ import {
   SHOT_TAIL,
   type PlayerWpnSpec,
 } from "../sim/combat";
-import { allCrafts } from "../sim/craft";
+import { allCrafts } from "../sim/crafts";
 import { ENEMY_WPNS, usesOfWeapon, type ShotKind } from "../sim/roster";
 import {
   RIG_INFO,

@@ -1,7 +1,106 @@
 import Phaser from "phaser";
-import { craftControlScheme, craftOf, type CraftSpec } from "../sim/craft";
+import { craftControlScheme, craftOf, type CraftSpec } from "../sim/crafts";
 import { allMissions } from "../sim/mission";
 import { fbm } from "../worldgen/noise";
+
+/**
+ * Blackbody-style heat gradient for segmented stat bars: deep red (t=0, left) through the
+ * brand amber to white-hot (t=1, right) — reads as "hotter" toward the high end of the bar.
+ */
+export function statHeatColor(t: number): number {
+  const stops: [number, number, number][] = [
+    [176, 58, 30],
+    [232, 184, 74],
+    [255, 244, 208],
+  ];
+  const u = Phaser.Math.Clamp(t, 0, 1) * (stops.length - 1);
+  const i = Math.min(stops.length - 2, Math.floor(u));
+  const f = u - i;
+  const [r0, g0, b0] = stops[i]!;
+  const [r1, g1, b1] = stops[i + 1]!;
+  const r = Math.round(r0 + (r1 - r0) * f);
+  const g = Math.round(g0 + (g1 - g0) * f);
+  const b = Math.round(b0 + (b1 - b0) * f);
+  return (r << 16) | (g << 8) | b;
+}
+
+/**
+ * Debug-only knob for the three-region scale's "standard band" half-width (see
+ * `computeThreeRegionScale`), as a multiple of the data's median absolute deviation — shared
+ * across the menu's FLIGHT PROFILE and the Field Manual's craft stats so +/- adjusts both from a
+ * single live value instead of each keeping its own. Remove once the value is settled.
+ */
+let threeRegionMadMul = 1.25;
+
+export function getThreeRegionMadMul(): number {
+  return threeRegionMadMul;
+}
+
+/** Nudges the shared debug mad-multiplier by `delta`, clamped to [0.25, 5]. Returns the new value. */
+export function adjustThreeRegionMadMul(delta: number): number {
+  threeRegionMadMul = Phaser.Math.Clamp(threeRegionMadMul + delta, 0.25, 5);
+  return threeRegionMadMul;
+}
+
+export interface ThreeRegionScale {
+  min: number;
+  standardMin: number;
+  median: number;
+  standardMax: number;
+  max: number;
+}
+
+function medianOf(sorted: readonly number[]): number {
+  const n = sorted.length;
+  if (n === 0) return 0;
+  const mid = Math.floor(n / 2);
+  return n % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+}
+
+/**
+ * Splits a roster's stat values into three regions around the median: a "standard" band
+ * (`median ± madMul × the data's median absolute deviation` — a robust dispersion measure, so a
+ * handful of extreme outliers don't widen the band the way a min/max-based spread would) and the
+ * low/high tails outside it. Feeds `threeRegionNorm`, which is what actually maps a value onto
+ * the three regions' bar-fill ranges.
+ */
+export function computeThreeRegionScale(values: number[], madMul = getThreeRegionMadMul()): ThreeRegionScale {
+  const sorted = values.slice().sort((a, b) => a - b);
+  const min = sorted[0] ?? 0;
+  const max = sorted[sorted.length - 1] ?? 0;
+  const median = medianOf(sorted);
+  const mad = medianOf(sorted.map((v) => Math.abs(v - median)).sort((a, b) => a - b));
+  const halfWidth = mad > 0 ? mad * madMul : (max - min) * 0.1;
+  const standardMin = Phaser.Math.Clamp(median - halfWidth, min, max);
+  const standardMax = Phaser.Math.Clamp(median + halfWidth, min, max);
+  return { min, standardMin, median, standardMax, max };
+}
+
+/**
+ * Maps a value to a continuous 0-10 bar-fill position using a three-region scale: the low tail
+ * (`[min, standardMin]`) fills `[0, 3]`, the standard band (`[standardMin, standardMax]`) fills
+ * `[3, 7]`, and the high tail (`[standardMax, max]`) fills `[7, 10]`. Unlike a plain linear or
+ * rank-smoothed scale, extreme outliers (FIREPOWER's Warthog/Leviathan/Marauder, say) are
+ * contained to the end caps and can't stretch or compress where the *typical* craft land — the
+ * bulk of the roster gets the full middle of the bar to spread out in, and only actually-extreme
+ * craft reach the very ends. Divide/scale the result for a bar with a segment count other than 10.
+ */
+export function threeRegionNorm(value: number, scale: ThreeRegionScale): number {
+  const { min, standardMin, standardMax, max } = scale;
+  if (value <= standardMin) {
+    const span = standardMin - min;
+    const t = span > 0 ? (value - min) / span : 1;
+    return Phaser.Math.Clamp(t, 0, 1) * 3;
+  }
+  if (value >= standardMax) {
+    const span = max - standardMax;
+    const t = span > 0 ? (value - standardMax) / span : 1;
+    return 7 + Phaser.Math.Clamp(t, 0, 1) * 3;
+  }
+  const span = standardMax - standardMin;
+  const t = span > 0 ? (value - standardMin) / span : 0.5;
+  return 3 + Phaser.Math.Clamp(t, 0, 1) * 4;
+}
 
 export function ensureMissionPreviews(textures: Phaser.Textures.TextureManager): void {
   const width = 160;

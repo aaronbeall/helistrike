@@ -1,2177 +1,578 @@
-import { lookupSpriteMuzzles, lookupSpriteOrigin, lookupSpritePoints, mountsOf, spritePointLabel } from "../art/spriteOrigin";
+import Phaser from "phaser";
 import {
-  type HullMount,
-  type HullMountRole,
-  type TrackKind,
-} from "./roster";
-import { weaponMountTex, type CountermeasureId, type WpnId } from "./combat";
+  craftControlScheme,
+  craftGunPreferOffset,
+  craftOf,
+  craftRotorFlightSpeed,
+  craftRotorSpoolDur,
+  craftRotorSpoolPeak,
+  craftSocketBarrelCount,
+  type CraftKind,
+  type CraftSpec,
+} from "./crafts";
+import { groundZ, WORLD, type WorldData } from "../worldgen/world";
 
-const DEFAULT_ORIGIN = { x: 0.5, y: 0.5 };
+export interface Stick {
+  up: boolean;
+  down: boolean;
+  left: boolean;
+  right: boolean;
+}
 
-function clamp(n: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, n));
+/** True when a world XY is inside the playable map rectangle. */
+export function pointInPlayableMap(x: number, y: number): boolean {
+  return x >= 0 && x <= WORLD && y >= 0 && y <= WORLD;
 }
 
 /**
- * Playable / selectable craft.
- * UV layout lives in SPRITE_SPECS for body/gun textures — craft only names textures
- * and gameplay fields. Pick via `selectCraft` / `craftOf(kind)`.
- * `CraftKind` is derived from `CRAFTS` keys below.
+ * Soft hard-stop past the playable map for leave-theater craft (planes).
+ * Past the edge the camera sees sky / clouds (missionScene leave-theater field).
  */
+export const MAP_AIR_SOFT = 480;
 
-/** Physical install class — also the weapon compatibility key (`fits`). */
-export type SocketClass = "fixed" | "turret" | "hardpoint";
-
-/** Aesthetic crew-served role for automatic turret stations (HUD / hangar). */
-export type CrewRole = "door" | "ramp" | "belly";
-
-/** Body UV this socket owns, with optional per-barrel rest aim (turrets). */
-export interface SocketPoint {
-  /** `SPRITE_SPECS[body].points` id within the class→role set. */
-  id: string;
-  /** Preferred aim degrees off craft nose (overrides socket `heading`). */
-  heading?: number;
-  /** Per-barrel draw layer (overrides socket `gunLayer`). */
-  layer?: "below" | "above";
-}
-
-export interface CraftSocket {
-  /** Stable physical install id (hangar / save) — location, not weapon. */
-  id: string;
-  /** Mount class — drives aim policy and weapon fit. */
-  class: SocketClass;
-  controller: "pilot" | "automatic";
-  /** Default installed weapon; hangar may reassign any catalog weapon in `fits`. */
-  weapon: WpnId;
-  /**
-   * Body UVs this socket owns, by id, in fire / overlay order.
-   * Resolved only within class→role (turret→gun, fixed→muzzle, hardpoint→hardpoint).
-   * Omit → all points of that role (several turrets may share the same gun UVs).
-   * Specify only to partition a multi-gun hull (e.g. Gunship spooky/bofors/howitzer).
-   */
-  points?: SocketPoint[];
-  /**
-   * Shared rest / preferred aim in degrees off craft nose (0 = forward).
-   * Used when `points[i].heading` is omitted — handy for a single-gun socket
-   * without stuffing heading into `points: [{ id, heading }]`.
-   */
-  heading?: number;
-  /** Fire cone width in degrees, centered on that barrel’s heading (or 0). Omit = unrestricted. */
-  traverse?: number;
-  /** Authored multi-muzzle policy belongs to this installation, not the weapon identity. */
-  muzzleFire?: "single" | "alternate" | "simultaneous";
-  /**
-   * Optional turret overlay texture (default: weapon `art.mount`).
-   * Use for craft-specific turrets (e.g. hover tank dual-rail cupola).
-   */
-  gunTex?: string;
-  /** Draw turret above the hull (default below for heli chin guns). */
-  gunLayer?: "below" | "above";
-  /** Extra draw scale for this turret overlay (× craft `gunOverlayScale`). */
-  gunScale?: number;
-  /**
-   * Shell-gun reverse thrust on this station (same impulse path as craft `cannonInherit`).
-   * Use when only one mount should kick — e.g. Marauder howitzer, not crew miniguns.
-   */
-  recoil?: boolean;
-  /** Crew-served station flavor (door / ramp / belly gunners) — not a technical "auto" tag. */
-  crew?: CrewRole;
-  /** Extra capacity on this station, on top of craft `ammoScale`. */
-  ammoMul?: number;
-  /**
-   * Multiplies fire rate (shots / time). Omit = 1.
-   * Cooldown applied at fire = catalog `fireCd / fireRateMul`.
-   */
-  fireRateMul?: number;
-  /**
-   * Engage / beam envelope override in world units (Tesla coil muzzle reach).
-   * Omit → weapon catalog `launch.range`.
-   */
-  range?: number;
-  /**
-   * Gravity-bomb release for this hardpoint. Socket wins over craft-level `bombDrop`.
-   * Lower `momentum` = more aim-directed (Chinook); higher = carry craft velocity (Lightning).
-   */
-  bombDrop?: CraftBombDrop;
-}
-
-/** Per-socket / per-craft gravity-bomb launcher (momentum inherit + capped corrective boost). */
-export interface CraftBombDrop {
-  /** Fraction of craft horizontal velocity inherited (0–1). */
-  momentum: number;
-  /** Max horizontal boost toward aim the launcher can add (world units / sec). */
-  maxBoost: number;
-  /** Base upward release impulse (world units / sec). */
-  loft: number;
-  /** Optional higher loft when more range is needed (uses the vertical arc). */
-  loftMax?: number;
+/**
+ * Leave-theater + forced U-turn + free chase cam.
+ * Planes (Warthog, Gunship) and plane-scheme VTOL (Lightning).
+ */
+export function craftHasForcedUTurn(spec: CraftSpec): boolean {
+  return spec.flightModel === "plane" || craftControlScheme(spec) === "plane";
 }
 
 /**
- * How the player steers the hull (orthogonal to flightModel dynamics).
- * - aim: nose follows reticle (default helis / most VTOL)
- * - plane: mouse aim + A/D circle offset; banked yaw / gun-brake / jet aim clamp
- * - orbit: hold A/D yaw, W/S speed trim; mouse aims weapons only (AC-130)
+ * Chase camera / scroll clamp only for craft without forced U-turn
+ * (helis + non-plane-scheme VTOL like Osprey / Prometheus).
  */
-export type ControlScheme = "aim" | "plane" | "orbit";
-
-/** Authored exhaust plume for craft with nozzle FX. */
-export interface CraftExhaustProfile {
-  rate: number;
-  speed: number;
-  tint: number;
-  smoke: number;
-  sx: number;
-  sy: number;
-  life: number;
-  /** Nozzle flame scale. 0 = smoke only; a pale `smoke` tint uses the light sheet. */
-  flame: number;
-  gap: number;
-  /** Degrees from warm exhaust art; 0 keeps source orange. */
-  flameHue?: number;
-  /** Dense ribbon particle counts (jets). */
-  ribbonDense?: boolean;
-  /** Glow oval follows hull pose instead of jet angle (Prometheus). */
-  glowFollowsHull?: boolean;
+export function craftCameraEdgeLocked(spec: CraftSpec): boolean {
+  return !craftHasForcedUTurn(spec);
 }
 
-export interface CraftSpec {
-  /** Catalog key — must match the CRAFTS entry name. */
-  kind: string;
-  name: string;
-  fullName: string;
-  /** Short fantasy combat identity shown on the craft profile (hangar / help). */
-  role: string;
-  /** Player-facing blurb. What the aircraft is, not a control how-to. */
-  description?: string;
-  /**
-   * Hangar / mission-select roster. Omit or true → playable player craft.
-   * False → hull used by remotes / pods only (still `craftOf`-able for Heli).
-   */
-  playable?: boolean;
-  flightModel: "heli" | "vtol" | "plane" | "ground";
-  /** Player hull-steer mapping; omit → aim. */
-  controlScheme?: ControlScheme;
-  /** Hull sweep kills standing troops it drives/flies through at low AGL (roadkill). */
-  crushesInfantry?: boolean;
-  /** Cannon muzzle impulse inherits craft velocity. */
-  cannonInherit?: boolean;
-  /** Chin/turret overlay draw scale (cobra/viper 0.42). */
-  gunOverlayScale?: number;
-  /**
-   * Elastic whip antenna — base UV role `antenna` on the gun overlay (or body).
-   * Tip springs upright and wobbles with hull / turret motion.
-   */
-  antenna?: {
-    length?: number;
-    aft?: number;
-    stiffness?: number;
-    damping?: number;
-    yawWhip?: number;
-    lag?: number;
-  };
-  /**
-   * Extra framing mul on size-based camera scale (<1 zooms out).
-   * Use for low ground-huggers that need more theater around the hull.
-   */
-  cameraScale?: number;
-  /** Exhaust nozzle plume; omit → no craft exhaust FX. */
-  exhaustProfile?: CraftExhaustProfile;
-  /** Largest real-world plan-view envelope in meters; Apache baseline for fictional craft. */
-  sizeM: number;
-  /** Capacity multiplier for finite-ammo weapons. */
-  ammoScale: number;
-  health: number;
-  /** Collision / silhouette radius (roster marks / future). */
-  radius: number;
-  /** Collision / aim height (world units). */
-  height: number;
-  /** Body texture key. */
-  body: string;
-  hulk: string;
-  /** T / sensor-cam thermal look. Omit → white_hot. */
-  sensorPalette?: "white_hot" | "full_spectrum" | "black_hot" | "night_vision";
-  /**
-   * Flat hover plate: no yaw bank lean, no roll foreshorten on the body.
-   * Use for ground-huggers (Wraith / HOUND) and heavy sky haulers (Leviathan / Marauder).
-   * Omit → normal bank lean / squash.
-   */
-  flatHull?: boolean;
-  /**
-   * Ground track prints while moving (tread / tire / …).
-   * Used by craft-backed remotes (HOUND) and any dirt-locked hull.
-   */
-  track?: TrackKind;
-  trackGap?: number;
-  trackScale?: number;
-  /**
-   * Rotor / thruster overlay texture. Omit for fixed-wing (gunship / warthog).
-   * Spin bake is `${rotor}_spin` when present.
-   */
-  rotor?: string;
-  rotorHulk?: string;
-  /** Draw multiplier for the rotor overlay relative to its baked texture size. */
-  rotorScale?: number;
-  /**
-   * Blade mass / inertia relative to Apache (= 1). Drives spool duration and
-   * spin rate (mission + previews). Omit → derived from `rotorDrawSpan`.
-   * Tiny (Murder Hornet ~0.3) = near-instant spool + fast spin; Chinook >1 = slower.
-   */
-  rotorInertia?: number;
-  /** Sprite nose-up offset (world aim 0 is +X). */
-  rotOff: number;
-  forwardThrust: number;
-  /** Optional backward thrust; defaults to forwardThrust. */
-  reverseThrust?: number;
-  strafeThrust: number;
-  maxSpeed: number;
-  /** Optional cap on velocity opposite the nose; defaults to maxSpeed. */
-  maxReverseSpeed?: number;
-  /** Fixed-wing floor; zero for craft that can hover. */
-  minSpeed: number;
-  yawRate: number;
-  yawAccel: number;
-  drag: number;
-  verticalThrust: number;
-  cruiseThrust: number;
-  cruiseAgl: number;
-  maxAgl: number;
-  /** Future pickup/place capability; no cargo gameplay exists yet. */
-  liftClass?: "medium" | "heavy";
-  /**
-   * Fallback gravity-bomb release when a socket omits `bombDrop`.
-   * Prefer authoring on the bomb hardpoint itself.
-   */
-  bombDrop?: CraftBombDrop;
-  /**
-   * Weapon installs: geometry + policy + default weapon.
-   * Hangar loadouts assign any catalog weapon whose `fits` includes `socket.class`.
-   */
-  sockets: CraftSocket[];
-  /** Enemy gun-laying accuracy multiplier; lower is harder to hit. */
-  enemyAimMul?: number;
-  /** Enemy seeker acquisition/tracking multiplier; lower is harder to lock. */
-  enemySeekerMul?: number;
-  /** Enemy spotting / chase-engage range multiplier. Does not change aim accuracy or weapon fire range. Helis also get a slight extra cut at low AGL. */
-  enemyAwareMul?: number;
-  /** Countermeasure on E. Omit → flares. */
-  countermeasure?: CountermeasureId;
-}
+/** Nape / cruise / pop-up ceilings are AGL (added to local groundZ), not world Z. */
+export const LOW_AGL = 4;
+export const CRUISE_AGL = 46;
+export const MAX_AGL = 118;
+export const FWD_THRUST = 520;
+export const STRAFE_THRUST = 340;
+/** Collective climb/dive accel — matched to strafe. */
+export const Z_THRUST = STRAFE_THRUST;
+/** Gentle collective toward cruise. Far weaker than Z_THRUST. */
+export const CRUISE_THRUST = 36;
+export const CRUISE_DAMP = 2.2;
+/** How fast cruise's ground reference tracks real terrain. Low = ignore rivers. */
+export const GND_FOLLOW = 0.55;
 
-/** Catalog of player-selectable craft. */
-const CRAFTS_DEFS = {
-  apache: {
-    kind: "apache",
-    name: "Apache",
-    fullName: "AH-64E Apache",
-    role: "Heavy Gunship",
-    description: "The baseline gunship. Stable enough to sit in a fight, armed from troops up through armor.",
-    flightModel: "heli",
-    sizeM: 14.7,
-    ammoScale: 1,
-    health: 100,
-    radius: 20,
-    height: 14,
-    body: "craft_apache",
-    hulk: "craft_apache_hulk",
-    rotor: "craft_apache_rotor",
-    rotorHulk: "craft_apache_rotor_hulk",
-    rotOff: Math.PI / 2,
-    forwardThrust: 520, strafeThrust: 340, maxSpeed: 340, minSpeed: 0, yawRate: 2.55, yawAccel: 11, drag: 1.65,
-    verticalThrust: 340, cruiseThrust: 36, cruiseAgl: 46, maxAgl: 118,
-    sockets: [
-      { id: "chin_turret", class: "turret", controller: "pilot", weapon: "chain_gun", traverse: 240 },
-      { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket" },
-      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "hellfire_missile" },
-      { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "tv_missile" },
-    ],
-  },
-  little_bird: {
-    kind: "little_bird",
-    name: "Little Bird",
-    fullName: "AH-6 Little Bird",
-    role: "Knife Fighter",
-    description: "A knife fighter. Small, quick, and happiest inside the enemy's gun range.",
-    flightModel: "heli",
-    sizeM: 9.94,
-    ammoScale: 0.7,
-    health: 70,
-    radius: 14,
-    height: 8,
-    body: "craft_littlebird",
-    hulk: "craft_littlebird_hulk",
-    rotor: "craft_littlebird_rotor",
-    rotorHulk: "craft_littlebird_rotor_hulk",
-    rotorScale: 0.71,
-    rotOff: Math.PI / 2,
-    forwardThrust: 660, strafeThrust: 560, maxSpeed: 390, minSpeed: 0, yawRate: 4.1, yawAccel: 22, drag: 1.25,
-    verticalThrust: 520, cruiseThrust: 52, cruiseAgl: 46, maxAgl: 118,
-    sockets: [
-      { id: "wing_gun_l", class: "fixed", controller: "pilot", weapon: "minigun", muzzleFire: "simultaneous" },
-      { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket" },
-      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "stinger_missile" },
-      { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "heavy_cal_pod" },
-    ],
-  },
-  cobra: {
-    kind: "cobra",
-    name: "Cobra",
-    fullName: "AH-1 Cobra",
-    role: "Agile Striker",
-    description: "An older striker built for a diving pass: a fast chin gun and a deep rocket load.",
-    flightModel: "heli",
-    // IRL AH-1 shorter than Apache; keep under Apache's sizeM baseline.
-    sizeM: 13.4,
-    ammoScale: 1.05,
-    health: 82,
-    radius: 16,
-    height: 13,
-    // Slimmer silhouette → slightly harder for enemies to notice than Apache.
-    enemyAwareMul: 0.92,
-    body: "craft_cobra",
-    hulk: "craft_cobra_hulk",
-    sensorPalette: "night_vision",
-    rotor: "craft_cobra_rotor",
-    rotorHulk: "craft_cobra_rotor_hulk",
-    rotorScale: 1.24,
-    rotOff: Math.PI / 2,
-    gunOverlayScale: 0.42,
-    // Hot-rod classic: snappier than Apache/Viper, thinner skin.
-    forwardThrust: 640, strafeThrust: 450, maxSpeed: 395, minSpeed: 0, yawRate: 3.45, yawAccel: 18.5, drag: 1.35,
-    verticalThrust: 440, cruiseThrust: 46, cruiseAgl: 46, maxAgl: 118,
-    sockets: [
-      { id: "chin_turret", class: "turret", controller: "pilot", weapon: "gatling", traverse: 280 },
-      { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket", ammoMul: 1.45 },
-      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "sidewinder_missile" },
-      { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "tow_missile" },
-    ],
-  },
-  viper: {
-    kind: "viper",
-    name: "Viper",
-    fullName: "AH-1Z Viper",
-    role: "Modern Striker",
-    description: "The Cobra's successor. Same kind of pass, with guided anti-tank on the wing.",
-    flightModel: "heli",
-    // Same silhouette class as Cobra; under Apache sizeM.
-    sizeM: 13.4,
-    ammoScale: 1.2,
-    health: 90,
-    radius: 16,
-    height: 13,
-    enemyAwareMul: 0.92,
-    body: "craft_viper",
-    hulk: "craft_viper_hulk",
-    rotor: "craft_viper_rotor",
-    rotorHulk: "craft_viper_rotor_hulk",
-    rotorScale: 1.24,
-    gunOverlayScale: 0.42,
-    rotOff: Math.PI / 2,
-    // Between Cobra and Apache: slightly less snap than Cobra, still a striker.
-    forwardThrust: 620, strafeThrust: 430, maxSpeed: 385, minSpeed: 0, yawRate: 3.3, yawAccel: 17, drag: 1.38,
-    verticalThrust: 425, cruiseThrust: 44, cruiseAgl: 48, maxAgl: 122,
-    sockets: [
-      { id: "chin_turret", class: "turret", controller: "pilot", weapon: "gatling", traverse: 280 },
-      { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket" },
-      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "hellfire_missile" },
-      { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "tow_missile", ammoMul: 8 / 7 },
-    ],
-  },
-  blackhawk: {
-    kind: "blackhawk",
-    name: "Black Hawk",
-    fullName: "UH-60M Black Hawk",
-    role: "Assault Transport",
-    description: "An assault transport that shoots back. Wing guns for the run, a crew gun on the cabin.",
-    flightModel: "heli",
-    sizeM: 19.76,
-    ammoScale: 1.3,
-    health: 135,
-    radius: 27,
-    height: 15,
-    body: "craft_blackhawk",
-    hulk: "craft_blackhawk_hulk",
-    sensorPalette: "black_hot",
-    rotor: "craft_blackhawk_rotor",
-    rotorHulk: "craft_blackhawk_rotor_hulk",
-    rotorScale: 1.39,
-    rotOff: Math.PI / 2,
-    forwardThrust: 450, strafeThrust: 260, maxSpeed: 280, minSpeed: 0, yawRate: 1.95, yawAccel: 8, drag: 1.85,
-    verticalThrust: 300, cruiseThrust: 32, cruiseAgl: 46, maxAgl: 118,
-    liftClass: "medium",
-    sockets: [
-      { id: "wing_guns", class: "fixed", controller: "pilot", weapon: "gatling", muzzleFire: "simultaneous" },
-      { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "rocket" },
-      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "hellfire_missile" },
-      // Door guns: explicit points ↔ heading.
-      {
-        id: "cabin_doors",
-        class: "turret",
-        controller: "automatic",
-        weapon: "machine_gun",
-        points: [
-          { id: "door_l", heading: -75 },
-          { id: "door_r", heading: 75 },
-        ],
-        traverse: 270,
-        crew: "door",
-      },
-    ],
-  },
-  chinook: {
-    kind: "chinook",
-    name: "Chinook",
-    fullName: "CH-47F Chinook",
-    role: "Heavy Ordnance",
-    description: "A heavy lifter. Slow, big, and carrying the bombs the helicopters can't.",
-    flightModel: "heli",
-    sizeM: 30.1,
-    ammoScale: 1.6,
-    health: 420,
-    radius: 41,
-    height: 25,
-    body: "craft_chinook",
-    hulk: "craft_chinook_hulk",
-    sensorPalette: "black_hot",
-    rotor: "craft_chinook_rotor",
-    rotorHulk: "craft_chinook_rotor_hulk",
-    rotorScale: 1.55,
-    rotOff: Math.PI / 2,
-    forwardThrust: 520, strafeThrust: 280, maxSpeed: 310, minSpeed: 0, yawRate: 0.72, yawAccel: 3.4, drag: 1.65,
-    verticalThrust: 340, cruiseThrust: 34, cruiseAgl: 48, maxAgl: 125,
-    liftClass: "heavy",
-    sockets: [
-      // Forward cabin guns: explicit mount ↔ heading (same multi-mount model as Black Hawk doors).
-      {
-        id: "cabin_forward",
-        class: "turret",
-        controller: "automatic",
-        weapon: "machine_gun",
-        points: [
-          { id: "fwd_l", heading: -50 },
-          { id: "fwd_r", heading: 50 },
-        ],
-        traverse: 240,
-      },
-      // Heavy lift: low momentum inherit so hover / reverse drops can go where aimed.
-      {
-        id: "bomb_bay_1",
-        class: "hardpoint",
-        controller: "pilot",
-        weapon: "heavy_bomb",
-        bombDrop: { momentum: 0.28, maxBoost: 240, loft: 130, loftMax: 230 },
-      },
-      {
-        id: "bomb_bay_2",
-        class: "hardpoint",
-        controller: "pilot",
-        weapon: "cluster_bomb",
-        bombDrop: { momentum: 0.28, maxBoost: 240, loft: 130, loftMax: 230 },
-      },
-      // Ramp gun faces aft.
-      {
-        id: "cabin_ramp",
-        class: "turret",
-        controller: "automatic",
-        weapon: "heavy_machine_gun",
-        points: [{ id: "ramp", heading: 180 }],
-        traverse: 270,
-        crew: "ramp",
-      },
-    ],
-  },
-  osprey: {
-    kind: "osprey",
-    name: "Osprey",
-    fullName: "MV-22B Osprey",
-    role: "Hybrid Assault",
-    description: "A tiltrotor. Faster than the helicopters, and it can still hover a gun run.",
-    flightModel: "vtol",
-    sizeM: 25.8,
-    ammoScale: 1.4,
-    health: 140,
-    radius: 35,
-    height: 20,
-    body: "craft_osprey",
-    hulk: "craft_osprey_hulk",
-    rotor: "craft_osprey_rotor",
-    rotorHulk: "craft_osprey_rotor_hulk",
-    rotorScale: 0.98,
-    rotOff: Math.PI / 2,
-    forwardThrust: 700, strafeThrust: 230, maxSpeed: 430, minSpeed: 0, yawRate: 1.7, yawAccel: 7, drag: 1.4,
-    verticalThrust: 380, cruiseThrust: 40, cruiseAgl: 70, maxAgl: 170,
-    liftClass: "heavy",
-    sockets: [
-      {
-        id: "belly_turret",
-        class: "turret",
-        controller: "automatic",
-        weapon: "minigun",
-        points: [{ id: "belly" }],
-        traverse: 360,
-        crew: "belly",
-      },
-      { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "guided_rockets", ammoMul: 1.25 },
-      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "hellfire_missile" },
-      {
-        id: "cabin_ramp",
-        class: "turret",
-        controller: "automatic",
-        weapon: "heavy_machine_gun",
-        points: [{ id: "ramp", heading: 180 }],
-        traverse: 270,
-        crew: "ramp",
-      },
-    ],
-  },
-  stealthhawk: {
-    kind: "stealthhawk",
-    name: "Stealth Hawk",
-    fullName: "XH-60 Stealth Hawk",
-    role: "Stealth Attack",
-    description: "Built to arrive unseen. Harder to spot in the weeds, and the cannon punishes targets that are already blind or stunned.",
-    flightModel: "heli",
-    sizeM: 14.7,
-    ammoScale: 1,
-    health: 110,
-    radius: 20,
-    height: 14,
-    body: "craft_stealthhawk",
-    hulk: "craft_stealthhawk_hulk",
-    rotor: "craft_stealthhawk_rotor",
-    rotorHulk: "craft_stealthhawk_rotor_hulk",
-    rotorScale: 1.24,
-    rotOff: Math.PI / 2,
-    forwardThrust: 475, strafeThrust: 310, maxSpeed: 305, minSpeed: 0, yawRate: 2.45, yawAccel: 10.5, drag: 1.65,
-    verticalThrust: 340, cruiseThrust: 36, cruiseAgl: 46, maxAgl: 118,
-    sockets: [
-      { id: "chin_turret", class: "turret", controller: "pilot", weapon: "concealed_cannon", traverse: 220 },
-      { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "guided_rockets", ammoMul: 0.75 },
-      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "stinger_missile" },
-      { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "smoke_bomb" },
-    ],
-    enemyAimMul: 0.55,
-    enemySeekerMul: 0.42,
-    enemyAwareMul: 0.32,
-    countermeasure: "emp",
-  },
-  cyberhawk: {
-    kind: "cyberhawk",
-    name: "Cyber Hawk",
-    fullName: "XH-88 Cyber Hawk",
-    role: "High-tech Offensive",
-    description: "An experimental gunship. Energy weapons, a drone in the bay, and timewarp instead of flares.",
-    flightModel: "heli",
-    sizeM: 14.7,
-    ammoScale: 1.05,
-    health: 120,
-    radius: 20,
-    height: 14,
-    body: "craft_cyberhawk",
-    hulk: "craft_cyberhawk_hulk",
-    rotor: "craft_cyberhawk_rotor",
-    rotorHulk: "craft_cyberhawk_rotor_hulk",
-    rotorScale: 1,
-    rotOff: Math.PI / 2,
-    forwardThrust: 740, strafeThrust: 500, maxSpeed: 500, minSpeed: 0, yawRate: 3.35, yawAccel: 16, drag: 1.2,
-    verticalThrust: 480, cruiseThrust: 48, cruiseAgl: 46, maxAgl: 118,
-    exhaustProfile: {
-      rate: 32, speed: 105, tint: 0x70d8ff, smoke: 0x485761, sx: 1.05, sy: 0.26, life: 1180, flame: 0.5, gap: 9, flameHue: 172,
-    },
-    sockets: [
-      // Single chin rail — snappier than the catalog / hover dual.
-      { id: "chin_turret", class: "turret", controller: "pilot", weapon: "railgun", traverse: 150, fireRateMul: 1.55 },
-      { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "swarm_missile" },
-      { id: "tesla_coil", class: "turret", controller: "pilot", weapon: "tesla_beam", traverse: 150, range: 260 },
-      { id: "bomb_bay", class: "hardpoint", controller: "pilot", weapon: "attack_drone" },
-    ],
-    countermeasure: "timewarp",
-    sensorPalette: "full_spectrum",
-  },
-  quad_drone: {
-    kind: "quad_drone",
-    name: "Murder Hornet",
-    fullName: "MQ-27 Murder Hornet",
-    role: "Kill Drone",
-    description: "A pocket gunship. Fast, fragile, and mean at knife range.",
-    flightModel: "heli",
-    sizeM: 1.9,
-    ammoScale: 0.65,
-    health: 45,
-    radius: 4.5,
-    height: 3.2,
-    body: "craft_quad_drone",
-    hulk: "craft_quad_drone_hulk",
-    rotor: "craft_quad_drone_rotor",
-    rotorHulk: "craft_quad_drone_rotor_hulk",
-    rotorScale: 0.26,
-    rotOff: Math.PI / 2,
-    forwardThrust: 760, strafeThrust: 700, maxSpeed: 440, minSpeed: 0, yawRate: 8.7, yawAccel: 47, drag: 1.05,
-    verticalThrust: 650, cruiseThrust: 60, cruiseAgl: 38, maxAgl: 105,
-    sockets: [
-      { id: "belly_gun", class: "fixed", controller: "pilot", weapon: "machine_gun",
-        points: [{ id: "pod0" }, { id: "pod1" }], muzzleFire: "simultaneous" },
-      { id: "belly_coil", class: "fixed", controller: "pilot", weapon: "tesla_beam",
-        points: [{ id: "coil" }], range: 138 },
-      { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "mini_hellfire_missile" },
-      {
-        id: "bomb_bay",
-        class: "hardpoint",
-        controller: "pilot",
-        weapon: "mini_bomb",
-        bombDrop: { momentum: 0.45, maxBoost: 160, loft: 110, loftMax: 190 },
-      },
-    ],
-    countermeasure: "emp",
-  },
-  // Kamikaze pod. Same quad-drone art as Murder Hornet, own slower flight. Not hangar-selectable.
-  spectre: {
-    kind: "spectre",
-    name: "Spectre",
-    fullName: "SPECTRE DRONE",
-    role: "Kamikaze Drone",
-    description: "A bomb with rotors. You fly it in from the cockpit and detonate it.",
-    playable: false,
-    flightModel: "heli",
-    sizeM: 1.9,
-    ammoScale: 0.65,
-    health: 28,
-    radius: 7,
-    height: 4,
-    body: "craft_quad_drone",
-    hulk: "craft_quad_drone_hulk",
-    rotor: "craft_quad_drone_rotor",
-    rotorHulk: "craft_quad_drone_rotor_hulk",
-    rotorScale: 0.26,
-    rotOff: Math.PI / 2,
-    // Same thrust / cap / yaw as the old remote. Drag matches its per-frame bleed
-    // (v *= 0.12^dt) so W cruises near 260 instead of sitting on the 360 cap.
-    forwardThrust: 560, strafeThrust: 500, maxSpeed: 360, minSpeed: 0, yawRate: 5.4, yawAccel: 29, drag: 2.12,
-    verticalThrust: 300, cruiseThrust: 40, cruiseAgl: 26, maxAgl: 90,
-    sockets: [],
-  },
-  lightning_ii: {
-    kind: "lightning_ii",
-    name: "Lightning II",
-    fullName: "F-35B Lightning II",
-    role: "Fast Attack",
-    description: "A fast jet that can stop. Make the pass and leave before the turn runs out of airspeed.",
-    flightModel: "vtol",
-    controlScheme: "plane",
-    cannonInherit: true,
-    sizeM: 15.7,
-    ammoScale: 1.5,
-    health: 165,
-    radius: 31,
-    height: 13,
-    body: "craft_lightning_ii",
-    hulk: "craft_lightning_ii_hulk",
-    rotOff: Math.PI / 2,
-    forwardThrust: 1050, reverseThrust: 130, strafeThrust: 260, maxSpeed: 680, maxReverseSpeed: 65, minSpeed: 0, yawRate: 2.35, yawAccel: 10, drag: 1.15,
-    verticalThrust: 380, cruiseThrust: 40, cruiseAgl: 210, maxAgl: 420,
-    exhaustProfile: {
-      rate: 56, speed: 160, tint: 0xbfeaff, smoke: 0x3b4145, sx: 1.22, sy: 0.3, life: 1320, flame: 0.72, gap: 6,
-      flameHue: 185, ribbonDense: true,
-    },
-    sockets: [
-      { id: "nose_gun", class: "fixed", controller: "pilot", weapon: "medium_gatling_cannon" },
-      { id: "internal_bay_1", class: "hardpoint", controller: "pilot", weapon: "light_gps_missile" },
-      { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "sidewinder_missile" },
-      // Fast attack: bombs carry craft speed; little corrective throw.
-      {
-        id: "internal_bay_2",
-        class: "hardpoint",
-        controller: "pilot",
-        weapon: "gps_bomb",
-        // JDAM: less carry, more aim throw — fins do the rest in flight.
-        bombDrop: { momentum: 0.48, maxBoost: 185, loft: 105, loftMax: 190 },
-      },
-    ],
-  },
-  warthog: {
-    kind: "warthog",
-    name: "Warthog",
-    fullName: "A-10C Warthog",
-    role: "Tank Buster",
-    description: "A flying gun. It has to keep its speed, and the cannon is the point of the aircraft.",
-    flightModel: "plane",
-    controlScheme: "plane",
-    cannonInherit: true,
-    sizeM: 17.42,
-    ammoScale: 1.3,
-    health: 150,
-    radius: 40,
-    height: 13,
-    body: "craft_warthog",
-    hulk: "craft_warthog_hulk",
-    rotOff: Math.PI / 2,
-    forwardThrust: 1200, strafeThrust: 0, maxSpeed: 760, minSpeed: 400, yawRate: 1.85, yawAccel: 8.2, drag: 0.75,
-    verticalThrust: 180, cruiseThrust: 24, cruiseAgl: 280, maxAgl: 560,
-    exhaustProfile: {
-      rate: 52, speed: 145, tint: 0xff8a2c, smoke: 0x3d3935, sx: 1.35, sy: 0.34, life: 1420, flame: 0.7, gap: 7,
-      flameHue: 0, ribbonDense: true,
-    },
-    sockets: [
-      { id: "nose_gun", class: "fixed", controller: "pilot", weapon: "heavy_cannon" },
-      {
-        id: "bomb_bay_1",
-        class: "hardpoint",
-        controller: "pilot",
-        weapon: "cluster_bomb",
-        // Dumb iron: same craft carry as before, weaker aim correction (vs JDAM bay).
-        bombDrop: { momentum: 0.45, maxBoost: 85, loft: 110, loftMax: 195 },
-      },
-      { id: "wing_hardpoint", class: "hardpoint", controller: "pilot", weapon: "heavy_guided_missile" },
-      {
-        id: "bomb_bay_2",
-        class: "hardpoint",
-        controller: "pilot",
-        weapon: "gps_bomb",
-        bombDrop: { momentum: 0.52, maxBoost: 170, loft: 100, loftMax: 180 },
-      },
-    ],
-  },
-  gunship: {
-    kind: "gunship",
-    name: "Gunship",
-    fullName: "AC-130 Gunship",
-    role: "Loiter Gunship",
-    description: "A circling battery. You hold the orbit and the mouse lays the side guns.",
-    flightModel: "plane",
-    controlScheme: "orbit",
-    sizeM: 39.7,
-    ammoScale: 2,
-    health: 320,
-    radius: 100,
-    height: 35,
-    body: "craft_gunship",
-    hulk: "craft_gunship_hulk",
-    rotor: "craft_osprey_rotor",
-    rotorHulk: "craft_osprey_rotor_hulk",
-    rotorScale: 0.24,
-    rotOff: Math.PI / 2,
-    forwardThrust: 580, strafeThrust: 0, maxSpeed: 340, minSpeed: 200, yawRate: 0.95, yawAccel: 2.6, drag: 1.25,
-    verticalThrust: 90, cruiseThrust: 14, cruiseAgl: 320, maxAgl: 520,
-    sockets: [
-      {
-        id: "cabin_gun_1",
-        class: "turret",
-        controller: "automatic",
-        weapon: "heavy_artillery",
-        points: [{ id: "howitzer" }],
-        heading: -90,
-        traverse: 160,
-      },
-      {
-        id: "cabin_gun_2",
-        class: "turret",
-        controller: "automatic",
-        weapon: "medium_cannon",
-        points: [{ id: "bofors" }],
-        heading: -90,
-        traverse: 160,
-      },
-      {
-        id: "cabin_gun_3",
-        class: "turret",
-        controller: "automatic",
-        weapon: "light_cannon",
-        points: [{ id: "spooky" }],
-        heading: -90,
-        traverse: 160,
-      },
-      {
-        id: "wing_hardpoint",
-        class: "hardpoint",
-        controller: "pilot",
-        weapon: "gps_missile",
-      },
-    ],
-    sensorPalette: "black_hot",
-  },
-  prometheus: {
-    kind: "prometheus",
-    name: "Prometheus",
-    fullName: "XV-99 Prometheus",
-    role: "Alien Superweapon",
-    description: "An exotic striker. Beams and a cloak, not a rocket truck.",
-    flightModel: "vtol",
-    sizeM: 14.7,
-    ammoScale: 1.2,
-    health: 130,
-    radius: 36,
-    height: 14,
-    body: "craft_prometheus",
-    hulk: "craft_prometheus_hulk",
-    // No rotor — hover via energy FX later.
-    rotOff: Math.PI / 2,
-    forwardThrust: 900, strafeThrust: 760, maxSpeed: 600, minSpeed: 0, yawRate: 4.5, yawAccel: 25, drag: 0.95,
-    verticalThrust: 700, cruiseThrust: 65, cruiseAgl: 90, maxAgl: 240,
-    liftClass: "heavy",
-    exhaustProfile: {
-      rate: 26, speed: 72, tint: 0xc86cff, smoke: 0x6b3a78, sx: 0.98, sy: 0.28, life: 1320, flame: 0.58, gap: 10,
-      flameHue: 248, glowFollowsHull: true,
-    },
-    sockets: [
-      // Helix + Refractor share the belly gun UV (same pattern as Cyberhawk chin).
-      { id: "belly_turret", class: "turret", controller: "pilot", weapon: "plasma_cannon", traverse: 260 },
-      { id: "belly_beam", class: "turret", controller: "pilot", weapon: "laser_rocket", traverse: 260 },
-      { id: "body_hardpoint", class: "hardpoint", controller: "pilot", weapon: "photon_missile" },
-      { id: "bomb_bay", class: "hardpoint", controller: "pilot", weapon: "warp_bomb" },
-    ],
-    countermeasure: "phase_cloak",
-    sensorPalette: "full_spectrum",
-  },
-  airship: {
-    kind: "airship",
-    name: "Leviathan",
-    fullName: "Leviathan Airship",
-    role: "Sky Fortress",
-    description: "A ship in the sky. It fights by launching the craft in its bays as much as by its own guns.",
-    // Gunship-style loiter: A/D yaw, W/S trim, mouse aims stores.
-    flightModel: "plane",
-    controlScheme: "orbit",
-    sizeM: 68,
-    ammoScale: 2.4,
-    health: 480,
-    radius: 118,
-    height: 72,
-    body: "craft_airship",
-    hulk: "craft_airship_hulk",
-    // Propellers are composited (nacelle + stern + bow mounts) — not painted into body art.
-    rotor: "craft_osprey_rotor",
-    rotorHulk: "craft_osprey_rotor_hulk",
-    rotorScale: 0.34,
-    rotorInertia: 0.55,
-    // Sky fortress stays upright — no A/D bank lean.
-    flatHull: true,
-    rotOff: Math.PI / 2,
-    forwardThrust: 280, strafeThrust: 0, maxSpeed: 160, minSpeed: 70, yawRate: 0.55, yawAccel: 1.4, drag: 1.85,
-    verticalThrust: 70, cruiseThrust: 16, cruiseAgl: 220, maxAgl: 380,
-    liftClass: "heavy",
-    // Twin stern vents — warm steampunk wash (UVs on craft_airship).
-    // flameHue 0 = source orange sheet (`fx_flame`); only 172/185/248 are pre-baked.
-    exhaustProfile: {
-      rate: 16,
-      speed: 48,
-      tint: 0xd4a878,
-      smoke: 0x5a5048,
-      sx: 1.35,
-      sy: 0.48,
-      life: 1680,
-      flame: 0.38,
-      gap: 16,
-      flameHue: 0,
-      glowFollowsHull: true,
-    },
-    sockets: [
-      // Top-center revolving grenade lob — pilot turret, iron-bomb arc.
-      {
-        id: "grenade_turret",
-        class: "turret",
-        controller: "pilot",
-        weapon: "grenade_launcher",
-        points: [{ id: "grenade" }],
-        traverse: 240,
-        gunLayer: "above",
-        gunScale: 1.05,
-        bombDrop: { momentum: 0.2, maxBoost: 180, loft: 150, loftMax: 270 },
-      },
-      // Four deck .50s — one HUD slot; each barrel aims/fires independently.
-      {
-        id: "deck_fifties",
-        class: "turret",
-        controller: "automatic",
-        weapon: "heavy_machine_gun",
-        points: [
-          { id: "bow_l", heading: -20 },
-          { id: "bow_r", heading: 20 },
-          { id: "flank_l", heading: -90 },
-          { id: "flank_r", heading: 90 },
-        ],
-        traverse: 220,
-        gunLayer: "above",
-        gunScale: 0.85,
-        crew: "door",
-      },
-      {
-        id: "banshee_racks",
-        class: "hardpoint",
-        controller: "pilot",
-        weapon: "banshee",
-        points: [
-          { id: "star_l0" },
-          { id: "star_r0" },
-          { id: "star_l1" },
-          { id: "star_r1" },
-          { id: "star_l2" },
-          { id: "star_r2" },
-          { id: "star_l3" },
-          { id: "star_r3" },
-          { id: "star_l4" },
-          { id: "star_r4" },
-        ],
-      },
-      {
-        id: "skiff_bay",
-        class: "hardpoint",
-        controller: "pilot",
-        weapon: "wingman_drone",
-        points: [{ id: "skiff" }],
-        // Catalog ammo × airship ammoScale 2.4 → cap the bay at 6 Skiffs.
-        ammoMul: 6 / Math.round(6 * 2.4),
-      },
-      {
-        id: "fighter_bay",
-        class: "hardpoint",
-        controller: "pilot",
-        weapon: "fighter_pod",
-        points: [{ id: "skiff" }],
-      },
-    ],
-    sensorPalette: "black_hot",
-  },
-  biplane: {
-    kind: "biplane",
-    name: "Red Baron",
-    fullName: "Fokker Dr.I",
-    role: "Dogfighter",
-    description: "A turn fighter. Nose guns and incendiaries up close, iron bombs below, and an observer who can call the guns.",
-    flightModel: "plane",
-    controlScheme: "plane",
-    sizeM: 7.2,
-    ammoScale: 0.55,
-    health: 55,
-    radius: 16,
-    height: 6,
-    body: "craft_biplane",
-    hulk: "craft_biplane_hulk",
-    rotor: "craft_osprey_rotor",
-    rotorHulk: "craft_osprey_rotor_hulk",
-    rotorScale: 0.16,
-    rotorInertia: 0.22,
-    sensorPalette: "night_vision",
-    rotOff: Math.PI / 2,
-    // Slow but agile: little thrust differential; plane yaw a touch slower than the snap gun.
-    forwardThrust: 420, reverseThrust: 380, strafeThrust: 0, maxSpeed: 280, minSpeed: 90, yawRate: 3.15, yawAccel: 13, drag: 1.45,
-    verticalThrust: 110, cruiseThrust: 20, cruiseAgl: 90, maxAgl: 220,
-    sockets: [
-      { id: "nose_guns", class: "fixed", controller: "pilot", weapon: "machine_gun", muzzleFire: "simultaneous" },
-      {
-        id: "observer",
-        class: "turret",
-        controller: "pilot",
-        weapon: "artillery_strike",
-        points: [{ id: "cockpit" }],
-        gunLayer: "above",
-        gunScale: 0.52,
-      },
-      {
-        id: "wing_rockets",
-        class: "hardpoint",
-        controller: "pilot",
-        weapon: "incendiary_rocket",
-        points: [{ id: "wing_l" }, { id: "wing_r" }],
-      },
-      {
-        id: "bomb_bay",
-        class: "hardpoint",
-        controller: "pilot",
-        weapon: "bomb",
-        points: [{ id: "bay" }],
-        bombDrop: { momentum: 0.4, maxBoost: 70, loft: 90, loftMax: 160 },
-      },
-    ],
-    countermeasure: "smoke_screen",
-    enemySeekerMul: 0.72,
-  },
-  // Leviathan wingman — remote-only hull (not hangar-selectable).
-  skiff: {
-    kind: "skiff",
-    name: "Skiff",
-    fullName: "SKIFF Wingman",
-    role: "AI Wingman",
-    description: "An unmanned wingman. It launches itself, makes a gun pass, and comes back to the bay.",
-    playable: false,
-    flightModel: "plane",
-    controlScheme: "plane",
-    sizeM: 6.4,
-    ammoScale: 0.55,
-    health: 36,
-    radius: 14,
-    height: 5,
-    body: "craft_skiff",
-    hulk: "craft_skiff_hulk",
-    rotor: "craft_osprey_rotor",
-    rotorHulk: "craft_osprey_rotor_hulk",
-    rotorScale: 0.14,
-    rotorInertia: 0.2,
-    rotOff: Math.PI / 2,
-    // Faster boom-and-zoom than the hangar biplane.
-    forwardThrust: 520, reverseThrust: 360, strafeThrust: 0, maxSpeed: 380, minSpeed: 110, yawRate: 3.2, yawAccel: 13.5, drag: 1.3,
-    verticalThrust: 120, cruiseThrust: 22, cruiseAgl: 160, maxAgl: 320,
-    // White linger cloud off the aft exhaust UV. No nozzle flame.
-    exhaustProfile: {
-      rate: 16, speed: 24, tint: 0xffffff, smoke: 0xffffff, sx: 0.32, sy: 0.27, life: 1100, flame: 0, gap: 4,
-    },
-    sockets: [
-      { id: "nose_guns", class: "fixed", controller: "pilot", weapon: "machine_gun", muzzleFire: "simultaneous" },
-    ],
-    countermeasure: "smoke_screen",
-    enemySeekerMul: 0.72,
-  },
-  // Steampunk fighter pod — same plane scheme as biplane; launched from Leviathan.
-  // Not hangar-selectable — remote roster owns lifecycle (`remoteSpecOf("fighter")`).
-  raptor: {
-    kind: "raptor",
-    name: "Raptor",
-    fullName: "Raptor Fighter",
-    role: "Escort Fighter",
-    description: "An escort fighter you can borrow. Leave it and it stays with the ship; take the stick and it is yours.",
-    playable: false,
-    flightModel: "plane",
-    controlScheme: "plane",
-    sizeM: 8.4,
-    // Mild POV pull-in vs Leviathan (size scale already zooms small hulls).
-    cameraScale: 1.05,
-    ammoScale: 0.7,
-    health: 48,
-    radius: 14,
-    height: 6,
-    body: "craft_raptor",
-    hulk: "craft_raptor_hulk",
-    rotor: "craft_osprey_rotor",
-    rotorHulk: "craft_osprey_rotor_hulk",
-    rotorScale: 0.18,
-    rotorInertia: 0.22,
-    rotOff: Math.PI / 2,
-    forwardThrust: 520, reverseThrust: 320, strafeThrust: 0, maxSpeed: 400, minSpeed: 150, yawRate: 3.4, yawAccel: 14, drag: 1.2,
-    // Match Leviathan operating band so the pod doesn't dive to biplane cruise.
-    verticalThrust: 140, cruiseThrust: 24, cruiseAgl: 200, maxAgl: 380,
-    // Light aft flame — steampunk single nozzle (UV on craft_raptor).
-    exhaustProfile: {
-      rate: 16,
-      speed: 64,
-      tint: 0xd4a878,
-      smoke: 0x5a5550,
-      sx: 0.52,
-      sy: 0.18,
-      life: 700,
-      flame: 0.3,
-      gap: 7,
-      flameHue: 0,
-    },
-    sockets: [
-      {
-        id: "nose_guns",
-        class: "fixed",
-        controller: "pilot",
-        weapon: "machine_gun",
-        muzzleFire: "simultaneous",
-      },
-      {
-        id: "wing_rockets",
-        class: "hardpoint",
-        controller: "pilot",
-        weapon: "incendiary_rocket",
-        points: [{ id: "wing_l" }, { id: "wing_r" }],
-      },
-      {
-        id: "bomb_bay",
-        class: "hardpoint",
-        controller: "pilot",
-        weapon: "bomb",
-        points: [{ id: "bay" }],
-        bombDrop: { momentum: 0.4, maxBoost: 70, loft: 90, loftMax: 160 },
-      },
-    ],
-    countermeasure: "smoke_screen",
-    enemySeekerMul: 0.68,
-    // Small POV pod — baseline harder to spot/chase than the host airship.
-    enemyAwareMul: 0.62,
-  },
-  reaper: {
-    kind: "reaper",
-    name: "Reaper",
-    fullName: "MQ-9 Reaper",
-    role: "Loiter Hunter",
-    description: "Circles high and hunts with guided weapons, harder to spot than a gunship down in the weeds.",
-    flightModel: "plane",
-    controlScheme: "orbit",
-    sizeM: 20,
-    ammoScale: 1.1,
-    health: 90,
-    radius: 36,
-    height: 8,
-    body: "craft_reaper",
-    hulk: "craft_reaper_hulk",
-    rotOff: Math.PI / 2,
-    // Orbit loiter like Gunship: A/D turn, W/S trim; mouse aims stores.
-    // Cruise above tank/building lob ceilings; helis can still climb to meet.
-    forwardThrust: 480, strafeThrust: 0, maxSpeed: 360, minSpeed: 160, yawRate: 1.05, yawAccel: 3.2, drag: 0.95,
-    verticalThrust: 70, cruiseThrust: 14, cruiseAgl: 620, maxAgl: 820,
-    enemyAwareMul: 0.55,
-    exhaustProfile: {
-      rate: 14, speed: 78, tint: 0xa8c4d8, smoke: 0x5a6570, sx: 0.72, sy: 0.22, life: 980, flame: 0.32, gap: 12, flameHue: 172,
-    },
-    sockets: [
-      { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "hellfire_missile" },
-      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "hellfire_missile" },
-      { id: "wing_hardpoint_3", class: "hardpoint", controller: "pilot", weapon: "gps_missile" },
-      { id: "sensor_bay", class: "hardpoint", controller: "pilot", weapon: "tv_missile" },
-    ],
-    sensorPalette: "white_hot",
-  },
-  hover_tank: {
-    kind: "hover_tank",
-    name: "Wraith",
-    fullName: "MHT-7 Wraith",
-    role: "Heavy Ground Assault",
-    description: "A tank that hovers. It fights from the deck, and driving through infantry kills them.",
-    flightModel: "vtol",
-    controlScheme: "orbit",
-    crushesInfantry: true,
-    sizeM: 9.5,
-    ammoScale: 1.15,
-    health: 220,
-    radius: 28,
-    height: 10,
-    body: "craft_hover_tank",
-    hulk: "craft_hover_tank_hulk",
-    gunOverlayScale: 1.15,
-    // Ground-hugger reads small on screen — pull the chase cam back.
-    cameraScale: 0.72,
-    flatHull: true,
-    rotOff: Math.PI / 2,
-    // Orbit yaw (A/D) + heli thrust (W/S). Reverse is deliberately weak — forward assault hull.
-    forwardThrust: 640, reverseThrust: 280, strafeThrust: 0, maxSpeed: 260, maxReverseSpeed: 95, minSpeed: 0, yawRate: 2.4, yawAccel: 12, drag: 1.8,
-    verticalThrust: 380, cruiseThrust: 48, cruiseAgl: 18, maxAgl: 48,
-    exhaustProfile: {
-      rate: 22, speed: 88, tint: 0x70d8ff, smoke: 0x485761, sx: 0.95, sy: 0.28, life: 1100, flame: 0.48, gap: 10, flameHue: 172,
-      // Rear vents are painted on the hull — keep the glow oval on body axes.
-      glowFollowsHull: true,
-    },
-    sockets: [
-      {
-        id: "main_turret",
-        class: "turret",
-        controller: "pilot",
-        weapon: "railgun",
-        points: [{ id: "main" }],
-        muzzleFire: "simultaneous",
-        // Dual rails, slow volleys — cadence clearly below Cyber Hawk's chin rail.
-        // 2 × (catalog / 0.48) ≈ similar DPS, much heavier pulse.
-        fireRateMul: 0.48,
-        gunTex: "craft_hover_tank_turret",
-        gunLayer: "above",
-        // Cupola rail — print larger than the coax MG on the same mount.
-        gunScale: 1.35,
-        // Kick opposite turret aim (not hull heading).
-        recoil: true,
-      },
-      {
-        id: "coax_mg",
-        class: "turret",
-        controller: "automatic",
-        weapon: "heavy_machine_gun",
-        points: [{ id: "coax" }],
-        // Draw above the rail turret on the shared cupola.
-        gunLayer: "above",
-        gunScale: 0.72,
-      },
-      {
-        id: "spider_ports",
-        class: "fixed",
-        controller: "pilot",
-        weapon: "spider_drone",
-        muzzleFire: "alternate",
-      },
-      {
-        id: "banshee_rack",
-        class: "hardpoint",
-        controller: "pilot",
-        weapon: "banshee",
-        points: [{ id: "wing_l" }, { id: "wing_r" }],
-      },
-    ],
-    // Whip on the rail cupola — wobbles with hull + turret yaw.
-    antenna: { length: 12, aft: 1.6, stiffness: 28, damping: 2.8, yawWhip: 12, lag: 1.8 },
-    countermeasure: "reactive_armor",
-    sensorPalette: "full_spectrum",
-  },
-  // Dropship AGV pod — dirt-locked tank drive; same Heli path as other remotes.
-  // Not hangar-selectable — remote roster owns lifecycle (`remoteSpecOf("agv")`).
-  hound: {
-    kind: "hound",
-    name: "Hound",
-    fullName: "HOUND AGV",
-    role: "Ground Escort",
-    description: "A ground vehicle you drop off the ramp. Air defenses do not shoot it, it runs troops over, and it can throw a smoke screen.",
-    playable: false,
-    // Heading-locked tank drive (A/D yaw, W/S along nose — no slide).
-    flightModel: "ground",
-    controlScheme: "orbit",
-    crushesInfantry: true,
-    sizeM: 4.2,
-    ammoScale: 0.85,
-    health: 140,
-    radius: 14,
-    // Tall enough that roof-turret leave clears dirt ripples (was 8 → skim kills).
-    height: 14,
-    body: "craft_hound",
-    hulk: "craft_hound",
-    gunOverlayScale: 0.88,
-    cameraScale: 0.78,
-    flatHull: true,
-    track: "tread",
-    trackGap: 8,
-    trackScale: 0.82,
-    rotOff: Math.PI / 2,
-    // Orbit yaw + forward thrust; dirt-hugger (pad AGL enforced by remote snap).
-    forwardThrust: 300, reverseThrust: 220, strafeThrust: 0, maxSpeed: 130, maxReverseSpeed: 70, minSpeed: 0, yawRate: 2.4, yawAccel: 12, drag: 1.85,
-    verticalThrust: 200, cruiseThrust: 40, cruiseAgl: 3.5, maxAgl: 14,
-    // Dark dust cloud off the rear grille. No nozzle flame.
-    exhaustProfile: {
-      rate: 7, speed: 16, tint: 0x5c5c58, smoke: 0x5c5c58, sx: 0.36, sy: 0.32, life: 3200, flame: 0, gap: 6,
-    },
-    sockets: [
-      {
-        id: "turret",
-        class: "turret",
-        controller: "pilot",
-        weapon: "minigun",
-        points: [{ id: "main" }],
-        traverse: 360,
-        gunTex: "gun_minigun",
-        gunScale: 0.88,
-        gunLayer: "above",
-      },
-      {
-        id: "missile_rack",
-        class: "hardpoint",
-        controller: "pilot",
-        weapon: "photon_missile",
-        ammoMul: 4 / 12,
-      },
-      {
-        id: "howitzer_spot",
-        class: "turret",
-        controller: "pilot",
-        weapon: "remote_howitzer",
-      },
-      {
-        id: "strike_observer",
-        class: "turret",
-        controller: "pilot",
-        weapon: "artillery_strike",
-      },
-    ],
-    countermeasure: "smoke_screen",
-    // Dirt runner — harder to spot than the dropship; seekers already ignore ground focus.
-    enemyAwareMul: 0.7,
-    enemySeekerMul: 0.78,
-  },
-  vtol_dropship: {
-    kind: "vtol_dropship",
-    name: "Marauder",
-    fullName: "UD-92 Marauder",
-    role: "Heavy Air/Drop Assault",
-    description: "A heavy dropship. Crew guns down the sides, a howitzer on the roof, and a Hound in the bay.",
-    flightModel: "vtol",
-    sizeM: 16,
-    ammoScale: 1.5,
-    health: 400,
-    radius: 40,
-    height: 16,
-    body: "craft_vtol_dropship_v2",
-    hulk: "craft_vtol_dropship_v2_hulk",
-    rotor: "craft_osprey_rotor",
-    rotorHulk: "craft_osprey_rotor_hulk",
-    rotorScale: 0.52,
-    rotorInertia: 1.35,
-    // Heavy hauler stays upright — no strafe bank lean.
-    flatHull: true,
-    rotOff: Math.PI / 2,
-    // Tough hauler: Chinook-class armor feel, sluggish turn / strafe — lumbering escort pace.
-    // Reverse is weak — big VTOL backs up carefully.
-    forwardThrust: 360, reverseThrust: 180, strafeThrust: 160, maxSpeed: 150, maxReverseSpeed: 70, minSpeed: 0, yawRate: 0.85, yawAccel: 3.6, drag: 1.9,
-    verticalThrust: 380, cruiseThrust: 36, cruiseAgl: 70, maxAgl: 180,
-    liftClass: "heavy",
-    exhaustProfile: {
-      rate: 20, speed: 92, tint: 0xa8c4d8, smoke: 0x5a6570, sx: 0.88, sy: 0.26, life: 1050, flame: 0.42, gap: 11, flameHue: 172,
-    },
-    sockets: [
-      {
-        id: "chin_gun",
-        class: "turret",
-        controller: "automatic",
-        weapon: "chain_gun",
-        points: [{ id: "chin" }],
-        traverse: 240,
-        muzzleFire: "simultaneous",
-        gunTex: "gun_dual_chain",
-        gunScale: 0.5,
-        crew: "belly",
-      },
-      {
-        id: "miniguns",
-        class: "turret",
-        controller: "automatic",
-        weapon: "minigun",
-        // One HUD slot; AI aims each barrel independently.
-        points: [
-          { id: "side_l", heading: -70, layer: "below" },
-          { id: "side_r", heading: 70, layer: "below" },
-          { id: "dorsal", layer: "above" },
-        ],
-        traverse: 240,
-        muzzleFire: "simultaneous",
-        gunScale: 0.5,
-        crew: "door",
-      },
-      {
-        id: "howitzer_turret",
-        class: "turret",
-        controller: "automatic",
-        weapon: "heavy_artillery",
-        points: [{ id: "howitzer" }],
-        traverse: 200,
-        gunLayer: "above",
-        recoil: true,
-      },
-      {
-        id: "starstreak_racks",
-        class: "hardpoint",
-        controller: "pilot",
-        weapon: "swarm_missile",
-        points: [
-          { id: "wing_l0" },
-          { id: "wing_r0" },
-          { id: "wing_l1" },
-          { id: "wing_r1" },
-        ],
-      },
-      { id: "cargo_bay", class: "hardpoint", controller: "pilot", weapon: "agv_drop", points: [{ id: "ramp" }] },
-    ],
-    countermeasure: "smoke_screen",
-  },
-} satisfies Record<string, CraftSpec>;
+/** Rotor speed before dust-off starts kicking in during spool (Apache-ref units). */
+const DUST_ROTOR_MIN = 15;
+const DUST_ROTOR_MIN_REF_PEAK = 26;
+/** Pad sit height above ground while waiting for lift-off (landing-gear clearance). */
+const PAD_AGL = 5.5;
+/** Max gun depression below horizontal for jets (radians). */
+export const JET_GUN_MAX_DEPRESS = (28 * Math.PI) / 180;
+/** Mild upward elevation cap for jet guns. */
+export const JET_GUN_MAX_ELEV = (12 * Math.PI) / 180;
 
-/** Playable craft identity — literal union of CRAFTS keys. */
-export type CraftKind = keyof typeof CRAFTS_DEFS;
+export type Phase = "grounded" | "spool" | "ready" | "flight" | "dead";
 
-/** Homogeneous catalog (keys stay literal via CraftKind). */
-export const CRAFTS: Record<CraftKind, CraftSpec> = CRAFTS_DEFS;
-
-export const DEFAULT_CRAFT: CraftKind = "apache";
-export const APACHE_SIZE_M = CRAFTS.apache.sizeM;
-
-let selected: CraftKind = DEFAULT_CRAFT;
-
-export function selectCraft(kind: CraftKind): void {
-  selected = kind;
-}
-
-export function craftKind(): CraftKind {
-  return selected;
-}
-
-/** Active craft, or a named one. */
-export function craftOf(kind: CraftKind = selected): CraftSpec & { kind: CraftKind } {
-  return CRAFTS[kind] as CraftSpec & { kind: CraftKind };
-}
-
-/** Player hull-steer scheme (orthogonal to flightModel). */
-export function craftControlScheme(c: CraftSpec | CraftKind): ControlScheme {
-  const spec = typeof c === "string" ? craftOf(c) : c;
-  return spec.controlScheme ?? "aim";
-}
-
-/** Hull noses toward the reticle (helis / jets). Orbit scheme is false — keys yaw, mouse aims. */
-export function craftNoseFollowsAim(c: CraftSpec = craftOf()): boolean {
-  return craftControlScheme(c) !== "orbit";
-}
-
-/**
- * Altitude cloud look from cruise AGL (all craft).
- * Higher cruise → smaller / more distant parallax on screen.
- * sizeMul is world scale compensated by craftCameraScale so zoom-out
- * (orbit gunship) doesn't double-shrink clouds vs helis.
- */
-export function craftCloudParallax(c: CraftSpec | CraftKind): {
-  sizeMul: number;
-  alphaMul: number;
-  /** 0 = distant sky banks (low scroll), 1 = near-field (scroll toward 1). */
-  nearness: number;
-} {
-  const spec = typeof c === "string" ? craftOf(c) : c;
-  const cruise = spec.cruiseAgl;
-  // ~heli 40 → gunship 320
-  const t = clamp((cruise - 40) / 280, 0, 1);
-  // Screen-relative size: heli a bit larger than gunship, not 2×+.
-  const screenMul = 0.48 - t * (0.48 - 0.38);
-  return {
-    sizeMul: screenMul / craftCameraScale(spec),
-    alphaMul: 0.82 + t * 0.18,
-    nearness: 1 - t,
-  };
-}
-
-const DEFAULT_BOMB_DROP: CraftBombDrop = {
-  momentum: 0.55,
-  maxBoost: 160,
-  loft: 125,
-  loftMax: 210,
-};
-
-/** Gravity-bomb release tune: socket → craft → defaults. */
-export function craftBombDrop(
-  c: CraftSpec = craftOf(),
-  socket?: CraftSocket | null
-): CraftBombDrop {
-  const d = socket?.bombDrop ?? c.bombDrop;
-  if (!d) return { ...DEFAULT_BOMB_DROP };
-  return {
-    momentum: d.momentum,
-    maxBoost: d.maxBoost,
-    loft: d.loft,
-    loftMax: d.loftMax ?? d.loft * 1.7,
-  };
-}
-
-export function allCrafts(): Array<CraftSpec & { kind: CraftKind }> {
-  return allCraftKinds().map((k) => craftOf(k));
-}
-
-/** Hangar / mission-select craft — excludes remote-only hulls (`playable: false`). */
-export function allCraftKinds(): CraftKind[] {
-  return (Object.keys(CRAFTS) as CraftKind[]).filter((k) => CRAFTS[k]!.playable !== false);
-}
-
-/** Every CRAFTS key including remote-only hulls (bake / craftOf / Heli). */
-export function allCraftHullKinds(): CraftKind[] {
-  return Object.keys(CRAFTS) as CraftKind[];
-}
-
-/** Real-world plan-view scale relative to the Apache. */
-export function craftSizeScale(c: CraftSpec = craftOf()): number {
-  return c.sizeM / APACHE_SIZE_M;
-}
-
-/** Softer inverse framing adjustment: large craft zoom out, small craft zoom in. */
-export function craftCameraScale(c: CraftSpec = craftOf()): number {
-  const size = Math.max(0.62, Math.min(1.24, 1 / Math.sqrt(craftSizeScale(c))));
-  return size * (c.cameraScale ?? 1);
-}
-
-/** Starting capacity for a weapon; unlimited guns remain unlimited. */
-export function craftStartingAmmo(baseAmmo: number, c: CraftSpec = craftOf()): number {
-  return Number.isFinite(baseAmmo) ? Math.max(1, Math.round(baseAmmo * c.ammoScale)) : Infinity;
-}
-
-/** Socket capacity — multi-barrel crew stations keep one shared pool sized for all barrels. */
-export function craftSocketStartingAmmo(
-  baseAmmo: number,
-  c: CraftSpec,
-  socketIndex: number
-): number {
-  const base = craftStartingAmmo(baseAmmo, c);
-  if (!Number.isFinite(base)) return base;
-  const sockMul = c.sockets[socketIndex]?.ammoMul ?? 1;
-  return Math.max(1, Math.round(base * craftSocketBarrelCount(c, socketIndex) * sockMul));
-}
-
-/** Catalog fire cooldown scaled by this socket's `fireRateMul` (higher mul = shorter CD). */
-export function craftSocketFireCd(
-  baseFireCd: number,
-  c: CraftSpec,
-  socketIndex: number
-): number {
-  const mul = c.sockets[socketIndex]?.fireRateMul ?? 1;
-  return baseFireCd / Math.max(0.05, mul);
-}
-
-/** Composite handling rating used by the craft selector and field manual. */
-export function craftAgility(c: CraftSpec = craftOf()): number {
-  return Math.min(
-    1,
-    0.45 * (c.yawRate / 4.5) +
-      0.25 * (c.yawAccel / 25) +
-      0.2 * (c.strafeThrust / 760) +
-      0.1 * (0.95 / c.drag)
-  );
-}
-
-/** Capability hook for the future object/friendly pickup and placement system. */
-export function craftCanLift(c: CraftSpec = craftOf()): boolean {
-  return c.liftClass != null;
-}
-
-/** Live rotor texture key, or undefined for fixed-wing. */
-export function craftRotorTex(c: CraftSpec = craftOf()): string | undefined {
-  return c.rotor;
-}
-
-/** Spin-disc texture for a craft rotor (when baked). */
-export function craftRotorSpinTex(c: CraftSpec = craftOf()): string | undefined {
-  return c.rotor ? `${c.rotor}_spin` : undefined;
-}
-
-export type CraftCompositePart = {
-  kind: "gun" | "rotor";
-  tex: string;
-  spinTex?: string;
-  origin: { x: number; y: number };
-  mount: { x: number; y: number };
-  layer: "below" | "above";
-  /** Normalized texture span before the body's display scale is applied. */
-  drawSpan?: number;
-  /** +1 CW / −1 CCW from above (Phaser rotation sign). */
-  spinSign?: 1 | -1;
-  /**
-   * Gun rest pose for nose-up composite previews (Phaser rotation).
-   * Barrel-up art at 0; door/side mounts get craft→mount outward yaw.
-   */
-  heading?: number;
-};
-
-export type CraftComposite = {
-  body: { tex: string; origin: { x: number; y: number } };
-  guns: CraftCompositePart[];
-  rotors: CraftCompositePart[];
-};
-
-/** Shared live-rotor diameter policy used by world rendering and previews. */
-export function rotorDrawSpan(tex: string, partScale = 1): number {
-  if (tex === "craft_apache_rotor") return 124 * 1.08 * partScale;
-  if (tex.includes("rotor") && tex !== "enemy_drone_rotor") return 108 * partScale;
-  return 108 * partScale;
-}
-
-/** Apache main-rotor draw span — inertia reference (= 1). */
-export const APACHE_ROTOR_SPAN = rotorDrawSpan("craft_apache_rotor", 1);
-
-/** Largest on-screen rotor diameter for a craft (main disc, not tip tanks). */
-export function craftRotorDrawSpan(c: CraftSpec = craftOf()): number {
-  if (!c.rotor) return APACHE_ROTOR_SPAN;
-  const base = c.rotorScale ?? 1;
-  const mounts = rotorMountsOf(c.body);
-  if (!mounts.length) return rotorDrawSpan(c.rotor, base);
-  let best = 0;
-  for (const m of mounts) {
-    const span = rotorDrawSpan(c.rotor, base * (m.scale ?? 1));
-    if (span > best) best = span;
-  }
-  return best || rotorDrawSpan(c.rotor, base);
-}
-
-/**
- * Blade inertia relative to Apache (1). Authored `rotorInertia` wins; otherwise
- * derived from effective rotor draw span.
- */
-export function craftRotorInertia(c: CraftSpec = craftOf()): number {
-  if (c.rotorInertia != null) return clamp(c.rotorInertia, 0.12, 3);
-  if (!c.rotor) return 1;
-  return clamp(craftRotorDrawSpan(c) / APACHE_ROTOR_SPAN, 0.15, 2.5);
-}
-
-/** Reference spool / flight rates at Apache inertia (= 1). */
-const ROTOR_SPOOL_DUR_REF = 2.35;
-const ROTOR_FLIGHT_REF = 32;
-const ROTOR_SPOOL_PEAK_REF = 26;
-
-/** Seconds to wind up before lift-off prompt. */
-export function craftRotorSpoolDur(c: CraftSpec = craftOf()): number {
-  const i = craftRotorInertia(c);
-  return clamp(ROTOR_SPOOL_DUR_REF * Math.pow(i, 1.15), 0.22, 4.5);
-}
-
-/** Steady flight rotor angular speed. */
-export function craftRotorFlightSpeed(c: CraftSpec = craftOf()): number {
-  const i = craftRotorInertia(c);
-  return clamp(ROTOR_FLIGHT_REF / Math.pow(i, 0.45), 18, 72);
-}
-
-/** Peak angular speed at end of spool (before easing up to flight). */
-export function craftRotorSpoolPeak(c: CraftSpec = craftOf()): number {
-  return craftRotorFlightSpeed(c) * (ROTOR_SPOOL_PEAK_REF / ROTOR_FLIGHT_REF);
-}
-
-/** Menu / help idle: ms per full revolution (Apache ≈ 60s). */
-export function craftRotorPreviewSpinMs(c: CraftSpec = craftOf()): number {
-  return Math.round(60000 * Math.pow(craftRotorInertia(c), 0.85));
-}
-
-/**
- * Screen-space disc lean vs body pitch/roll (Apache = 1).
- * Smaller / lighter discs shift less; keeps the fake parallax in proportion.
- */
-export function craftRotorTiltMul(c: CraftSpec = craftOf()): number {
-  return clamp(craftRotorInertia(c), 0.14, 1.35);
-}
-
-/**
- * Along-fuselage scale for rotor/prop discs (local Y after hull heading).
- * Forward-facing props (gunship wings, biplane nose) foreshorten so they read
- * as tilted discs, not top-down pads.
- */
-export function craftRotorAlongScale(c: CraftSpec | CraftKind = craftOf()): number {
-  const spec = typeof c === "string" ? craftOf(c) : c;
-  if (craftControlScheme(spec) === "orbit") return 0.34;
-  if (spec.flightModel === "plane" && spec.rotor) return 0.34;
-  return 1;
-}
-
-/** True when rotor overlays are angled prop discs (not top-down lift rotors). */
-export function craftRotorIsProp(c: CraftSpec | CraftKind = craftOf()): boolean {
-  return craftRotorAlongScale(c) < 0.999;
-}
-
-/**
- * Phaser spin sign for a rotor mount (+1 CW, −1 CCW), viewed from above.
- * Western single mains → CCW. Tandem / side-by-side / quad use counter-rotation.
- */
-export function rotorSpinSign(
-  rotors: { x: number; y: number; id?: string; spin?: 1 | -1 }[],
-  index: number
-): 1 | -1 {
-  const n = rotors.length;
-  const p = rotors[index];
-  if (!p || n < 1) return -1;
-  if (p.spin === 1 || p.spin === -1) return p.spin;
-  if (p.id === "tail" || p.id?.startsWith("tail")) return 1;
-  if (n === 1) return -1;
-
-  const xs = rotors.map((r) => r.x);
-  const ys = rotors.map((r) => r.y);
-  const xSpan = Math.max(...xs) - Math.min(...xs);
-  const ySpan = Math.max(...ys) - Math.min(...ys);
-
-  if (n === 2 && ySpan > xSpan * 1.15) {
-    // Chinook-style tandem: forward CCW, aft CW (CH-47 from above).
-    let front = 0;
-    for (let i = 1; i < n; i++) if (rotors[i]!.y < rotors[front]!.y) front = i;
-    return index === front ? -1 : 1;
-  }
-  if (n === 2 && xSpan > ySpan * 1.15) {
-    // Osprey-style: left CW, right CCW from above.
-    let left = 0;
-    for (let i = 1; i < n; i++) if (rotors[i]!.x < rotors[left]!.x) left = i;
-    return index === left ? 1 : -1;
-  }
-  if (n >= 3 && xSpan > ySpan * 2.2) {
-    // Wing props in a row (gunship): adjacent counter-rotate, outer-left CW.
-    const order = rotors.map((_, i) => i).sort((a, b) => rotors[a]!.x - rotors[b]!.x);
-    const rank = order.indexOf(index);
-    return rank % 2 === 0 ? 1 : -1;
-  }
-  if (n >= 4) {
-    // Quad X: FL+RR CW, FR+RL CCW (nose = smaller y).
-    const midX = (Math.min(...xs) + Math.max(...xs)) * 0.5;
-    const midY = (Math.min(...ys) + Math.max(...ys)) * 0.5;
-    const left = p.x < midX;
-    const nose = p.y < midY;
-    if (nose && left) return 1;
-    if (nose && !left) return -1;
-    if (!nose && left) return -1;
-    return 1;
-  }
-  return index % 2 === 0 ? -1 : 1;
-}
-
-/** Rotor UVs for a hull texture (craft body or unit). */
-export function rotorMountsOf(
-  texKey: string
-): { x: number; y: number; scale?: number; id?: string; spin?: 1 | -1 }[] {
-  const mounts = lookupSpritePoints(texKey)
-    .filter((point) => point.role === "rotor")
-    .map((point) => ({
-      x: point.x,
-      y: point.y,
-      ...(point.scale != null ? { scale: point.scale } : {}),
-      ...(point.id != null ? { id: point.id } : {}),
-      ...(point.spin === 1 || point.spin === -1 ? { spin: point.spin } : {}),
-    }));
-  return mounts.length ? mounts : [{ x: 0.5, y: 0.5 }];
-}
-
-/** Authored rotor centers and optional per-mount scales; body center if none authored. */
-export function craftRotorMounts(c: CraftSpec = craftOf()): {
+export class Craft {
+  /** Catalog id. Spec comes from `craftOf(kind)`. */
+  kind: CraftKind;
   x: number;
   y: number;
-  scale?: number;
-  id?: string;
-  spin?: 1 | -1;
-}[] {
-  return rotorMountsOf(c.body);
-}
+  z: number;
+  vx = 0;
+  vy = 0;
+  vz = 0;
+  angle = 0;
+  angVel = 0;
+  pitch = 0;
+  roll = 0;
+  rotor = 0;
+  rotorSpd = 0;
+  /** Primary / player-aimed turret bearing (synced from the active station). */
+  gunAngle = 0;
+  /** Per-socket, per-barrel aim bearings — multi-gun cabins track each barrel. */
+  stationAim: number[][] = [];
+  health: number;
+  phase: Phase = "grounded";
+  /** Elapsed time in spool. */
+  spool = 0;
+  /**
+   * After spool, if Space was already held, wait for a release before a press
+   * can hand over controls (avoids auto-lift when mashing through spool).
+   */
+  readySpaceLatch = false;
+  weapon = 0;
+  fireCd = 0;
+  immune = false;
+  /** Hard lock for lock_on weapons (unit id). */
+  lockTarget: { id: number } | null = null;
+  /** Soft acquire while dwelling for lock_on (unit id + elapsed). */
+  lockAcquire: { id: number; t: number } | null = null;
+  /** Persistent solid-pixel damage locations on the craft body. */
+  dmgSites: { u: number; v: number; scale: number }[] = [];
+  gndSmooth: number;
+  killDx = 0;
+  killDy = 0;
+  /** Fixed-wing automatic recovery turn near the theater boundary. */
+  edgeTurn = false;
+  /** Smoothed visual engine output; does not feed back into flight physics. */
+  thrustPower = 0;
+  /** Seconds of gun-brake — lowers plane minSpeed floor while cannons fire. */
+  gunBrakeT = 0;
 
-/**
- * Visible gun overlay texture for a craft.
- * Prefers PlayerWpnSpec.mount for the first turret socket that has mount art.
- */
-export function craftGunTexture(c: CraftSpec = craftOf()): string | undefined {
-  const sock = c.sockets.find(
-    (s) => (s.class === "turret") && !!(s.gunTex || weaponMountTex(s.weapon))
-  );
-  return sock ? sock.gunTex ?? weaponMountTex(sock.weapon) : undefined;
-}
+  constructor(x: number, y: number, world: WorldData, kind: CraftKind = craftOf().kind) {
+    this.kind = kind;
+    this.x = x;
+    this.y = y;
+    this.health = craftOf(kind).health;
+    this.gndSmooth = groundZ(world, x, y);
+    this.z = this.gndSmooth + PAD_AGL;
+    this.stationAim = craftOf(kind).sockets.map((_, i) =>
+      Array.from({ length: craftSocketBarrelCount(craftOf(kind), i) }, () => 0)
+    );
+  }
 
-/** Stable key for a body gun UV — id when authored, else quantized xy. */
-function craftGunMountKey(p: { x: number; y: number; id?: string }): string {
-  return p.id ?? `${p.x.toFixed(5)},${p.y.toFixed(5)}`;
-}
-
-/**
- * Overlay barrels: one gun art per body gun mount, first turret socket wins.
- * Later turrets that resolve to an already-claimed UV (e.g. Cyber Hawk Tesla on chin)
- * are skipped so previews don't stack mount art.
- */
-function craftGunOverlayBarrels(
-  c: CraftSpec
-): { slot: number; x: number; y: number }[] {
-  const claimed = new Set<string>();
-  const out: { slot: number; x: number; y: number }[] = [];
-  for (let i = 0; i < c.sockets.length; i++) {
-    const s = c.sockets[i]!;
-    if (s.class !== "turret" || !(s.gunTex || weaponMountTex(s.weapon))) continue;
-    for (const p of craftSocketGunPoints(c, i)) {
-      const key = craftGunMountKey(p);
-      if (claimed.has(key)) continue;
-      claimed.add(key);
-      out.push({ slot: i, x: p.x, y: p.y });
+  /** Align station aims to rest headings (nose / craft→mount outward) and sync gunAngle. */
+  syncStationAimToHull(): void {
+    const c = this.spec;
+    for (let i = 0; i < this.stationAim.length; i++) {
+      const barrels = this.stationAim[i]!;
+      const socket = c.sockets[i];
+      const usePrefer =
+        !!socket && socket.class === "turret";
+      for (let b = 0; b < barrels.length; b++) {
+        barrels[b] = usePrefer
+          ? Phaser.Math.Angle.Wrap(this.angle + craftGunPreferOffset(c, i, b))
+          : this.angle;
+      }
     }
+    const first = this.stationAim.find((a) => a.length > 0)?.[0];
+    this.gunAngle = first ?? this.angle;
   }
-  return out;
-}
 
-/** Socket indices that own a visible gun overlay (matches `craftComposite(...).guns` order).
- * Multi-barrel turret sockets repeat their slot index once per barrel.
- * Fixed / hardpoint stations never contribute — hull-baked muzzles have no overlay.
- * Each body gun UV is claimed once (first socket in loadout order). */
-export function craftGunSocketSlots(c: CraftSpec = craftOf()): number[] {
-  return craftGunOverlayBarrels(c).map((b) => b.slot);
-}
-
-/**
- * Overlay barrel count for a turret socket with mount art.
- * Omit `points` → every `role: "gun"` UV (shared across turrets is fine).
- */
-export function craftSocketBarrelCount(c: CraftSpec, socketIndex: number): number {
-  const socket = c.sockets[socketIndex];
-  if (!socket) return 1;
-  if (socket.class !== "turret" || !(socket.gunTex || weaponMountTex(socket.weapon))) return 1;
-  return craftSocketGunPoints(c, socketIndex).length;
-}
-
-/**
- * Resolved body gun UVs for a socket (overlay / fire order).
- * - `points` listed → those gun ids in list order.
- * - Else → all `role: "gun"` points (overlay dedupes via `craftGunOverlayBarrels`).
- */
-export function craftSocketGunPoints(
-  c: CraftSpec,
-  socketIndex: number
-): { x: number; y: number; id?: string }[] {
-  const socket = c.sockets[socketIndex];
-  if (!socket || socket.class !== "turret" || !(socket.gunTex || weaponMountTex(socket.weapon))) return [];
-  if (socket.points?.length) {
-    return resolveSocketPointIds(c, socket, "gun");
+  get spec() {
+    return craftOf(this.kind);
   }
-  return lookupSpritePoints(c.body, "gun").map((p) => ({ x: p.x, y: p.y, id: p.id }));
-}
 
-/** Every authored player gun mount, in firing / overlay order (socket groups).
- * One entry per body UV — first turret socket that claims it wins. */
-export function craftGunMounts(c: CraftSpec = craftOf()): { x: number; y: number }[] {
-  const ordered = craftGunOverlayBarrels(c).map((b) => ({ x: b.x, y: b.y }));
-  if (ordered.length) return ordered;
-  return mountsOf(c.body, "gun");
-}
-
-/**
- * Preferred aim degrees off craft nose for a barrel:
- * `points[barrel].heading` → socket `heading` → 0.
- */
-export function craftGunPreferDegrees(c: CraftSpec, slot: number, barrel = 0): number {
-  const socket = c.sockets[slot];
-  if (!socket) return 0;
-  return socket.points?.[barrel]?.heading ?? socket.heading ?? 0;
-}
-
-/** Preferred aim offset in radians (overlay / station init). */
-export function craftGunPreferOffset(c: CraftSpec, slot: number, barrel = 0): number {
-  return (craftGunPreferDegrees(c, slot, barrel) * Math.PI) / 180;
-}
-
-/** Body gun UV for a socket barrel (same order as `craftComposite(...).guns`). */
-export function craftGunMountForBarrel(
-  c: CraftSpec,
-  slot: number,
-  barrel = 0
-): { x: number; y: number } {
-  const mounts = craftGunMounts(c);
-  const slots = craftGunSocketSlots(c);
-  let seen = 0;
-  for (let i = 0; i < slots.length; i++) {
-    if (slots[i] !== slot) continue;
-    if (seen === barrel) return mounts[i] ?? mounts[0] ?? craftOrigin(c);
-    seen++;
+  get height(): number {
+    return this.spec.height;
   }
-  return mounts[0] ?? craftOrigin(c);
-}
 
-/** Authoritative visual parts and mounts for composing a craft in any view. */
-export function craftComposite(c: CraftSpec = craftOf()): CraftComposite {
-  const rotorTex = craftRotorTex(c);
-  const gunMounts = craftGunMounts(c);
-  const gunSlots = craftGunSocketSlots(c);
-  const barrelOf = new Map<number, number>();
-  return {
-    body: { tex: c.body, origin: craftOrigin(c) },
-    guns: gunSlots.map((slot, i) => {
-      const sock = c.sockets[slot]!;
-      const tex = sock.gunTex ?? weaponMountTex(sock.weapon)!;
-      const barrel = barrelOf.get(slot) ?? 0;
-      barrelOf.set(slot, barrel + 1);
-      // Barrel-up gun art: Phaser rot = prefer offset (nose → 0).
-      const heading = craftGunPreferOffset(c, slot, barrel);
-      return {
-        kind: "gun" as const,
-        tex,
-        origin: lookupSpriteOrigin(tex) ?? craftGunOrigin(c),
-        mount: gunMounts[i] ?? gunMounts[0] ?? craftOrigin(c),
-        layer: (sock.points?.[barrel]?.layer ?? sock.gunLayer ?? "below") as "below" | "above",
-        heading,
-      };
-    }),
-    rotors: rotorTex
-      ? craftRotorMounts(c).map((mount, i, mounts) => ({
-          kind: "rotor",
-          tex: rotorTex,
-          spinTex: craftRotorSpinTex(c),
-          origin: lookupSpriteOrigin(rotorTex) ?? DEFAULT_ORIGIN,
-          mount,
-          layer: "above",
-          spinSign: rotorSpinSign(mounts, i),
-          drawSpan: rotorDrawSpan(
-            rotorTex,
-            (c.rotorScale ?? 1) * (mount.scale ?? 1)
-          ),
-        }))
-      : [],
-  };
-}
-
-/** Scale a composite part consistently against a body view scale. */
-export function craftCompositePartScale(
-  part: { drawSpan?: number },
-  textureWidth: number,
-  bodyScale: number
-): number {
-  return part.drawSpan == null
-    ? bodyScale
-    : (part.drawSpan / Math.max(1, textureWidth)) * bodyScale;
-}
-
-/**
- * Fit a craft body texture into a UI box without upscaling past native pixels.
- * Shared by selection / help / other UI previews — not the roster zoom path.
- */
-export function craftPreviewFitScale(
-  bodyW: number,
-  bodyH: number,
-  boxW: number,
-  boxH: number,
-  maxScale = 1
-): number {
-  return Math.min(maxScale, boxW / Math.max(1, bodyW), boxH / Math.max(1, bodyH));
-}
-
-/** Exhaust glow display scale — compact wash at the nozzle base. */
-export function craftPreviewExhaustScale(bodyScale: number): { x: number; y: number } {
-  const s = bodyScale * 0.42;
-  return { x: s, y: s * 0.85 };
-}
-
-/** Per-craft exhaust glow tint for UI previews. */
-export function craftPreviewExhaustTint(kind: CraftKind | string): number {
-  if (typeof kind === "string" && kind in CRAFTS) {
-    return CRAFTS[kind as CraftKind].exhaustProfile?.tint ?? 0x70d8ff;
+  private get spoolDur(): number {
+    return craftRotorSpoolDur(this.spec);
   }
-  return 0x70d8ff;
-}
 
-/**
- * Hue rotation (degrees) from the authored warm exhaust/flame art toward each
- * craft's look. 0 keeps the source orange grading intact.
- * Nozzle Images use runtime ColorMatrix; trail particles use pre-baked sheets
- * (`craftExhaustFlameSheet`) because ParticleEmitter has no preFX.
- */
-export function craftExhaustFlameHue(kind: CraftKind | string): number {
-  if (typeof kind === "string" && kind in CRAFTS) {
-    return CRAFTS[kind as CraftKind].exhaustProfile?.flameHue ?? 172;
+  private get rotorFlight(): number {
+    return craftRotorFlightSpeed(this.spec);
   }
-  return 172;
-}
 
-/** Non-zero trail flame hues that must exist as `fx_flame_hue_<n>` sheets. */
-export const EXHAUST_TRAIL_FLAME_HUES: readonly number[] = [172, 185, 248];
-
-/** Particle texture for craft exhaust trails (graded flame, hue pre-baked). */
-export function craftExhaustFlameSheet(kind: CraftKind | string): string {
-  const hue = craftExhaustFlameHue(kind);
-  if (hue === 0) return "fx_flame";
-  // Only EXHAUST_TRAIL_FLAME_HUES are baked — missing keys show as green boxes.
-  if ((EXHAUST_TRAIL_FLAME_HUES as readonly number[]).includes(hue)) {
-    return `fx_flame_hue_${hue}`;
+  private get rotorSpoolPeak(): number {
+    return craftRotorSpoolPeak(this.spec);
   }
-  return "fx_flame";
-}
 
-/** Body origin from SPRITE_SPECS. */
-export function craftOrigin(c: CraftSpec = craftOf()): { x: number; y: number } {
-  return lookupSpriteOrigin(c.body) ?? DEFAULT_ORIGIN;
-}
-
-/** Chin gun attach UV on the body. */
-export function craftGunMount(c: CraftSpec = craftOf()): { x: number; y: number } {
-  return craftGunMounts(c)[0] ?? craftOrigin(c);
-}
-
-/** Fixed gun muzzle UVs authored directly on the craft body. */
-export function craftFixedMuzzles(c: CraftSpec = craftOf()): { x: number; y: number }[] {
-  return mountsOf(c.body, "muzzle");
-}
-
-/** Pivot on the gun sprite. */
-export function craftGunOrigin(c: CraftSpec = craftOf()): { x: number; y: number } {
-  const tex = craftGunTexture(c);
-  return (tex ? lookupSpriteOrigin(tex) : undefined) ?? DEFAULT_ORIGIN;
-}
-
-/** Body UV role derived from socket class: turret→gun, fixed→muzzle, hardpoint→hardpoint. */
-function socketPointRole(socket: { class: string }): "gun" | "muzzle" | "hardpoint" {
-  if (socket.class === "turret") return "gun";
-  if (socket.class === "fixed") return "muzzle";
-  return "hardpoint";
-}
-
-/** Resolve `socket.points` ids against body UVs of the given role (throws on miss). */
-function resolveSocketPointIds(
-  c: CraftSpec,
-  socket: CraftSocket,
-  role: "gun" | "muzzle" | "hardpoint"
-): { x: number; y: number; id?: string }[] {
-  const refs = socket.points;
-  if (!refs?.length) return [];
-  const byId = new Map<string, { x: number; y: number; id?: string }>();
-  for (const p of lookupSpritePoints(c.body, role)) {
-    if (p.id) byId.set(p.id, { x: p.x, y: p.y, id: p.id });
+  startAirborne(angle: number, world: WorldData): void {
+    this.angle = angle;
+    this.phase = "flight";
+    this.gndSmooth = groundZ(world, this.x, this.y);
+    this.z = this.gndSmooth + this.spec.cruiseAgl;
+    this.vx = Math.cos(angle) * this.spec.minSpeed;
+    this.vy = Math.sin(angle) * this.spec.minSpeed;
+    this.vz = 0;
+    const planeScheme = craftControlScheme(this.spec) === "plane";
+    this.thrustPower = this.spec.flightModel === "plane" || planeScheme ? 0.55 : 0.22;
+    this.syncStationAimToHull();
   }
-  return refs.map((ref) => {
-    const p = byId.get(ref.id);
-    if (!p) {
-      throw new Error(`${c.kind} socket "${socket.id}": no ${role} point id "${ref.id}"`);
-    }
-    return p;
-  });
-}
 
-/**
- * Soft socket UV resolve on any texture key (host body or remote `look` override).
- * Missing point ids fall through to role / gun↔muzzle / hardpoint fallbacks.
- */
-export function socketPointsOnKey(
-  key: string,
-  socket: { class: string; points?: { id: string }[] }
-): { x: number; y: number; id?: string }[] {
-  const role = socketPointRole(socket);
-  if (socket.points?.length) {
-    const byId = new Map<string, { x: number; y: number; id?: string }>();
-    for (const p of lookupSpritePoints(key, role)) {
-      if (p.id) byId.set(p.id, { x: p.x, y: p.y, id: p.id });
-    }
-    const resolved = socket.points
-      .map((ref) => byId.get(ref.id))
-      .filter((p): p is { x: number; y: number; id?: string } => !!p);
-    if (resolved.length) return resolved;
+  get noseX(): number {
+    return this.x + Math.cos(this.angle) * 42;
   }
-  const primary = lookupSpritePoints(key, role);
-  if (primary.length) return primary.map((p) => ({ x: p.x, y: p.y, id: p.id }));
-  if (role === "muzzle") {
-    const gun = lookupSpritePoints(key, "gun");
-    if (gun.length) return gun.map((p) => ({ x: p.x, y: p.y, id: p.id }));
+  get noseY(): number {
+    return this.y + Math.sin(this.angle) * 42;
   }
-  if (role === "gun") {
-    const muzzle = lookupSpritePoints(key, "muzzle");
-    if (muzzle.length) return muzzle.map((p) => ({ x: p.x, y: p.y, id: p.id }));
-  }
-  return lookupSpritePoints(key, "hardpoint").map((p) => ({ x: p.x, y: p.y, id: p.id }));
-}
 
-/**
- * Emit / attach UVs for a socket on the craft body texture.
- * Optional `points` partitions ids within class→role (strict — throws on miss);
- * omit → all of role (+ gun↔muzzle / hardpoint fallbacks when empty).
- */
-export function craftSocketPoints(
-  c: CraftSpec,
-  socket: CraftSocket
-): { x: number; y: number; id?: string }[] {
-  const role = socketPointRole(socket);
-  if (socket.points?.length) {
-    return resolveSocketPointIds(c, socket, role);
-  }
-  return socketPointsOnKey(c.body, socket);
-}
-
-/** Wing / store hardpoint UVs — left → right. */
-export function craftHardpointMounts(c: CraftSpec = craftOf()): { x: number; y: number }[] {
-  return mountsOf(c.body, "hardpoint");
-}
-
-/** True when the craft aims a turret gun independently of the hull. */
-export function craftAimsWithTurret(c: CraftSpec = craftOf()): boolean {
-  return c.sockets.some((s) => s.class === "turret");
-}
-
-/** Default weapon ids in HUD / fire order. */
-export function craftSocketWeapons(c: CraftSpec = craftOf()): WpnId[] {
-  return c.sockets.map((s) => s.weapon);
-}
-
-/**
- * How many barrels / installs a socket represents for loadout UI.
- * Simultaneous multi-muzzle (fixed body tips or turret gun-tex tips) count;
- * alternate tips are one weapon (they cycle, not fire as a pair).
- */
-export function craftSocketMultiplicity(c: CraftSpec, socketIndex: number): number {
-  const socket = c.sockets[socketIndex];
-  if (!socket) return 1;
-  if (socket.class === "fixed") {
-    const pts = craftSocketPoints(c, socket);
-    if (pts.length > 1 && socket.muzzleFire === "simultaneous") {
-      return pts.length;
-    }
+  /** 0 at pad start → 1 once flight controls unlock. */
+  get takeoffProgress(): number {
+    if (this.phase === "grounded") return 0;
+    if (this.phase === "spool") return Phaser.Math.Clamp(this.spool / this.spoolDur, 0, 1) * 0.85;
+    if (this.phase === "ready") return 0.85;
     return 1;
   }
-  if (socket.class === "turret") {
-    const mounts = craftSocketBarrelCount(c, socketIndex);
-    if (socket.muzzleFire === "simultaneous") {
-      const tex = socket.gunTex ?? weaponMountTex(socket.weapon);
-      const tips = tex ? lookupSpriteMuzzles(tex).length : 1;
-      if (tips > 1) return mounts * tips;
+
+  /** Dust-off intensity 0→1: waits for visible rotor speed, then builds; holds on ready. */
+  get dustPower(): number {
+    if (this.phase === "spool") {
+      const peak = this.rotorSpoolPeak;
+      const dustMin = peak * (DUST_ROTOR_MIN / DUST_ROTOR_MIN_REF_PEAK);
+      if (this.rotorSpd < dustMin) return 0;
+      const u = Phaser.Math.Clamp(
+        (this.rotorSpd - dustMin) / Math.max(1, peak - dustMin),
+        0,
+        1
+      );
+      return Math.pow(u, 1.35);
     }
-    return mounts;
+    if (this.phase === "ready") return 1;
+    return 0;
   }
-  return 1;
-}
 
-/**
- * How many concurrent fire streams a socket contributes to sustained DPS.
- * Simultaneous multi-muzzle and automatic multi-barrel turrets count fully;
- * alternate muzzles are one stream (tips cycle, same cadence).
- */
-export function craftSocketFireStreams(c: CraftSpec, socketIndex: number): number {
-  const socket = c.sockets[socketIndex];
-  if (!socket) return 1;
-  if (socket.class === "fixed") {
-    const pts = craftSocketPoints(c, socket);
-    if (pts.length > 1 && socket.muzzleFire === "simultaneous") return pts.length;
-    return 1;
-  }
-  if (socket.class === "turret") {
-    const mounts = Math.max(1, craftSocketBarrelCount(c, socketIndex));
-    if (socket.muzzleFire === "simultaneous") {
-      const tex = socket.gunTex ?? weaponMountTex(socket.weapon);
-      const tips = tex ? lookupSpriteMuzzles(tex).length : 1;
-      if (tips > 1) return mounts * tips;
+  update(
+    dt: number,
+    world: WorldData,
+    stick: Stick,
+    aimX: number,
+    aimY: number,
+    spaceDown: boolean,
+    shiftDown: boolean
+  ): void {
+    if (this.phase === "dead") return;
+    const up = stick.up;
+    const down = stick.down;
+    const left = stick.left;
+    const right = stick.right;
+
+    if (this.phase === "grounded") {
+      this.spool = 0;
+      this.phase = "spool";
     }
-    if (socket.controller === "automatic") return mounts;
-    return 1;
-  }
-  return 1;
-}
 
-/** Gun stations (chin / fixed / crew) vs hardpoint ordnance. */
-export function craftSocketIsPrimary(socket: CraftSocket): boolean {
-  return socket.class === "turret" || socket.class === "fixed";
-}
-
-const CREW_LOADOUT_SUFFIX: Record<CrewRole, string> = {
-  door: "DOOR GUNNERS",
-  ramp: "RAMP GUNNER",
-  belly: "BELLY GUNNER",
-};
-
-const CREW_HUD_TAG: Record<CrewRole, string> = {
-  door: "DOOR",
-  ramp: "RAMP",
-  belly: "BELLY",
-};
-
-/** Short HUD tag for crew-served stations (replaces technical "AUTO"). */
-export function craftCrewHudTag(socket: CraftSocket): string | undefined {
-  return socket.crew ? CREW_HUD_TAG[socket.crew] : socket.controller === "automatic" ? "CREW" : undefined;
-}
-
-/** Loadout label parts — weapon name vs crew designation (for multi-color UI). */
-export function craftLoadoutParts(
-  c: CraftSpec,
-  socketIndex: number,
-  fullName: string
-): { base: string; crew?: string } {
-  const socket = c.sockets[socketIndex];
-  const n = craftSocketMultiplicity(c, socketIndex);
-  const base = n <= 1 ? fullName : `${n}× ${fullName}`;
-  if (!socket?.crew) return { base };
-  return { base, crew: ` · ${CREW_LOADOUT_SUFFIX[socket.crew]}` };
-}
-
-/** Loadout label with 2× / N× and optional crew designation. */
-export function craftLoadoutLabel(
-  c: CraftSpec,
-  socketIndex: number,
-  fullName: string
-): string {
-  const { base, crew } = craftLoadoutParts(c, socketIndex, fullName);
-  return crew ? `${base}${crew}` : base;
-}
-
-/** Authored visual exhaust emit points on the craft body. */
-export function craftExhaustMounts(c: CraftSpec = craftOf()): { x: number; y: number }[] {
-  return mountsOf(c.body, "exhaust");
-}
-
-/** Wingtip UVs for bank contrails (jets). */
-export function craftWingTipMounts(c: CraftSpec = craftOf()): { x: number; y: number; id?: string }[] {
-  return lookupSpritePoints(c.body, "wingtip");
-}
-
-/** Pivot for a craft texture (body origin or gun origin). */
-export function craftPivot(key: string): { x: number; y: number } | undefined {
-  const k = key.replace(/__(woodland|desert|urban|snow|digital)$/, "");
-  for (const c of allCrafts()) {
-    if (c.body === k || c.hulk === k) return craftOrigin(c);
-  }
-  return undefined;
-}
-
-/** Tagged hull mounts for a craft — from SPRITE_SPECS body points (ids preserved). */
-export function craftMountsOf(sp: CraftSpec): HullMount[] {
-  const roles: HullMountRole[] = ["gun", "rotor", "hardpoint", "exhaust", "wingtip"];
-  const tagged: HullMount[] = [];
-  for (const role of roles) {
-    for (const p of lookupSpritePoints(sp.body, role)) {
-      tagged.push({
-        x: p.x,
-        y: p.y,
-        role,
-        label: spritePointLabel(p),
-        id: p.id,
-      });
+    if (this.phase === "spool") {
+      this.spool += dt;
+      const spoolDur = this.spoolDur;
+      const peak = this.rotorSpoolPeak;
+      const t = Phaser.Math.Clamp(this.spool / spoolDur, 0, 1);
+      // Typical helis crawl then snap; short craft spools ramp more aggressively.
+      const spin = spoolDur < 1 ? t * t : t * t * t;
+      this.rotorSpd = spin * peak;
+      if (t >= 1) {
+        this.phase = "ready";
+        this.readySpaceLatch = spaceDown;
+        this.rotorSpd = peak;
+      }
     }
+
+    if (this.phase === "ready") {
+      this.rotorSpd = Phaser.Math.Linear(this.rotorSpd, this.rotorFlight, 1 - Math.pow(0.12, dt));
+      if (this.readySpaceLatch) {
+        if (!spaceDown) this.readySpaceLatch = false;
+      } else if (spaceDown) {
+        this.phase = "flight";
+        this.vz = 0;
+      }
+    }
+
+    const controllable = this.phase === "flight";
+    this.rotor += this.rotorSpd * dt;
+    if (this.gunBrakeT > 0) this.gunBrakeT = Math.max(0, this.gunBrakeT - dt);
+
+    const planeScheme = craftControlScheme(this.spec) === "plane";
+    const orbit = craftControlScheme(this.spec) === "orbit";
+    const groundDrive = this.spec.flightModel === "ground";
+    const outside = !pointInPlayableMap(this.x, this.y);
+    const aimInside = pointInPlayableMap(aimX, aimY);
+    // Off-map recovery: respect an in-map mouse aim; otherwise blend aim with map center.
+    const turnX =
+      outside && !aimInside ? (aimX + WORLD * 0.5) * 0.5 : aimX;
+    const turnY =
+      outside && !aimInside ? (aimY + WORLD * 0.5) * 0.5 : aimY;
+    const turnAng = Math.atan2(turnY - this.y, turnX - this.x);
+
+    // Default: nose toward reticle. Gunship yaws with A/D hold (below).
+    let desired = orbit ? this.angle : turnAng;
+    const uTurn = craftHasForcedUTurn(this.spec);
+    if (outside && uTurn) {
+      // Forced U-turn while off-map — turn target rules above always apply.
+      this.edgeTurn = true;
+      desired = turnAng;
+    } else {
+      this.edgeTurn = false;
+      if (!orbit && controllable && this.spec.flightModel === "plane" && left !== right) {
+        // Circling: A/D retarget yaw to ±90° from mouse aim (same momentum yaw as mouse turn).
+        desired = turnAng + (right ? Math.PI / 2 : -Math.PI / 2);
+      } else if (!orbit) {
+        desired = turnAng;
+      }
+    }
+    if (controllable && orbit && !outside) {
+      // Hold-to-turn: A/D applies yaw rate while pressed; release stops turning.
+      const steerIn = (right ? 1 : 0) + (left ? -1 : 0);
+      const maxRate = this.spec.yawRate;
+      const targetRate = steerIn * maxRate;
+      const yawAcc = this.spec.yawAccel;
+      if (this.angVel < targetRate) this.angVel = Math.min(targetRate, this.angVel + yawAcc * dt);
+      else this.angVel = Math.max(targetRate, this.angVel - yawAcc * dt);
+      this.angle += this.angVel * dt;
+    } else if (controllable) {
+      const err = Phaser.Math.Angle.Wrap(desired - this.angle);
+      // Banked jets turn tighter — roll feeds yaw authority.
+      const bankMul = planeScheme ? 1 + Math.abs(this.roll) * 0.85 : 1;
+      const maxRate = this.spec.yawRate * bankMul;
+      const targetRate = Phaser.Math.Clamp(err * 5.4, -maxRate, maxRate);
+      const yawAcc = this.spec.yawAccel * (planeScheme ? 1 + Math.abs(this.roll) * 0.45 : 1);
+      if (this.angVel < targetRate) this.angVel = Math.min(targetRate, this.angVel + yawAcc * dt);
+      else this.angVel = Math.max(targetRate, this.angVel - yawAcc * dt);
+      this.angle += this.angVel * dt;
+    } else {
+      this.angVel *= Math.pow(0.04, dt);
+    }
+    // Chin gun aim is updated in MissionScene from the mount (not heli center).
+
+    const ca = Math.cos(this.angle);
+    const sa = Math.sin(this.angle);
+    let ax = 0;
+    let ay = 0;
+    const fwd = (up ? 1 : 0) + (down ? -1 : 0);
+    const str = (right ? 1 : 0) + (left ? -1 : 0);
+    const collective = (spaceDown ? 1 : 0) + (shiftDown ? -1 : 0);
+    const idlePower =
+      this.spec.flightModel === "plane" || planeScheme || groundDrive ? 0.55 : 0.22;
+    const forwardPower = fwd < 0
+      ? Math.abs(fwd) * ((this.spec.reverseThrust ?? this.spec.forwardThrust) / this.spec.forwardThrust)
+      : Math.abs(fwd);
+    // Spool / ready bring the engines up; flight follows stick load.
+    let thrustTarget = 0;
+    if (controllable) {
+      const steerLoad = orbit
+        ? Math.abs(this.angVel) / Math.max(0.2, this.spec.yawRate)
+        : Math.abs(str);
+      thrustTarget = Math.max(idlePower, forwardPower, steerLoad, Math.abs(collective));
+    } else if (this.phase === "spool") {
+      const spoolDur = this.spoolDur;
+      const t = Phaser.Math.Clamp(this.spool / spoolDur, 0, 1);
+      const spin = spoolDur < 1 ? t * t : t * t * t;
+      thrustTarget = idlePower * spin;
+    } else if (this.phase === "ready") {
+      thrustTarget = idlePower;
+    }
+    this.thrustPower = Phaser.Math.Linear(
+      this.thrustPower,
+      thrustTarget,
+      1 - Math.pow(0.08, dt)
+    );
+    if (controllable) {
+      const load = Phaser.Math.Clamp(
+        (this.thrustPower - idlePower) / Math.max(0.08, 1 - idlePower),
+        0,
+        1
+      );
+      const rotorTarget = this.rotorFlight * (1 + 0.2 * load);
+      this.rotorSpd = Phaser.Math.Linear(this.rotorSpd, rotorTarget, 1 - Math.pow(0.16, dt));
+      const longitudinalThrust = fwd < 0
+        ? (this.spec.reverseThrust ?? this.spec.forwardThrust)
+        : this.spec.forwardThrust;
+      // Gunship (orbit + plane): speed trimmed below — skip axial thrust so W/S aren't cancelled by drag.
+      // Hover tank / AGV (orbit + vtol|ground): W/S push forward/back along nose.
+      if (!(orbit && this.spec.flightModel === "plane")) {
+        ax += ca * fwd * longitudinalThrust;
+        ay += sa * fwd * longitudinalThrust;
+      }
+      // Ground tanks never strafe — A/D is yaw only (even if strafeThrust is authored).
+      if (!groundDrive) {
+        ax += -sa * str * this.spec.strafeThrust;
+        ay += ca * str * this.spec.strafeThrust;
+      }
+    }
+    this.vx += ax * dt;
+    this.vy += ay * dt;
+    const drag = controllable ? this.spec.drag : 8;
+    this.vx *= Math.pow(1 / (1 + drag * dt), 1);
+    this.vy *= Math.pow(1 / (1 + drag * dt), 1);
+    // Fixed-wing (incl. Gunship orbit trim): lock speed along heading.
+    // Ground tanks: full heading lock — body angle is the trajectory (no slide).
+    if (controllable && (this.spec.flightModel === "plane" || groundDrive)) {
+      const headingX = Math.cos(this.angle);
+      const headingY = Math.sin(this.angle);
+      // Gun fire dips the floor so recoil can bleed speed on a gun run.
+      const minFloor =
+        planeScheme && this.gunBrakeT > 0 ? this.spec.minSpeed * 0.68 : this.spec.minSpeed;
+      let along = this.vx * headingX + this.vy * headingY;
+      if (groundDrive) {
+        const maxRev = this.spec.maxReverseSpeed ?? this.spec.maxSpeed;
+        along = Phaser.Math.Clamp(along, -maxRev, this.spec.maxSpeed);
+        this.vx = headingX * along;
+        this.vy = headingY * along;
+      } else {
+        if (orbit) {
+          // Hold-to-trim: W climbs toward max, S bleeds toward min; coast holds current.
+          const trim =
+            fwd > 0 ? this.spec.maxSpeed : fwd < 0 ? minFloor : Phaser.Math.Clamp(along, minFloor, this.spec.maxSpeed);
+          const catchUp = fwd !== 0 ? 2.8 : 1.6;
+          along = Phaser.Math.Linear(along, trim, 1 - Math.exp(-catchUp * dt));
+        }
+        const forwardSpeed = Math.max(minFloor, along);
+        // Jets keep more lateral momentum through a banked turn.
+        const slipDamp = planeScheme ? 0.72 : 2.2;
+        const lateralSpeed =
+          (-this.vx * headingY + this.vy * headingX) * Math.exp(-slipDamp * dt);
+        this.vx = headingX * forwardSpeed - headingY * lateralSpeed;
+        this.vy = headingY * forwardSpeed + headingX * lateralSpeed;
+      }
+    }
+    const maxReverse = this.spec.maxReverseSpeed;
+    if (maxReverse != null && !groundDrive) {
+      const along = this.vx * ca + this.vy * sa;
+      if (along < -maxReverse) {
+        const lateral = -this.vx * sa + this.vy * ca;
+        this.vx = ca * -maxReverse - sa * lateral;
+        this.vy = sa * -maxReverse + ca * lateral;
+      }
+    }
+    const spd = Math.hypot(this.vx, this.vy);
+    const max = this.spec.maxSpeed;
+    if (spd > max) {
+      this.vx *= max / spd;
+      this.vy *= max / spd;
+    }
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    // Leave + forced U-turn craft may exit the playable rectangle into a soft
+    // off-map skirt, then U-turn inland. Everyone else is hard-clamped
+    // (camera uses the same predicate via craftCameraEdgeLocked).
+    if (!craftHasForcedUTurn(this.spec)) {
+      const margin = 40;
+      this.x = Phaser.Math.Clamp(this.x, margin, WORLD - margin);
+      this.y = Phaser.Math.Clamp(this.y, margin, WORLD - margin);
+      if (this.x <= margin && this.vx < 0) this.vx = 0;
+      else if (this.x >= WORLD - margin && this.vx > 0) this.vx = 0;
+      if (this.y <= margin && this.vy < 0) this.vy = 0;
+      else if (this.y >= WORLD - margin && this.vy > 0) this.vy = 0;
+    } else {
+      const soft = MAP_AIR_SOFT;
+      this.x = Phaser.Math.Clamp(this.x, -soft, WORLD + soft);
+      this.y = Phaser.Math.Clamp(this.y, -soft, WORLD + soft);
+    }
+
+    const gnd = groundZ(world, this.x, this.y);
+    this.gndSmooth += (gnd - this.gndSmooth) * (1 - Math.exp(-GND_FOLLOW * dt));
+    if (groundDrive) {
+      // Dirt-locked — pad AGL only, no collective loft.
+      this.z = this.gndSmooth + this.spec.cruiseAgl;
+      this.vz = 0;
+    } else if (this.phase === "spool" || this.phase === "ready") {
+      this.z = this.gndSmooth + PAD_AGL;
+      this.vz = 0;
+    } else if (controllable) {
+      const minZ = gnd + LOW_AGL;
+      const maxZ = gnd + this.spec.maxAgl;
+      const restZ = this.gndSmooth + this.spec.cruiseAgl;
+      const zIn = (spaceDown ? 1 : 0) + (shiftDown ? -1 : 0);
+      let az = zIn * this.spec.verticalThrust;
+      if (zIn === 0) {
+        az += Phaser.Math.Clamp(
+          restZ - this.z,
+          -this.spec.cruiseThrust,
+          this.spec.cruiseThrust
+        );
+        this.vz *= Math.pow(1 / (1 + CRUISE_DAMP * dt), 1);
+      }
+      const ceilPad = 26;
+      const floorPad = 14;
+      const toCeil = maxZ - this.z;
+      const toFloor = this.z - minZ;
+      if (toCeil < ceilPad) {
+        const u = Phaser.Math.Clamp(1 - toCeil / ceilPad, 0, 1);
+        az -= u * u * 780;
+        if (this.vz > 0) this.vz *= Math.pow(1 / (1 + 8 * u * dt), 1);
+      }
+      if (toFloor < floorPad) {
+        const u = Phaser.Math.Clamp(1 - toFloor / floorPad, 0, 1);
+        az += u * u * 780;
+        if (this.vz < 0) this.vz *= Math.pow(1 / (1 + 8 * u * dt), 1);
+      }
+      this.vz += az * dt;
+      this.vz *= Math.pow(1 / (1 + drag * dt), 1);
+      if (Math.abs(this.vz) > max) this.vz = Math.sign(this.vz) * max;
+      this.z += this.vz * dt;
+      if (this.z < minZ) {
+        this.z = minZ;
+        if (this.vz < 0) this.vz *= 0.2;
+      } else if (this.z > maxZ) {
+        this.z = maxZ;
+        if (this.vz > 0) this.vz *= 0.2;
+      }
+    }
+
+    const localFwd = this.vx * ca + this.vy * sa;
+    const localStr = -this.vx * sa + this.vy * ca;
+    if (this.spec.flatHull && controllable) {
+      // Flat hulls stay upright — no roll bank (orbit yaw / plane turn / VTOL strafe).
+      this.roll = Phaser.Math.Linear(this.roll, 0, 1 - Math.pow(0.04, dt));
+      if (groundDrive) {
+        this.pitch = Phaser.Math.Linear(this.pitch, 0, 1 - Math.pow(0.06, dt));
+      } else {
+        this.pitch = Phaser.Math.Linear(
+          this.pitch,
+          Phaser.Math.Clamp(localFwd / (planeScheme ? 320 : 280), planeScheme ? -0.28 : -0.18, planeScheme ? 0.32 : 0.18),
+          1 - Math.pow(0.06, dt)
+        );
+      }
+    } else if (planeScheme && controllable) {
+      // Bank into the turn from yaw rate; keep a bit of slip lean for feel.
+      const yawBank = Phaser.Math.Clamp(
+        -this.angVel / Math.max(0.35, this.spec.yawRate) * 0.95,
+        -0.92,
+        0.92
+      );
+      const slipBank = Phaser.Math.Clamp(localStr / 220, -0.32, 0.32);
+      this.roll = Phaser.Math.Linear(
+        this.roll,
+        Phaser.Math.Clamp(yawBank + slipBank, -0.95, 0.95),
+        1 - Math.pow(0.02, dt)
+      );
+      this.pitch = Phaser.Math.Linear(
+        this.pitch,
+        Phaser.Math.Clamp(localFwd / 320, -0.28, 0.32),
+        1 - Math.pow(0.06, dt)
+      );
+    } else if (orbit && controllable) {
+      // Mild bank from A/D yaw rate — mouse aims guns only.
+      const yawBank = Phaser.Math.Clamp(
+        -this.angVel / Math.max(0.2, this.spec.yawRate) * 0.72,
+        -0.55,
+        0.55
+      );
+      this.roll = Phaser.Math.Linear(this.roll, yawBank, 1 - Math.pow(0.05, dt));
+      this.pitch = Phaser.Math.Linear(
+        this.pitch,
+        Phaser.Math.Clamp(localFwd / 280, -0.22, 0.22),
+        1 - Math.pow(0.06, dt)
+      );
+    } else {
+      this.pitch = Phaser.Math.Linear(
+        this.pitch,
+        controllable ? Phaser.Math.Clamp(localFwd / 240, -0.42, 0.42) : 0,
+        1 - Math.pow(0.06, dt)
+      );
+      this.roll = Phaser.Math.Linear(
+        this.roll,
+        controllable ? Phaser.Math.Clamp(localStr / 200, -0.4, 0.4) : 0,
+        1 - Math.pow(0.06, dt)
+      );
+    }
+    this.fireCd = Math.max(0, this.fireCd - dt);
   }
-  return tagged;
+
+  /** Reverse thrust along −gun bore (physics only) — jets / opted-in sockets. */
+  applyGunRecoil(impulse: number, gunAngle = this.angle): void {
+    if (impulse <= 0) return;
+    const ca = Math.cos(gunAngle);
+    const sa = Math.sin(gunAngle);
+    this.vx -= ca * impulse;
+    this.vy -= sa * impulse;
+    this.gunBrakeT = Math.max(this.gunBrakeT, 0.28);
+  }
+
+  kill(): void {
+    this.phase = "dead";
+    this.health = 0;
+  }
+
+  damage(n: number, dx?: number, dy?: number): void {
+    if (this.immune) return;
+    if (this.phase === "dead") return;
+    if (dx != null && dy != null && (dx || dy)) {
+      this.killDx = dx;
+      this.killDy = dy;
+    }
+    this.health -= n;
+    if (this.health <= 0) this.kill();
+  }
 }

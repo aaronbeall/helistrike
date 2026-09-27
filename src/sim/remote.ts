@@ -6,7 +6,10 @@
  * (scale, look art, fragile health, skiff skin, …).
  */
 import {
+  allCrafts,
+  craftFirepower,
   craftOf,
+  craftSocketFirepower,
   craftSocketStartingAmmo,
   rotorDrawSpan,
   rotorSpinSign,
@@ -14,10 +17,13 @@ import {
   type CraftKind,
   type CraftSocket,
   type CraftSpec,
-} from "./craft";
+} from "./crafts";
 import {
+  PLAYER_WPNS,
   playerLoadoutFromSockets,
+  playerWeaponClassMul,
   type PlayerWpnSpec,
+  type UnitClass,
   type WpnId,
 } from "./combat";
 import type { TrackKind } from "./roster";
@@ -235,6 +241,10 @@ export interface RemoteCraft {
   };
   /** AI engage unit id. */
   aiTargetId?: number;
+  /** Seconds continuously AI-firing on `aiTargetId` — narrows gun-aim jitter over time. */
+  aimHoldT?: number;
+  /** Target id `aimHoldT` was last accumulated against — reset the hold when this changes. */
+  aimHoldTargetId?: number;
   /**
    * Skiff attack-pass FSM: `run` lines up fixed guns and fires;
    * `break` coasts outbound past the target, then turns for another pass.
@@ -474,9 +484,9 @@ const REMOTE_DEFS: Record<RemoteKind, RemoteDef> = {
     ground: true,
     antenna: { length: 11, aft: 1.8, stiffness: 28, damping: 2.8, yawWhip: 10, lag: 1.6 },
     engageRange: 320,
-    orbitRange: 95,
-    mouseStopRange: 90,
-    mouseLeashRange: 220,
+    orbitRange: 150,
+    mouseStopRange: 200,
+    mouseLeashRange: 420,
     hostEscort: { innerRadius: 140, outerRadius: 260 },
   },
 };
@@ -494,4 +504,79 @@ export function remoteSpecOf(kind: RemoteKind): RemoteSpec {
 
 export function allRemoteKinds(): RemoteKind[] {
   return Object.keys(REMOTE_DEFS) as RemoteKind[];
+}
+
+/**
+ * Same as `craftFirepower`, but a socket that deploys a remote with its own armed loadout (Skiff
+ * wingmen, Raptor fighters, the HOUND AGV) counts that hull's own firepower instead of just the
+ * launcher's negligible deploy/detonate hit. A `pilotable` remote (Raptor, HOUND) only ever has
+ * one instance active — you fly it directly, and the socket's ammo is sequential replacements,
+ * not a squad — so it counts once regardless of ammo; a pure-AI remote (Skiff, no `pilotable`)
+ * really can have several alive at once (its own notes: "LIVE ×N, max 6"), so it's multiplied by
+ * the socket's ammo count. A remote with no sockets of its own (the Spectre kamikaze drone,
+ * `sockets: []`) has no separate loadout to add — its launcher's `dmg` already *is* the full
+ * detonation, so it falls through to the normal per-socket calc unchanged. Lives here rather than
+ * in craft.ts because it needs `remoteSpecOf`/`remoteHull`, which would circularly import craft.ts.
+ */
+export function craftFirepowerWithRemotes(c: CraftSpec): { total: number; byClass: Record<UnitClass, number> } {
+  let total = 0;
+  const byClass: Record<UnitClass, number> = { air: 0, vehicle: 0, building: 0, troop: 0 };
+  c.sockets.forEach((socket, i) => {
+    const w = PLAYER_WPNS[socket.weapon];
+    if (!w) return;
+    const spec = w.payload.remote ? remoteSpecOf(w.payload.remote.kind) : undefined;
+    const hull = spec ? remoteHull(spec) : undefined;
+    if (spec && hull && hull.sockets.length > 0) {
+      const count = spec.pilotable ? 1 : craftSocketStartingAmmo(w.ammo, c, i);
+      const deployed = craftFirepower(hull);
+      total += count * deployed.total;
+      (Object.keys(byClass) as UnitClass[]).forEach((cls) => {
+        byClass[cls] += count * deployed.byClass[cls];
+      });
+      return;
+    }
+    const burst = craftSocketFirepower(c, i);
+    total += burst;
+    (Object.keys(byClass) as UnitClass[]).forEach((cls) => {
+      byClass[cls] += burst * playerWeaponClassMul(w, cls);
+    });
+  });
+  return { total, byClass };
+}
+
+/** Exponent on the above-median burst ratio in `craftFirepowerRating` — bigger = a standout
+ * weapon (Warthog's cannon) pulls its rating up further above what `ammoScale` alone would give. */
+const FIREPOWER_RATING_BURST_EXPONENT = 1.7;
+
+/**
+ * The roster's median `craftFirepowerWithRemotes` total — the "ordinary" reference burst that
+ * `craftFirepowerRating` measures standout weapons against. Recomputed from the live roster each
+ * call (roster is small, ~20 craft) rather than cached, so it stays correct if the roster changes.
+ */
+function medianCraftBurstFirepower(): number {
+  const bursts = allCrafts()
+    .map((c) => craftFirepowerWithRemotes(c).total)
+    .sort((a, b) => a - b);
+  const mid = bursts.length / 2;
+  return bursts.length % 2 ? bursts[Math.floor(mid)]! : (bursts[mid - 1]! + bursts[mid]!) / 2;
+}
+
+/**
+ * Craft-level FIREPOWER rating shown in the game's own stats (menu / field manual) — `ammoScale`
+ * is the primary signal (how much this craft is built to carry, which tracks its size/role
+ * archetype far better than raw burst damage does — see the Gunship/Little Bird mismatches a
+ * burst-only rating produced), boosted by how far above the roster's *median* burst firepower a
+ * craft's actual weapons land. The boost is one-sided (floored at 1): a craft at or below the
+ * median burst keeps its plain `ammoScale` untouched, so "standard" craft aren't dragged down by
+ * this — only a standout weapon (Warthog's cannon, Marauder's HOUND-plus-guns stack) pulls a craft
+ * above what its `ammoScale` alone would suggest.
+ *
+ * This is a display-only rating. The balance rig keeps using `craftFirepowerWithRemotes` /
+ * `craftFirepower` directly — actual weapon output, not this proxy.
+ */
+export function craftFirepowerRating(c: CraftSpec): number {
+  const burst = craftFirepowerWithRemotes(c).total;
+  const median = medianCraftBurstFirepower();
+  const boost = median > 0 ? Math.max(1, Math.pow(burst / median, FIREPOWER_RATING_BURST_EXPONENT)) : 1;
+  return c.ammoScale * boost;
 }

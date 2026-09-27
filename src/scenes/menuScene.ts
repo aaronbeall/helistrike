@@ -8,25 +8,52 @@ import {
 import {
   allCrafts,
   craftAgility,
-  craftComposite,
-  craftCompositePartScale,
-  craftExhaustMounts,
   craftLoadoutParts,
   craftOf,
-  craftPreviewExhaustScale,
-  craftPreviewExhaustTint,
+  craftOrigin,
   craftPreviewFitScale,
-  craftRotorAlongScale,
-  craftRotorPreviewSpinMs,
   craftSocketStartingAmmo,
   selectCraft,
-} from "../sim/craft";
+} from "../sim/crafts";
 import { allMissions, missionOf, selectMission } from "../sim/mission";
+import { craftFirepowerRating } from "../sim/remote";
 import { installRigHotkeys } from "../rigs/rigs";
-import { ensureExhaustGlow, spriteUvPos } from "../art/sprites";
-import { ensureMissionPreviews } from "../ui/menuChrome";
+import { ensureExhaustGlow } from "../art/sprites";
+import {
+  adjustThreeRegionMadMul,
+  computeThreeRegionScale,
+  ensureMissionPreviews,
+  getThreeRegionMadMul,
+  statHeatColor,
+  threeRegionNorm,
+} from "../ui/menuChrome";
+import { FieldManual } from "../ui/fieldManual";
+import { buildCraftPreviewOverlay, type CraftPreviewOverlay } from "../ui/craftPreview";
 import { applyEdgeLight, clearEdgeLight } from "../render/edgeLight";
 import { setGlitchPipeline } from "../render/glitch";
+
+// —— Ring carousel tuning: shared by both the craft strip and the map strip. ——
+const RING_SPACING = 85;
+const RING_MAX = 2;
+const RING_SCALE = [1, 0.72, 0.5] as const; // indexed by |offset|, clamped to RING_MAX
+const RING_ALPHA = [1, 0.55, 0.28] as const;
+// Each ring slot gets its own depth band (closer to center = higher), and within a band the
+// frame/art/label keep a fixed internal stacking order — so nearer cards always draw fully
+// above farther ones, and a card's own layers never cross another card's.
+const RING_BAND_SPAN = 10;
+const RING_LAYER = { frame: 0, art: 2, label: 5 } as const;
+
+function ringOffset(i: number, selected: number, count: number): number {
+  let d = i - selected;
+  const half = count / 2;
+  if (d > half) d -= count;
+  if (d < -half) d += count;
+  return d;
+}
+
+function ringBand(ad: number): number {
+  return (RING_MAX + 1 - Math.min(ad, RING_MAX + 1)) * RING_BAND_SPAN;
+}
 
 export class MenuScene extends Phaser.Scene {
   constructor() {
@@ -92,17 +119,54 @@ export class MenuScene extends Phaser.Scene {
         .setDepth(1.4);
     }
     if (this.textures.exists("fx_spark")) {
+      type EmberParticle = Phaser.GameObjects.Particles.Particle & {
+        emberScale?: number;
+        emberWobbleFreq?: number;
+        emberWobbleAmp?: number;
+        emberWobblePhase?: number;
+      };
       this.add
         .particles(0, 0, "fx_spark", {
           x: { min: 0, max: w },
           y: h + 10,
-          lifespan: { min: 5000, max: 8000 },
-          speedY: { min: -40, max: -80 },
-          speedX: { min: -10, max: 10 },
-          scale: { start: 0.34, end: 0 },
+          // Much longer-lived than a spark — this is rising ash, not a flying ember — but still
+          // moving briskly upward.
+          lifespan: { min: 8000, max: 13000 },
+          speedY: { min: -30, max: -65 },
+          // speedX is emit-only in Phaser (no onUpdate) — the erratic back-and-forth wobble has
+          // to come from a continuously oscillating acceleration instead, like ash caught in
+          // eddies — kept subtle so it reads as a wobble, not a sideways dash.
+          // Acceleration integrates over the particle's whole (long) life, so a low oscillation
+          // frequency builds up a lot of sideways velocity even from a "small" amplitude —
+          // higher frequency + low amplitude keeps this a tight jitter, not a sideways sweep.
+          speedX: {
+            onEmit: (p) => {
+              const q = p as EmberParticle;
+              q.emberWobbleFreq = 2.2 + Math.random() * 2.8;
+              q.emberWobbleAmp = 10 + Math.random() * 18;
+              q.emberWobblePhase = Math.random() * Math.PI * 2;
+              return (Math.random() - 0.5) * 3;
+            },
+          },
+          accelerationX: {
+            onUpdate: (p, _k, t) => {
+              const q = p as EmberParticle;
+              return Math.sin(t * Math.PI * 2 * (q.emberWobbleFreq ?? 3) + (q.emberWobblePhase ?? 0)) * (q.emberWobbleAmp ?? 15);
+            },
+          },
+          scale: {
+            // Exponential bias: mostly small flecks, with large ones rare.
+            onEmit: (p) => {
+              const q = p as EmberParticle;
+              q.emberScale = 0.16 + Math.pow(Math.random(), 4) * 0.65;
+              return q.emberScale;
+            },
+            // Shrink to nothing over its (long) life, not just fade — dying ash visibly withers.
+            onUpdate: (p, _k, t) => (p as EmberParticle).emberScale! * (1 - t),
+          },
           alpha: { start: 0.9, end: 0 },
           rotate: { min: 0, max: 360 },
-          frequency: 80,
+          frequency: 130,
           quantity: 2,
           tint: 0xffb050,
           blendMode: Phaser.BlendModes.ADD,
@@ -158,23 +222,51 @@ export class MenuScene extends Phaser.Scene {
     // Focus stops for UP/DOWN: 0 = craft, 1 = mission, 2 = stats/help, 3+ = custom map option (row - 3).
     let row = 0;
 
-    // —— Two-column layout: AIRFRAME (left) / OPERATION (right) — never share a row. ——
-    const craftX = 300;
-    const missionX = 970;
-    const dividerX = 636;
-    const headerY = 92;
-    const cardY = 196;
+    // —— Two-row layout: CRAFT strip (top) / MAP strip (bottom). Each strip has three zones:
+    // [carousel] a rotating ring of previews | [info] stats/briefing | [more info] loadout/params. ——
+    const contentX0 = 50;
+    const contentX1 = 1220;
+    const carouselW = 430;
+    const zoneGap = 30;
 
-    const divider = this.add
-      .graphics()
-      .setDepth(2)
-      .setAlpha(0)
-      .lineStyle(1, 0x554c39, 0.55)
-      .lineBetween(dividerX, 82, dividerX, 616);
+    const boxPadX = 18;
+    const carouselX0 = contentX0;
+    const carouselX1 = carouselX0 + carouselW;
+    const carouselCenterX = (carouselX0 + carouselX1) / 2;
+
+    const infoX0 = carouselX1 + zoneGap;
+    const infoW = 340;
+    const infoX1 = infoX0 + infoW;
+    const infoCenterX = (infoX0 + infoX1) / 2;
+
+    const moreInfoX0 = infoX1 + zoneGap;
+    const moreInfoX1 = contentX1;
+    const moreInfoCenterX = (moreInfoX0 + moreInfoX1) / 2;
+
+    const contentTop = 82;
+    const contentBottom = 640;
+    const stripGap = 24;
+    const stripH = (contentBottom - contentTop - stripGap) / 2;
+
+    const craftStripTop = contentTop;
+    const craftStripBottom = craftStripTop + stripH;
+    const mapStripTop = craftStripBottom + stripGap;
+
+    const craftHeaderY = craftStripTop + 14;
+    const craftCardY = craftHeaderY + 104;
+    const mapHeaderY = mapStripTop + 14;
+    const missionCardY = mapHeaderY + 104;
+
+    const craftX = carouselCenterX;
+    const missionX = carouselCenterX;
+
+    const divider = this.add.graphics().setDepth(2).setAlpha(0);
+    divider.lineStyle(1, 0x554c39, 0.55);
+    divider.lineBetween(contentX0, (craftStripBottom + mapStripTop) / 2, contentX1, (craftStripBottom + mapStripTop) / 2);
     this.tweens.add({ targets: divider, alpha: 1, duration: 500, delay: 180 });
 
     const craftHeader = this.add
-      .text(craftX - 20, headerY, "AIRFRAME", {
+      .text(craftX - 20, craftHeaderY, "AIRFRAME", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "14px",
         color: "#e8b84a",
@@ -186,7 +278,7 @@ export class MenuScene extends Phaser.Scene {
       .setAlpha(0);
     this.tweens.add({ targets: craftHeader, x: craftX, alpha: 1, duration: 420, delay: 160, ease: "Sine.Out" });
     const missionHeader = this.add
-      .text(missionX + 20, headerY, "OPERATION", {
+      .text(missionX + 20, mapHeaderY, "OPERATION", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "14px",
         color: "#e8e0cc",
@@ -198,68 +290,52 @@ export class MenuScene extends Phaser.Scene {
       .setAlpha(0);
     this.tweens.add({ targets: missionHeader, x: missionX, alpha: 1, duration: 420, delay: 160, ease: "Sine.Out" });
 
+    /**
+     * Positions/scales/fades a ring member toward its slot for `offset` (0 = centered/focused).
+     * `layer` (RING_LAYER.*) keeps frame/art/label in a fixed stacking order within their band —
+     * nearer cards' bands always sit fully above farther cards' bands.
+     */
+    const applyRing = (
+      target: Phaser.GameObjects.Text | Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle,
+      cx: number,
+      cy: number,
+      offset: number,
+      baseScale: number,
+      animate: boolean,
+      layer: number,
+      alphaOverride?: number
+    ) => {
+      const ad = Math.min(Math.abs(offset), RING_MAX + 1);
+      const ringScale = ad <= RING_MAX ? RING_SCALE[ad] : 0.35;
+      const alpha = alphaOverride ?? (ad <= RING_MAX ? RING_ALPHA[ad] : 0);
+      const x = cx + offset * RING_SPACING;
+      const scale = baseScale * ringScale;
+      target.setDepth(ringBand(ad) + layer);
+      if (animate) {
+        this.tweens.add({ targets: target, x, y: cy, scale, alpha, duration: 280, ease: "Sine.Out" });
+      } else {
+        target.setPosition(x, cy);
+        target.setScale(scale);
+        target.setAlpha(alpha);
+      }
+    };
+
     const craftW = 148;
     const craftH = 128;
+    const craftLabelY = craftCardY + craftH / 2 + 24;
     const craftCards = crafts.map((craft, i) => {
-      const x = craftX;
       const frame = this.add
-        .rectangle(x, cardY, craftW, craftH, 0x0c0b09, 0.82)
+        .rectangle(craftX, craftCardY, craftW, craftH, 0x0c0b09, 0.82)
         .setStrokeStyle(1, 0x5d5544, 0.8)
         .setDepth(2)
         .setInteractive({ useHandCursor: true });
-      const art = this.add.image(x, cardY - 8, craft.body).setDepth(3);
+      const bodyOrigin = craftOrigin(craft);
+      const art = this.add.image(craftX, craftCardY - 8, craft.body).setOrigin(bodyOrigin.x, bodyOrigin.y).setDepth(3);
       // Fit the card box; never upscale past native 1:1 (keeps drones crisp).
       const artScale = craftPreviewFitScale(art.width, art.height, 138, 106);
       art.setScale(artScale);
-      const composite = craftComposite(craft);
-      const rotors = composite.rotors.map((part) => {
-        const along = craftRotorAlongScale(craft);
-        const rotor = this.add
-          .image(0, 0, part.tex)
-          .setOrigin(part.origin.x, part.origin.y)
-          .setDepth(4);
-        const host =
-          along < 0.999
-            ? this.add.container(x, cardY - 8).setDepth(4).add(rotor)
-            : rotor;
-        if (along < 0.999) {
-          rotor.setData("tiltWrap", host);
-          (host as Phaser.GameObjects.Container).setScale(1, along);
-        } else {
-          rotor.setPosition(x, cardY - 8);
-        }
-        const sign = part.spinSign ?? -1;
-        this.tweens.add({
-          targets: rotor,
-          rotation: sign * Math.PI * 2,
-          duration: craftRotorPreviewSpinMs(craft),
-          repeat: -1,
-          ease: "Linear",
-        });
-        return rotor;
-      });
-      const exhaustMounts = craftExhaustMounts(craft);
-      const exhaustTint = craftPreviewExhaustTint(craft.kind);
-      const exhaustGlows = exhaustMounts.map((_, exhaustI) => {
-        const glow = this.add
-          .image(x, cardY - 8, "fx_exhaust_glow")
-          .setOrigin(0.5, 0)
-          .setBlendMode(Phaser.BlendModes.ADD)
-          .setTint(exhaustTint)
-          .setDepth(8.5)
-          .setVisible(false);
-        this.tweens.add({
-          targets: glow,
-          alpha: { from: 0.5 + (exhaustI % 2) * 0.08, to: 0.96 },
-          duration: 780 + exhaustI * 90,
-          yoyo: true,
-          repeat: -1,
-          ease: "Sine.InOut",
-        });
-        return glow;
-      });
       const label = this.add
-        .text(x, cardY + craftH / 2 + 24, craft.name.toUpperCase(), {
+        .text(craftX, craftLabelY, craft.name.toUpperCase(), {
           fontFamily: "Share Tech Mono, monospace",
           fontSize: "11px",
           color: "#cfc7b1",
@@ -272,37 +348,26 @@ export class MenuScene extends Phaser.Scene {
         craftIndex = i;
         refreshSelection();
       });
-      return {
-        frame,
-        art,
-        label,
-        artScale,
-        rotorParts: composite.rotors,
-        rotors,
-        rotorAlong: craftRotorAlongScale(craft),
-        exhaustMounts,
-        exhaustGlows,
-        wasSelected: false,
-      };
+      return { frame, art, label, artScale };
     });
 
-    const missionW = 156;
-    const missionH = 156;
+    // Same box as the craft card so both carousels (and the field manual's preview) share one aspect ratio.
+    const missionW = craftW;
+    const missionH = craftH;
+    const missionLabelY = missionCardY + missionH / 2 + 24;
     const missionCards = missions.map((mission, i) => {
-      const x = missionX;
       const frame = this.add
-        .rectangle(x, cardY, missionW, missionH, 0x0b0a08, 0.88)
+        .rectangle(missionX, missionCardY, missionW, missionH, 0x0b0a08, 0.88)
         .setStrokeStyle(1, 0x5d5544, 0.8)
         .setDepth(2)
         .setInteractive({ useHandCursor: true });
-      const art = this.add
-        .image(x, cardY, `menu_mission_preview_${mission.kind}`)
-        .setDisplaySize(missionW - 8, missionH - 8)
-        .setDepth(3);
-      const artScaleX = art.scaleX;
-      const artScaleY = art.scaleY;
+      // Fit (not stretch) like the craft art — the square thumbnail must not distort to fill
+      // a non-square box.
+      const art = this.add.image(missionX, missionCardY, `menu_mission_preview_${mission.kind}`).setDepth(3);
+      const artScale = craftPreviewFitScale(art.width, art.height, missionW - 8, missionH - 8);
+      art.setScale(artScale);
       const label = this.add
-        .text(x, cardY + missionH / 2 + 24, mission.label, {
+        .text(missionX, missionLabelY, mission.label, {
           fontFamily: "Share Tech Mono, monospace",
           fontSize: "11px",
           color: "#cfc7b1",
@@ -315,7 +380,7 @@ export class MenuScene extends Phaser.Scene {
         missionIndex = i;
         refreshSelection();
       });
-      return { frame, art, label, artScaleX, artScaleY, wasSelected: false };
+      return { frame, art, label, artScale };
     });
 
     const carouselArrow = (x: number, y: number, dir: -1 | 1, targetRow: 0 | 1) => {
@@ -328,7 +393,7 @@ export class MenuScene extends Phaser.Scene {
           strokeThickness: 4,
         })
         .setOrigin(0.5)
-        .setDepth(8)
+        .setDepth(12)
         .setInteractive({ useHandCursor: true });
       hoverPunch(arrow, () => 1, 1.24);
       arrow.on("pointerdown", () => {
@@ -339,16 +404,13 @@ export class MenuScene extends Phaser.Scene {
       });
       return arrow;
     };
-    carouselArrow(craftX - craftW / 2 - 32, cardY - 8, -1, 0);
-    carouselArrow(craftX + craftW / 2 + 32, cardY - 8, 1, 0);
-    carouselArrow(missionX - missionW / 2 - 32, cardY, -1, 1);
-    carouselArrow(missionX + missionW / 2 + 32, cardY, 1, 1);
+    carouselArrow(carouselX0 + 16, craftCardY - 8, -1, 0);
+    carouselArrow(carouselX1 - 16, craftCardY - 8, 1, 0);
+    carouselArrow(carouselX0 + 16, missionCardY, -1, 1);
+    carouselArrow(carouselX1 - 16, missionCardY, 1, 1);
 
-    const craftLabelY = cardY + craftH / 2 + 24;
-    const missionLabelY = cardY + missionH / 2 + 24;
     const craftDotsY = craftLabelY + 18;
     const missionDotsY = missionLabelY + 18;
-
     const carouselDots = (count: number, cx: number, y: number, targetRow: 0 | 1) =>
       Array.from({ length: count }, (_, i) => {
         const spacing = Math.min(13, 320 / Math.max(1, count - 1));
@@ -367,80 +429,141 @@ export class MenuScene extends Phaser.Scene {
         });
         return dot;
       });
-    const craftDots = carouselDots(crafts.length, craftX, craftDotsY, 0);
-    const missionDots = carouselDots(missions.length, missionX, missionDotsY, 1);
+    const craftDots = carouselDots(crafts.length, carouselCenterX, craftDotsY, 0);
+    const missionDots = carouselDots(missions.length, carouselCenterX, missionDotsY, 1);
 
-    // —— Left column, stacked below the craft carousel: flight profile, then loadout. ——
+    // —— Focus overlay: rotors + exhaust glow (shared with the field manual's own preview),
+    // rebuilt only for the craft currently centered in the ring. Repositioned every frame so it
+    // tracks the card's art image in real time instead of lagging behind its ring-slide tween. ——
+    let craftFocusOverlay: CraftPreviewOverlay | null = null;
+    const syncCraftFocus = (craft: (typeof crafts)[number]) => {
+      craftFocusOverlay?.destroy();
+      craftFocusOverlay = buildCraftPreviewOverlay(this, craftCards[craftIndex]!.art, craft);
+    };
+    this.events.on(Phaser.Scenes.Events.UPDATE, () => craftFocusOverlay?.reposition());
+
+    // —— Craft-strip info zone: FLIGHT PROFILE, a stat per row. ——
+    // FIREPOWER uses craftFirepowerRating (ammoScale, boosted by standout burst weapons) rather
+    // than raw burst — see its own doc comment for why a pure weapon-burst number misjudged
+    // Gunship/Little Bird.
     const statDefs = [
-      { label: "SPEED", max: Math.max(...crafts.map((craft) => craft.maxSpeed)), value: (craft: (typeof crafts)[number]) => craft.maxSpeed },
-      { label: "AGILITY", max: 1, value: (craft: (typeof crafts)[number]) => craftAgility(craft) },
-      { label: "SIZE", max: Math.max(...crafts.map((craft) => craft.sizeM)), value: (craft: (typeof crafts)[number]) => craft.sizeM },
-      { label: "ARMOR", max: Math.max(...crafts.map((craft) => craft.health)), value: (craft: (typeof crafts)[number]) => craft.health },
+      { label: "SPEED", max: Math.max(...crafts.map((c) => c.maxSpeed)), value: (c: (typeof crafts)[number]) => c.maxSpeed, fmt: (v: number) => Math.round(v).toString() },
+      { label: "AGILITY", max: 1, value: (c: (typeof crafts)[number]) => craftAgility(c), fmt: (v: number) => v.toFixed(2) },
+      { label: "SIZE", max: Math.max(...crafts.map((c) => c.sizeM)), value: (c: (typeof crafts)[number]) => c.sizeM, fmt: (v: number) => `${Math.round(v)}m` },
+      { label: "ARMOR", max: Math.max(...crafts.map((c) => c.health)), value: (c: (typeof crafts)[number]) => c.health, fmt: (v: number) => Math.round(v).toString() },
+      {
+        label: "FIREPOWER",
+        max: Math.max(...crafts.map((c) => craftFirepowerRating(c))),
+        value: (c: (typeof crafts)[number]) => craftFirepowerRating(c),
+        fmt: (v: number) => v.toFixed(2),
+      },
     ];
-    const profileRows = statDefs.length + 1; // + ROLE
-    const statsHeaderY = craftDotsY + 34;
-    const statsRow0 = statsHeaderY + 18;
-    const statsBottom = statsRow0 + (profileRows - 1) * 20 + 10;
+    // Every bar fills on a three-region scale (see computeThreeRegionScale/threeRegionNorm's doc
+    // comments) rather than plain linear-against-max: a handful of outlier craft can't stretch or
+    // compress where the typical craft land, since the low/high tails are capped off into the
+    // bar's end segments and the "standard" band gets the whole readable middle to itself.
+    // Computed once per stat here (needs every craft's value, not just this one).
+    // Recomputed whenever the debug +/- keys nudge the shared mad-multiplier (see below).
+    const computeStatScales = () => statDefs.map((stat) => computeThreeRegionScale(crafts.map((c) => stat.value(c))));
+    let statScales = computeStatScales();
+    // Debug-only: +/- nudges the shared three-region mad-multiplier live (see menuChrome's
+    // getThreeRegionMadMul doc comment) — refreshSelection redraws using the closed-over
+    // `craft`/`row` state it already tracks, same as any other selection-changing key.
+    const reapplyStatScales = () => {
+      statScales = computeStatScales();
+      refreshSelection();
+    };
+    const bumpThreeRegionMadMul = (delta: number) => {
+      // The Field Manual is modal and has its own +/- binding (guarded by its own isOpen) — skip
+      // here so an open panel doesn't double-apply the same keypress via both handlers.
+      if (fieldManual.isOpen) return;
+      adjustThreeRegionMadMul(delta);
+      reapplyStatScales();
+    };
+    this.input.keyboard?.on("keydown-PLUS", () => bumpThreeRegionMadMul(0.25));
+    this.input.keyboard?.on("keydown-NUMPAD_ADD", () => bumpThreeRegionMadMul(0.25));
+    this.input.keyboard?.on("keydown-MINUS", () => bumpThreeRegionMadMul(-0.25));
+    this.input.keyboard?.on("keydown-NUMPAD_SUBTRACT", () => bumpThreeRegionMadMul(-0.25));
 
-    const maxWeaponSlots = Math.max(4, ...crafts.map((c) => c.sockets.length));
-    const loadoutHeaderY = statsBottom + 28;
-    const loadoutRow0 = loadoutHeaderY + 18;
-    const loadoutBottom = loadoutRow0 + maxWeaponSlots * 20 + 10;
-
-    const panelPad = 16;
-    const panelBg = this.add
-      .rectangle(
-        craftX,
-        (statsHeaderY - panelPad + loadoutBottom) / 2,
-        craftW + 260,
-        loadoutBottom - (statsHeaderY - panelPad),
-        0x0b0a08,
-        0.76
-      )
-      .setStrokeStyle(1, 0x554c39, 0.65)
-      .setDepth(2)
-      .setAlpha(0);
-    this.tweens.add({ targets: panelBg, alpha: 1, duration: 420, delay: 260, ease: "Sine.Out" });
-
-    // —— Field manual button, pinned to the panel's top-right corner (popup content comes later) ——
-    const panelTop = statsHeaderY - panelPad;
-    const panelRight = craftX + (craftW + 260) / 2;
-    const infoBtn = this.add
-      .circle(panelRight - 18, panelTop + 18, 13, 0x0b0a08, 0.9)
-      .setStrokeStyle(1.5, 0xe8b84a, 0.9)
-      .setDepth(4)
-      .setAlpha(0)
-      .setInteractive({ useHandCursor: true });
-    const infoBtnGlyph = this.add
-      .text(panelRight - 18, panelTop + 18, "?", {
+    // —— Debug: three-region scale visualization (toggle with /, same as in-game debug menu). ——
+    // One horizontal strip per stat, plotting every craft's raw value at its true position
+    // between that stat's min and max, with the low/standard/high regions shaded behind them —
+    // lets you see at a glance whether the "standard" band (bright) actually covers where the
+    // roster bunches up, and whether the currently selected craft (the bright dot) reads sanely.
+    const vizPad = 24;
+    const vizX0 = vizPad;
+    const vizW = w - vizPad * 2;
+    const vizRowH = 26;
+    const vizY0 = h - vizPad - statDefs.length * vizRowH - 20;
+    let vizVisible = false;
+    const vizBg = this.add
+      .rectangle(vizX0 - 10, vizY0 - 22, vizW + 20, statDefs.length * vizRowH + 34, 0x0a0806, 0.92)
+      .setOrigin(0, 0)
+      .setStrokeStyle(1, 0x5d5544, 0.8)
+      .setDepth(9600)
+      .setScrollFactor(0)
+      .setVisible(false);
+    const vizTitle = this.add
+      .text(vizX0, vizY0 - 16, "DEBUG: THREE-REGION SCALE  ( / to toggle, +/- adjusts mad×N )", {
         fontFamily: "Share Tech Mono, monospace",
-        fontSize: "14px",
+        fontSize: "10px",
         color: "#e8b84a",
       })
-      .setOrigin(0.5)
-      .setDepth(5)
-      .setAlpha(0);
-    this.tweens.add({ targets: [infoBtn, infoBtnGlyph], alpha: 1, duration: 380, delay: 420, ease: "Sine.Out" });
-    this.tweens.add({
-      targets: infoBtn,
-      alpha: { from: 0.78, to: 1 },
-      duration: 1500,
-      delay: 900,
-      yoyo: true,
-      repeat: -1,
-      ease: "Sine.InOut",
-    });
-    hoverPunch(infoBtn, () => 1, 1.28);
-    const openFieldManual = () => {
-      // TODO: open the field manual once it exists.
+      .setDepth(9600)
+      .setScrollFactor(0)
+      .setVisible(false);
+    const vizGfx = this.add.graphics().setDepth(9600).setScrollFactor(0).setVisible(false);
+    const vizLabels = statDefs.map(() =>
+      this.add
+        .text(vizX0, 0, "", { fontFamily: "Share Tech Mono, monospace", fontSize: "9px", color: "#aaa28f" })
+        .setDepth(9600)
+        .setScrollFactor(0)
+        .setVisible(false)
+    );
+    const drawDebugViz = (craft: (typeof crafts)[number]) => {
+      if (!vizVisible) return;
+      vizGfx.clear();
+      statDefs.forEach((stat, i) => {
+        const scale = statScales[i]!;
+        const y = vizY0 + i * vizRowH;
+        const barY = y + 12;
+        const barH = 6;
+        const span = Math.max(1e-9, scale.max - scale.min);
+        const toX = (v: number) => vizX0 + Phaser.Math.Clamp((v - scale.min) / span, 0, 1) * vizW;
+        const lowX0 = toX(scale.min);
+        const lowX1 = toX(scale.standardMin);
+        const stdX1 = toX(scale.standardMax);
+        const highX1 = toX(scale.max);
+        vizGfx.fillStyle(0x36404a, 0.9).fillRect(lowX0, barY, lowX1 - lowX0, barH);
+        vizGfx.fillStyle(0xe8b84a, 0.85).fillRect(lowX1, barY, stdX1 - lowX1, barH);
+        vizGfx.fillStyle(0x36404a, 0.9).fillRect(stdX1, barY, highX1 - stdX1, barH);
+        const medX = toX(scale.median);
+        vizGfx.lineStyle(1, 0xffffff, 0.9).lineBetween(medX, barY - 3, medX, barY + barH + 3);
+        crafts.forEach((c) => {
+          const v = stat.value(c);
+          const selected = c.kind === craft.kind;
+          vizGfx.fillStyle(selected ? 0xffffff : 0x12100c, selected ? 1 : 0.65);
+          vizGfx.fillCircle(toX(v), barY + barH / 2, selected ? 4 : 2);
+          vizGfx.lineStyle(1, selected ? 0xe8b84a : 0x1c1812, selected ? 1 : 0.5);
+          vizGfx.strokeCircle(toX(v), barY + barH / 2, selected ? 4 : 2);
+        });
+        vizLabels[i]!.setPosition(vizX0, y - 4).setText(
+          `${stat.label.padEnd(10)} min ${stat.fmt(scale.min)}  std [${stat.fmt(scale.standardMin)} .. ${stat.fmt(scale.standardMax)}]  max ${stat.fmt(scale.max)}  (madMul ${getThreeRegionMadMul().toFixed(2)})`
+        );
+      });
     };
-    infoBtn.on("pointerdown", openFieldManual);
+    this.input.keyboard?.on("keydown-FORWARD_SLASH", () => {
+      if (fieldManual.isOpen) return;
+      vizVisible = !vizVisible;
+      vizBg.setVisible(vizVisible);
+      vizTitle.setVisible(vizVisible);
+      vizGfx.setVisible(vizVisible);
+      vizLabels.forEach((l) => l.setVisible(vizVisible));
+      refreshSelection();
+    });
 
-    const colHalf = (craftW + 260) / 2 - 14;
-    const statLabelX = craftX - colHalf;
-    const statBarX = statLabelX + 122;
     this.add
-      .text(statLabelX, statsHeaderY, "FLIGHT PROFILE", {
+      .text(infoX0 + boxPadX, craftHeaderY, "FLIGHT PROFILE", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "9px",
         color: "#aaa28f",
@@ -448,9 +571,16 @@ export class MenuScene extends Phaser.Scene {
         strokeThickness: 2,
       })
       .setDepth(3);
-    statDefs.forEach((stat, i) => {
+    const statsRow0 = craftHeaderY + 28;
+    const statRowH = 30;
+    const statLabelX = infoX0 + boxPadX;
+    const statBarX0 = statLabelX + 62;
+    const statBarX1 = infoX1 - boxPadX - 42;
+    const statValueX = infoX1 - boxPadX;
+    const statValueTexts = statDefs.map((stat, i) => {
+      const y = statsRow0 + i * statRowH;
       this.add
-        .text(statLabelX, statsRow0 + i * 20, stat.label, {
+        .text(statLabelX, y, stat.label, {
           fontFamily: "Share Tech Mono, monospace",
           fontSize: "10px",
           color: "#d8d0ba",
@@ -459,9 +589,20 @@ export class MenuScene extends Phaser.Scene {
         })
         .setOrigin(0, 0.5)
         .setDepth(3);
+      return this.add
+        .text(statValueX, y, "", {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: "10px",
+          color: "#f2d579",
+          stroke: "#1c1812",
+          strokeThickness: 2,
+        })
+        .setOrigin(1, 0.5)
+        .setDepth(3);
     });
+    const roleY = statsRow0 + statDefs.length * statRowH;
     this.add
-      .text(statLabelX, statsRow0 + statDefs.length * 20, "ROLE", {
+      .text(statLabelX, roleY, "ROLE", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "10px",
         color: "#d8d0ba",
@@ -471,36 +612,102 @@ export class MenuScene extends Phaser.Scene {
       .setOrigin(0, 0.5)
       .setDepth(3);
     const roleTxt = this.add
-      .text(statBarX, statsRow0 + statDefs.length * 20, "", {
+      .text(statValueX, roleY, "", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "10px",
         color: "#f2d579",
         stroke: "#1c1812",
         strokeThickness: 2,
       })
-      .setOrigin(0, 0.5)
+      .setOrigin(1, 0.5)
       .setDepth(3);
+    const statsBottom = roleY + statRowH / 2;
     const statBars = this.add.graphics().setDepth(3);
     const drawStatBars = (craft: (typeof crafts)[number]) => {
       statBars.clear();
-      const segments = 8;
-      const segmentW = 11;
-      const segmentH = 6;
-      const segmentGap = 3;
-      statDefs.forEach((stat, statI) => {
-        const filled = Math.max(1, Math.round((stat.value(craft) / stat.max) * segments));
-        const y = statsRow0 - 3 + statI * 20;
+      const segments = 10;
+      const barW = statBarX1 - statBarX0;
+      const segGap = 2;
+      const segW = (barW - segGap * (segments - 1)) / segments;
+      statDefs.forEach((stat, i) => {
+        const y = statsRow0 + i * statRowH;
+        statValueTexts[i]!.setText(stat.fmt(stat.value(craft)));
+        const norm = threeRegionNorm(stat.value(craft), statScales[i]!);
+        const filled = Math.max(1, Math.round((norm / 10) * segments));
         for (let segment = 0; segment < segments; segment++) {
-          const x = statBarX + segment * (segmentW + segmentGap);
-          statBars.fillStyle(segment < filled ? 0xe8b84a : 0x302b22, segment < filled ? 0.96 : 0.82);
-          statBars.fillRoundedRect(x, y, segmentW, segmentH, 2);
-          statBars.lineStyle(1, segment < filled ? 0xf2d579 : 0x5d5544, 0.7);
-          statBars.strokeRoundedRect(x, y, segmentW, segmentH, 2);
+          const x = statBarX0 + segment * (segW + segGap);
+          const heat = statHeatColor(segment / (segments - 1));
+          statBars.fillStyle(segment < filled ? heat : 0x302b22, segment < filled ? 0.96 : 0.82);
+          statBars.fillRoundedRect(x, y - 3, segW, 6, 2);
+          statBars.lineStyle(1, segment < filled ? heat : 0x5d5544, segment < filled ? 0.9 : 0.7);
+          statBars.strokeRoundedRect(x, y - 3, segW, 6, 2);
         }
       });
     };
 
-    const weaponX = craftX - colHalf;
+    // —— Craft-strip more-info zone: LOADOUT, one row per weapon + countermeasure. ——
+    const maxWeaponSlots = Math.max(4, ...crafts.map((c) => c.sockets.length));
+    const loadoutHeaderY = craftHeaderY;
+    const loadoutRow0 = loadoutHeaderY + 26;
+    const loadoutBottom = loadoutRow0 + (maxWeaponSlots + 1) * 20 + 10;
+    // Extra bottom padding reserves room for the MORE INFO button pinned in this corner.
+    const panelBottom = Math.max(statsBottom, loadoutBottom) + 42;
+    const panelPad = 16;
+    const panelBg = this.add
+      .rectangle(
+        (infoX0 + moreInfoX1) / 2,
+        (craftHeaderY - panelPad + panelBottom) / 2,
+        moreInfoX1 - infoX0,
+        panelBottom - (craftHeaderY - panelPad),
+        0x0b0a08,
+        0.76
+      )
+      .setStrokeStyle(1, 0x554c39, 0.65)
+      .setDepth(2)
+      .setAlpha(0);
+    this.tweens.add({ targets: panelBg, alpha: 1, duration: 420, delay: 260, ease: "Sine.Out" });
+
+    // —— Field manual button, pinned to the stats panel's lower-right corner. ——
+    const infoBtn = this.add
+      .text(moreInfoX1 - 14, panelBottom - 14, "MORE INFO  ›", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "11px",
+        color: "#1c1812",
+        backgroundColor: "#e8b84a",
+        padding: { x: 10, y: 5 },
+      })
+      .setOrigin(1, 1)
+      .setDepth(4)
+      .setAlpha(0)
+      .setScale(0.9)
+      .setInteractive({ useHandCursor: true });
+    this.tweens.add({ targets: infoBtn, alpha: 1, scale: 1, duration: 380, delay: 420, ease: "Back.Out" });
+    infoBtn.on("pointerover", () => {
+      infoBtn.setStyle({ backgroundColor: "#f2d579" });
+      this.tweens.add({ targets: infoBtn, scale: 1.06, duration: 120, ease: "Back.Out" });
+    });
+    infoBtn.on("pointerout", () => {
+      infoBtn.setStyle({ backgroundColor: "#e8b84a" });
+      this.tweens.add({ targets: infoBtn, scale: 1, duration: 140, ease: "Sine.Out" });
+    });
+    const fieldManual = new FieldManual(this, {
+      craftBrowsable: true,
+      onCraftChange: (kind) => {
+        const idx = crafts.findIndex((c) => c.kind === kind);
+        if (idx < 0) return;
+        craftIndex = idx;
+        row = 0;
+        refreshSelection();
+      },
+    });
+    const openFieldManual = () => fieldManual.toggle(true);
+    infoBtn.on("pointerdown", openFieldManual);
+    this.input.keyboard?.on("keydown-H", () => fieldManual.toggle());
+    this.input.keyboard?.on("keydown-ESC", () => {
+      if (fieldManual.isOpen) fieldManual.close();
+    });
+
+    const weaponX = moreInfoX0 + boxPadX;
     this.add
       .text(weaponX, loadoutHeaderY, "LOADOUT", {
         fontFamily: "Share Tech Mono, monospace",
@@ -511,7 +718,7 @@ export class MenuScene extends Phaser.Scene {
       })
       .setDepth(3);
     this.add
-      .text(weaponX + colHalf * 2, loadoutHeaderY, "AMMO", {
+      .text(moreInfoX1 - boxPadX, loadoutHeaderY, "AMMO", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "9px",
         color: "#aaa28f",
@@ -520,7 +727,7 @@ export class MenuScene extends Phaser.Scene {
       })
       .setOrigin(1, 0)
       .setDepth(3);
-    const rowW = colHalf * 2;
+    const rowW = moreInfoX1 - boxPadX - weaponX;
     const makeLoadoutRow = (y: number, alt: boolean) => {
       const frame = this.add
         .rectangle(weaponX + rowW / 2, y, rowW, 17, alt ? 0x15120d : 0x1b1710, 0.78)
@@ -562,22 +769,29 @@ export class MenuScene extends Phaser.Scene {
         .setDepth(4);
       return { frame, slot, name, crew, ammo };
     };
-    const maxLoadoutSlots = maxWeaponSlots;
-    const weaponRows = Array.from({ length: maxLoadoutSlots }, (_, i) =>
+    const weaponRows = Array.from({ length: maxWeaponSlots }, (_, i) =>
       makeLoadoutRow(loadoutRow0 + i * 20, i % 2 === 1)
     );
-    const cmRow = makeLoadoutRow(loadoutRow0 + maxLoadoutSlots * 20, maxLoadoutSlots % 2 === 1);
+    const cmRow = makeLoadoutRow(loadoutRow0 + maxWeaponSlots * 20, maxWeaponSlots % 2 === 1);
 
-    // —— Right column, stacked below the mission carousel: briefing, then custom params. ——
-    const briefingY = missionDotsY + 36;
+    // —— Map-strip info zone: BRIEFING. ——
+    this.add
+      .text(infoX0, mapHeaderY, "BRIEFING", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "9px",
+        color: "#aaa28f",
+        stroke: "#1c1812",
+        strokeThickness: 2,
+      })
+      .setDepth(3);
     const detailTxt = this.add
-      .text(missionX, briefingY, "", {
+      .text(infoCenterX, mapHeaderY + 24, "", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "12px",
         color: "#d8d0ba",
         align: "center",
         lineSpacing: 5,
-        wordWrap: { width: 420 },
+        wordWrap: { width: infoW - 12 },
         stroke: "#1c1812",
         strokeThickness: 3,
       })
@@ -586,6 +800,7 @@ export class MenuScene extends Phaser.Scene {
       .setAlpha(0);
     this.tweens.add({ targets: detailTxt, alpha: 1, duration: 420, delay: 340, ease: "Sine.Out" });
 
+    // —— Map-strip more-info zone: MISSION PARAMETERS, custom-map controls only — blank otherwise. ——
     const customMission = missions.find((mission) => mission.kind === "custom")!;
     const customProfile = customMission.profile;
     const forceMixes = ["mixed", "naval", "heavy"] as const;
@@ -657,11 +872,21 @@ export class MenuScene extends Phaser.Scene {
         },
       },
     ];
-    const customParamsY0 = briefingY + 96;
+    const customParamsHeader = this.add
+      .text(moreInfoX0, mapHeaderY, "MISSION PARAMETERS", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "9px",
+        color: "#aaa28f",
+        stroke: "#1c1812",
+        strokeThickness: 2,
+      })
+      .setDepth(3);
+    const customParamsY0 = mapHeaderY + 30;
+    const customParamCol = 85;
     const customParamCards = customParams.map((param, i) => {
-      const col = i % 3;
-      const line = (i / 3) | 0;
-      const x = missionX - 168 + col * 168;
+      const col = i % 2;
+      const line = (i / 2) | 0;
+      const x = moreInfoCenterX + (col === 0 ? -customParamCol : customParamCol);
       const y = customParamsY0 + line * 27;
       const frame = this.add.rectangle(x, y, 158, 23, 0x0b0a08, 0.86).setDepth(2);
       const minus = this.add
@@ -701,6 +926,7 @@ export class MenuScene extends Phaser.Scene {
     function syncCustomParams(): void {
       const visible = missions[missionIndex]!.kind === "custom";
       const focused = row - 3;
+      customParamsHeader.setVisible(visible);
       customParamCards.forEach((card, i) => {
         const isFocused = visible && i === focused;
         card.frame
@@ -725,7 +951,10 @@ export class MenuScene extends Phaser.Scene {
     }
 
     const thisScene = this;
+    let firstSync = true;
+    let lastCraftIndex = -1;
     const refreshSelection = () => {
+      const animate = !firstSync;
       const craft = crafts[craftIndex]!;
       const mission = missions[missionIndex]!;
       if (row >= 3 && mission.kind !== "custom") row = 1;
@@ -735,125 +964,49 @@ export class MenuScene extends Phaser.Scene {
       missionHeader.setColor(row === 1 ? "#e8b84a" : "#8f8774");
       const helpFocused = row === 2;
       panelBg.setStrokeStyle(helpFocused ? 2 : 1, helpFocused ? 0xe8b84a : 0x554c39, helpFocused ? 1 : 0.65);
-      infoBtn.setStrokeStyle(helpFocused ? 2.5 : 1.5, 0xe8b84a, 0.9);
+      infoBtn.setStyle({ backgroundColor: helpFocused ? "#f2d579" : "#e8b84a" }).setScale(helpFocused ? 1.06 : 1);
+
       craftCards.forEach((card, i) => {
-        const selected = i === craftIndex;
-        const justSelected = selected && !card.wasSelected;
-        card.wasSelected = selected;
-        const popAlpha = justSelected ? 0 : 1;
+        const offset = ringOffset(i, craftIndex, crafts.length);
+        const focused = offset === 0;
+        applyRing(card.frame, craftX, craftCardY, offset, 1, animate, RING_LAYER.frame);
+        applyRing(card.art, craftX, craftCardY - 8, offset, card.artScale, animate, RING_LAYER.art);
+        applyRing(card.label, craftX, craftLabelY, offset, 1, animate, RING_LAYER.label, focused ? 1 : 0);
         card.frame
-          .setVisible(selected)
-          .setPosition(craftX, cardY)
-          .setScale(1.05)
-          .setDepth(7)
-          .setAlpha(popAlpha)
-          .setFillStyle(0x241e10, 0.96)
-          .setStrokeStyle(row === 0 ? 3 : 2, 0xe8b84a, 1);
-        card.art
-          .setVisible(selected)
-          .setPosition(craftX, cardY - 8)
-          .setScale(Math.min(1, card.artScale * 1.05))
-          .setDepth(8)
-          .setAlpha(popAlpha);
-        // Live-object bevel glow (same shader as in-mission units) on the selected airframe only.
-        if (selected) applyEdgeLight(card.art, 0, 0.42);
-        else clearEdgeLight(card.art);
-        const fadeTargets: Phaser.GameObjects.GameObject[] = [card.frame, card.art, card.label];
-        card.rotors.forEach((rotor, rotorI) => {
-          const part = card.rotorParts[rotorI]!;
-          const at = spriteUvPos(card.art, part.mount.x, part.mount.y);
-          const sc = craftCompositePartScale(part, rotor.width, card.art.scaleX);
-          const along = card.rotorAlong;
-          const wrap = rotor.getData("tiltWrap") as Phaser.GameObjects.Container | undefined;
-          if (wrap?.scene) {
-            wrap
-              .setVisible(selected)
-              .setPosition(at.x, at.y)
-              .setScale(sc, sc * along)
-              .setDepth(9)
-              .setAlpha(popAlpha);
-            rotor.setPosition(0, 0).setScale(1).setVisible(selected).setAlpha(1);
-            fadeTargets.push(wrap);
-          } else {
-            rotor
-              .setVisible(selected)
-              .setPosition(at.x, at.y)
-              .setScale(sc)
-              .setDepth(9)
-              .setAlpha(popAlpha);
-            fadeTargets.push(rotor);
-          }
-        });
-        card.exhaustGlows.forEach((glow, exhaustI) => {
-          const mount = card.exhaustMounts[exhaustI]!;
-          const at = spriteUvPos(card.art, mount.x, mount.y);
-          const glowSc = craftPreviewExhaustScale(card.art.scaleX);
-          glow
-            .setVisible(selected)
-            .setPosition(at.x, at.y)
-            .setScale(glowSc.x, glowSc.y)
-            .setDepth(8.5);
-        });
-        card.label
-          .setVisible(selected)
-          .setPosition(craftX, craftLabelY)
-          .setScale(1)
-          .setDepth(10)
-          .setAlpha(popAlpha)
-          .setColor("#f2d579");
-        if (justSelected) {
-          this.tweens.add({ targets: fadeTargets, alpha: 1, duration: 260, ease: "Sine.Out" });
-          card.frame.setScale(0.94);
-          this.tweens.add({ targets: card.frame, scale: 1.05, duration: 240, ease: "Back.Out" });
-        }
+          .setFillStyle(0x0c0b09, focused ? 1 : 0.7)
+          .setStrokeStyle(focused && row === 0 ? 3 : 1, focused ? 0xe8b84a : 0x5d5544, focused ? 1 : 0.8);
       });
       craftDots.forEach((dot, i) =>
         dot
           .setFillStyle(i === craftIndex ? 0xe8b84a : 0x5d5544, i === craftIndex ? 1 : 0.9)
           .setScale(i === craftIndex ? 1.45 : 1)
       );
+      if (craftIndex !== lastCraftIndex) {
+        lastCraftIndex = craftIndex;
+        syncCraftFocus(craft);
+      }
+
       missionCards.forEach((card, i) => {
-        const selected = i === missionIndex;
-        const justSelected = selected && !card.wasSelected;
-        card.wasSelected = selected;
-        const popAlpha = justSelected ? 0 : 1;
+        const offset = ringOffset(i, missionIndex, missions.length);
+        const focused = offset === 0;
+        applyRing(card.frame, missionX, missionCardY, offset, 1, animate, RING_LAYER.frame);
+        applyRing(card.art, missionX, missionCardY, offset, card.artScale, animate, RING_LAYER.art);
+        applyRing(card.label, missionX, missionLabelY, offset, 1, animate, RING_LAYER.label, focused ? 1 : 0);
         card.frame
-          .setVisible(selected)
-          .setPosition(missionX, cardY)
-          .setScale(1)
-          .setDepth(7)
-          .setAlpha(popAlpha)
-          .setFillStyle(0x241e10, 0.96)
-          .setStrokeStyle(row === 1 ? 3 : 2, 0xe8b84a, 1);
-        card.art
-          .setVisible(selected)
-          .setPosition(missionX, cardY)
-          .setScale(card.artScaleX, card.artScaleY)
-          .setDepth(8)
-          .setAlpha(popAlpha);
-        // Live-object bevel glow (same shader as in-mission units) on the selected theater only.
-        if (selected) applyEdgeLight(card.art, 0, 0.35);
+          .setFillStyle(0x0b0a08, focused ? 1 : 0.75)
+          .setStrokeStyle(focused && row === 1 ? 3 : 1, focused ? 0xe8b84a : 0x5d5544, focused ? 1 : 0.8);
+        if (focused) applyEdgeLight(card.art, 0, 0.35);
         else clearEdgeLight(card.art);
-        card.label
-          .setVisible(selected)
-          .setPosition(missionX, missionLabelY)
-          .setScale(1)
-          .setDepth(10)
-          .setAlpha(popAlpha)
-          .setColor("#f2d579");
-        if (justSelected) {
-          this.tweens.add({ targets: [card.frame, card.art, card.label], alpha: 1, duration: 260, ease: "Sine.Out" });
-          card.frame.setScale(0.94);
-          this.tweens.add({ targets: card.frame, scale: 1, duration: 240, ease: "Back.Out" });
-        }
       });
       missionDots.forEach((dot, i) =>
         dot
           .setFillStyle(i === missionIndex ? 0xe8b84a : 0x5d5544, i === missionIndex ? 1 : 0.9)
           .setScale(i === missionIndex ? 1.45 : 1)
       );
+
       const weapons = playerLoadoutFromSockets(craft.sockets);
       drawStatBars(craft);
+      drawDebugViz(craft);
       roleTxt.setText(craft.role.toUpperCase());
       weaponRows.forEach((row, i) => {
         const weapon = weapons[i];
@@ -866,7 +1019,9 @@ export class MenuScene extends Phaser.Scene {
         if (!weapon) return;
         row.slot.setText(String(i + 1)).setColor("#e8b84a");
         const parts = craftLoadoutParts(craft, i, weapon.fullName);
-        row.name.setText(parts.base);
+        // Launches a remote craft rather than firing a shot — flag it right on the name.
+        const isRemote = !!weapon.payload.remote;
+        row.name.setText(isRemote ? `▸ ${parts.base}` : parts.base).setColor(isRemote ? "#f2c94e" : "#d8d0ba");
         if (parts.crew) {
           row.crew
             .setText(parts.crew)
@@ -887,6 +1042,7 @@ export class MenuScene extends Phaser.Scene {
       cmRow.ammo.setVisible(true).setPosition(weaponX + rowW, cmY).setText(countermeasureTimingLabel(cm)).setColor("#8ec8e8");
       detailTxt.setText(mission.briefing);
       syncCustomParams();
+      firstSync = false;
     };
 
     // Custom map options only count as UP/DOWN stops while a custom mission is selected.
@@ -944,7 +1100,12 @@ export class MenuScene extends Phaser.Scene {
     };
     go.on("pointerdown", deploy);
     // ENTER/SPACE activate whatever currently has focus: help, or deploy from anywhere else.
+    // While the field manual modal is open, it owns all of these — the menu underneath freezes.
     const activate = () => {
+      if (fieldManual.isOpen) {
+        fieldManual.activateFocus();
+        return;
+      }
       if (row === 2) openFieldManual();
       else deploy();
     };
@@ -952,17 +1113,25 @@ export class MenuScene extends Phaser.Scene {
     this.input.keyboard?.on("keydown-SPACE", activate);
 
     const selectUp = () => {
+      if (fieldManual.isOpen) {
+        fieldManual.nudgeFocus(-1);
+        return;
+      }
       const n = focusStopCount();
       row = (row - 1 + n) % n;
       refreshSelection();
     };
     const selectDown = () => {
+      if (fieldManual.isOpen) {
+        fieldManual.nudgeFocus(1);
+        return;
+      }
       const n = focusStopCount();
       row = (row + 1) % n;
       refreshSelection();
     };
-    const selectLeft = () => cycleSelection(-1);
-    const selectRight = () => cycleSelection(1);
+    const selectLeft = () => (fieldManual.isOpen ? fieldManual.nudgeTip(-1) : cycleSelection(-1));
+    const selectRight = () => (fieldManual.isOpen ? fieldManual.nudgeTip(1) : cycleSelection(1));
     this.input.keyboard?.on("keydown-UP", selectUp);
     this.input.keyboard?.on("keydown-DOWN", selectDown);
     this.input.keyboard?.on("keydown-LEFT", selectLeft);
