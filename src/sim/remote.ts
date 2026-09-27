@@ -487,7 +487,7 @@ const REMOTE_DEFS: Record<RemoteKind, RemoteDef> = {
     orbitRange: 150,
     mouseStopRange: 200,
     mouseLeashRange: 420,
-    hostEscort: { innerRadius: 140, outerRadius: 260 },
+    hostEscort: { innerRadius: 280, outerRadius: 520 },
   },
 };
 

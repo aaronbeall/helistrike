@@ -1178,7 +1178,7 @@ const CRAFTS_DEFS = {
     rotOff: Math.PI / 2,
     // Tough hauler: Chinook-class armor feel, sluggish turn / strafe — lumbering escort pace.
     // Reverse is weak — big VTOL backs up carefully.
-    forwardThrust: 360, reverseThrust: 180, strafeThrust: 160, maxSpeed: 150, maxReverseSpeed: 70, minSpeed: 0, yawRate: 0.85, yawAccel: 3.6, drag: 1.9,
+    forwardThrust: 360, reverseThrust: 180, strafeThrust: 160, maxSpeed: 160, maxReverseSpeed: 70, minSpeed: 0, yawRate: 1.0, yawAccel: 4.2, drag: 1.9,
     verticalThrust: 380, cruiseThrust: 36, cruiseAgl: 70, maxAgl: 180,
     liftClass: "heavy",
     exhaustProfile: {
@@ -1202,13 +1202,14 @@ const CRAFTS_DEFS = {
         class: "turret",
         controller: "automatic",
         weapon: "minigun",
-        // One HUD slot; AI aims each barrel independently. All three face forward.
+        // One HUD slot; AI aims each barrel independently. Full-circle traverse each, but
+        // preferred headings split so they don't all crowd the same forward targets.
         points: [
-          { id: "side_l", hullPlacement: "below" },
-          { id: "side_r", hullPlacement: "below" },
-          { id: "dorsal", hullPlacement: "above" },
+          { id: "side_l", heading: -45, hullPlacement: "below" },
+          { id: "side_r", heading: 45, hullPlacement: "below" },
+          { id: "dorsal", heading: 0, hullPlacement: "above" },
         ],
-        traverse: 240,
+        traverse: 360,
         muzzleFire: "simultaneous",
         gunScale: 0.5,
         crew: "door",
