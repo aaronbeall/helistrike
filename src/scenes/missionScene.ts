@@ -19346,6 +19346,27 @@ specIsShellGun(spec)
   }
 
   /**
+   * Wounded troops bleed toward death past the downed floor. HV troops never bleed out;
+   * others only expire once off screen. Returns true if the unit died.
+   */
+  tickBleedOut(u: Unit, dt: number): boolean {
+    const rate = u.health <= 1 ? 0.028 : 0.05;
+    u.health -= u.max * rate * dt;
+    if (u.hv) {
+      u.health = Math.max(u.health, 0.5);
+      return false;
+    }
+    if (u.health > 0) return false;
+    const at = worldToScreen(u.x, u.y, u.z);
+    if (cameraPointVisible(u.z, u.y) && this.projectedInView(at.x, at.y, 24)) {
+      u.health = 0.01;
+      return false;
+    }
+    this.destroyUnit(u, true);
+    return true;
+  }
+
+  /**
    * No AI: no drive, turn, turret track, or fire. Existing velocity / spin coasts with friction.
    */
   tickStunnedUnit(u: Unit, dt: number): void {
@@ -19355,14 +19376,7 @@ specIsShellGun(spec)
     const sp = specOf(u.kind);
     if (sp.dish) u.rotor += 0.55 * dt;
     if (sp.rotors.length) u.rotor += (sp.rotorSpinRate ?? 28) * dt;
-    if (sp.organic && u.health < u.max) {
-      const rate = u.health <= 1 ? 0.028 : 0.05;
-      u.health -= u.max * rate * dt;
-      if (u.health <= 0) {
-        this.destroyUnit(u, true);
-        return;
-      }
-    }
+    if (sp.organic && u.health < u.max && this.tickBleedOut(u, dt)) return;
     if ((sp.behavior === "orbit_attack_heli" || sp.behavior === "kite_attack_heli") || sp.behavior === "suicide_attack_heli") {
       u.x += u.vx * dt;
       u.y += u.vy * dt;
@@ -19607,15 +19621,7 @@ specIsShellGun(spec)
         }
         if ((sp.behavior === "attack_infantry" || sp.behavior === "flee_infantry") && !this.snapHost(u)) {
           const canShoot = !!sp.weapon;
-          if (sp.organic && u.health < u.max) {
-            // Keep bleeding past the downed floor so they eventually expire quietly.
-            const rate = u.health <= 1 ? 0.028 : 0.05;
-            u.health -= u.max * rate * dt;
-            if (u.health <= 0) {
-              this.destroyUnit(u, true);
-              continue;
-            }
-          }
+          if (sp.organic && u.health < u.max && this.tickBleedOut(u, dt)) continue;
           const seeR = this.enemyAwareReach(400, vision);
           const screenR = this.scale.width / Math.max(this.cameras.main.zoom, 0.001);
           const wounded = u.health < u.max;
