@@ -529,6 +529,8 @@ const CRAFTS_DEFS: Record<CraftKind, Omit<CraftSpec, "kind">> = {
         class: "hardpoint",
         controller: "pilot",
         weapon: "heavy_bomb",
+        // Side stub bays only — not the tail cargo_ramp.
+        points: [{ id: "hardpoint0" }, { id: "hardpoint1" }],
         bombDrop: { momentum: 0.28, maxBoost: 240, loft: 130, loftMax: 230 },
       },
       {
@@ -536,6 +538,8 @@ const CRAFTS_DEFS: Record<CraftKind, Omit<CraftSpec, "kind">> = {
         class: "hardpoint",
         controller: "pilot",
         weapon: "cluster_bomb",
+        // Side stub bays only — not the tail cargo_ramp.
+        points: [{ id: "hardpoint0" }, { id: "hardpoint1" }],
         bombDrop: { momentum: 0.28, maxBoost: 240, loft: 130, loftMax: 230 },
       },
       // Ramp gun faces aft.

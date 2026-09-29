@@ -11038,6 +11038,13 @@ specIsShellGun(spec)
     }
   }
 
+  /** Track print darkness: soft/hard ground patches by world position, plus per-print jitter. */
+  trackPrintAlpha(base: number, x: number, y: number): number {
+    const patch = 0.5 + 0.5 * Math.sin(x * 0.011 + y * 0.017) * Math.sin(x * 0.023 - y * 0.013 + 1.3);
+    // Only lightens: the darkest print matches the old uniform `base`.
+    return Phaser.Math.Clamp(base * Phaser.Math.Linear(0.25, 1, patch) * range(0.65, 1), 0.06, base);
+  }
+
   /** Tank-track prints sized to the HOUND hull. */
   stampRemoteTracks(r: RemoteCraft, _dt: number, x0: number, y0: number): void {
     const kind = r.spec.track;
@@ -11054,13 +11061,15 @@ specIsShellGun(spec)
       const t = step > 0 ? Phaser.Math.Clamp(dist / step, 0, 1) : 1;
       const key = `fx_track_${kind}`;
       const back = r.spec.radius * 0.55;
+      const px = Phaser.Math.Linear(x0, r.x, t) - Math.cos(r.angle) * back;
+      const py = Phaser.Math.Linear(y0, r.y, t) - Math.sin(r.angle) * back;
       this.stampWreck(
         this.textures.exists(key) ? key : "fx_track_mono",
-        Phaser.Math.Linear(x0, r.x, t) - Math.cos(r.angle) * back,
-        Phaser.Math.Linear(y0, r.y, t) - Math.sin(r.angle) * back,
+        px,
+        py,
         r.angle + Math.PI / 2,
         sc,
-        0.65
+        this.trackPrintAlpha(0.65, px, py)
       );
     }
     r.track = ((r.track ?? 0) + step) % printGap;
@@ -18473,7 +18482,8 @@ specIsShellGun(spec)
     const sOff = Math.min(smokeOff, fireOff - 1.25);
     const fOff = Math.max(fireOff, sOff + 1.25);
     const sd = this.fxBandDepth(smokeSlot.band, sOff);
-    const fd = this.fxBandDepth(fireSlot.band, fOff);
+    // Lift flame one band so smoke left in the neighbouring band (trail crossing bands) stays under it.
+    const fd = this.fxBandDepth(fireSlot.band, fOff) + this.fxBandH;
     if (smoke.depth !== sd) smoke.setDepth(sd);
     if (fire.depth !== fd) fire.setDepth(fd);
     return { fire, smoke };
@@ -19309,13 +19319,15 @@ specIsShellGun(spec)
         const t = step > 0 ? Phaser.Math.Clamp(dist / step, 0, 1) : 1;
         const key = `fx_track_${d.track}`;
         const back = specOf(u.kind).radius * 0.72;
+        const px = Phaser.Math.Linear(trackX0, u.x, t) - Math.cos(u.angle) * back;
+        const py = Phaser.Math.Linear(trackY0, u.y, t) - Math.sin(u.angle) * back;
         this.stampWreck(
           this.textures.exists(key) ? key : "fx_track_mono",
-          Phaser.Math.Linear(trackX0, u.x, t) - Math.cos(u.angle) * back,
-          Phaser.Math.Linear(trackY0, u.y, t) - Math.sin(u.angle) * back,
+          px,
+          py,
           u.angle + Math.PI / 2,
           d.trackScale * 0.85,
-          0.7
+          this.trackPrintAlpha(0.7, px, py)
         );
       }
       u.track = (u.track + step) % printGap;
@@ -22255,8 +22267,9 @@ specIsShellGun(spec)
     this.miniWrecks.setDisplaySize(WORLD * s, WORLD * s);
     this.miniWrecks.setPosition(this.miniTerrain.x, this.miniTerrain.y);
     this.miniGfx.clear();
+    const rimR = 90;
     this.miniGfx.lineStyle(2, 0xe8b84a, 0.85);
-    this.miniGfx.strokeCircle(cx, cy, 90);
+    this.miniGfx.strokeCircle(cx, cy, rimR);
     this.miniGfx.lineStyle(1, 0xe8b84a, 0.2);
     this.miniGfx.strokeCircle(cx, cy, 45);
     const toMap = (x: number, y: number) => ({
@@ -22275,17 +22288,13 @@ specIsShellGun(spec)
     for (const r of this.remotes) {
       if (r.detonate || r.dock) continue;
       const p = toMap(r.x, r.y);
-      // Yellow diamond — player drones / remotes only. Off-radar stays locked to
-      // the rim on heading, shrinking with range instead of disappearing.
-      if (inRing(p)) {
-        this.drawMiniDiamond(p.x, p.y, 4.5, mark);
-      } else {
-        const ang = Math.atan2(p.y - cy, p.x - cx);
-        const rim = { x: cx + Math.cos(ang) * (mapR - 6), y: cy + Math.sin(ang) * (mapR - 6) };
-        const over = Math.hypot(r.x - this.player.x, r.y - this.player.y) - span / 2;
-        const size = Phaser.Math.Clamp(4.5 - over / 150, 1.5, 4.5);
-        this.drawMiniDiamond(rim.x, rim.y, size, mark);
-      }
+      // Yellow diamond — player drones / remotes only. Clamped onto the rim line when
+      // off-radar (continuous with the in-ring position, no shrink).
+      const dx = p.x - cx;
+      const dy = p.y - cy;
+      const d = Math.hypot(dx, dy);
+      const k = d > rimR ? rimR / d : 1;
+      this.drawMiniDiamond(cx + dx * k, cy + dy * k, 4.5, mark);
     }
     for (const shot of this.shots) {
       if (!shotShowsOnRadar(shot)) continue;
