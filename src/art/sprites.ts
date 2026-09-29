@@ -137,27 +137,27 @@ const CRAFT_ART: { key: string; file: string; fit: number; rotor?: boolean; keyP
   { key: "craft_quad_drone_rotor_hulk", file: "sprites/craft/quad-drone-rotor-hulk.png", fit: 20, rotor: true },
   { key: "craft_cobra", file: "sprites/craft/cobra.png", fit: 104 },
   { key: "craft_cobra_hulk", file: "sprites/craft/cobra-hulk.png", fit: 104 },
-  { key: "craft_cobra_rotor", file: "sprites/craft/cobra-rotor.png", fit: 120, rotor: true },
+  { key: "craft_cobra_rotor", file: "sprites/craft/cobra-rotor.png", fit: 134, rotor: true },
   { key: "craft_cobra_rotor_hulk", file: "sprites/craft/cobra-rotor-hulk.png", fit: 80, rotor: true },
   { key: "craft_viper", file: "sprites/craft/viper.png", fit: 104 },
   { key: "craft_viper_hulk", file: "sprites/craft/viper-hulk.png", fit: 104 },
-  { key: "craft_viper_rotor", file: "sprites/craft/viper-rotor.png", fit: 120, rotor: true },
+  { key: "craft_viper_rotor", file: "sprites/craft/viper-rotor.png", fit: 134, rotor: true },
   { key: "craft_viper_rotor_hulk", file: "sprites/craft/viper-rotor-hulk.png", fit: 80, rotor: true },
   { key: "craft_blackhawk", file: "sprites/craft/blackhawk.png", fit: 132 },
   { key: "craft_blackhawk_hulk", file: "sprites/craft/blackhawk-hulk.png", fit: 132 },
-  { key: "craft_blackhawk_rotor", file: "sprites/craft/blackhawk-rotor.png", fit: 130, rotor: true },
+  { key: "craft_blackhawk_rotor", file: "sprites/craft/blackhawk-rotor.png", fit: 151, rotor: true },
   { key: "craft_blackhawk_rotor_hulk", file: "sprites/craft/blackhawk-rotor-hulk.png", fit: 80, rotor: true },
   { key: "craft_chinook", file: "sprites/craft/chinook.png", fit: 155 },
   { key: "craft_chinook_hulk", file: "sprites/craft/chinook-hulk.png", fit: 155 },
-  { key: "craft_chinook_rotor", file: "sprites/craft/chinook-rotor.png", fit: 130, rotor: true },
+  { key: "craft_chinook_rotor", file: "sprites/craft/chinook-rotor.png", fit: 168, rotor: true },
   { key: "craft_chinook_rotor_hulk", file: "sprites/craft/chinook-rotor-hulk.png", fit: 80, rotor: true },
   { key: "craft_osprey", file: "sprites/craft/osprey.png", fit: 143 },
   { key: "craft_osprey_hulk", file: "sprites/craft/osprey-hulk.png", fit: 143 },
-  { key: "craft_osprey_rotor", file: "sprites/craft/osprey-rotor.png", fit: 100, rotor: true },
+  { key: "craft_osprey_rotor", file: "sprites/craft/osprey-rotor.png", fit: 106, rotor: true },
   { key: "craft_osprey_rotor_hulk", file: "sprites/craft/osprey-rotor-hulk.png", fit: 70, rotor: true },
   { key: "craft_stealthhawk", file: "sprites/craft/stealthhawk.png", fit: 120 },
   { key: "craft_stealthhawk_hulk", file: "sprites/craft/stealthhawk-hulk.png", fit: 120 },
-  { key: "craft_stealthhawk_rotor", file: "sprites/craft/stealthhawk-rotor.png", fit: 130, rotor: true },
+  { key: "craft_stealthhawk_rotor", file: "sprites/craft/stealthhawk-rotor.png", fit: 134, rotor: true },
   { key: "craft_stealthhawk_rotor_hulk", file: "sprites/craft/stealthhawk-rotor-hulk.png", fit: 80, rotor: true },
   { key: "craft_cyberhawk", file: "sprites/craft/cyberhawk.png", fit: 120 },
   { key: "craft_cyberhawk_hulk", file: "sprites/craft/cyberhawk-hulk.png", fit: 120 },
@@ -183,7 +183,7 @@ const CRAFT_ART: { key: string; file: string; fit: number; rotor?: boolean; keyP
   { key: "craft_reaper_hulk", file: "sprites/craft/reaper-hulk.png", fit: 150 },
   { key: "craft_hover_tank", file: "sprites/craft/hover-tank.png", fit: 92 },
   { key: "craft_hover_tank_hulk", file: "sprites/craft/hover-tank-hulk.png", fit: 92 },
-  { key: "craft_hover_tank_turret", file: "sprites/craft/hover-tank-turret.png", fit: 54 },
+  { key: "craft_hover_tank_turret", file: "sprites/craft/hover-tank-turret.png", fit: 84 },
   { key: "craft_hound", file: "sprites/craft/hound.png", fit: 72 },
   { key: "craft_humvee", file: "sprites/craft/humvee.png", fit: 84 },
   { key: "craft_humvee_hulk", file: "sprites/craft/humvee-hulk.png", fit: 84 },
@@ -660,7 +660,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   const rotors = splitRotorSheet(keyPixels(src(textures, "src_enemy_rotors"), "magenta"));
   // Hub-centered square (axis at canvas middle) — required for spin-blur registration.
   // Sheet cell 0 unused (Apache rotor is CRAFT_ART); cell 1 = enemy heli.
-  const enemyRotor = fit(squareCenter(rotors[1]!), 108);
+  const enemyRotor = fit(squareCenter(rotors[1]!), 135);
   put(textures, "enemy_heli_rotor", enemyRotor);
   put(textures, "enemy_heli_rotor_spin", radialStampBlur(enemyRotor, spritePivot("enemy_heli_rotor")), "generated");
 

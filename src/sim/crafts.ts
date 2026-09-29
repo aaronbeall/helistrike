@@ -1062,8 +1062,8 @@ const CRAFTS_DEFS: Record<CraftKind, Omit<CraftSpec, "kind">> = {
         fireRateMul: 0.48,
         gunTex: "craft_hover_tank_turret",
         hullPlacement: "above",
-        // Cupola rail — print larger than the coax MG on the same mount.
-        gunScale: 1.35,
+        // Cupola rail — print larger than the coax MG on the same mount (bake 84px → ~1:1 draw).
+        gunScale: 0.868,
         // Kick opposite turret aim (not hull heading).
         recoil: true,
       },
@@ -1211,7 +1211,7 @@ const CRAFTS_DEFS: Record<CraftKind, Omit<CraftSpec, "kind">> = {
         points: [{ id: "main" }],
         traverse: 360,
         gunTex: "craft_humvee_turret",
-        gunScale: 0.9,
+        gunScale: 1.0,
         hullPlacement: "above",
       },
     ],
