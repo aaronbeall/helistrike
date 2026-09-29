@@ -19,7 +19,7 @@ export interface CraftPreviewOverrides {
    * onboard gun that differs from whatever's in the underlying hull's own socket loadout — the
    * hull is just borrowed for flight/sockets, not what's actually mounted on this specific unit.
    */
-  gun?: { tex?: string; scale?: number };
+  gun?: { tex?: string; scale?: number; hullScale?: number };
 }
 
 export interface CraftPreviewOverlay {
@@ -64,7 +64,11 @@ export function buildCraftPreviewOverlay(
     const origin = gunOverrideTex ? spritePivot(gunOverrideTex) : part.origin;
     const img = scene.add.image(0, 0, tex).setOrigin(origin.x, origin.y).setRotation(part.heading ?? 0);
     const isOverride = overrides?.gun != null;
-    const gunScale = isOverride ? (overrides!.gun!.scale ?? sock?.gunScale ?? 1) : (sock?.gunScale ?? 1);
+    // In-mission a remote's hull draws at spec.scale × zoom but its gun at gunScale × zoom, so the
+    // gun is gunScale / spec.scale of the hull — divide by the hull's scale to keep that ratio here.
+    const gunScale = isOverride
+      ? (overrides!.gun!.scale ?? sock?.gunScale ?? 1) / (overrides!.gun!.hullScale || 1)
+      : (sock?.gunScale ?? 1);
     return { img, part, gunScale, isOverride };
   });
 

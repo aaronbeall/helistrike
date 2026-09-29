@@ -1,14 +1,16 @@
 /** Launched craft pods — Spectre, airship wingmen/fighter, HOUND AGV.
  *
- * Remotes are their own roster (`REMOTE_DEFS` → `remoteSpecOf`).
+ * Remotes are their own roster (`REMOTES` → `remoteSpecOf`).
  * Hull / flight / sockets live on a CraftSpec (`craftLook`); this file only authors
- * lifecycle (battery, dock, AI flags, host escort) plus optional overrides
- * (scale, look art, fragile health, skiff skin, …).
+ * lifecycle (battery, dock, AI flags, host escort), plus a rare hull-field override.
  */
 import {
   allCrafts,
   craftFirepower,
   craftOf,
+  craftRotorMounts,
+  craftRotorTex,
+  craftRotorSpinTex,
   craftSocketFirepower,
   craftSocketStartingAmmo,
   rotorDrawSpan,
@@ -24,29 +26,27 @@ import {
   playerWeaponClassMul,
   type PlayerWpnSpec,
   type UnitClass,
-  type WpnId,
 } from "./combat";
-import type { TrackKind } from "./roster";
-import { lookupSpriteOrigin, lookupSpritePoints } from "../art/spriteOrigin";
+import { lookupSpriteOrigin } from "../art/spriteOrigin";
 
-export type RemoteKind = "spectre" | "wingman" | "fighter" | "agv";
+// Manually declared, not `keyof typeof REMOTES` like CraftKind/WpnId — Craft (sockets
+// reference WpnId) → Weapon (payload.remote references RemoteKind) → Remote (craftLook
+// references CraftKind) form a genuine 3-way cycle; one link has to be a plain leaf type
+// or none of the three can resolve. This is the smallest/lowest-churn catalog, so it's it.
+export type RemoteKind = "drone" | "wingman" | "fighter" | "agv" | "ground_escort" | "ugv";
 
 /**
- * Resolved remote — always complete for gameplay.
- * Built by `remoteSpecOf` from authored defs + optional craft hull.
- * Flight / control scheme live on `craftLook` (`craftOf`).
+ * Resolved remote — a `CraftSpec` (same physical hull data a player craft uses: flight,
+ * sockets, art, ...) plus the deployed-instance lifecycle/AI layer that has no player
+ * equivalent. Built by `mergeRemoteDef` from an authored def + its `craftLook` hull; `kind`
+ * is the one field that must narrow (a `RemoteKind`, not the hull's own `CraftKind`).
  */
-export interface RemoteSpec {
+export interface RemoteSpec extends CraftSpec {
   kind: RemoteKind;
-  name: string;
-  health: number;
-  radius: number;
-  height: number;
   life: number;
   detonateDmg: number;
   detonateBlast: number;
   launchSpeed: number;
-  look: string;
   scale: number;
   thermal?: boolean;
   /** AI patrols / attacks without player pilot. */
@@ -57,6 +57,12 @@ export interface RemoteSpec {
   dockable?: boolean;
   /** Ground-hugging AGV — clamps to terrain. */
   ground?: boolean;
+  /**
+   * Manned, fully autonomous fire-support escort AI (HUMVEE) — tight leash-follow on the
+   * host when idle, orbit-attacks between host and target when engaged — instead of the
+   * default ground+gun mouse-park AI (HOUND). Never `pilotable`.
+   */
+  orbitEscort?: boolean;
   /**
    * Fixed-gun boom-pass AI (Skiff): line up → fire → overshoot → turn.
    * Without this, sensor-net air AI uses a strafe ring (Raptor).
@@ -69,40 +75,16 @@ export interface RemoteSpec {
    * orbit-preferring (Skiffs → Raptor), else the host craft.
    */
   orbitPreferRemote?: boolean;
-  /** Bird-cam Q recalls every live remote with this flag (Skiff scramble home). */
-  recallWithQ?: boolean;
   /**
-   * POV remotes with their own weapon HUD (HOUND / Raptor).
-   * From craft hull when `pilotable`, unless overridden.
+   * Auto-launches from the bay the instant a hostile enters the friendly awareness net,
+   * sharing its fire cooldown with manual launch (Skiff wolfpack scramble). Not the same as
+   * `dockable` — every dockable remote recalls home on bird-cam Q, but only this one self-deploys.
    */
-  sockets?: CraftSocket[];
-  /** Capacity scale for `sockets` (default hull ammoScale). */
-  ammoScale?: number;
-  /** Onboard gun for AI / turret overlay (defaults to first turret socket). */
-  gun?: WpnId;
-  /** Gun sprite key (defaults to weapon mount art). */
-  gunTex?: string;
-  gunScale?: number;
-  /** Ground track prints. */
-  track?: TrackKind;
-  trackGap?: number;
-  trackScale?: number;
-  /**
-   * Elastic whip antenna — base UV role `antenna` on `look`.
-   * Tip springs upright (Z + slight aft) and wobbles with thrust / yaw.
-   */
-  antenna?: {
-    /** Rest height above the mount (world Z). */
-    length?: number;
-    /** Rest tip bias aft along −heading (world). */
-    aft?: number;
-    stiffness?: number;
-    damping?: number;
-    /** Extra yaw-rate whip (rad/s → tip kick). */
-    yawWhip?: number;
-    /** Linear accel lag (tip resists base motion). */
-    lag?: number;
-  };
+  autoLaunch?: boolean;
+  // `sockets` (real weapon mounts — always populated regardless of `pilotable`; only a
+  // `pilotable` remote shows them as a POV weapon HUD, see `remoteHasPovHud`), `ammoScale`,
+  // `track`/`trackGap`/`trackScale`, `antenna`, `rotOff`, `gunOverlayScale`, `sensorPalette`,
+  // and everything else physical all inherit from `CraftSpec` — nothing to redeclare here.
   /** AI engage / fire radius. */
   engageRange?: number;
   /** AI orbit radius around a locked hostile (strafe ring). */
@@ -111,6 +93,18 @@ export interface RemoteSpec {
   awareRange?: number;
   /** Idle escort ring around host (airship / raptor), beyond host radius. */
   escortRange?: number;
+  /** Ground-escort idle follow: rest within this radius of host, no active repositioning. */
+  followInnerRadius?: number;
+  /** Ground-escort idle follow: beyond this radius (still no target), actively catches back up to host. */
+  followOuterRadius?: number;
+  /** Ground-escort: while pursuing/engaging a target, max allowed distance from host. */
+  pursueRadius?: number;
+  /** Ground-escort attack orbit: circle radius as a fraction of the host↔target distance. */
+  attackOrbitFrac?: number;
+  /** Ground-escort attack orbit: 0 = circle centered on host, 1 = centered on target (bias along the host→target line). */
+  attackBias?: number;
+  /** Ground-escort attack orbit: minimum standoff kept between the circle's nearest edge and the target. */
+  attackStandoff?: number;
   /**
    * When piloting this POV remote, the host craft escorts it.
    * Follow keeps within outerRadius (seeks innerRadius when outside);
@@ -136,8 +130,6 @@ export interface RemoteSpec {
   hostFace?: boolean;
   /** CraftKind hull for flight / sockets / silhouette. */
   craftLook: CraftKind;
-  /** Nose-up art offset override (defaults from hull). */
-  rotOff?: number;
 }
 
 /**
@@ -153,39 +145,70 @@ type RemoteDef = {
   launchSpeed: number;
   scale: number;
   craftLook: CraftKind;
-  /** Override hull body art (e.g. Skiff skin on biplane flight). */
-  look?: string;
-  health?: number;
-  radius?: number;
-  height?: number;
   thermal?: boolean;
   ai?: boolean;
   pilotable?: boolean;
   dockable?: boolean;
   ground?: boolean;
+  orbitEscort?: boolean;
   attackPass?: boolean;
   sensorNet?: boolean;
   orbitPreferRemote?: boolean;
-  recallWithQ?: boolean;
+  autoLaunch?: boolean;
   sockets?: CraftSocket[];
-  ammoScale?: number;
-  gun?: WpnId;
-  gunTex?: string;
-  gunScale?: number;
-  track?: TrackKind;
-  trackGap?: number;
-  trackScale?: number;
   antenna?: RemoteSpec["antenna"];
   engageRange?: number;
   orbitRange?: number;
   awareRange?: number;
   escortRange?: number;
+  followInnerRadius?: number;
+  followOuterRadius?: number;
+  pursueRadius?: number;
+  attackOrbitFrac?: number;
+  attackBias?: number;
+  attackStandoff?: number;
   hostEscort?: RemoteSpec["hostEscort"];
   mouseStopRange?: number;
   mouseLeashRange?: number;
   hostFace?: boolean;
-  rotOff?: number;
+  /**
+   * Rare one-off overrides of hull-derived fields — every remote today just inherits these
+   * from its `craftLook` hull. Give the hull the right values instead, if you can.
+   */
+  overrides?: Partial<
+    Pick<RemoteSpec, "health" | "radius" | "height" | "body" | "ammoScale" | "track" | "trackGap" | "trackScale" | "rotOff">
+  >;
 };
+
+export type EscortNavState = "FOLLOW" | "PARKED" | "ATTACK" | "AVOID" | "REVERSE";
+
+export interface EscortNav {
+  state: EscortNavState;
+  /** True while catching up to the host (holds until inside the inner radius). */
+  follow: boolean;
+  /** Pursued world point + raw goal heading vs avoidance-adjusted heading (debug). */
+  goalX: number;
+  goalY: number;
+  rawWant: number;
+  steerWant: number;
+  /** Lookahead probe end point and whether it is blocked (debug). */
+  probeX: number;
+  probeY: number;
+  probeHit: boolean;
+  throttle: number;
+  /** -1 left, 0 straight, 1 right (input intent). */
+  steer: number;
+  /** Seconds left holding an away-turn after a probe hit, and its side (+1 obstacle on the right). */
+  avoidT: number;
+  avoidOs: number;
+  /** Accumulated no-progress time, progress sampler, and the active unstick reverse. */
+  stuckT: number;
+  sampleT: number;
+  lastX: number;
+  lastY: number;
+  reverseT: number;
+  reverseSteer: number;
+}
 
 export interface RemoteCraft {
   id: number;
@@ -245,6 +268,8 @@ export interface RemoteCraft {
   aimHoldT?: number;
   /** Target id `aimHoldT` was last accumulated against — reset the hold when this changes. */
   aimHoldTargetId?: number;
+  /** Ground-escort movement state: avoidance, unstick, and debug readout. */
+  nav?: EscortNav;
   /**
    * Skiff attack-pass FSM: `run` lines up fixed guns and fires;
    * `break` coasts outbound past the target, then turns for another pass.
@@ -266,25 +291,7 @@ export interface RemoteCraft {
 
 /** True when this remote replaces the player weapon HUD while piloted. */
 export function remoteHasPovHud(spec: RemoteSpec): boolean {
-  return !!spec.sockets?.length;
-}
-
-/** Socket capacity — same barrel × ammoMul rules as `craftSocketStartingAmmo`. */
-export function remoteSocketStartingAmmo(
-  baseAmmo: number,
-  spec: RemoteSpec,
-  socketIndex: number
-): number {
-  const hull = remoteHull(spec);
-  return craftSocketStartingAmmo(
-    baseAmmo,
-    {
-      ...hull,
-      ammoScale: spec.ammoScale ?? hull.ammoScale,
-      sockets: spec.sockets ?? hull.sockets,
-    },
-    socketIndex
-  );
+  return !!spec.pilotable && spec.sockets.length > 0;
 }
 
 /** Build / refresh live loadout + ammo from authored sockets. */
@@ -298,41 +305,30 @@ export function initRemoteLoadout(r: RemoteCraft): void {
     return;
   }
   r.loadout = playerLoadoutFromSockets(sockets);
-  r.ammo = r.loadout.map((w, i) => remoteSocketStartingAmmo(w.ammo, r.spec, i));
+  // `r.spec` is itself a complete CraftSpec (extends it) — no hull refetch needed.
+  r.ammo = r.loadout.map((w, i) => craftSocketStartingAmmo(w.ammo, r.spec, i));
   r.weapon = 0;
   r.fireCd = 0;
 }
 
-/** AI gun id — authored `gun`, else turret, else first fixed socket (Raptor nose guns). */
-export function remoteGunId(spec: RemoteSpec): WpnId | undefined {
-  if (spec.gun) return spec.gun;
-  const turret = spec.sockets?.find((s) => s.class === "turret");
-  if (turret?.weapon) return turret.weapon;
-  return spec.sockets?.find((s) => s.class === "fixed")?.weapon;
-}
+// Gun socket/id/art/scale lookups (craftTurretSocket, craftGunId, craftGunTex, craftGunScale,
+// ...) moved to crafts.ts — they're pure CraftSpec derivations with nothing remote-specific
+// about them, and the player-craft render path needs the exact same math (see
+// craftSocketGunScale's use in missionScene.ts's syncHeliGfx).
 
 /**
  * Spinning rotor overlays for a remote — only when the look sprite authors
  * `role: "rotor"` UVs and `craftLook` supplies a rotor texture.
  * (No inventing a center disc; HOUND has neither → empty.)
+ * Same math as craftComposite's rotors branch — spec has its own rotor/rotorScale via inheritance.
  */
 export function remoteRotorParts(spec: RemoteSpec): CraftCompositePart[] {
-  if (!spec.craftLook) return [];
-  const hull = craftOf(spec.craftLook);
-  const rotorTex = hull.rotor;
+  const rotorTex = craftRotorTex(spec);
   if (!rotorTex) return [];
-  const mounts = lookupSpritePoints(spec.look)
-    .filter((p) => p.role === "rotor")
-    .map((p) => ({
-      x: p.x,
-      y: p.y,
-      ...(p.scale != null ? { scale: p.scale } : {}),
-      ...(p.id != null ? { id: p.id } : {}),
-      ...(p.spin === 1 || p.spin === -1 ? { spin: p.spin as 1 | -1 } : {}),
-    }));
+  const mounts = craftRotorMounts(spec).filter((p) => p.role === "rotor");
   if (!mounts.length) return [];
   const origin = lookupSpriteOrigin(rotorTex) ?? { x: 0.5, y: 0.5 };
-  const spinTex = `${rotorTex}_spin`;
+  const spinTex = craftRotorSpinTex(spec);
   return mounts.map((mount, i) => ({
     kind: "rotor" as const,
     tex: rotorTex,
@@ -341,7 +337,7 @@ export function remoteRotorParts(spec: RemoteSpec): CraftCompositePart[] {
     mount: { x: mount.x, y: mount.y },
     layer: "above" as const,
     spinSign: rotorSpinSign(mounts, i),
-    drawSpan: rotorDrawSpan(rotorTex, (hull.rotorScale ?? 1) * (mount.scale ?? 1)),
+    drawSpan: rotorDrawSpan(rotorTex, (spec.rotorScale ?? 1) * (mount.scale ?? 1)),
   }));
 }
 
@@ -355,58 +351,17 @@ export function remoteRotorPoolSize(): number {
 }
 
 function mergeRemoteDef(def: RemoteDef): RemoteSpec {
-  const hull = craftOf(def.craftLook);
-  // POV loadout: pilotable remotes inherit hull sockets unless overridden.
-  const sockets =
-    def.sockets ?? (def.pilotable ? hull.sockets : undefined);
-  const turret = sockets?.find((s) => s.class === "turret");
-  return {
-    kind: def.kind,
-    name: def.name,
-    health: def.health ?? hull.health,
-    radius: def.radius ?? hull.radius,
-    height: def.height ?? hull.height,
-    life: def.life,
-    detonateDmg: def.detonateDmg,
-    detonateBlast: def.detonateBlast,
-    launchSpeed: def.launchSpeed,
-    look: def.look ?? hull.body,
-    scale: def.scale,
-    thermal: def.thermal,
-    ai: def.ai,
-    pilotable: def.pilotable,
-    dockable: def.dockable,
-    ground: def.ground,
-    attackPass: def.attackPass,
-    sensorNet: def.sensorNet,
-    orbitPreferRemote: def.orbitPreferRemote,
-    recallWithQ: def.recallWithQ,
-    sockets,
-    ammoScale: def.ammoScale ?? hull.ammoScale,
-    // Gun overlay is turret-only; fixed hull muzzles fire from body UVs (see remoteFireTips).
-    gun: def.gun ?? turret?.weapon,
-    gunTex: def.gunTex ?? turret?.gunTex,
-    gunScale: def.gunScale ?? turret?.gunScale,
-    track: def.track ?? hull.track,
-    trackGap: def.trackGap ?? hull.trackGap,
-    trackScale: def.trackScale ?? hull.trackScale,
-    antenna: def.antenna,
-    engageRange: def.engageRange,
-    orbitRange: def.orbitRange,
-    awareRange: def.awareRange,
-    escortRange: def.escortRange,
-    hostEscort: def.hostEscort,
-    mouseStopRange: def.mouseStopRange,
-    mouseLeashRange: def.mouseLeashRange,
-    hostFace: def.hostFace,
-    craftLook: def.craftLook,
-    rotOff: def.rotOff ?? hull.rotOff,
-  };
+  // `sockets` (part of the hull spread) is the hull's real weapon mounts regardless of
+  // `pilotable` — piloting is a behavior switch (does the player fly it), not a change to
+  // what's physically mounted. Gun weapon/art (craftGunId/craftGunTex/craftGunScale, in
+  // crafts.ts) are derived from `sockets` on demand, not stored here — one source, not two.
+  return { ...craftOf(def.craftLook), ...def, ...def.overrides };
 }
 
 /**
- * CraftSpec for a remote — always the `craftLook` hull.
- * Prefer this over reading kinematics off RemoteSpec.
+ * The pristine `craftLook` hull, with its real `CraftKind` (e.g. "skiff", not the remote's own
+ * `"wingman"` roster kind). `spec` already carries every physical stat via inheritance — only
+ * reach for this when the true hull kind itself is what's needed (texture/asset-key lookups).
  */
 export function remoteHull(spec: RemoteSpec): CraftSpec & { kind: CraftKind } {
   return craftOf(spec.craftLook);
@@ -416,12 +371,9 @@ export function remoteHull(spec: RemoteSpec): CraftSpec & { kind: CraftKind } {
  * Authored remote roster — lifecycle + overrides only.
  * Hull / flight / default sockets come from `craftLook`.
  */
-const REMOTE_DEFS: Record<RemoteKind, RemoteDef> = {
-  spectre: {
-    kind: "spectre",
+const REMOTE_DEFS: Record<RemoteKind, Omit<RemoteDef, "kind">> = {
+  drone: {
     name: "SPECTRE",
-    // Fragile vs Murder Hornet hull health.
-    health: 28,
     life: 45,
     detonateDmg: 258,
     detonateBlast: 140,
@@ -431,9 +383,7 @@ const REMOTE_DEFS: Record<RemoteKind, RemoteDef> = {
     craftLook: "spectre",
   },
   wingman: {
-    kind: "wingman",
     name: "SKIFF",
-    health: 36,
     life: 90,
     detonateDmg: 40,
     detonateBlast: 48,
@@ -445,14 +395,12 @@ const REMOTE_DEFS: Record<RemoteKind, RemoteDef> = {
     attackPass: true,
     sensorNet: true,
     orbitPreferRemote: true,
-    recallWithQ: true,
-    gun: "machine_gun",
+    autoLaunch: true,
     orbitRange: 160,
     awareRange: 560,
     escortRange: 200,
   },
   fighter: {
-    kind: "fighter",
     name: "RAPTOR",
     life: 75,
     detonateDmg: 120,
@@ -471,7 +419,6 @@ const REMOTE_DEFS: Record<RemoteKind, RemoteDef> = {
     escortRange: 240,
   },
   agv: {
-    kind: "agv",
     name: "HOUND",
     life: 600,
     detonateDmg: 180,
@@ -485,17 +432,67 @@ const REMOTE_DEFS: Record<RemoteKind, RemoteDef> = {
     antenna: { length: 11, aft: 1.8, stiffness: 28, damping: 2.8, yawWhip: 10, lag: 1.6 },
     engageRange: 320,
     orbitRange: 150,
-    mouseStopRange: 200,
+    mouseStopRange: 80,
     mouseLeashRange: 420,
-    hostEscort: { innerRadius: 280, outerRadius: 520 },
+    hostEscort: { innerRadius: 220, outerRadius: 380 },
+  },
+  ground_escort: {
+    name: "HUMVEE",
+    life: 480,
+    detonateDmg: 110,
+    detonateBlast: 60,
+    launchSpeed: 220,
+    scale: 0.4,
+    craftLook: "humvee",
+    ai: true,
+    ground: true,
+    // Manned, fully autonomous fire-support escort — never pilotable. Tight leash-follow
+    // on the host when idle, orbits a point between host and target when engaged.
+    orbitEscort: true,
+    // Live deployed units still count as available "ammo" on the HUD (dropped only on loss).
+    dockable: true,
+    antenna: { length: 9, aft: 1.6, stiffness: 26, damping: 2.6, yawWhip: 9, lag: 1.4 },
+    awareRange: 480,
+    followInnerRadius: 90,
+    followOuterRadius: 220,
+    pursueRadius: 500,
+    attackOrbitFrac: 0.5,
+    attackBias: 0.75,
+    attackStandoff: 60,
+  },
+  ugv: {
+    name: "WOLF",
+    // Heavier hull than the Hound's fantasy sci-fi loadout, but a lighter, no-frills
+    // real-world weapons fit and no countermeasure — same manned/pilotable, mouse-park-
+    // when-autonomous behavior as the Hound.
+    life: 560,
+    detonateDmg: 165,
+    detonateBlast: 85,
+    launchSpeed: 220,
+    scale: 0.44,
+    craftLook: "wolf",
+    ai: true,
+    pilotable: true,
+    ground: true,
+    engageRange: 320,
+    orbitRange: 150,
+    mouseStopRange: 80,
+    mouseLeashRange: 420,
+    hostEscort: { innerRadius: 220, outerRadius: 380 },
   },
 };
 
+const REMOTES: Record<RemoteKind, RemoteDef> = Object.fromEntries(
+  Object.entries(REMOTE_DEFS).map(([kind, def]) => [kind, { ...def, kind }])
+) as Record<RemoteKind, RemoteDef>;
+
 const RESOLVED: Record<RemoteKind, RemoteSpec> = {
-  spectre: mergeRemoteDef(REMOTE_DEFS.spectre),
-  wingman: mergeRemoteDef(REMOTE_DEFS.wingman),
-  fighter: mergeRemoteDef(REMOTE_DEFS.fighter),
-  agv: mergeRemoteDef(REMOTE_DEFS.agv),
+  drone: mergeRemoteDef(REMOTES.drone),
+  wingman: mergeRemoteDef(REMOTES.wingman),
+  fighter: mergeRemoteDef(REMOTES.fighter),
+  agv: mergeRemoteDef(REMOTES.agv),
+  ground_escort: mergeRemoteDef(REMOTES.ground_escort),
+  ugv: mergeRemoteDef(REMOTES.ugv),
 };
 
 export function remoteSpecOf(kind: RemoteKind): RemoteSpec {
@@ -503,7 +500,7 @@ export function remoteSpecOf(kind: RemoteKind): RemoteSpec {
 }
 
 export function allRemoteKinds(): RemoteKind[] {
-  return Object.keys(REMOTE_DEFS) as RemoteKind[];
+  return Object.keys(REMOTES) as RemoteKind[];
 }
 
 /**
@@ -516,7 +513,7 @@ export function allRemoteKinds(): RemoteKind[] {
  * the socket's ammo count. A remote with no sockets of its own (the Spectre kamikaze drone,
  * `sockets: []`) has no separate loadout to add — its launcher's `dmg` already *is* the full
  * detonation, so it falls through to the normal per-socket calc unchanged. Lives here rather than
- * in craft.ts because it needs `remoteSpecOf`/`remoteHull`, which would circularly import craft.ts.
+ * in craft.ts because it needs `remoteSpecOf`, which would circularly import craft.ts.
  */
 export function craftFirepowerWithRemotes(c: CraftSpec): { total: number; byClass: Record<UnitClass, number> } {
   let total = 0;
@@ -525,10 +522,9 @@ export function craftFirepowerWithRemotes(c: CraftSpec): { total: number; byClas
     const w = PLAYER_WPNS[socket.weapon];
     if (!w) return;
     const spec = w.payload.remote ? remoteSpecOf(w.payload.remote.kind) : undefined;
-    const hull = spec ? remoteHull(spec) : undefined;
-    if (spec && hull && hull.sockets.length > 0) {
+    if (spec && spec.sockets.length > 0) {
       const count = spec.pilotable ? 1 : craftSocketStartingAmmo(w.ammo, c, i);
-      const deployed = craftFirepower(hull);
+      const deployed = craftFirepower(spec);
       total += count * deployed.total;
       (Object.keys(byClass) as UnitClass[]).forEach((cls) => {
         byClass[cls] += count * deployed.byClass[cls];

@@ -4,10 +4,13 @@ import {
   craftComposite,
   craftCompositePartScale,
   craftExhaustMounts,
+  craftGunId,
   craftGunMountForBarrel,
   craftGunMounts,
   craftGunOrigin,
   craftGunPreferDegrees,
+  craftGunScale,
+  craftGunTex,
   craftKind,
   craftOf,
   craftOrigin,
@@ -482,7 +485,7 @@ export class RosterRig {
   private layoutRemotePreview(remote: RemoteSpec): void {
     const w = this.scene.scale.width;
     const h = this.scene.scale.height;
-    const tex = remote.look;
+    const tex = remote.body;
     const listRight = LIST_X + LIST_W + 20;
     const gap = 28;
     const block = formatRemote(remote);
@@ -522,19 +525,20 @@ export class RosterRig {
       });
     }
 
-    if (remote.gun && remote.gunTex && this.scene.textures.exists(remote.gunTex)) {
+    const remoteGunKey = craftGunTex(remote);
+    if (craftGunId(remote) && remoteGunKey && this.scene.textures.exists(remoteGunKey)) {
       const gunPts = lookupSpritePoints(tex, "gun");
       const mount = gunPts[0] ?? { x: 0.5, y: 0.5 };
-      const gOrig = lookupSpriteOrigin(remote.gunTex) ?? { x: 0.5, y: 0.7 };
+      const gOrig = lookupSpriteOrigin(remoteGunKey) ?? { x: 0.5, y: 0.7 };
       // In-game: body uses `scale`, gun uses `gunScale` (both × perspective).
       // Roster hull is at zoom 1× — gun part scale must be gunScale/bodyScale.
       const bodySc = Math.max(0.01, remote.scale);
       parts.push({
-        tex: remote.gunTex,
+        tex: remoteGunKey,
         origin: gOrig,
         mount: { x: mount.x, y: mount.y },
         rot: 0,
-        scale: (remote.gunScale ?? 0.55) / bodySc,
+        scale: craftGunScale(remote) / bodySc,
         layer: "above",
       });
     }
@@ -1546,7 +1550,7 @@ function formatRemote(remote: RemoteSpec): { stats: string[]; info: string[] } {
   const stats = [
     ...dumpRig(remote, { format: formatRotOff }),
     ...dumpRig({
-      origin: lookupSpriteOrigin(remote.look) ?? spritePivot(remote.look),
+      origin: lookupSpriteOrigin(remote.body) ?? spritePivot(remote.body),
       ...(launchers.length
         ? {
             launchWeapons: launchers.map((w) => ({

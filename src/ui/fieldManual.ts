@@ -22,7 +22,9 @@ import {
   allCrafts,
   craftAgility,
   craftComposite,
+  craftGunScale,
   craftGunSocketSlots,
+  craftGunTex,
   craftSocketFireStreams,
   craftLoadoutParts,
   craftOf,
@@ -60,7 +62,6 @@ import { buildCraftPreviewOverlay, type CraftPreviewOverlay } from "./craftPrevi
 import {
   craftFirepowerRating,
   craftFirepowerWithRemotes,
-  remoteHull,
   remoteSpecOf,
   type RemoteKind,
   type RemoteSpec,
@@ -712,7 +713,7 @@ export class FieldManual {
     const inlayMargin = 4;
     const inlayY = previewY + this.previewBox.h / 2 - inlaySize / 2 - inlayMargin;
     this.craftRemoteInlays = remoteKinds.flatMap((kind, i) => {
-      const hull = remoteHull(remoteSpecOf(kind));
+      const hull = remoteSpecOf(kind);
       const hullOrigin = craftComposite(hull).body.origin;
       const inlayX = leftX + this.previewBox.w / 2 - inlaySize / 2 - inlayMargin - i * (inlaySize + inlayMargin);
       const frame = scene.add
@@ -1555,34 +1556,33 @@ export class FieldManual {
     // A remote-deploy weapon launches a craft, not a shot — show that craft's hull, not the
     // launcher's (unrelated) projectile art.
     const remoteSpec = weapon.payload.remote ? remoteSpecOf(weapon.payload.remote.kind) : undefined;
-    const remoteHullSpec = remoteSpec ? remoteHull(remoteSpec) : undefined;
 
     // Rendered at native size (no upscale) — small sprites should look crisp, not blurry.
-    const tex = isGun && gunTex ? gunTex : remoteHullSpec ? remoteHullSpec.body : weapon.art.look;
+    const tex = isGun && gunTex ? gunTex : remoteSpec ? remoteSpec.body : weapon.art.look;
     const cluster = weapon.payload.cluster;
     // Guns don't get an exhaust preview — the field's really a shot-in-flight trail.
     const exhaustForPreview = isGun ? undefined : weapon.exhaust;
     const origin =
       isGun && gunTex
         ? spritePivot(tex)
-        : remoteHullSpec
-          ? craftComposite(remoteHullSpec).body.origin
+        : remoteSpec
+          ? craftComposite(remoteSpec).body.origin
           : SHOT_ORIGIN;
-    const mainScale = isGun || remoteHullSpec ? 1 : weapon.art.scale;
-    const mainTint = !isGun && !remoteHullSpec ? weapon.art.tint : undefined;
-    if (remoteHullSpec) {
+    const mainScale = isGun || remoteSpec ? 1 : weapon.art.scale;
+    const mainTint = !isGun && !remoteSpec ? weapon.art.tint : undefined;
+    if (remoteSpec) {
       // It's a launched craft, not a static shot — the full preview system (body + rotors +
       // guns + exhaust glow), same as the main craft preview and menu carousel, not just the hull sprite.
-      const body = scene.add.image(this.rightX0 + this.rightW / 2, y + 34, remoteHullSpec.body).setOrigin(origin.x, origin.y);
+      const body = scene.add.image(this.rightX0 + this.rightW / 2, y + 34, remoteSpec.body).setOrigin(origin.x, origin.y);
       const fit = craftPreviewFitScale(body.width, body.height, 150, 66);
       body.setScale(fit);
-      // The hull is only borrowed for flight/sockets — the remote's own onboard gun (if any)
-      // can differ in art and scale from whatever the hull's own default loadout would show.
-      const gunOverride =
-        remoteSpec && (remoteSpec.gunTex != null || remoteSpec.gunScale != null)
-          ? { tex: remoteSpec.gunTex, scale: remoteSpec.gunScale }
-          : undefined;
-      const overlay = buildCraftPreviewOverlay(scene, body, remoteHullSpec, gunOverride ? { gun: gunOverride } : undefined);
+      // In-mission a remote's hull draws at spec.scale × zoom but its gun at craftGunScale ×
+      // zoom alone — the gun is craftGunScale / spec.scale of the hull. Divide by the
+      // remote's scale here to keep that same ratio in the preview.
+      const gunOverride = remoteSpec
+        ? { tex: craftGunTex(remoteSpec), scale: craftGunScale(remoteSpec), hullScale: remoteSpec.scale }
+        : undefined;
+      const overlay = buildCraftPreviewOverlay(scene, body, remoteSpec, gunOverride ? { gun: gunOverride } : undefined);
       overlay.below.forEach((p) => this.addDetail(p));
       this.addDetail(body);
       overlay.above.forEach((p) => this.addDetail(p));
@@ -1614,7 +1614,7 @@ export class FieldManual {
 
     // A remote-deploy weapon's own description is usually just controls ("Q recalls...") — fall
     // back to the deployed hull's flavor description, which is what actually sells the unit.
-    const description = weapon.description ?? remoteHullSpec?.description;
+    const description = weapon.description ?? remoteSpec?.description;
     if (description) {
       const desc = this.addDetail(
         scene.add
@@ -1653,8 +1653,8 @@ export class FieldManual {
 
     // A remote-deploy weapon is a launched craft, not a shot with damage/rate/DPS stats —
     // show the remote's own airframe stats and loadout instead.
-    if (remoteHullSpec) {
-      return this.buildRemoteDetail(y, remoteHullSpec, remoteSpec!);
+    if (remoteSpec) {
+      return this.buildRemoteDetail(y, remoteSpec);
     }
 
     // Stats appropriate to the weapon's delivery type, in the same rank-chart language as the
@@ -1699,7 +1699,7 @@ export class FieldManual {
    * weapon stats would normally go, and a loadout table (one column per onboard weapon, plus a
    * countermeasure column when it has one) where the damage-focus class bar would normally go.
    */
-  private buildRemoteDetail(y0: number, hull: CraftSpec, spec: RemoteSpec): number {
+  private buildRemoteDetail(y0: number, spec: RemoteSpec): number {
     const scene = this.scene;
     let y = y0;
 
@@ -1713,9 +1713,9 @@ export class FieldManual {
 
     const allCraftsList = allCrafts();
     const stats = [
-      { label: "SPEED", value: hull.maxSpeed, values: allCraftsList.map((c) => c.maxSpeed) },
-      { label: "AGILITY", value: craftAgility(hull), values: allCraftsList.map((c) => craftAgility(c)) },
-      { label: "SIZE", value: hull.sizeM, values: allCraftsList.map((c) => c.sizeM) },
+      { label: "SPEED", value: spec.maxSpeed, values: allCraftsList.map((c) => c.maxSpeed) },
+      { label: "AGILITY", value: craftAgility(spec), values: allCraftsList.map((c) => craftAgility(c)) },
+      { label: "SIZE", value: spec.sizeM, values: allCraftsList.map((c) => c.sizeM) },
       { label: "ARMOR", value: spec.health, values: allCraftsList.map((c) => c.health) },
     ];
     const labelX = this.rightX0;
@@ -1736,12 +1736,12 @@ export class FieldManual {
     const roleY = y + stats.length * rowH + 4;
     this.addDetail(scene.add.text(labelX, roleY, "ROLE", { fontFamily: MONO, fontSize: "10px", color: CREAM }).setOrigin(0, 0.5));
     this.addDetail(
-      scene.add.text(barX, roleY, hull.role.toUpperCase(), { fontFamily: MONO, fontSize: "10px", color: "#f2d579" }).setOrigin(0, 0.5)
+      scene.add.text(barX, roleY, spec.role.toUpperCase(), { fontFamily: MONO, fontSize: "10px", color: "#f2d579" }).setOrigin(0, 0.5)
     );
     y = roleY + rowH + 8;
 
-    const weapons = playerLoadoutFromSockets(hull.sockets);
-    const cm = hull.countermeasure ? COUNTERMEASURES[craftCountermeasure(hull.countermeasure)] : undefined;
+    const weapons = playerLoadoutFromSockets(spec.sockets);
+    const cm = spec.countermeasure ? COUNTERMEASURES[craftCountermeasure(spec.countermeasure)] : undefined;
     const colCount = weapons.length + (cm ? 1 : 0);
     if (colCount === 0) return y;
 
@@ -1775,16 +1775,16 @@ export class FieldManual {
       rows: StatCell[];
     };
     const table: TableCol[] = weapons.map((w, i) => {
-      const socket = hull.sockets[i];
+      const socket = spec.sockets[i];
       const isGunSocket = socket?.class === "turret" || socket?.class === "fixed";
       const gTex = socket ? socket.gunTex ?? weaponMountTex(socket.weapon) : undefined;
       const icon = isGunSocket && gTex ? gTex : w.art.look;
       const iconOrigin = isGunSocket && gTex ? spritePivot(icon) : SHOT_ORIGIN;
-      const mountMul = craftSocketFireStreams(hull, i) * (socket?.fireRateMul ?? 1);
+      const mountMul = craftSocketFireStreams(spec, i) * (socket?.fireRateMul ?? 1);
       // Per-barrel cadence, not multiplied by mount streams — DPS is where multi-barrel output shows up.
       const rofOf = (ww: PlayerWpnSpec) => 1 / Math.max(0.001, ww.fireCd);
       const thisDps = playerWeaponDps(w) * mountMul;
-      const capacity = craftSocketStartingAmmo(w.ammo, hull, i);
+      const capacity = craftSocketStartingAmmo(w.ammo, spec, i);
       const dmgRank = rankOf(w, (ww) => ww.dmg, w.dmg);
       const rofRank = rankOf(w, rofOf, rofOf(w));
       const dpsRank = rankOf(w, playerWeaponDps, thisDps);

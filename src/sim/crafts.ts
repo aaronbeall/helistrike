@@ -156,6 +156,36 @@ export interface CraftExhaustProfile {
   glowFollowsHull?: boolean;
 }
 
+// Manually declared, not `keyof typeof CRAFTS_DEFS` — see RemoteKind's comment in remote.ts
+// for why (Craft/Weapon/Remote form a 3-way reference cycle; each catalog's identifier type
+// must be a plain leaf, not derived from its own catalog's shape).
+export type CraftKind =
+  | "apache"
+  | "little_bird"
+  | "cobra"
+  | "viper"
+  | "blackhawk"
+  | "chinook"
+  | "osprey"
+  | "stealthhawk"
+  | "cyberhawk"
+  | "quad_drone"
+  | "spectre"
+  | "lightning_ii"
+  | "warthog"
+  | "gunship"
+  | "reaper"
+  | "prometheus"
+  | "skiff"
+  | "raptor"
+  | "hover_tank"
+  | "hound"
+  | "humvee"
+  | "wolf"
+  | "vtol_dropship"
+  | "airship"
+  | "biplane";
+
 export interface CraftSpec {
   /** Catalog key — must match the CRAFTS entry name. */
   kind: string;
@@ -179,6 +209,10 @@ export interface CraftSpec {
   cannonInherit?: boolean;
   /** Chin/turret overlay draw scale (cobra/viper 0.42). */
   gunOverlayScale?: number;
+  /** Ground hull steers like a wheeled car: yaw rate scales with signed forward speed (no pivoting in place). */
+  vehicleSteering?: boolean;
+  /** Forward speed (u/s) at which `vehicleSteering` reaches full `yawRate`. */
+  steerSpeedRef?: number;
   /**
    * Elastic whip antenna — base UV role `antenna` on the gun overlay (or body).
    * Tip springs upright and wobbles with hull / turret motion.
@@ -280,9 +314,8 @@ export interface CraftSpec {
 }
 
 /** Catalog of player-selectable craft. */
-const CRAFTS_DEFS = {
+const CRAFTS_DEFS: Record<CraftKind, Omit<CraftSpec, "kind">> = {
   apache: {
-    kind: "apache",
     name: "Apache",
     fullName: "AH-64E Apache",
     role: "Heavy Gunship",
@@ -308,7 +341,6 @@ const CRAFTS_DEFS = {
     ],
   },
   little_bird: {
-    kind: "little_bird",
     name: "Little Bird",
     fullName: "AH-6 Little Bird",
     role: "Knife Fighter",
@@ -351,7 +383,6 @@ const CRAFTS_DEFS = {
     ],
   },
   cobra: {
-    kind: "cobra",
     name: "Cobra",
     fullName: "AH-1 Cobra",
     role: "Agile Striker",
@@ -384,7 +415,6 @@ const CRAFTS_DEFS = {
     ],
   },
   viper: {
-    kind: "viper",
     name: "Viper",
     fullName: "AH-1Z Viper",
     role: "Strike Interceptor",
@@ -415,7 +445,6 @@ const CRAFTS_DEFS = {
     ],
   },
   blackhawk: {
-    kind: "blackhawk",
     name: "Black Hawk",
     fullName: "UH-60M Black Hawk",
     role: "Assault Transport",
@@ -456,7 +485,6 @@ const CRAFTS_DEFS = {
     ],
   },
   chinook: {
-    kind: "chinook",
     name: "Chinook",
     fullName: "CH-47F Chinook",
     role: "Heavy Ordnance",
@@ -520,10 +548,10 @@ const CRAFTS_DEFS = {
         traverse: 270,
         crew: "ramp",
       },
+      { id: "cargo_bay", class: "hardpoint", controller: "pilot", weapon: "humvee_drop", points: [{ id: "cargo_ramp" }], heading: 180, ammo: 2 },
     ],
   },
   osprey: {
-    kind: "osprey",
     name: "Osprey",
     fullName: "MV-22B Osprey",
     role: "Hybrid Assault",
@@ -564,10 +592,10 @@ const CRAFTS_DEFS = {
         traverse: 270,
         crew: "ramp",
       },
+      { id: "cargo_bay", class: "hardpoint", controller: "pilot", weapon: "wolf_drop", points: [{ id: "cargo_ramp" }], heading: 180, ammo: 1 },
     ],
   },
   stealthhawk: {
-    kind: "stealthhawk",
     name: "Stealth Hawk",
     fullName: "XH-60 Stealth Hawk",
     role: "Stealth Attack",
@@ -598,7 +626,6 @@ const CRAFTS_DEFS = {
     countermeasure: "emp",
   },
   cyberhawk: {
-    kind: "cyberhawk",
     name: "Cyber Hawk",
     fullName: "XH-88 Cyber Hawk",
     role: "High-tech Offensive",
@@ -631,7 +658,6 @@ const CRAFTS_DEFS = {
     sensorPalette: "full_spectrum",
   },
   quad_drone: {
-    kind: "quad_drone",
     name: "Murder Hornet",
     fullName: "MQ-27 Murder Hornet",
     role: "Kill Drone",
@@ -668,7 +694,6 @@ const CRAFTS_DEFS = {
   },
   // Kamikaze pod. Same quad-drone art as Murder Hornet, own slower flight. Not hangar-selectable.
   spectre: {
-    kind: "spectre",
     name: "Spectre",
     fullName: "SPECTRE DRONE",
     role: "Kamikaze Drone",
@@ -693,7 +718,6 @@ const CRAFTS_DEFS = {
     sockets: [],
   },
   lightning_ii: {
-    kind: "lightning_ii",
     name: "Lightning II",
     fullName: "F-35B Lightning II",
     role: "Fast Attack",
@@ -731,7 +755,6 @@ const CRAFTS_DEFS = {
     ],
   },
   warthog: {
-    kind: "warthog",
     name: "Warthog",
     fullName: "A-10C Warthog",
     role: "Tank Buster",
@@ -774,7 +797,6 @@ const CRAFTS_DEFS = {
     ],
   },
   gunship: {
-    kind: "gunship",
     name: "Gunship",
     fullName: "AC-130 Gunship",
     role: "Loiter Gunship",
@@ -835,7 +857,6 @@ const CRAFTS_DEFS = {
     sensorPalette: "black_hot",
   },
   reaper: {
-    kind: "reaper",
     name: "Reaper",
     fullName: "MQ-9 Reaper",
     role: "Loiter Hunter",
@@ -867,7 +888,6 @@ const CRAFTS_DEFS = {
     sensorPalette: "white_hot",
   },
   prometheus: {
-    kind: "prometheus",
     name: "Prometheus",
     fullName: "XV-99 Prometheus",
     role: "Alien Superweapon",
@@ -901,7 +921,6 @@ const CRAFTS_DEFS = {
   },
   // Leviathan wingman — remote-only hull (not hangar-selectable).
   skiff: {
-    kind: "skiff",
     name: "Skiff",
     fullName: "SKIFF Wingman",
     role: "Wingman Fighter",
@@ -937,7 +956,6 @@ const CRAFTS_DEFS = {
   // Steampunk fighter pod — same plane scheme as biplane; launched from Leviathan.
   // Not hangar-selectable — remote roster owns lifecycle (`remoteSpecOf("fighter")`).
   raptor: {
-    kind: "raptor",
     name: "Raptor",
     fullName: "Raptor Fighter",
     role: "Sky Leader",
@@ -1003,7 +1021,6 @@ const CRAFTS_DEFS = {
     enemyAwareMul: 0.62,
   },
   hover_tank: {
-    kind: "hover_tank",
     name: "Wraith",
     fullName: "MHT-7 Wraith",
     role: "Heavy Ground Assault",
@@ -1085,7 +1102,6 @@ const CRAFTS_DEFS = {
   // Dropship AGV pod — dirt-locked tank drive; same Craft path as other remotes.
   // Not hangar-selectable — remote roster owns lifecycle (`remoteSpecOf("agv")`).
   hound: {
-    kind: "hound",
     name: "Hound",
     fullName: "HOUND AGV",
     role: "Ground Escort",
@@ -1126,7 +1142,7 @@ const CRAFTS_DEFS = {
         points: [{ id: "main" }],
         traverse: 360,
         gunTex: "gun_minigun",
-        gunScale: 0.88,
+        gunScale: 0.78,
         hullPlacement: "above",
       },
       {
@@ -1155,8 +1171,109 @@ const CRAFTS_DEFS = {
     enemyAwareMul: 0.7,
     enemySeekerMul: 0.78,
   },
+  humvee: {
+    name: "Humvee",
+    fullName: "HUMVEE",
+    role: "Ground Recon/Fire Support",
+    description: "A manned fire-support escort deployed in pairs from the Chinook, holding tight to the flank and engaging hostiles at danger-close range.",
+    playable: false,
+    flightModel: "ground",
+    controlScheme: "orbit",
+    crushesInfantry: true,
+    sizeM: 3.6,
+    ammoScale: 0.9,
+    health: 90,
+    radius: 16,
+    height: 12,
+    body: "craft_humvee",
+    hulk: "craft_humvee_hulk",
+    gunOverlayScale: 0.85,
+    cameraScale: 0.75,
+    flatHull: true,
+    track: "tire",
+    trackGap: 10,
+    trackScale: 0.8,
+    rotOff: Math.PI / 2,
+    vehicleSteering: true,
+    steerSpeedRef: 60,
+    // Nimble wheeled scout — faster than the Hound, softer and single-armed.
+    forwardThrust: 280, reverseThrust: 180, strafeThrust: 0, maxSpeed: 150, maxReverseSpeed: 70, minSpeed: 0, yawRate: 2.0, yawAccel: 10, drag: 1.8,
+    verticalThrust: 180, cruiseThrust: 40, cruiseAgl: 3, maxAgl: 12,
+    exhaustProfile: {
+      rate: 5, speed: 14, tint: 0x5c5c58, smoke: 0x5c5c58, sx: 0.3, sy: 0.28, life: 2800, flame: 0, gap: 5,
+    },
+    sockets: [
+      {
+        id: "rws",
+        class: "turret",
+        controller: "pilot",
+        weapon: "machine_gun",
+        points: [{ id: "main" }],
+        traverse: 360,
+        gunTex: "craft_humvee_turret",
+        gunScale: 0.9,
+        hullPlacement: "above",
+      },
+    ],
+    // Small, quiet profile — harder to spot and lock than the Hound.
+    enemyAwareMul: 0.75,
+    enemySeekerMul: 0.8,
+  },
+  wolf: {
+    name: "Wolf",
+    fullName: "HDT HUNTER WOLF",
+    role: "Ground Escort",
+    description: "A heavily-armored tracked UGV, manned or autonomous, built around a lean chaingun-and-missile fit for direct firepower.",
+    playable: false,
+    flightModel: "ground",
+    controlScheme: "orbit",
+    crushesInfantry: true,
+    sizeM: 4.0,
+    ammoScale: 0.85,
+    health: 130,
+    radius: 14,
+    height: 14,
+    body: "craft_wolf",
+    hulk: "craft_wolf_hulk",
+    gunOverlayScale: 0.88,
+    cameraScale: 0.78,
+    flatHull: true,
+    track: "tread",
+    trackGap: 8,
+    trackScale: 0.82,
+    rotOff: Math.PI / 2,
+    // Tracked and armored like the Hound — same drive feel, no artillery-spotter payload.
+    forwardThrust: 300, reverseThrust: 220, strafeThrust: 0, maxSpeed: 128, maxReverseSpeed: 70, minSpeed: 0, yawRate: 2.3, yawAccel: 11, drag: 1.85,
+    verticalThrust: 200, cruiseThrust: 40, cruiseAgl: 3.5, maxAgl: 14,
+    exhaustProfile: {
+      rate: 7, speed: 16, tint: 0x3c3c38, smoke: 0x3c3c38, sx: 0.36, sy: 0.32, life: 3200, flame: 0, gap: 6,
+    },
+    sockets: [
+      {
+        id: "turret",
+        class: "turret",
+        controller: "pilot",
+        weapon: "minigun",
+        points: [{ id: "main" }],
+        traverse: 360,
+        gunTex: "craft_wolf_turret",
+        gunScale: 0.82,
+        hullPlacement: "above",
+      },
+      {
+        id: "hardpoint",
+        class: "hardpoint",
+        controller: "pilot",
+        weapon: "mini_hellfire_missile",
+        hullPlacement: "above",
+        ammo: 6,
+      },
+    ],
+    // No countermeasure — realistic, no-frills loadout vs. the Hound's smoke screen.
+    enemyAwareMul: 0.72,
+    enemySeekerMul: 0.8,
+  },
   vtol_dropship: {
-    kind: "vtol_dropship",
     name: "Marauder",
     fullName: "UD-92 Marauder",
     role: "Heavy Air/Drop Assault",
@@ -1242,7 +1359,6 @@ const CRAFTS_DEFS = {
     countermeasure: "smoke_screen",
   },
   airship: {
-    kind: "airship",
     name: "Leviathan",
     fullName: "Leviathan Airship",
     role: "Sky Fortress",
@@ -1358,7 +1474,6 @@ const CRAFTS_DEFS = {
     sensorPalette: "black_hot",
   },
   biplane: {
-    kind: "biplane",
     name: "Red Baron",
     fullName: "Fokker Dr.I",
     role: "Dogfighter",
@@ -1411,13 +1526,12 @@ const CRAFTS_DEFS = {
     countermeasure: "smoke_screen",
     enemySeekerMul: 0.72,
   },
-} satisfies Record<string, CraftSpec>;
-
-/** Playable craft identity — literal union of CRAFTS keys. */
-export type CraftKind = keyof typeof CRAFTS_DEFS;
+};
 
 /** Homogeneous catalog (keys stay literal via CraftKind). */
-export const CRAFTS: Record<CraftKind, CraftSpec> = CRAFTS_DEFS;
+export const CRAFTS: Record<CraftKind, CraftSpec> = Object.fromEntries(
+  Object.entries(CRAFTS_DEFS).map(([kind, def]) => [kind, { ...def, kind }])
+) as Record<CraftKind, CraftSpec>;
 
 export const DEFAULT_CRAFT: CraftKind = "apache";
 export const APACHE_SIZE_M = CRAFTS.apache.sizeM;
@@ -1804,6 +1918,36 @@ function craftGunOverlayBarrels(
     }
   }
   return out;
+}
+
+/** A craft's onboard turret socket, if it has one — the one source of gun art/scale. */
+export function craftTurretSocket(c: CraftSpec): CraftSocket | undefined {
+  return c.sockets.find((s) => s.class === "turret");
+}
+
+/** A craft's primary gun mount — turret first, else any socket with a weapon (fixed nose guns). */
+export function craftGunSocket(c: CraftSpec): CraftSocket | undefined {
+  return craftTurretSocket(c) ?? c.sockets.find((s) => s.weapon != null);
+}
+
+/** AI gun id for firing / aim-precision lookups — a craft's one primary onboard gun. */
+export function craftGunId(c: CraftSpec): WpnId | undefined {
+  return craftGunSocket(c)?.weapon;
+}
+
+/** Gun overlay art — turret-only; fixed hull muzzles fire from body UVs, no overlay sprite. */
+export function craftGunTex(c: CraftSpec): string | undefined {
+  return craftTurretSocket(c)?.gunTex;
+}
+
+/** Gun overlay draw scale for a specific socket — hull-wide gunOverlayScale × socket gunScale. */
+export function craftSocketGunScale(c: CraftSpec, socket: CraftSocket | undefined, defaultSockScale = 1): number {
+  return (c.gunOverlayScale ?? 1) * (socket?.gunScale ?? defaultSockScale);
+}
+
+/** Gun overlay draw scale for a craft's one primary turret (Hound/Humvee/Wolf-style single gun). */
+export function craftGunScale(c: CraftSpec): number {
+  return craftSocketGunScale(c, craftTurretSocket(c), 0.55);
 }
 
 /** Socket indices that own a visible gun overlay (matches `craftComposite(...).guns` order).

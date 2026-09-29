@@ -294,7 +294,12 @@ export class Craft {
     if (controllable && orbit && !outside) {
       // Hold-to-turn: A/D applies yaw rate while pressed; release stops turning.
       const steerIn = (right ? 1 : 0) + (left ? -1 : 0);
-      const maxRate = this.spec.yawRate;
+      let maxRate = this.spec.yawRate;
+      if (groundDrive && this.spec.vehicleSteering) {
+        // Wheeled: yaw only while rolling; reversing flips the turn direction.
+        const rolling = this.vx * Math.cos(this.angle) + this.vy * Math.sin(this.angle);
+        maxRate *= Phaser.Math.Clamp(rolling / (this.spec.steerSpeedRef ?? 60), -1, 1);
+      }
       const targetRate = steerIn * maxRate;
       const yawAcc = this.spec.yawAccel;
       if (this.angVel < targetRate) this.angVel = Math.min(targetRate, this.angVel + yawAcc * dt);

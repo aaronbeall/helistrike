@@ -154,6 +154,8 @@ export type WeaponPayload = {
      */
     openAt?: number;
     bombletDetonate?: HeDetonate;
+    /** In-flight trail for each bomblet; omit = none. */
+    bombletExhaust?: ExhaustTrail;
   };
   smoke?: { duration: number; radius: number };
   remote?: { kind: RemoteKind; duration: number };
@@ -295,6 +297,60 @@ export type WeaponLaunch =
     }
   | { mode: "drop"; inheritMomentum: 1; gravity: WeaponGravity }
   | { mode: "beam"; range: number; delivery: "ray" | "arc" };
+
+// Manually declared, not `keyof typeof PLAYER_WPNS_DEFS` — see RemoteKind's comment in
+// remote.ts for why (Craft/Weapon/Remote form a 3-way reference cycle; each catalog's
+// identifier type must be a plain leaf, not derived from its own catalog's shape).
+export type WpnId =
+  | "chain_gun"
+  | "rocket"
+  | "incendiary_rocket"
+  | "hellfire_missile"
+  | "tv_missile"
+  | "minigun"
+  | "gatling"
+  | "tow_missile"
+  | "sidewinder_missile"
+  | "machine_gun"
+  | "heavy_bomb"
+  | "cluster_bomb"
+  | "guided_rockets"
+  | "microwave_missile"
+  | "heavy_machine_gun"
+  | "heavy_cal_pod"
+  | "concealed_cannon"
+  | "smoke_bomb"
+  | "stinger_missile"
+  | "railgun"
+  | "swarm_missile"
+  | "banshee"
+  | "grenade_launcher"
+  | "attack_drone"
+  | "wingman_drone"
+  | "fighter_pod"
+  | "agv_drop"
+  | "humvee_drop"
+  | "wolf_drop"
+  | "spider_drone"
+  | "plasma_cannon"
+  | "laser_rocket"
+  | "photon_missile"
+  | "warp_bomb"
+  | "medium_gatling_cannon"
+  | "light_gps_missile"
+  | "gps_bomb"
+  | "heavy_artillery"
+  | "medium_cannon"
+  | "light_cannon"
+  | "gps_missile"
+  | "heavy_cannon"
+  | "heavy_guided_missile"
+  | "bomb"
+  | "tesla_beam"
+  | "mini_hellfire_missile"
+  | "mini_bomb"
+  | "artillery_strike"
+  | "remote_howitzer";
 
 /** Player loadout — shared by fire logic and the combat rig. */
 export interface PlayerWpnSpec {
@@ -547,9 +603,9 @@ const commitGuidance = (
 });
 
 /** Canonical weapon identities; craft sockets supply installation policy + default loadout. */
-const PLAYER_WPNS_DEFS = {
+const PLAYER_WPNS_DEFS: Record<WpnId, Omit<PlayerWpnSpec, "id">> = {
   chain_gun: {
-    id: "chain_gun", name: "CHAIN GUN", fullName: "30MM CHAIN GUN", description: "A heavy-hitting automatic cannon that punches clean through armored hulls with devastating explosive force.", designation: "M230 30MM CHAIN GUN", ammo: 1200, fireCd: 0.096, speed: 580,
+    name: "CHAIN GUN", fullName: "30MM CHAIN GUN", description: "A heavy-hitting automatic cannon that punches clean through armored hulls with devastating explosive force.", designation: "M230 30MM CHAIN GUN", ammo: 1200, fireCd: 0.096, speed: 580,
     dmg: 28, blast: 36, life: 0.22,
     art: gunArt("chain_gun", 0.56, { w: 44, h: 8, core: [255, 248, 220], mid: [255, 140, 40], rim: [200, 55, 18], blunt: 0.42, glow: 0.62 }, MOUNT_GATLING),
     cam: CAM_GUN, fire: FIRE_GUN, control: HOLD, launch: MUZZLE,
@@ -557,7 +613,7 @@ const PLAYER_WPNS_DEFS = {
     fits: FIT_GUN, notes: ["30mm HEDP — watch the orbs walk on; slow vs 20mm / GAU-8"],
   },
   rocket: {
-    id: "rocket", name: "HYDRA", fullName: "HYDRA ROCKET PODS", description: "A classic rocket pod that fires a rapid, unguided ripple of smoke-trailing explosives.", designation: "HYDRA 70 ROCKET PODS", ammo: 38, fireCd: 0.22, speed: 620,
+    name: "HYDRA", fullName: "HYDRA ROCKET PODS", description: "A classic rocket pod that fires a rapid, unguided ripple of smoke-trailing explosives.", designation: "HYDRA 70 ROCKET PODS", ammo: 38, fireCd: 0.22, speed: 620,
     // Soft targets only: still one-shots pickup (70) / truck (84); ripple rate was overkill at 258.
     dmg: 115, blast: 150, life: 3.4,
     art: ordArt("rocket", 1, "velocity"),
@@ -575,7 +631,7 @@ const PLAYER_WPNS_DEFS = {
     fits: FIT_HARDPOINT, notes: ["unguided dumbfire — soft leave, motor burn, then coast"],
   },
   incendiary_rocket: {
-    id: "incendiary_rocket", name: "INCENDIARY", fullName: "INCENDIARY ROCKETS", description: "An unguided rocket array that bathes wide areas in liquid fire, melting infantry while sparing heavy structures.", designation: "LE PRIEUR INCENDIARY ROCKETS",
+    name: "INCENDIARY", fullName: "INCENDIARY ROCKETS", description: "An unguided rocket array that bathes wide areas in liquid fire, melting infantry while sparing heavy structures.", designation: "LE PRIEUR INCENDIARY ROCKETS",
     ammo: 28, fireCd: 0.28, speed: 460,
     dmg: 118, blast: 160, life: 2.9,
     art: ordArt("rocket", 0.92, "velocity"),
@@ -596,7 +652,7 @@ const PLAYER_WPNS_DEFS = {
     notes: ["Le Prieur-style — soft leave + short burn; fat fireball, wild spray"],
   },
   hellfire_missile: {
-    id: "hellfire_missile", name: "HELLFIRE", fullName: "HELLFIRE MISSILE", description: "A staple lock-on missile designed to track and completely destroy high-value enemy armor.", designation: "AGM-114R HELLFIRE II", ammo: 8, fireCd: 0.55, speed: 380,
+    name: "HELLFIRE", fullName: "HELLFIRE MISSILE", description: "A staple lock-on missile designed to track and completely destroy high-value enemy armor.", designation: "AGM-114R HELLFIRE II", ammo: 8, fireCd: 0.55, speed: 380,
     dmg: 360, blast: 155, life: 4.9,
     art: ordArt("laserGuided", 1, "heading"),
     exhaust: particleTrail(0.55, { fire: "burn", smoke: "linger", density: 1.35 }),
@@ -609,7 +665,7 @@ const PLAYER_WPNS_DEFS = {
     notes: ["laser lock; pop-up then 3D home — AT fantasy"],
   },
   tv_missile: {
-    id: "tv_missile", name: "SPIKE", fullName: "SPIKE MISSILE", description: "A high-tech anti-armor missile featuring a thermal camera feed that locks onto targets with total finality.", designation: "SPIKE NLOS COMMAND MISSILE", ammo: 6, fireCd: 1.15, speed: 290,
+    name: "SPIKE", fullName: "SPIKE MISSILE", description: "A high-tech anti-armor missile featuring a thermal camera feed that locks onto targets with total finality.", designation: "SPIKE NLOS COMMAND MISSILE", ammo: 6, fireCd: 1.15, speed: 290,
     dmg: 380, blast: 160, life: 30,
     art: ordArt("guided", 0.95, "heading"),
     exhaust: particleTrail(0.52, { fire: "burn", smoke: "linger", density: 1.35 }),
@@ -626,7 +682,7 @@ const PLAYER_WPNS_DEFS = {
     dmgMul: { vehicle: 1.25, building: 1.1, air: 0.55, troop: 0.7 },
   },
   minigun: {
-    id: "minigun", name: "MINIGUN", fullName: "MINIGUN", description: "A high-speed bullet hose engineered to absolutely shred incoming infantry waves in seconds.", designation: "M134 / GAU-17/A 7.62MM MINIGUN",
+    name: "MINIGUN", fullName: "MINIGUN", description: "A high-speed bullet hose engineered to absolutely shred incoming infantry waves in seconds.", designation: "M134 / GAU-17/A 7.62MM MINIGUN",
     ammo: 3600, fireCd: 0.03, speed: 1040, dmg: 5.8, blast: 9, life: 0.082,
     art: gunArt("minigun", 0.46, TRACER_762, MOUNT_MINIGUN),
     cam: CAM_GUN, fire: FIRE_GUN, control: HOLD, launch: MUZZLE, payload: {},
@@ -635,7 +691,7 @@ const PLAYER_WPNS_DEFS = {
     notes: ["same 7.62 as the M240 — shreds troops; soft vs armor"],
   },
   gatling: {
-    id: "gatling", name: "GATLING", fullName: "20MM GATLING GUN", description: "A versatile rotary cannon that blends rapid-fire pacing with reliable, armor-piercing power.", designation: "M197 20MM THREE-BARREL GATLING", ammo: 900, fireCd: 0.08, speed: 1200,
+    name: "GATLING", fullName: "20MM GATLING GUN", description: "A versatile rotary cannon that blends rapid-fire pacing with reliable, armor-piercing power.", designation: "M197 20MM THREE-BARREL GATLING", ammo: 900, fireCd: 0.08, speed: 1200,
     dmg: 20, blast: 26, life: 0.11,
     art: gunArt("gatling", 0.66, { w: 66, h: 10, core: [255, 250, 210], mid: [255, 175, 55], rim: [230, 90, 25], blunt: 0.28, glow: 0.55 }, MOUNT_GATLING),
     cam: CAM_GUN, fire: FIRE_GUN, control: HOLD, launch: MUZZLE,
@@ -643,7 +699,7 @@ const PLAYER_WPNS_DEFS = {
     fits: FIT_GUN, notes: ["20mm HE — flat snap, fastest heli gun"],
   },
   tow_missile: {
-    id: "tow_missile", name: "TOW", fullName: "TOW MISSILE", description: "A heavy anti-armor missile guided directly by the pilot's targeting wire for manual precision.", designation: "BGM-71E TOW 2A MISSILE", ammo: 6, fireCd: 1.1, speed: 290,
+    name: "TOW", fullName: "TOW MISSILE", description: "A heavy anti-armor missile guided directly by the pilot's targeting wire for manual precision.", designation: "BGM-71E TOW 2A MISSILE", ammo: 6, fireCd: 1.1, speed: 290,
     dmg: 350, blast: 145, life: 6.1,
     art: ordArt("guided", 1, "heading"),
     exhaust: particleTrail(0.52, { fire: "burn", smoke: "linger", density: 1.3 }),
@@ -657,7 +713,7 @@ const PLAYER_WPNS_DEFS = {
     notes: ["continuous wire command; same steer family as SPIKE — AT fantasy"],
   },
   sidewinder_missile: {
-    id: "sidewinder_missile", name: "SIDEWINDER", fullName: "SIDEWINDER MISSILE (AIR-TO-AIR)", description: "A lightning-fast, heat-seeking missile dedicated to hunting down and destroying enemy aircraft.", designation: "AIM-9X SIDEWINDER", ammo: 12, fireCd: 0.28, speed: 980,
+    name: "SIDEWINDER", fullName: "SIDEWINDER MISSILE (AIR-TO-AIR)", description: "A lightning-fast, heat-seeking missile dedicated to hunting down and destroying enemy aircraft.", designation: "AIM-9X SIDEWINDER", ammo: 12, fireCd: 0.28, speed: 980,
     dmg: 170, blast: 80, life: 3.6,
     art: ordArt("aa", 0.68, "heading"),
     exhaust: particleTrail(0.72, { fire: "hotFlame", smoke: "short" }),
@@ -679,7 +735,7 @@ const PLAYER_WPNS_DEFS = {
     notes: ["WVR heat seeker — snap lock, air-class punch; soft vs armor / troops"],
   },
   machine_gun: {
-    id: "machine_gun", name: "MACHINE GUN", fullName: "7.62MM MACHINE GUN", description: "A dependable defensive staple that lays down a steady wall of anti-personnel suppression.", designation: "M240D 7.62MM MACHINE GUN", ammo: 3200, fireCd: 0.066, speed: 1040,
+    name: "MACHINE GUN", fullName: "7.62MM MACHINE GUN", description: "A dependable defensive staple that lays down a steady wall of anti-personnel suppression.", designation: "M240D 7.62MM MACHINE GUN", ammo: 3200, fireCd: 0.066, speed: 1040,
     dmg: 5.8, blast: 9, life: 0.075,
     art: gunArt("machine_gun", 0.46, TRACER_762, MOUNT_MACHINE),
     cam: CAM_GUN, fire: FIRE_GUN, control: HOLD, launch: MUZZLE, payload: {},
@@ -688,7 +744,7 @@ const PLAYER_WPNS_DEFS = {
     notes: ["crew or pilot M240; shreds troops — softer on vehicles than the minigun"],
   },
   heavy_bomb: {
-    id: "heavy_bomb", name: "MOAB", fullName: "MASSIVE ORDNANCE AIR BLAST", description: "The ultimate unguided bomb, flattening massive grid sections with a colossal, catastrophic shockwave.", designation: "GBU-43/B MASSIVE ORDNANCE AIR BLAST", ammo: 2, fireCd: 2.4, speed: 165,
+    name: "MOAB", fullName: "MASSIVE ORDNANCE AIR BLAST", description: "The ultimate unguided bomb, flattening massive grid sections with a colossal, catastrophic shockwave.", designation: "GBU-43/B MASSIVE ORDNANCE AIR BLAST", ammo: 2, fireCd: 2.4, speed: 165,
     dmg: 980, blast: 280, life: 7.5,
     art: ordArt("bomb", 1.15, "velocity"),
     exhaust: particleTrail(0.42, { density: 0.45, contrail: true }),
@@ -698,7 +754,7 @@ const PLAYER_WPNS_DEFS = {
     notes: ["momentum-first drop; structure / armor fantasy"],
   },
   cluster_bomb: {
-    id: "cluster_bomb", name: "ROCKEYE", fullName: "ROCKEYE CLUSTER BOMB", description: "A specialized cluster bomb that bursts mid-air to carpet the warzone in dozens of explosive submunitions.", designation: "CBU-100 ROCKEYE II CLUSTER BOMB", ammo: 5, fireCd: 1.35, speed: 185,
+    name: "ROCKEYE", fullName: "ROCKEYE CLUSTER BOMB", description: "A specialized cluster bomb that bursts mid-air to carpet the warzone in dozens of explosive submunitions.", designation: "CBU-100 ROCKEYE II CLUSTER BOMB", ammo: 5, fireCd: 1.35, speed: 185,
     dmg: 12, blast: 28, life: 6.8,
     art: ordArt("canister", 1.65, "velocity"),
     exhaust: particleTrail(0.42, { density: 0.45, contrail: true }),
@@ -708,12 +764,13 @@ const PLAYER_WPNS_DEFS = {
         bomblets: 18, spread: 175, bombletDmg: 82, bombletBlast: 95, break: "spray",
         look: ordLook("miniRocket"),
         openAt: 0.6,
+        bombletExhaust: particleTrail(0.3, { density: 0.3, contrail: true }),
       },
     },
     fits: FIT_HARDPOINT, notes: ["light mid-air canister pop ~60% down; damage is the bomblet carpet"],
   },
   guided_rockets: {
-    id: "guided_rockets", name: "MICROS MISSILES", fullName: "DEFENSE MICRO-MISSILES", description: "A massive swarm of steerable rocket pods that can be adjusted mid-flight without clunky wire guidance.", designation: "FORWARD DEFENSE MICRO-MISSILE POD", ammo: 80, fireCd: 0.24, speed: 420,
+    name: "MICROS MISSILES", fullName: "DEFENSE MICRO-MISSILES", description: "A massive swarm of steerable rocket pods that can be adjusted mid-flight without clunky wire guidance.", designation: "FORWARD DEFENSE MICRO-MISSILE POD", ammo: 80, fireCd: 0.24, speed: 420,
     // Falls under Hydra's DPS (was 110/0.22=522.7); salvo of 2 makes effective DPS dmg*2/fireCd.
     dmg: 50, blast: 70, life: 4.1,
     art: ordArt("rocket", 0.5, "heading"),
@@ -725,7 +782,7 @@ const PLAYER_WPNS_DEFS = {
     fits: FIT_HARDPOINT, notes: ["slightly steers toward reticle; muzzle arc into the ground; no pov cam"],
   },
   microwave_missile: {
-    id: "microwave_missile", name: "MICROWAVE", fullName: "HIGH-POWERED MICROWAVE MISSILE", description: "A steerable micro-missile variant that trades warhead punch for a wide EM burst radius, frying vehicle and turret electronics with a generous stun.", designation: "HPM-4 MICROWAVE MISSILE POD", ammo: 60, fireCd: 0.24, speed: 420,
+    name: "MICROWAVE", fullName: "HIGH-POWERED MICROWAVE MISSILE", description: "A steerable micro-missile variant that trades warhead punch for a wide EM burst radius, frying vehicle and turret electronics with a generous stun.", designation: "HPM-4 MICROWAVE MISSILE POD", ammo: 60, fireCd: 0.24, speed: 420,
     dmg: 30, blast: 120, life: 4.1,
     art: ordArt("rocket", 0.5, "heading", { tint: 0x8ad4ff }),
     exhaust: particleTrail(0.32, { fire: "burn", fireFor: 0.1, smoke: "rocket", align: "heading" }),
@@ -736,7 +793,7 @@ const PLAYER_WPNS_DEFS = {
     fits: FIT_HARDPOINT, notes: ["same steer/salvo as Micro Missiles — wider blast, softer damage, generous stun vs vehicles/turrets"],
   },
   heavy_machine_gun: {
-    id: "heavy_machine_gun", name: "HEAVY MACHINE GUN", fullName: ".50 CAL MACHINE GUN", description: "A slow-thumping caliber upgrade designed to tear through light vehicles and heavy infantry alike.", designation: "M2HB .50 CAL MACHINE GUN", ammo: 900, fireCd: 0.105, speed: 860,
+    name: "HEAVY MACHINE GUN", fullName: ".50 CAL HEAVY MACHINE GUN", description: "A slow-thumping caliber upgrade designed to tear through light vehicles and heavy infantry alike.", designation: "M2HB .50 CAL MACHINE GUN", ammo: 900, fireCd: 0.105, speed: 860,
     dmg: 20, blast: 22, life: 0.13,
     art: gunArt("heavy_machine_gun", 0.68, { w: 62, h: 9, core: [255, 235, 190], mid: [255, 145, 50], rim: [210, 75, 28], blunt: 0.22, glow: 0.52 }, MOUNT_MACHINE),
     cam: CAM_GUN, fire: FIRE_GUN, control: HOLD, launch: MUZZLE,
@@ -744,7 +801,7 @@ const PLAYER_WPNS_DEFS = {
     fits: FIT_GUN, notes: ["crew-served .50 — readable slugs you can walk onto a target"],
   },
   heavy_cal_pod: {
-    id: "heavy_cal_pod", name: "HEAVY CAL POD", fullName: ".50 CAL GATLING POD", description: "A wing-mounted rotary beast that delivers relentless, high-caliber kinetic punishment.", designation: "GAU-19/A .50 CAL GATLING POD", ammo: 300, fireCd: 0.072, speed: 860,
+    name: "HEAVY CAL POD", fullName: ".50 CAL GATLING POD", description: "A wing-mounted rotary beast that delivers relentless, high-caliber kinetic punishment.", designation: "GAU-19/A .50 CAL GATLING POD", ammo: 300, fireCd: 0.072, speed: 860,
     dmg: 20, blast: 22, life: 0.13,
     art: gunArt("heavy_cal_pod", 0.68, { w: 62, h: 9, core: [255, 235, 190], mid: [255, 145, 50], rim: [210, 75, 28], blunt: 0.22, glow: 0.52 }, MOUNT_CAL_POD),
     cam: CAM_GUN, fire: FIRE_GUN, control: HOLD, launch: MUZZLE,
@@ -753,7 +810,7 @@ const PLAYER_WPNS_DEFS = {
     fits: ["hardpoint", "fixed"] as SocketClass[], notes: ["pylon .50 gatling — same slug as the HMG, short belt"],
   },
   concealed_cannon: {
-    id: "concealed_cannon", name: "WHISPER", fullName: "20MM WHISPER CANNON", description: "A stealthy, suppressed autocannon that inflicts massive bonus damage to disoriented or blinded targets.", designation: "WPR-20 20MM WHISPER CANNON", ammo: 820, fireCd: 0.105, speed: 1080,
+    name: "WHISPER", fullName: "20MM WHISPER CANNON", description: "A stealthy, suppressed autocannon that inflicts massive bonus damage to disoriented or blinded targets.", designation: "WPR-20 20MM WHISPER CANNON", ammo: 820, fireCd: 0.105, speed: 1080,
     dmg: 13.5, blast: 15, life: 0.1,
     art: gunArt("concealed_cannon", 0.6, { w: 52, h: 8, core: [220, 230, 240], mid: [140, 160, 180], rim: [70, 90, 110], glow: 0.22 }, MOUNT_SILENCED_CANNON),
     cam: CAM_GUN, fire: { muzzleFlash: false, muzzleSparks: true, jitter: 0.025 }, control: HOLD, launch: MUZZLE,
@@ -762,7 +819,7 @@ const PLAYER_WPNS_DEFS = {
     fits: FIT_GUN, notes: ["suppressed report and low muzzle flash", "bonus damage vs stunned or smoke-blinded targets"],
   },
   smoke_bomb: {
-    id: "smoke_bomb", name: "SMOKE", fullName: "SMOKE BOMB", description: "A utility wire-guided missile used to blanket huge areas in tactical cover and screen friendly movements.", designation: "COMMAND-GUIDED SMOKE BOMB", ammo: 8, fireCd: 1.15, speed: 290,
+    name: "SMOKE", fullName: "SMOKE BOMB", description: "A utility wire-guided missile used to blanket huge areas in tactical cover and screen friendly movements.", designation: "COMMAND-GUIDED SMOKE BOMB", ammo: 8, fireCd: 1.15, speed: 290,
     dmg: 24, blast: 195, life: 9,
     art: ordArt("canister", 0.88, "heading"),
     exhaust: particleTrail(0.4, { fire: "burn", smoke: "linger", density: 1.3 }),
@@ -774,7 +831,7 @@ const PLAYER_WPNS_DEFS = {
     fits: FIT_HARDPOINT, notes: ["TOW-family wire steer — dives into the reticle; stacked puffs cut awareness / fire range"],
   },
   stinger_missile: {
-    id: "stinger_missile", name: "STINGER", fullName: "STINGER MISSILE", description: "A lightweight, reliable anti-air lock-on missile built for quick response dogfighting.", designation: "FIM-92 STINGER STEALTH POD", ammo: 10, fireCd: 0.5, speed: 475,
+    name: "STINGER", fullName: "STINGER MISSILE", description: "A lightweight, reliable anti-air lock-on missile built for quick response dogfighting.", designation: "FIM-92 STINGER STEALTH POD", ammo: 10, fireCd: 0.5, speed: 475,
     dmg: 168, blast: 85, life: 4.7,
     art: ordArt("missile", 0.6, "heading"),
     exhaust: particleTrail(0.55, { fire: "burn", smoke: "linger", density: 1.3 }),
@@ -787,7 +844,7 @@ const PLAYER_WPNS_DEFS = {
     notes: ["low-signature heat seeker — air punch, soft AG"],
   },
   railgun: {
-    id: "railgun", name: "RAILGUN", fullName: "RAILGUN", description: "A high-tech marksman weapon that fires hypervelocity slugs to instantly pierce through the heaviest armor lines.", designation: "RG-40 HYPERVELOCITY RAILGUN", ammo: 180, fireCd: 0.5, speed: 1850,
+    name: "RAILGUN", fullName: "RAILGUN", description: "A high-tech marksman weapon that fires hypervelocity slugs to instantly pierce through the heaviest armor lines.", designation: "RG-40 HYPERVELOCITY RAILGUN", ammo: 180, fireCd: 0.5, speed: 1850,
     // One-shots drones (24) and scout helis (112). CD keeps catalog DPS at 260.
     dmg: 130, blast: 12, life: 0.16,
     art: gunArt("railgun", 0.82, { w: 128, h: 12, core: [255, 255, 255], mid: [120, 220, 255], rim: [40, 120, 255], glow: 1.05, shape: "bolt" }, MOUNT_RAILGUN),
@@ -798,7 +855,7 @@ const PLAYER_WPNS_DEFS = {
     fits: FIT_GUN, notes: ["hypervelocity penetrator; deliberate automatic fire"],
   },
   swarm_missile: {
-    id: "swarm_missile", name: "STARSCREAM", fullName: "STARSCREAM MISSILE", description: "Fires steerable energy thrust rockets that split into a trio of highly destructive cluster munitions.", designation: "STARSCREAM HVM GUIDED DARTS", ammo: 92, fireCd: 0.095, speed: 920,
+    name: "STARSCREAM", fullName: "STARSCREAM MISSILE", description: "Fires steerable energy thrust rockets that split into a trio of highly destructive cluster munitions.", designation: "STARSCREAM HVM GUIDED DARTS", ammo: 92, fireCd: 0.095, speed: 920,
     dmg: 99, blast: 105, life: 4.2,
     art: ordArt("miniRocket", 0.4, "heading"),
     exhaust: energyTrail({ ribbons: 1, hue: "cyan" }),
@@ -819,7 +876,7 @@ const PLAYER_WPNS_DEFS = {
   },
   /** Starscream-family hose without cluster — loft pop then dive onto reticle. */
   banshee: {
-    id: "banshee", name: "BANSHEE", fullName: "BANSHEE MISSILE", description: "A smart steerable missile that lofts high into the sky before diving straight down onto target roofs.", designation: "BANSHEE HVM LOFT DARTS", ammo: 148, fireCd: 0.095, speed: 780,
+    name: "BANSHEE", fullName: "BANSHEE MISSILE", description: "A smart steerable missile that lofts high into the sky before diving straight down onto target roofs.", designation: "BANSHEE HVM LOFT DARTS", ammo: 148, fireCd: 0.095, speed: 780,
     dmg: 99, blast: 105, life: 5.2,
     art: ordArt("miniRocket", 0.4, "heading"),
     exhaust: energyTrail({ ribbons: 1, hue: "cyan" }),
@@ -833,7 +890,7 @@ const PLAYER_WPNS_DEFS = {
     notes: ["neon ribbon; pops straight up, then crashes onto the reticle; no bomblet burst"],
   },
   grenade_launcher: {
-    id: "grenade_launcher",
+    
     name: "GRENADE",
     fullName: "GRENADE LAUNCHER",
     description: "Lobs a steady stream of highly volatile explosives that leave clear smoky trails across the sky.",
@@ -859,16 +916,16 @@ const PLAYER_WPNS_DEFS = {
     ],
   },
   attack_drone: {
-    id: "attack_drone", name: "SPECTRE", fullName: "SPECTRE DRONE", designation: "SPECTRE REMOTE ATTACK DRONE", ammo: 3, fireCd: 3, speed: 280,
+    name: "SPECTRE", fullName: "SPECTRE DRONE", designation: "SPECTRE REMOTE ATTACK DRONE", ammo: 3, fireCd: 3, speed: 280,
     dmg: 258, blast: 100, life: 45,
     art: ordArt("guided", 0.55, "velocity"),
     cam: { reticle: "square", look: LOOK_GUIDED, thermal: true },
     control: CLICK, launch: { mode: "muzzle", inheritMomentum: 0.85 },
-    payload: { remote: { kind: "spectre", duration: 45 } },
+    payload: { remote: { kind: "drone", duration: 45 } },
     fits: FIT_HARDPOINT, notes: ["launches as a separate controllable craft", "Q / RMB drop camera without detonating", "select Spectre slot to return view", "click Spectre in its view to detonate"],
   },
   wingman_drone: {
-    id: "wingman_drone", name: "SKIFF", fullName: "SKIFF WINGMAN", designation: "AUTONOMOUS WINGMAN SKIFF", ammo: 6, fireCd: 0.85, speed: 200,
+    name: "SKIFF", fullName: "SKIFF WINGMAN", designation: "AUTONOMOUS WINGMAN SKIFF", ammo: 6, fireCd: 0.85, speed: 200,
     dmg: 40, blast: 48, life: 90,
     art: ordArt("guided", 0.5, "velocity"),
     cam: CAM_GUIDED, control: CLICK, launch: { mode: "muzzle", inheritMomentum: 0.7 },
@@ -880,7 +937,7 @@ const PLAYER_WPNS_DEFS = {
     ],
   },
   fighter_pod: {
-    id: "fighter_pod", name: "RAPTOR", fullName: "RAPTOR FIGHTER", designation: "PILOTED FIGHTER POD", ammo: 2, fireCd: 4, speed: 260,
+    name: "RAPTOR", fullName: "RAPTOR FIGHTER", designation: "PILOTED FIGHTER POD", ammo: 2, fireCd: 4, speed: 260,
     dmg: 120, blast: 70, life: 75,
     art: ordArt("guided", 0.62, "velocity"),
     cam: { reticle: "square", look: LOOK_GUIDED },
@@ -892,7 +949,7 @@ const PLAYER_WPNS_DEFS = {
     ],
   },
   agv_drop: {
-    id: "agv_drop", name: "HOUND", fullName: "HOUND AGV", designation: "AUTONOMOUS GROUND VEHICLE", ammo: 2, fireCd: 5, speed: 40,
+    name: "HOUND", fullName: "HOUND AGV", designation: "AUTONOMOUS GROUND VEHICLE", ammo: 2, fireCd: 5, speed: 40,
     dmg: 180, blast: 90, life: 600,
     art: ordArt("guided", 0.7, "velocity"),
     cam: { reticle: "square", look: LOOK_GUN },
@@ -905,8 +962,36 @@ const PLAYER_WPNS_DEFS = {
       "very long battery — detonates when empty",
     ],
   },
+  humvee_drop: {
+    name: "HUMVEE", fullName: "HUMVEE", designation: "MANNED GROUND FIRE SUPPORT", ammo: 2, fireCd: 5, speed: 40,
+    dmg: 110, blast: 60, life: 480,
+    art: ordArt("guided", 0.7, "velocity"),
+    cam: { reticle: "square", look: LOOK_GUN },
+    control: CLICK, launch: DROP,
+    payload: { remote: { kind: "ground_escort", duration: 480 } },
+    fits: FIT_HARDPOINT,
+    notes: [
+      "crewed 4-wheeled escort with a single stabilized .50 cal — fully autonomous, not pilotable",
+      "deploy up to 2 at once; live units don't count against remaining ammo",
+      "tight leash-follows the host when idle, circles between host and target when it spots one",
+    ],
+  },
+  wolf_drop: {
+    name: "WOLF", fullName: "HDT HUNTER WOLF", designation: "TRACKED GROUND ESCORT", ammo: 2, fireCd: 5, speed: 40,
+    dmg: 165, blast: 85, life: 560,
+    art: ordArt("guided", 0.7, "velocity"),
+    cam: { reticle: "square", look: LOOK_GUN },
+    control: CLICK, launch: DROP,
+    payload: { remote: { kind: "ugv", duration: 560 } },
+    fits: FIT_HARDPOINT,
+    notes: [
+      "heavily-armored tracked UGV with minigun + Hellfire — same manned-or-piloted play as the Hound",
+      "lighter, real-world weapons fit and no countermeasure vs. the Hound's sci-fi loadout",
+      "A/D yaw, W/S thrust; deselect → tracks mouse, turret shoots on its own",
+    ],
+  },
   spider_drone: {
-    id: "spider_drone",
+    
     name: "SPIDER DRONE",
     fullName: "SPIDER DRONE",
     description: "Crawls toward the mouse in a thermal view, then dashes onto a nearby hostile and detonates.",
@@ -938,7 +1023,7 @@ const PLAYER_WPNS_DEFS = {
     ],
   },
   plasma_cannon: {
-    id: "plasma_cannon", name: "PLASMA HELIX", fullName: "PLASMA HELIX CANNON", description: "Fires a distinct three-round braided burst of energy that sears through targets with glowing trails.", designation: "PLASMA HELIX CANNON", ammo: 1800, fireCd: 0.2, speed: 1050,
+    name: "PLASMA HELIX", fullName: "PLASMA HELIX CANNON", description: "Fires a distinct three-round braided burst of energy that sears through targets with glowing trails.", designation: "PLASMA HELIX CANNON", ammo: 1800, fireCd: 0.2, speed: 1050,
     dmg: 42, blast: 52, life: 0.14,
     art: gunArt("plasma_cannon", 0.7, { w: 34, h: 22, core: [210, 255, 160], mid: [80, 255, 60], rim: [20, 160, 40], glow: 1.05, shape: "orb" }, MOUNT_PLASMA),
     exhaust: energyTrail({ hue: "green" }),
@@ -948,7 +1033,7 @@ const PLAYER_WPNS_DEFS = {
     fits: FIT_GUN, notes: ["quick 3-round burst; phase-offset strands braid with depth"],
   },
   laser_rocket: {
-    id: "laser_rocket", name: "REFRACTOR", fullName: "REFRACTOR BEAM", description: "A high-yield energy beam that forks and bounces between multiple targets to clear crowded battlefields.", designation: "REFRACTOR ENERGY BEAM", ammo: 72, fireCd: 0.2, speed: 1,
+    name: "REFRACTOR", fullName: "REFRACTOR BEAM", description: "A high-yield energy beam that forks and bounces between multiple targets to clear crowded battlefields.", designation: "REFRACTOR ENERGY BEAM", ammo: 72, fireCd: 0.2, speed: 1,
     dmg: 210, blast: 88, life: 0.16,
     art: gunArt("plasma_cannon", 0.7, { w: 48, h: 10, core: [255, 220, 255], mid: [180, 90, 255], rim: [80, 40, 255], glow: 1.1, shape: "bolt" }, MOUNT_TESLA),
     cam: { reticle: "square", look: LOOK_GUN },
@@ -959,7 +1044,7 @@ const PLAYER_WPNS_DEFS = {
     notes: ["solid beam forks at 30% to reticle into a spray; ground hits shatter into random smaller beams"],
   },
   photon_missile: {
-    id: "photon_missile", name: "PHOTON", fullName: "PHOTON MISSILE", description: "A devastating lock-on energy weapon that focuses intense light into a catastrophic, high-damage blast.", designation: "PHOTON SEEKER MISSILE", ammo: 12, fireCd: 0.42, speed: 2100,
+    name: "PHOTON", fullName: "PHOTON MISSILE", description: "A devastating lock-on energy weapon that focuses intense light into a catastrophic, high-damage blast.", designation: "PHOTON SEEKER MISSILE", ammo: 12, fireCd: 0.42, speed: 2100,
     dmg: 820, blast: 155, life: 5.5,
     art: ordArt("photon", 0.78, "heading"),
     exhaust: energyTrail({ ribbons: 3, hue: "cyan" }),
@@ -983,7 +1068,7 @@ const PLAYER_WPNS_DEFS = {
     notes: ["wide loft fly-off then gradual high-altitude descent onto lock; Tesla-scale impact storm"],
   },
   warp_bomb: {
-    id: "warp_bomb", name: "WARPWIRE BOMB", fullName: "WARPWIRE BOMB", description: "A high-damage futuristic explosive that tears open space with glowing warp motes and energy ribbons.", designation: "WB-1 WARPWIRE BOMB", ammo: 4, fireCd: 1.25, speed: 340,
+    name: "WARPWIRE BOMB", fullName: "WARPWIRE BOMB", description: "A high-damage futuristic explosive that tears open space with glowing warp motes and energy ribbons.", designation: "WB-1 WARPWIRE BOMB", ammo: 4, fireCd: 1.25, speed: 340,
     dmg: 560, blast: 242, life: 30,
     art: ordArt("photon", 1.35, "heading", { tint: 0xc86cff }),
     exhaust: energyTrail({ ribbons: 3, hue: "magenta", warpMotes: true }),
@@ -1004,7 +1089,7 @@ const PLAYER_WPNS_DEFS = {
     notes: ["SPIKE-path warp bomb; magenta ribbons + energy orbs/sparks; world crawls while in flight"],
   },
   medium_gatling_cannon: {
-    id: "medium_gatling_cannon", name: "EQUALIZER", fullName: "EQUALIZER GATLING GUN", description: "A devastating rapid-fire autocannon that fills the air with a blinding mixture of high explosives and dust.", designation: "25MM GAU-22/A EQUALIZER GATLING GUN", ammo: 500, fireCd: 0.042, speed: 1500,
+    name: "EQUALIZER", fullName: "EQUALIZER GATLING GUN", description: "A devastating rapid-fire autocannon that fills the air with a blinding mixture of high explosives and dust.", designation: "25MM GAU-22/A EQUALIZER GATLING GUN", ammo: 500, fireCd: 0.042, speed: 1500,
     dmg: 22, blast: 28, life: 0.115,
     art: gunArt("medium_gatling_cannon", 0.78, { w: 118, h: 9, core: [255, 248, 215], mid: [255, 165, 48], rim: [220, 80, 22], blunt: 0.14, glow: 0.58 }, MOUNT_GATLING),
     cam: CAM_GUN, fire: FIRE_GUN, control: HOLD, launch: { mode: "muzzle", inheritMomentum: 1 },
@@ -1012,7 +1097,7 @@ const PLAYER_WPNS_DEFS = {
     fits: FIT_GUN, notes: ["jet 25mm SAPHEI — punchier kinetic + subtle HE; dusty impacts"],
   },
   light_gps_missile: {
-    id: "light_gps_missile", name: "PYROS", fullName: "PYROS GPS MISSILE", description: "An agile, waypoint-guided bomb that offers a lighter, faster alternative to traditional heavy payloads.", designation: "PYROS LIGHT GPS GUIDED MISSILE", ammo: 24, fireCd: 0.38, speed: 460,
+    name: "PYROS", fullName: "PYROS GPS MISSILE", description: "An agile, waypoint-guided bomb that offers a lighter, faster alternative to traditional heavy payloads.", designation: "PYROS LIGHT GPS GUIDED MISSILE", ammo: 24, fireCd: 0.38, speed: 460,
     dmg: 155, blast: 95, life: 4.8,
     art: ordArt("guided", 0.68, "heading"),
     exhaust: particleTrail(0.42, { fire: "burn", smoke: "linger", density: 1.3 }),
@@ -1023,7 +1108,7 @@ const PLAYER_WPNS_DEFS = {
     fits: FIT_HARDPOINT, notes: ["light GPS AG missile — tube kick then burn; softer than JDAM"],
   },
   gps_bomb: {
-    id: "gps_bomb", name: "JDAM", fullName: "JDAM GPS BOMB", description: "A precise guided bomb that tracks designated waypoints to deliver a heavy, pinpoint explosion.", designation: "GBU-31 JDAM GPS PRECISION-GUIDED BOMB", ammo: 8, fireCd: 0.95, speed: 205,
+    name: "JDAM", fullName: "JDAM GPS BOMB", description: "A precise guided bomb that tracks designated waypoints to deliver a heavy, pinpoint explosion.", designation: "GBU-31 JDAM GPS PRECISION-GUIDED BOMB", ammo: 8, fireCd: 0.95, speed: 205,
     dmg: 450, blast: 232, life: 7,
     art: ordArt("wingedBomb", 1.1, "heading"),
     exhaust: particleTrail(0.5, { density: 0.48, contrail: true }),
@@ -1035,7 +1120,7 @@ const PLAYER_WPNS_DEFS = {
     fits: FIT_HARDPOINT, notes: ["clicked GPS point; steers hard while falling — structure / armor"],
   },
   heavy_artillery: {
-    id: "heavy_artillery", name: "HOWITZER", fullName: "HOWITZER ARTILLERY", description: "A heavy ground-pounder that lobs massive explosive shells in a high arc to shatter fortification lines.", designation: "105MM M102 HOWITZER ARTILLERY", ammo: 28, fireCd: 1.85, speed: 520,
+    name: "HOWITZER", fullName: "HOWITZER ARTILLERY", description: "A heavy ground-pounder that lobs massive explosive shells in a high arc to shatter fortification lines.", designation: "105MM M102 HOWITZER ARTILLERY", ammo: 28, fireCd: 1.85, speed: 520,
     dmg: 420, blast: 210, life: 2.8,
     // Fatter than MG tracers, not a floating brick — call-strike shell trail behind.
     art: gunArt("heavy_artillery", 0.98, { w: 70, h: 11, core: [255, 250, 230], mid: [255, 170, 50], rim: [180, 70, 20], blunt: 0.72, glow: 0.42 }, MOUNT_ARTILLERY),
@@ -1048,14 +1133,14 @@ const PLAYER_WPNS_DEFS = {
     groundOnly: true,
   },
   medium_cannon: {
-    id: "medium_cannon", name: "BOFORS", fullName: "BOFORS CANNON", description: "A steady, reliable anti-aircraft and anti-armor autocannon that hits targets with large, uniform explosions.", designation: "40MM BOFORS CANNON", ammo: 90, fireCd: 0.32, speed: 680,
+    name: "BOFORS", fullName: "BOFORS CANNON", description: "A steady, reliable anti-aircraft and anti-armor autocannon that hits targets with large, uniform explosions.", designation: "40MM BOFORS CANNON", ammo: 90, fireCd: 0.32, speed: 680,
     dmg: 85, blast: 95, life: 0.18,
     art: gunArt("medium_cannon", 1.05, { w: 76, h: 13, core: [255, 245, 210], mid: [255, 160, 45], rim: [200, 80, 18], blunt: 0.55, glow: 0.45 }, MOUNT_ARTILLERY),
     cam: CAM_GUN, fire: FIRE_GUN, control: HOLD, launch: MUZZLE, payload: HE_FIRE,
     fits: FIT_GUN, notes: ["medium-caliber explosive cannon"],
   },
   light_cannon: {
-    id: "light_cannon", name: "SPOOKY", fullName: "SPOOKY GATLING GUN", description: "A rapid-fire broadside cannon designed to blanket wide combat zones in armor-piercing fire.", designation: "25MM GAU-12/U SPOOKY GATLING CANNON", ammo: 3000, fireCd: 0.052, speed: 1160,
+    name: "SPOOKY", fullName: "SPOOKY GATLING GUN", description: "A rapid-fire broadside cannon designed to blanket wide combat zones in armor-piercing fire.", designation: "25MM GAU-12/U SPOOKY GATLING CANNON", ammo: 3000, fireCd: 0.052, speed: 1160,
     dmg: 16.5, blast: 20, life: 0.115,
     art: gunArt("light_cannon", 0.76, { w: 114, h: 9, core: [255, 248, 215], mid: [255, 170, 52], rim: [225, 85, 24], blunt: 0.12, glow: 0.56 }, MOUNT_GATLING),
     cam: CAM_GUN, fire: FIRE_GUN, control: HOLD, launch: MUZZLE,
@@ -1063,7 +1148,7 @@ const PLAYER_WPNS_DEFS = {
     fits: FIT_GUN, notes: ["gunship 25mm hose — GAU-12/U, not the F-35 Equalizer"],
   },
   gps_missile: {
-    id: "gps_missile", name: "GRIFFIN", fullName: "GRIFFIN GUIDED MISSILE", description: "A highly agile, steerable anti-air missile that hunts down agile targets without traditional wire limitations.", designation: "AGM-176 GRIFFIN COMMAND-GUIDED MISSILE", ammo: 12, fireCd: 0.7, speed: 340,
+    name: "GRIFFIN", fullName: "GRIFFIN GUIDED MISSILE", description: "A highly agile, steerable anti-air missile that hunts down agile targets without traditional wire limitations.", designation: "AGM-176 GRIFFIN COMMAND-GUIDED MISSILE", ammo: 12, fireCd: 0.7, speed: 340,
     dmg: 240, blast: 110, life: 9.5,
     art: ordArt("guided", 0.84, "heading"),
     exhaust: particleTrail(0.52, { fire: "burn", smoke: "linger", density: 1.3 }),
@@ -1077,7 +1162,7 @@ const PLAYER_WPNS_DEFS = {
     notes: ["command-guided; hold mouse to steer — slow loft, early dive onto ground / air"],
   },
   heavy_cannon: {
-    id: "heavy_cannon", name: "AVENGER", fullName: "AVENGER GATLING GUN", description: "A legendary, roaring rotary cannon that vaporizes armor with a relentless mix of high-velocity explosive rounds.", designation: "30MM GAU-8/A AVENGER GATLING GUN", ammo: 1150, fireCd: 0.04, speed: 1580,
+    name: "AVENGER", fullName: "AVENGER GATLING GUN", description: "A legendary, roaring rotary cannon that vaporizes armor with a relentless mix of high-velocity explosive rounds.", designation: "30MM GAU-8/A AVENGER GATLING GUN", ammo: 1150, fireCd: 0.04, speed: 1580,
     dmg: 170, blast: 32, life: 0.125,
     art: gunArt("heavy_cannon", 0.88, { w: 132, h: 10, core: [255, 252, 230], mid: [255, 160, 45], rim: [210, 70, 20], blunt: 0.16, glow: 0.68 }, MOUNT_GATLING),
     cam: CAM_GUN, fire: FIRE_GUN, control: HOLD, launch: { mode: "muzzle", inheritMomentum: 1 },
@@ -1085,7 +1170,7 @@ const PLAYER_WPNS_DEFS = {
     fits: FIT_GUN, notes: ["GAU-8 — one-taps soft armor/LAV; tanks fall in ~2"],
   },
   heavy_guided_missile: {
-    id: "heavy_guided_missile", name: "MAVERICK", fullName: "MAVERICK MISSILE (AIR-TO-GROUND)", description: "A heavy-duty lock-on missile engineered to crack the absolute toughest vehicular defenses on the field.", designation: "AGM-65 MAVERICK", ammo: 6, fireCd: 0.72, speed: 445,
+    name: "MAVERICK", fullName: "MAVERICK MISSILE (AIR-TO-GROUND)", description: "A heavy-duty lock-on missile engineered to crack the absolute toughest vehicular defenses on the field.", designation: "AGM-65 MAVERICK", ammo: 6, fireCd: 0.72, speed: 445,
     dmg: 420, blast: 170, life: 5.5,
     art: ordArt("laserGuided", 0.98, "heading"),
     exhaust: particleTrail(0.55, { fire: "burn", smoke: "linger", density: 1.3 }),
@@ -1098,7 +1183,7 @@ const PLAYER_WPNS_DEFS = {
     notes: ["AG laser lock — vehicle/building punch; soft vs air / troops"],
   },
   bomb: {
-    id: "bomb", name: "IRON BOMB", fullName: "IRON BOMB", description: "A traditional, unguided heavy payload dropped from above to obliterate grouped armored divisions.", designation: "MARK 82 GENERAL-PURPOSE BOMB", ammo: 10, fireCd: 0.72, speed: 220,
+    name: "IRON BOMB", fullName: "IRON BOMB", description: "A traditional, unguided heavy payload dropped from above to obliterate grouped armored divisions.", designation: "MARK 82 GENERAL-PURPOSE BOMB", ammo: 10, fireCd: 0.72, speed: 220,
     dmg: 380, blast: 200, life: 6.5,
     art: ordArt("bomb", 0.85, "velocity"),
     exhaust: particleTrail(0.42, { density: 0.45, contrail: true }),
@@ -1107,7 +1192,7 @@ const PLAYER_WPNS_DEFS = {
     fits: FIT_HARDPOINT, notes: ["gravity bomb — weak aim correction vs JDAM; structure / armor fantasy"],
   },
   tesla_beam: {
-    id: "tesla_beam", name: "TESLA COIL", fullName: "TESLA COIL", description: "Emits a chaining arc of electricity that fries enemy systems and leaves targets completely paralyzed.", designation: "TESLA COIL ARC CANNON", ammo: 900, fireCd: 0.05, speed: 1,
+    name: "TESLA COIL", fullName: "TESLA COIL", description: "Emits a chaining arc of electricity that fries enemy systems and leaves targets completely paralyzed.", designation: "TESLA COIL ARC CANNON", ammo: 900, fireCd: 0.05, speed: 1,
     dmg: 9, blast: 0, life: 0.05,
     art: gunArt("tesla_beam", 0.62, { w: 80, h: 10, core: [230, 255, 255], mid: [80, 240, 255], rim: [20, 120, 255], glow: 0.85 }, MOUNT_TESLA),
     cam: CAM_GUN, fire: { muzzleFlash: false, jitter: 0 },
@@ -1121,7 +1206,7 @@ const PLAYER_WPNS_DEFS = {
     ],
   },
   mini_hellfire_missile: {
-    id: "mini_hellfire_missile", name: "MICRO-HELLFIRE", fullName: "MICRO-HELLFIRE MISSILE", description: "A compact variant of the classic anti-armor missile, trading raw damage for a compact ammo pool.", designation: "MICRO-HELLFIRE MISSILE", ammo: 10, fireCd: 0.45, speed: 400,
+    name: "MICRO-HELLFIRE", fullName: "MICRO-HELLFIRE MISSILE", description: "A compact variant of the classic anti-armor missile, trading raw damage for a compact ammo pool.", designation: "MICRO-HELLFIRE MISSILE", ammo: 10, fireCd: 0.45, speed: 400,
     dmg: 200, blast: 90, life: 4.2,
     art: ordArt("laserGuided", 0.31, "heading"),
     exhaust: particleTrail(0.55, { fire: "burn", smoke: "linger", density: 1.3 }),
@@ -1134,7 +1219,7 @@ const PLAYER_WPNS_DEFS = {
     notes: ["Murder Hornet AT — compact laser F&F; lighter punch / shorter belt than Hellfire"],
   },
   mini_bomb: {
-    id: "mini_bomb", name: "KINETIC SLUGS", fullName: "KINETIC SLUGS", description: "High-velocity, unguided solid darts designed to punch straight through thick vehicular armor plating.", designation: "KINETIC DROP SLUGS", ammo: 14, fireCd: 0.6, speed: 180,
+    name: "KINETIC SLUGS", fullName: "KINETIC SLUGS", description: "High-velocity, unguided solid darts designed to punch straight through thick vehicular armor plating.", designation: "KINETIC DROP SLUGS", ammo: 14, fireCd: 0.6, speed: 180,
     dmg: 130, blast: 42, life: 5.5,
     art: ordArt("miniRocket", 0.58, "velocity"),
     exhaust: particleTrail(0.52, { smoke: "rocket", align: "heading" }),
@@ -1144,7 +1229,7 @@ const PLAYER_WPNS_DEFS = {
     fits: FIT_HARDPOINT, notes: ["Murder Hornet AT — paired kinetic drops; armor needles, not Apache splash"],
   },
   artillery_strike: {
-    id: "artillery_strike",
+    
     name: "ARTILLERY STRIKE",
     fullName: "SIGNAL FLARE ARTILLERY STRIKE",
     description: "A tactical marker gun used to call down an off-map deluge of heavy anti-armor ordnance.",
@@ -1201,7 +1286,7 @@ const PLAYER_WPNS_DEFS = {
     ],
   },
   remote_howitzer: {
-    id: "remote_howitzer",
+    
     name: "REMOTE HOWITZER",
     fullName: "DROPSHIP HOWITZER SPOT",
     description: "A spotting tool that links directly to a dropship to coordinate massive, precise artillery fire.",
@@ -1230,10 +1315,7 @@ const PLAYER_WPNS_DEFS = {
       "uses the host howitzer mount, ballistics, and shared ammo bank",
     ],
   },
-} satisfies Record<string, PlayerWpnSpec>;
-
-/** Player loadout identity — literal union of PLAYER_WPNS keys. */
-export type WpnId = keyof typeof PLAYER_WPNS_DEFS;
+};
 
 /** Compile-time: every host-fire id is a real catalog weapon. */
 const _hostFireIsWpnId: Record<HostFireWeaponId, WpnId> = {
@@ -1242,7 +1324,9 @@ const _hostFireIsWpnId: Record<HostFireWeaponId, WpnId> = {
 void _hostFireIsWpnId;
 
 /** Homogeneous catalog (keys stay literal via WpnId). */
-export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = PLAYER_WPNS_DEFS;
+export const PLAYER_WPNS: Record<WpnId, PlayerWpnSpec> = Object.fromEntries(
+  Object.entries(PLAYER_WPNS_DEFS).map(([id, def]) => [id, { ...def, id }])
+) as Record<WpnId, PlayerWpnSpec>;
 
 /** Narrow a catalog row to its key-typed id (defs use plain string `id`). */
 export function wpnIdOf(w: PlayerWpnSpec): WpnId {

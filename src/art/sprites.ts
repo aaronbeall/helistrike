@@ -185,6 +185,12 @@ const CRAFT_ART: { key: string; file: string; fit: number; rotor?: boolean; keyP
   { key: "craft_hover_tank_hulk", file: "sprites/craft/hover-tank-hulk.png", fit: 92 },
   { key: "craft_hover_tank_turret", file: "sprites/craft/hover-tank-turret.png", fit: 54 },
   { key: "craft_hound", file: "sprites/craft/hound.png", fit: 72 },
+  { key: "craft_humvee", file: "sprites/craft/humvee.png", fit: 84 },
+  { key: "craft_humvee_hulk", file: "sprites/craft/humvee-hulk.png", fit: 84 },
+  { key: "craft_humvee_turret", file: "sprites/craft/humvee-turret.png", fit: 25 },
+  { key: "craft_wolf", file: "sprites/craft/wolf.png", fit: 76 },
+  { key: "craft_wolf_hulk", file: "sprites/craft/wolf-hulk.png", fit: 76 },
+  { key: "craft_wolf_turret", file: "sprites/craft/wolf-turret.png", fit: 23 },
   { key: "craft_vtol_dropship_v2", file: "sprites/craft/vtol-dropship-v2.png", fit: 178 },
   { key: "craft_vtol_dropship_v2_hulk", file: "sprites/craft/vtol-dropship-v2-hulk.png", fit: 178 },
 ];

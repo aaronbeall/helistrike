@@ -214,13 +214,13 @@ function shotFacesHeading(s: Shot): boolean {
 
 import {
   initRemoteLoadout,
-  remoteGunId,
   remoteHasPovHud,
   remoteHull,
   remoteRotorParts,
   remoteRotorPoolSize,
-  remoteSocketStartingAmmo,
   remoteSpecOf,
+  type EscortNav,
+  type EscortNavState,
   type RemoteCraft,
 } from "../sim/remote";
 import {
@@ -247,7 +247,7 @@ import {
   toonBlastKey,
 } from "../render/toonBlast";
 import { ensureAllArtGenAnims } from "../art/artGen";
-import { isAerial, isGroundVehicle, isHeliBehavior, isInfantry, isOrganic, hasSoftBlood, specOf, driveOf, spawnAngle, pickTroop, labelOf, allKinds, gunsOf, rollParts, crewOf, muzzlesOfGun, type ShotKind, type ShotLook } from "../sim/roster";
+import { isAerial, isGroundVehicle, isInfantry, isOrganic, hasSoftBlood, specOf, driveOf, spawnAngle, pickTroop, labelOf, allKinds, gunsOf, rollParts, crewOf, muzzlesOfGun, type ShotKind, type ShotLook } from "../sim/roster";
 import {
   circumRadiusOf,
   closestOnFootprint,
@@ -260,7 +260,7 @@ import {
   type Footprint,
 } from "../render/footprint";
 import { lookupSpriteMuzzles, lookupSpriteOrigin, lookupSpritePoints } from "../art/spriteOrigin";
-import { craftAimsWithTurret, craftBombDrop, craftCameraScale, craftCloudParallax, craftComposite, craftCompositePartScale, craftCrewHudTag, craftExhaustFlameHue, craftExhaustFlameSheet, craftExhaustMounts, craftFixedMuzzles, craftGunMount, craftGunMounts, craftGunOrigin, craftGunPreferDegrees, craftGunPreferOffset, craftGunSocketSlots, craftHardpointMounts, craftControlScheme, craftOf, craftOrigin, craftPreviewExhaustScale, craftPreviewExhaustTint, craftRotorAlongScale, craftRotorFlightSpeed, craftRotorIsProp, craftRotorMounts, craftRotorTiltMul, craftSocketBarrelCount, craftSocketFireCd, craftSocketIsPrimary, craftSocketMultiplicity, craftSocketPoints, craftSocketStartingAmmo, craftWingTipMounts, craftRotorDrawSpan, rotorDrawSpan, rotorMountsOf, rotorSpinSign, socketHullPlacement, socketPointsOnKey, type CraftBombDrop, type CraftComposite, type CraftSpec } from "../sim/crafts";
+import { craftAimsWithTurret, craftBombDrop, craftCameraScale, craftCloudParallax, craftComposite, craftCompositePartScale, craftCrewHudTag, craftExhaustFlameHue, craftExhaustFlameSheet, craftExhaustMounts, craftFixedMuzzles, craftGunId, craftGunMount, craftGunMounts, craftGunOrigin, craftGunPreferDegrees, craftGunPreferOffset, craftGunScale, craftGunSocketSlots, craftGunTex, craftHardpointMounts, craftControlScheme, craftOf, craftOrigin, craftPreviewExhaustScale, craftPreviewExhaustTint, craftRotorAlongScale, craftRotorFlightSpeed, craftRotorIsProp, craftRotorMounts, craftRotorTiltMul, craftSocketBarrelCount, craftSocketFireCd, craftSocketGunScale, craftSocketIsPrimary, craftSocketMultiplicity, craftSocketPoints, craftSocketStartingAmmo, craftWingTipMounts, craftRotorDrawSpan, rotorDrawSpan, rotorMountsOf, rotorSpinSign, socketHullPlacement, socketPointsOnKey, type CraftBombDrop, type CraftComposite, type CraftSpec } from "../sim/crafts";
 import { missionOf } from "../sim/mission";
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "../worldgen/brushes";
 import { rigsAnyOpen, installRigHotkeys } from "../rigs/rigs";
@@ -315,10 +315,22 @@ const GUN_STATION_TURN_RATE = 6.4;
 const AUTO_GUN_ALIGN_TOL = 0.14;
 /** Score penalty per radian off the barrel's preferred (mount-outward) heading. */
 const AUTO_GUN_HEADING_WEIGHT = 900;
+/** Weapons with an authored cooldown at least this long (s) show the reticle cooldown radial. */
+const RETICLE_CD_MIN = 1.0;
 /** AI gun-aim precision: seconds of continuous tracking to fully narrow from wide to tight jitter. */
 const AI_AIM_NARROW_BASE = 2.5;
 /** AI gun-aim precision: freshly-acquired jitter is this many × the weapon's authored (fully-aimed) jitter. */
 const AI_AIM_WIDE_MUL = 2.2;
+/** Automatic (crew-fired) turret stations: wider fresh-acquire spread than AI enemies get. */
+const AUTO_GUN_WIDE_MUL = 3;
+/** Automatic turret: max extra spread (rad) added at/above AUTO_GUN_SPEED_REF craft speed. */
+const AUTO_GUN_SPEED_PENALTY_MAX = 0.06;
+/** Automatic turret: craft speed (world units/s) at which the speed spread penalty maxes out. */
+const AUTO_GUN_SPEED_REF = 400;
+/** Host AGL a ground remote's dock bay must be under to actually dock (can't reel a ground vehicle up mid-air). */
+const DOCK_GROUND_MAX_AGL = 30;
+/** Seconds the "too high to dock" alert stays on screen after a blocked recall. */
+const DOCK_AGL_ALERT_HOLD = 2.2;
 /** AI missile lock: base seconds of continuous tracking required to acquire lock before firing. */
 const AI_LOCK_BASE = 1.8;
 type FxPolicy = {
@@ -828,6 +840,9 @@ export class MissionScene extends Phaser.Scene {
   threatMissileTxt!: Phaser.GameObjects.Text;
   liftPrompt!: Phaser.GameObjects.Text;
   remotePrompt!: Phaser.GameObjects.Text;
+  /** Brief "TOO HIGH TO DOCK" flash when a ground dockable remote can't recall (host AGL too high). */
+  dockAglAlertTxt!: Phaser.GameObjects.Text;
+  dockAglAlertT = 0;
   remoteArmedTxt!: Phaser.GameObjects.Text;
   hvHud!: Phaser.GameObjects.Text;
   hvRows: Phaser.GameObjects.Text[] = [];
@@ -1159,6 +1174,8 @@ export class MissionScene extends Phaser.Scene {
   debugAi = false;
   aiGfx!: Phaser.GameObjects.Graphics;
   aiLabels: Phaser.GameObjects.Text[] = [];
+  /** Debug state labels for ground-escort remotes (HUMVEE-style), pooled like `aiLabels`. */
+  escortAiLabels: Phaser.GameObjects.Text[] = [];
   /** Last-frame auto / crew-gun track snapshot for AI debug overlay. */
   autoGunDbg: {
     slot: number;
@@ -1314,6 +1331,9 @@ export class MissionScene extends Phaser.Scene {
     this.infAmmo = false;
     this.debugAi = false;
     this.autoGunDbg = [];
+    this.aiLabels = [];
+    this.escortAiLabels = [];
+    this.dockAglAlertT = 0;
     this.editOpen = false;
     this.editInvert = false;
     this.editDirty = null;
@@ -2876,7 +2896,7 @@ export class MissionScene extends Phaser.Scene {
     this.input.keyboard!.addKey("Q").on("down", () => {
       if (this.editOpen) this.nudgeEditRot(-1);
       else if (this.remoteView && this.pilotingRemote()) this.exitRemoteView();
-      else this.recallWingmen();
+      else this.recallDockables();
     });
     this.input.keyboard!.addKey("COMMA").on("down", () => {
       if (this.editOpen) this.nudgeEditOff(-1, 0);
@@ -3068,6 +3088,18 @@ export class MissionScene extends Phaser.Scene {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "13px",
         color: "#7ad0ff",
+        align: "center",
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(Layer.HUD + 8)
+      .setStroke("#12100c", 4)
+      .setVisible(false);
+    this.dockAglAlertTxt = this.add
+      .text(this.scale.width / 2, this.scale.height - 130, "TOO HIGH TO DOCK — DESCEND", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "13px",
+        color: "#ff8a5a",
         align: "center",
       })
       .setOrigin(0.5)
@@ -3900,6 +3932,7 @@ export class MissionScene extends Phaser.Scene {
     }
     const wallDt = Math.min(dms / 1000, 0.05);
     this.frameWallDt = wallDt;
+    if (this.dockAglAlertT > 0) this.dockAglAlertT = Math.max(0, this.dockAglAlertT - wallDt);
     const mapPause = this.mapWant || this.mapBlend > 0.02;
     const uiPause = mapPause || this.helpOpen || this.exitOpen;
     let simScale = this.timeScale;
@@ -4664,7 +4697,7 @@ export class MissionScene extends Phaser.Scene {
         }
       }
       const sock = slot != null ? craft.sockets[slot] : undefined;
-      const gunSc = (craft.gunOverlayScale ?? 1) * (sock?.gunScale ?? 1);
+      const gunSc = craftSocketGunScale(craft, sock);
       // Automatic coax on a shared cupola draws above the pilot turret.
       const coaxBias = sock?.controller === "automatic" ? 0.55 : 0;
       gun
@@ -5482,13 +5515,16 @@ export class MissionScene extends Phaser.Scene {
     } else {
       this.drawReticleTally(p.x, p.y, !gunSight ? ammoShown : 0, ammoCap);
     }
+    if (spec.fireCd >= RETICLE_CD_MIN) {
+      this.drawReticleCooldown(p.x, p.y, h.fireCd, craftSocketFireCd(spec.fireCd, h.spec, h.weapon));
+    }
     // Remote slot: gun remotes keep a POV sight while selected; others have no laser.
     // POV-HUD remotes (HOUND) fall through to their own loadout sight below.
     if (payloadIsRemote(spec.payload)) {
       const live = this.selectedSlotRemote();
       if (live && remoteHasPovHud(live.spec)) {
         // Handled by povHudRemote sight path.
-      } else if (live && remoteGunId(live.spec) && !(live.spec.ai && !live.spec.pilotable)) {
+      } else if (live && craftGunId(live.spec) && !(live.spec.ai && !live.spec.pilotable)) {
         this.sight.setVisible(true);
         this.sight.clear();
         const aimAng = live.gunAngle ?? live.angle;
@@ -5532,7 +5568,7 @@ export class MissionScene extends Phaser.Scene {
       const remAmmoCap = Math.max(
         hostSpec && hostSlot >= 0
           ? craftSocketStartingAmmo(hostSpec.ammo, h.spec, hostSlot)
-          : remoteSocketStartingAmmo(remSpec.ammo, povRem.spec, remSlot),
+          : craftSocketStartingAmmo(remSpec.ammo, povRem.spec, remSlot),
         Number.isFinite(ammoLeft) ? ammoLeft : 0
       );
       if (remSpec.launch.mode === "beam") {
@@ -5540,6 +5576,8 @@ export class MissionScene extends Phaser.Scene {
       } else {
         this.drawReticleTally(p.x, p.y, !remGunSight ? ammoLeft : 0, remAmmoCap);
       }
+      const remCdTotal = hostSpec && payloadIsHostFire(remSpec.payload) ? hostSpec.fireCd : remSpec.fireCd;
+      if (remCdTotal >= RETICLE_CD_MIN) this.drawReticleCooldown(p.x, p.y, povRem.fireCd ?? 0, remCdTotal);
       this.sight.setVisible(true);
       this.sight.clear();
       if (bombDrop) {
@@ -6472,6 +6510,33 @@ designatorSightOrigins(slot = this.player.weapon): { x: number; y: number }[] {
     }
   }
 
+  /** Long-cooldown weapons: radial fills clockwise during cooldown, gone when ready. */
+  drawReticleCooldown(cx: number, cy: number, remaining: number, total: number): void {
+    if (!(total > 0) || !(remaining > 0)) return;
+    const frac = Phaser.Math.Clamp(1 - remaining / total, 0, 1);
+    if (frac >= 1) return;
+    const g = this.reticleMark;
+    g.setVisible(true);
+    const r = 7;
+    const ox = cx - 34;
+    const oy = cy - 34;
+    const start = -Math.PI / 2;
+    g.lineStyle(1.5, 0x000000, 0.4);
+    g.beginPath();
+    g.arc(ox, oy, r, 0, Math.PI * 2, false);
+    g.strokePath();
+    g.lineStyle(1.15, 0xe8b84a, 0.22);
+    g.beginPath();
+    g.arc(ox, oy, r, 0, Math.PI * 2, false);
+    g.strokePath();
+    if (frac > 0.002) {
+      g.lineStyle(1.6, 0xe8b84a, 0.85);
+      g.beginPath();
+      g.arc(ox, oy, r, start, start + Math.PI * 2 * frac, false);
+      g.strokePath();
+    }
+  }
+
   worldToHud(wx: number, wy: number): { x: number; y: number } {
     const cam = this.cameras.main;
     const view = cam.worldView;
@@ -6754,7 +6819,7 @@ craftBodyMountWorldPos(mount: { x: number; y: number }): { x: number; y: number 
         }
         if (live.spec.ai && !live.spec.pilotable) {
           // Skiffs / AI-only: launch more if ammo remains.
-        } else if (remoteGunId(live.spec)) {
+        } else if (craftGunId(live.spec)) {
           // Legacy single-gun remotes: selected + alive = player fire only.
           if (down) this.fireRemoteGun(live, dt);
           this.pointerWasDown = down;
@@ -6805,7 +6870,7 @@ craftBodyMountWorldPos(mount: { x: number; y: number }): { x: number; y: number 
       return;
     }
     // Skiff bay CD is shared with auto-scramble (may lag behind h.fireCd after weapon switch).
-    if (spec.payload?.remote && remoteSpecOf(spec.payload.remote.kind).recallWithQ) {
+    if (spec.payload?.remote && remoteSpecOf(spec.payload.remote.kind).autoLaunch) {
       const skiffCd = this.stationFireCd[slot]?.[0] ?? 0;
       if (skiffCd > 0) {
         this.pointerWasDown = down;
@@ -6828,7 +6893,7 @@ craftBodyMountWorldPos(mount: { x: number; y: number }): { x: number; y: number 
 
     h.fireCd = craftSocketFireCd(spec.fireCd, h.spec, slot);
     // Share recall-with-Q bay CD with auto-launch so manual + scramble don't stack.
-    if (spec.payload?.remote && remoteSpecOf(spec.payload.remote.kind).recallWithQ) {
+    if (spec.payload?.remote && remoteSpecOf(spec.payload.remote.kind).autoLaunch) {
       const cds =
         this.stationFireCd[slot] ??
         (this.stationFireCd[slot] = Array.from(
@@ -7573,9 +7638,7 @@ specIsShellGun(spec)
     const autoHoldT = autoTarget ? this.stationAimHoldT[slot]?.[barrelIndex] ?? 0 : undefined;
     for (const tipRef of tipRefs) {
       const spreadAmp =
-        autoHoldT != null
-          ? aimPrecisionSpread(autoHoldT, AI_AIM_NARROW_BASE, baseSpreadAmp * AI_AIM_WIDE_MUL, baseSpreadAmp)
-          : baseSpreadAmp;
+        autoHoldT != null ? this.autoGunAimSpread(autoHoldT, baseSpreadAmp) : baseSpreadAmp;
       const spread = spec.launch.mode === "beam" ? 0 : (Math.random() - 0.5) * spreadAmp;
       const ang = stationAng + spread + yawOff + ((st.helixSide ?? 0) * 0.012);
       const tip =
@@ -8603,6 +8666,24 @@ specIsShellGun(spec)
     return false;
   }
 
+  /**
+   * Automatic (crew-fired) turret aim spread: narrows with hold time like AI aim, but wider
+   * on fresh-acquire (AUTO_GUN_WIDE_MUL) and further widened while the host craft is moving —
+   * stationary is no penalty, full speed adds up to AUTO_GUN_SPEED_PENALTY_MAX.
+   * Shared by the debug cone (tickAutomaticStations) and the actual fired shot (fireMuzzleShot)
+   * so what's drawn always matches what's fired.
+   */
+  autoGunAimSpread(holdT: number, baseJitter: number): number {
+    const h = this.player;
+    const spd = Math.hypot(h.vx, h.vy, h.vz);
+    const speedPenalty =
+      Phaser.Math.Clamp(spd / AUTO_GUN_SPEED_REF, 0, 1) * AUTO_GUN_SPEED_PENALTY_MAX;
+    return (
+      aimPrecisionSpread(holdT, AI_AIM_NARROW_BASE, baseJitter * AUTO_GUN_WIDE_MUL, baseJitter) +
+      speedPenalty
+    );
+  }
+
   tickAutomaticStations(dt: number, _ptr: { x: number; y: number }): void {
     const h = this.player;
     this.autoGunDbg = [];
@@ -8731,7 +8812,7 @@ specIsShellGun(spec)
         else if (onCd) state += "CD";
         else state += "FIRE";
         const baseJitter = spec.fire?.jitter ?? 0;
-        const aimSpreadRad = aimPrecisionSpread(holdTs[b] ?? 0, AI_AIM_NARROW_BASE, baseJitter * AI_AIM_WIDE_MUL, baseJitter);
+        const aimSpreadRad = this.autoGunAimSpread(holdTs[b] ?? 0, baseJitter);
         pushDbg(b, {
           aim,
           want,
@@ -8846,7 +8927,7 @@ specIsShellGun(spec)
 
   craftCmId() {
     const pov = this.povHudRemote();
-    if (pov?.spec.craftLook) return craftCountermeasure(remoteHull(pov.spec).countermeasure);
+    if (pov) return craftCountermeasure(pov.spec.countermeasure);
     return craftCountermeasure(this.player.spec.countermeasure);
   }
 
@@ -9225,15 +9306,27 @@ specIsShellGun(spec)
     return d < this.remoteDockRange(drone);
   }
 
-  /** Q from bird-cam — send every live recallWithQ remote home to dock. */
-  recallWingmen(): void {
+  /**
+   * Q from bird-cam — send every live dockable remote home to dock. A ground remote can't
+   * reel up into a hovering host — it only docks if the host is near the ground; otherwise it
+   * stays out and flashes an alert instead of silently teleporting up to the bay.
+   */
+  recallDockables(): void {
+    const h = this.player;
     let any = false;
+    let blockedByAgl = false;
+    const hostAgl = castZ(this.world, h.x, h.y, h.z);
     for (const r of this.remotes) {
-      if (r.detonate || r.dock || !r.spec.recallWithQ) continue;
+      if (r.detonate || r.dock || !r.spec.dockable) continue;
+      if (r.spec.ground && hostAgl > DOCK_GROUND_MAX_AGL) {
+        blockedByAgl = true;
+        continue;
+      }
       r.dock = true;
       any = true;
     }
     if (any) this.applyThermalMode();
+    if (blockedByAgl) this.dockAglAlertT = DOCK_AGL_ALERT_HOLD;
   }
 
   /** Toggle dropship FOLLOW / HOLD while piloting a POV remote with `hostEscort`. */
@@ -9432,8 +9525,7 @@ specIsShellGun(spec)
     const sp = Math.sin(pitchOff);
     const kick = remoteSpec.launchSpeed;
     const gnd = groundZ(this.world, pylon.x, pylon.y);
-    const hull = remoteHull(remoteSpec);
-    const pad = gnd + hull.cruiseAgl;
+    const pad = gnd + remoteSpec.cruiseAgl;
     const drop = !!remoteSpec.ground && h.z > pad + 8;
     this.remotes.push({
       id: nextId(),
@@ -9641,9 +9733,15 @@ specIsShellGun(spec)
   }
 
   tickRemoteAi(drone: RemoteCraft, dt: number): void {
-    // Ground + turret AI (currently just HOUND) — orbit/shoot; same shadow Craft as piloted.
-    if (drone.spec.ground && drone.spec.gun) {
+    // Ground + turret AI (HOUND) — mouse-park + orbit/shoot; same shadow Craft as piloted.
+    if (drone.spec.ground && craftGunId(drone.spec) && !drone.spec.orbitEscort) {
       this.tickGroundGunAi(drone, dt);
+      return;
+    }
+    // Ground fire-support escort (HUMVEE): tight leash-follow the host, orbit-attack
+    // a point between host and target when engaged. Own dedicated AI, not the wingman ring.
+    if (drone.spec.orbitEscort) {
+      this.tickHumveeEscortAi(drone, dt);
       return;
     }
     // Sensor-net air AI (Skiff boom-pass / Raptor strafe) — not Spectre orbit.
@@ -9743,7 +9841,7 @@ specIsShellGun(spec)
     let slot = -1;
     for (let i = 0; i < this.loadout.length; i++) {
       const remote = this.loadout[i]?.payload?.remote;
-      if (remote && remoteSpecOf(remote.kind).recallWithQ) {
+      if (remote && remoteSpecOf(remote.kind).autoLaunch) {
         slot = i;
         break;
       }
@@ -9854,7 +9952,7 @@ specIsShellGun(spec)
     }
 
     // Soft climb toward host altitude band (Craft seeks hull cruiseAgl; AI biases to host).
-    const band = host.z + Phaser.Math.Clamp(remoteHull(spec).cruiseAgl - 30, -20, 40);
+    const band = host.z + Phaser.Math.Clamp(spec.cruiseAgl - 30, -20, 40);
     drone.vz += (band - drone.z) * 1.8 * dt;
     drone.vz *= Math.pow(0.25, dt);
 
@@ -9875,7 +9973,7 @@ specIsShellGun(spec)
     const sa = Math.sin(drone.angle);
     // >0 when the target is still ahead of the nose.
     const ahead = dx * ca + dy * sa;
-    const gunId = remoteGunId(drone.spec);
+    const gunId = craftGunId(drone.spec);
     const bulletSpd = gunId ? PLAYER_WPNS[gunId]?.speed ?? 900 : 900;
     // Lead the nose for a collision course; shots still leave along heading.
     const leadT = Phaser.Math.Clamp(dist / Math.max(280, bulletSpd * 0.4), 0.04, 0.45);
@@ -9971,7 +10069,7 @@ specIsShellGun(spec)
     drone.vz *= Math.pow(0.3, dt);
     if (dist < 110) {
       const pull = 1 - Math.exp(-5 * dt);
-      const along = remoteHull(drone.spec).maxSpeed * (0.45 + approach * 0.4) * 0.9;
+      const along = drone.spec.maxSpeed * (0.45 + approach * 0.4) * 0.9;
       drone.vx = Phaser.Math.Linear(drone.vx, (dx / dist) * along, pull);
       drone.vy = Phaser.Math.Linear(drone.vy, (dy / dist) * along, pull);
     }
@@ -10011,10 +10109,9 @@ specIsShellGun(spec)
     const gunAim = target
       ? { x: target.x, y: target.y }
       : { x: ptr.x, y: ptr.y };
-    const hull = craftOf(drone.spec.craftLook);
     if (target) {
       const aimWant = Math.atan2(target.y - drone.y, target.x - drone.x);
-      if (craftAimsWithTurret(hull)) {
+      if (craftAimsWithTurret(spec)) {
         drone.gunAngle = Phaser.Math.Angle.RotateTo(
           drone.gunAngle ?? drone.angle,
           aimWant,
@@ -10031,7 +10128,7 @@ specIsShellGun(spec)
       }
     } else {
       const idleWant = Math.atan2(ptr.y - drone.y, ptr.x - drone.x);
-      if (craftAimsWithTurret(hull)) {
+      if (craftAimsWithTurret(spec)) {
         drone.gunAngle = Phaser.Math.Angle.RotateTo(
           drone.gunAngle ?? drone.angle,
           idleWant,
@@ -10065,7 +10162,7 @@ specIsShellGun(spec)
     } else {
       // Reach a wide ring around the reticle, then idle. Don't nose in once inside.
       const spd = Math.hypot(drone.vx, drone.vy);
-      const coast = Math.max(90, (hull.maxSpeed / Math.max(0.1, hull.drag ?? 1)) * 1.8);
+      const coast = Math.max(90, (spec.maxSpeed / Math.max(0.1, spec.drag ?? 1)) * 1.8);
       if (toMouse > stopR) {
         const ux = (drone.x - ptr.x) / toMouse;
         const uy = (drone.y - ptr.y) / toMouse;
@@ -10074,7 +10171,7 @@ specIsShellGun(spec)
         want = Math.atan2(ty - drone.y, tx - drone.x);
         const remain = toMouse - stopR;
         if (remain < coast) {
-          const safeSpeed = (remain / coast) * hull.maxSpeed;
+          const safeSpeed = (remain / coast) * spec.maxSpeed;
           throttle = spd > safeSpeed + 12 ? -0.6 : 0;
         } else {
           throttle = toMouse < leashR ? 0.55 : 0.75;
@@ -10092,19 +10189,333 @@ specIsShellGun(spec)
   }
 
   /**
+   * HUMVEE fire-support escort AI (unpiloted, fully autonomous):
+   * - Idle: tight leash-follow on the host — rests inside `followInnerRadius`, only
+   *   drives back in once past `followOuterRadius`.
+   * - Engaged: circles a point on the host→target line biased toward the target
+   *   (`attackBias`), radius a fraction of the host↔target distance (`attackOrbitFrac`),
+   *   clamped so the near edge keeps `attackStandoff` from the target and the orbit
+   *   point itself never strays past `pursueRadius` from the host.
+   */
+  tickHumveeEscortAi(drone: RemoteCraft, dt: number): void {
+    const spec = drone.spec;
+    const host = this.wingmanOrbitHost(drone);
+    const maxEngage = this.wingmanMaxEngageRange();
+    const aware = spec.awareRange ?? 480;
+
+    let target: Unit | undefined =
+      drone.aiTargetId != null ? this.unitById(drone.aiTargetId) : undefined;
+    if (
+      !target ||
+      target.dead ||
+      !this.unitKnownToFriendlies(target, aware) ||
+      Math.hypot(target.x - host.x, target.y - host.y) > maxEngage
+    ) {
+      let best: Unit | undefined;
+      let bestD = maxEngage;
+      for (const u of this.units) {
+        if (u.dead) continue;
+        if (!this.unitKnownToFriendlies(u, aware)) continue;
+        const dHost = Math.hypot(u.x - host.x, u.y - host.y);
+        if (dHost > maxEngage) continue;
+        const d = Math.hypot(u.x - drone.x, u.y - drone.y);
+        if (d < bestD) {
+          bestD = d;
+          best = u;
+        }
+      }
+      target = best;
+      drone.aiTargetId = best?.id;
+    }
+
+    let want: number;
+    let throttle: number;
+    let state: EscortNavState = "PARKED";
+    let goalX = drone.x;
+    let goalY = drone.y;
+
+    if (target) {
+      const aimWant = Math.atan2(target.y - drone.y, target.x - drone.x);
+      if (craftAimsWithTurret(spec)) {
+        drone.gunAngle = Phaser.Math.Angle.RotateTo(drone.gunAngle ?? drone.angle, aimWant, GUN_STATION_TURN_RATE * dt);
+      } else {
+        drone.gunAngle = aimWant;
+      }
+      const aimErr = Math.abs(Phaser.Math.Angle.Wrap((drone.gunAngle ?? 0) - aimWant));
+      if (aimErr < 0.22 || Math.hypot(target.x - drone.x, target.y - drone.y) < maxEngage * 0.45) {
+        this.fireRemoteGun(drone, dt, { x: target.x, y: target.y });
+      } else {
+        drone.aimHoldT = 0; // out of cone/range — aim precision resets to max.
+      }
+
+      const hostTargetDist = Math.hypot(target.x - host.x, target.y - host.y) || 1;
+      const bias = Phaser.Math.Clamp(spec.attackBias ?? 0.75, 0, 1);
+      const centerX = host.x + (target.x - host.x) * bias;
+      const centerY = host.y + (target.y - host.y) * bias;
+      const centerToTargetDist = hostTargetDist * (1 - bias);
+      const standoff = spec.attackStandoff ?? 60;
+      const desiredR = hostTargetDist * (spec.attackOrbitFrac ?? 0.5);
+      const orbitR = Math.min(desiredR, Math.max(20, centerToTargetDist - standoff));
+      drone.orbit = (drone.orbit ?? 0) + dt * 0.9;
+      const lead = (drone.orbit ?? 0) + drone.id * 0.7;
+      let ox = centerX + Math.cos(lead) * orbitR;
+      let oy = centerY + Math.sin(lead) * orbitR;
+      const pursueR = spec.pursueRadius ?? 500;
+      const hostToPoint = Math.hypot(ox - host.x, oy - host.y) || 1;
+      if (hostToPoint > pursueR) {
+        const s = pursueR / hostToPoint;
+        ox = host.x + (ox - host.x) * s;
+        oy = host.y + (oy - host.y) * s;
+      }
+      want = Math.atan2(oy - drone.y, ox - drone.x);
+      const near = Math.hypot(ox - drone.x, oy - drone.y);
+      throttle = near < 40 ? 0.35 : 1;
+      state = "ATTACK";
+      goalX = ox;
+      goalY = oy;
+    } else {
+      const idleWant = drone.angle;
+      if (craftAimsWithTurret(spec)) {
+        drone.gunAngle = Phaser.Math.Angle.RotateTo(drone.gunAngle ?? drone.angle, idleWant, GUN_STATION_TURN_RATE * dt);
+      } else {
+        drone.gunAngle = idleWant;
+      }
+
+      const dx = host.x - drone.x;
+      const dy = host.y - drone.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const innerR = spec.followInnerRadius ?? 90;
+      const outerR = spec.followOuterRadius ?? 220;
+      if (d > outerR || (drone.nav?.follow && d > innerR)) {
+        const tx = host.x - (dx / d) * innerR;
+        const ty = host.y - (dy / d) * innerR;
+        want = Math.atan2(ty - drone.y, tx - drone.x);
+        throttle = 1;
+        state = "FOLLOW";
+        goalX = tx;
+        goalY = ty;
+      } else {
+        // Inside the rest radius — park and hold, same as HOUND's idle stillness.
+        const spd = Math.hypot(drone.vx, drone.vy);
+        want = drone.angle;
+        throttle = spd > 12 ? -0.6 : 0;
+      }
+    }
+
+    this.driveGroundEscort(drone, dt, want, throttle, state, goalX, goalY, target ? { x: target.x, y: target.y } : undefined);
+
+    if (spec.dockable && drone.life < 8 && this.remoteNearHost(drone)) {
+      drone.dock = true;
+    }
+  }
+
+  /** Deepest solid ground obstacle overlapping a circle (vehicles, buildings, ground remotes, landed player). */
+  groundObstacleAt(
+    self: RemoteCraft,
+    x: number,
+    y: number,
+    r: number,
+    pad = 0
+  ): { depth: number; nx: number; ny: number; px: number; py: number } | null {
+    let best: { depth: number; nx: number; ny: number; px: number; py: number } | null = null;
+    const consider = (depth: number, nx: number, ny: number, px: number, py: number) => {
+      if (depth > 0 && (!best || depth > best.depth)) best = { depth, nx, ny, px, py };
+    };
+    const circle = (cx: number, cy: number, cr: number) => {
+      const dx = x - cx;
+      const dy = y - cy;
+      const d = Math.hypot(dx, dy);
+      const nx = d > 1e-6 ? dx / d : 1;
+      const ny = d > 1e-6 ? dy / d : 0;
+      consider(r + pad + cr - d, nx, ny, cx + nx * cr, cy + ny * cr);
+    };
+    for (const o of this.units) {
+      if (o.dead || o.pinId != null) continue;
+      const osp = specOf(o.kind);
+      if (osp.aerial || osp.water || osp.behavior === "patrol_boat") continue;
+      if (!(osp.building || osp.behavior === "static_hold" || isGroundVehicle(o.kind))) continue;
+      const dx = x - o.x;
+      const dy = y - o.y;
+      const maxR = circumRadiusOf(o.kind) + r + pad + 2;
+      if (dx * dx + dy * dy > maxR * maxR) continue;
+      const fp = footprintInto(o, 0, 1);
+      const d = distToFootprint(x, y, fp);
+      if (d >= r + pad) continue;
+      const cp = closestOnFootprint(x, y, fp);
+      const cdx = x - cp.x;
+      const cdy = y - cp.y;
+      const cd = Math.hypot(cdx, cdy);
+      if (cd > 1e-6) consider(r + pad - d, cdx / cd, cdy / cd, cp.x, cp.y);
+      else {
+        const dd = Math.hypot(dx, dy) || 1;
+        consider(r + pad, dx / dd, dy / dd, o.x, o.y);
+      }
+    }
+    for (const q of this.remotes) {
+      if (q === self || !q.spec.ground || q.detonate || q.dock || q.airborne) continue;
+      circle(q.x, q.y, q.spec.radius);
+    }
+    if (this.player.phase !== "flight") circle(this.player.x, this.player.y, this.player.spec.radius);
+    return best;
+  }
+
+  /** Push a ground remote out of solids and cancel velocity into them; returns total penetration. */
+  resolveGroundRemote(drone: RemoteCraft): number {
+    const r = drone.spec.radius;
+    let total = 0;
+    for (let i = 0; i < 3; i++) {
+      const hit = this.groundObstacleAt(drone, drone.x, drone.y, r);
+      if (!hit) break;
+      drone.x += hit.nx * hit.depth;
+      drone.y += hit.ny * hit.depth;
+      const vn = drone.vx * hit.nx + drone.vy * hit.ny;
+      if (vn < 0) {
+        drone.vx -= hit.nx * vn;
+        drone.vy -= hit.ny * vn;
+      }
+      total += hit.depth;
+    }
+    return total;
+  }
+
+  /** Car-style ground drive: goal heading + avoidance probe + stuck→reverse recovery; writes nav debug state. */
+  driveGroundEscort(
+    drone: RemoteCraft,
+    dt: number,
+    want: number,
+    throttle: number,
+    state: EscortNavState,
+    goalX: number,
+    goalY: number,
+    gunAim?: { x: number; y: number }
+  ): void {
+    const nav: EscortNav = (drone.nav ??= {
+      state,
+      follow: false,
+      goalX,
+      goalY,
+      rawWant: want,
+      steerWant: want,
+      probeX: drone.x,
+      probeY: drone.y,
+      probeHit: false,
+      throttle: 0,
+      steer: 0,
+      avoidT: 0,
+      avoidOs: 0,
+      stuckT: 0,
+      sampleT: 0,
+      lastX: drone.x,
+      lastY: drone.y,
+      reverseT: 0,
+      reverseSteer: 0,
+    });
+    const r = drone.spec.radius;
+    const ca = Math.cos(drone.angle);
+    const sa = Math.sin(drone.angle);
+    const spd = Math.hypot(drone.vx, drone.vy);
+    const moving = throttle > 0.2;
+    nav.follow = state === "FOLLOW";
+    nav.goalX = goalX;
+    nav.goalY = goalY;
+    nav.rawWant = want;
+    nav.probeHit = false;
+    nav.probeX = drone.x + ca * (r + 22);
+    nav.probeY = drone.y + sa * (r + 22);
+
+    nav.sampleT += dt;
+    if (nav.sampleT >= 0.25) {
+      const moved = Math.hypot(drone.x - nav.lastX, drone.y - nav.lastY);
+      if (moving && nav.reverseT <= 0 && moved < 5) nav.stuckT += nav.sampleT;
+      else nav.stuckT = Math.max(0, nav.stuckT - nav.sampleT);
+      nav.lastX = drone.x;
+      nav.lastY = drone.y;
+      nav.sampleT = 0;
+    }
+    if (nav.reverseT <= 0 && nav.stuckT >= 0.6) {
+      nav.stuckT = 0;
+      nav.reverseT = 0.9;
+      const ahead = this.groundObstacleAt(drone, drone.x + ca * (r + 6), drone.y + sa * (r + 6), r, 8);
+      if (ahead) {
+        const side = -(ahead.px - drone.x) * sa + (ahead.py - drone.y) * ca;
+        nav.reverseSteer = side >= 0 ? 1 : -1;
+      } else {
+        nav.reverseSteer = Phaser.Math.Angle.Wrap(want - drone.angle) >= 0 ? -1 : 1;
+      }
+    }
+
+    let stick: { up: boolean; down: boolean; left: boolean; right: boolean };
+    let aim: { x: number; y: number };
+    if (nav.reverseT > 0) {
+      nav.reverseT -= dt;
+      nav.state = "REVERSE";
+      nav.steerWant = drone.angle;
+      nav.throttle = -1;
+      ({ stick, aim } = this.remoteAiStickAim(drone, drone.angle, -1));
+      stick.left = nav.reverseSteer < 0;
+      stick.right = nav.reverseSteer > 0;
+      if (nav.reverseT <= 0) {
+        nav.avoidT = 0.5;
+        nav.avoidOs = nav.reverseSteer;
+      }
+    } else {
+      let steerWant = want;
+      let thr = throttle;
+      nav.state = state;
+      if (moving || spd > 20) {
+        const look = r + 22 + spd * 0.55;
+        nav.probeX = drone.x + ca * look;
+        nav.probeY = drone.y + sa * look;
+        for (const f of [0.4, 0.75, 1]) {
+          const hit = this.groundObstacleAt(drone, drone.x + ca * look * f, drone.y + sa * look * f, r, 4);
+          if (!hit) continue;
+          const side = -(hit.px - drone.x) * sa + (hit.py - drone.y) * ca;
+          const goalSide = Math.sign(Phaser.Math.Angle.Wrap(want - drone.angle)) || 1;
+          nav.avoidOs = Math.abs(side) < r * 0.3 ? -goalSide : Math.sign(side);
+          nav.avoidT = 0.35;
+          nav.probeHit = true;
+          nav.probeX = drone.x + ca * look * f;
+          nav.probeY = drone.y + sa * look * f;
+          break;
+        }
+      }
+      if (nav.probeHit || nav.avoidT > 0) {
+        steerWant = drone.angle - nav.avoidOs * (nav.probeHit ? 1.0 : 0.5);
+        nav.state = "AVOID";
+        nav.avoidT = Math.max(0, nav.avoidT - dt);
+      }
+      if (moving) {
+        // Keep rolling so the wheels can turn; coast (never stop) when the heading error is large.
+        const err = Math.abs(Phaser.Math.Angle.Wrap(steerWant - drone.angle));
+        thr = (err > 1.0 || nav.probeHit) && spd > 60 ? 0 : 1;
+      } else if (thr >= -0.2 && spd < 12) {
+        drone.vx *= Math.pow(0.02, dt);
+        drone.vy *= Math.pow(0.02, dt);
+      }
+      nav.steerWant = steerWant;
+      nav.throttle = thr;
+      ({ stick, aim } = this.remoteAiStickAim(drone, steerWant, thr));
+    }
+    nav.steer = stick.right ? 1 : stick.left ? -1 : 0;
+
+    this.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false, gunAim });
+    const pen = this.resolveGroundRemote(drone);
+    if (pen > 0.5 && moving) nav.stuckT += dt;
+  }
+
+  /**
    * Ground remotes: locked pad AGL like enemy vehicles (no heli-style soft climb).
    * Airborne drops fall under gravity and thud-land with no bounce.
    */
   snapRemoteGround(drone: RemoteCraft, dt: number): void {
-    const hull = remoteHull(drone.spec);
     const gnd = groundZ(this.world, drone.x, drone.y);
     if (!drone.spec.ground) {
-      const rest = gnd + hull.cruiseAgl;
+      const rest = gnd + drone.spec.cruiseAgl;
       drone.vz += (rest - drone.z) * 2.4 * dt;
       drone.vz *= Math.pow(0.2, dt);
       return;
     }
-    const pad = gnd + hull.cruiseAgl;
+    const pad = gnd + drone.spec.cruiseAgl;
     if (drone.airborne) {
       drone.vz -= 620 * dt;
       if (drone.z <= pad) {
@@ -10172,7 +10583,7 @@ specIsShellGun(spec)
     drone.vx *= Math.pow(0.08, dt);
     drone.vy *= Math.pow(0.08, dt);
     const gnd = groundZ(this.world, drone.x, drone.y);
-    const rest = gnd + remoteHull(drone.spec).cruiseAgl;
+    const rest = gnd + drone.spec.cruiseAgl;
     drone.vz += (rest - drone.z) * 2.4 * dt;
     drone.vz *= Math.pow(0.2, dt);
   }
@@ -10287,7 +10698,7 @@ specIsShellGun(spec)
       if (r.spec.antenna) this.tickRemoteAntenna(r, dt);
       if (
         r.spec.craftLook &&
-        remoteHull(r.spec).exhaustProfile?.flame === 0 &&
+        r.spec.exhaustProfile?.flame === 0 &&
         !r.detonate &&
         !r.dock
       ) {
@@ -10374,7 +10785,7 @@ specIsShellGun(spec)
     const hullMounts = craftExhaustMounts(hull);
     const mounts = hullMounts.length
       ? hullMounts
-      : lookupSpritePoints(r.spec.look, "exhaust");
+      : lookupSpritePoints(r.spec.body, "exhaust");
     const power = Phaser.Math.Clamp(spd / Math.max(1, hull.maxSpeed), 0.2, 1);
     if ((profile?.flame ?? 1) === 0) return;
     if (profile && mounts.length) {
@@ -10473,11 +10884,10 @@ specIsShellGun(spec)
 
   /** Cloud exhaust from the hull profile, spawned at authored exhaust UVs. */
   emitExhaustPlume(r: RemoteCraft, dt: number, body: Phaser.GameObjects.Image): void {
-    const hull = remoteHull(r.spec);
-    const profile = hull.exhaustProfile;
+    const profile = r.spec.exhaustProfile;
     if (!profile || profile.flame !== 0) return;
     if (r.spec.ground && r.airborne) return;
-    const mounts = craftExhaustMounts(hull);
+    const mounts = craftExhaustMounts(r.spec);
     if (!mounts.length) return;
     const spd = Math.hypot(r.vx, r.vy);
     if (spd < 6) {
@@ -10485,7 +10895,7 @@ specIsShellGun(spec)
       return;
     }
     if (!cameraPointVisible(r.z, r.y)) return;
-    const powerRef = Math.max(90, hull.minSpeed * 1.15, hull.maxSpeed * 0.4);
+    const powerRef = Math.max(90, r.spec.minSpeed * 1.15, r.spec.maxSpeed * 0.4);
     const power = Phaser.Math.Clamp(spd / powerRef, 0.35, 1);
     r.exhaustCarry = (r.exhaustCarry ?? 0) + profile.rate * power * dt;
     const n = Math.floor(r.exhaustCarry);
@@ -10535,7 +10945,7 @@ specIsShellGun(spec)
 
   /** Onboard remote gun — hold-fire in POV, or AI auto-fire toward aim. */
   fireRemoteGun(drone: RemoteCraft, dt: number, aimAt?: { x: number; y: number }): void {
-    const gunId = remoteGunId(drone.spec);
+    const gunId = craftGunId(drone.spec);
     if (!gunId) return;
     const spec = PLAYER_WPNS[gunId];
     if (!spec) return;
@@ -10579,7 +10989,7 @@ specIsShellGun(spec)
       slot >= 0
         ? this.remoteFireTips(drone, slot)
         : (() => {
-            const bodyMuzzles = lookupSpritePoints(drone.spec.look, "muzzle");
+            const bodyMuzzles = lookupSpritePoints(drone.spec.body, "muzzle");
             if (bodyMuzzles.length > 1) {
               const leaveZ = this.remoteMuzzleZ(drone);
               return bodyMuzzles.map((uv) => {
@@ -10591,7 +11001,7 @@ specIsShellGun(spec)
           })();
     const fxInterval = spec.fireCd / Math.max(1, tips.length);
     const muzzleMul = playerMuzzleFxMul(spec);
-    const gunSc = drone.spec.gunScale ?? 0.55;
+    const gunSc = craftGunScale(drone.spec);
     const fxScale = projectileFxScale("player", fxInterval) * 0.7;
 
     for (const muzzle of tips) {
@@ -10968,7 +11378,7 @@ specIsShellGun(spec)
           life: 0.12,
           ang,
           scaleMul: 0.9 * muzzleMul * range(0.9, 1.12),
-          glowMul: 8 * (drone.spec.gunScale ?? 0.55),
+          glowMul: 8 * craftGunScale(drone.spec),
           worldX: mx,
           worldY: my,
           worldZ: mz,
@@ -11101,7 +11511,7 @@ specIsShellGun(spec)
     if (!drone.spec.antenna) return undefined;
     const z = drone.z + drone.spec.height * 0.42;
     const body = this.remoteBodyImage(drone);
-    const look = body?.visible ? body.texture.key : drone.spec.look;
+    const look = body?.visible ? body.texture.key : drone.spec.body;
     const uv = lookupSpritePoints(look, "antenna")[0];
     if (body?.visible && uv) {
       const scr = spriteUvPos(body, uv.x, uv.y);
@@ -11391,7 +11801,7 @@ specIsShellGun(spec)
     return { x: at.x, y: at.y };
   }
     // Pre-sync fallback: rotate UV offset around craft origin in world space.
-    const key = drone.spec.look;
+    const key = drone.spec.body;
     const pivot = lookupSpriteOrigin(key) ?? { x: 0.5, y: 0.5 };
     const img = this.textures.exists(key)
       ? (this.textures.get(key).getSourceImage() as { width: number; height: number })
@@ -11415,7 +11825,7 @@ specIsShellGun(spec)
     drone: RemoteCraft,
     socket: { class: string; points?: { id: string }[] }
   ): { x: number; y: number; id?: string }[] {
-    return socketPointsOnKey(drone.spec.look, socket);
+    return socketPointsOnKey(drone.spec.body, socket);
   }
 
   /**
@@ -11539,7 +11949,7 @@ specIsShellGun(spec)
       return { x: at.x, y: at.y, z: leaveZ };
     }
     // Body muzzle fallback when there is no gun overlay (Raptor fixed nose guns).
-    const bodyMuzzles = lookupSpritePoints(drone.spec.look, "muzzle");
+    const bodyMuzzles = lookupSpritePoints(drone.spec.body, "muzzle");
     if (bodyMuzzles.length) {
       const p = this.remoteBodyMountWorldPos(drone, bodyMuzzles[0]!);
       return { x: p.x, y: p.y, z: leaveZ };
@@ -11568,9 +11978,8 @@ specIsShellGun(spec)
     bodyKey: string,
     gunIm: Phaser.GameObjects.Image
   ): void {
-    const gunKey =
-      (drone.spec.gunTex && this.textures.exists(drone.spec.gunTex) && drone.spec.gunTex) ||
-      "gun_minigun";
+    const gunTex = craftGunTex(drone.spec);
+    const gunKey = (gunTex && this.textures.exists(gunTex) && gunTex) || "gun_minigun";
     if (gunIm.texture.key !== gunKey) gunIm.setTexture(gunKey);
     const gOrig = lookupSpriteOrigin(gunKey) ?? { x: 0.5, y: 0.7 };
     const gunAng = drone.gunAngle ?? drone.angle;
@@ -11582,7 +11991,7 @@ specIsShellGun(spec)
       .setOrigin(gOrig.x, gOrig.y)
       .setPosition(hub.x, hub.y)
       .setRotation(projectHeading(gunAng + Math.PI / 2, drone.x, drone.y, drone.z))
-      .setScale((drone.spec.gunScale ?? 0.55) * at.scale);
+      .setScale(craftGunScale(drone.spec) * at.scale);
   }
 
   /** Live body Image for a remote in `remoteG`. */
@@ -11675,8 +12084,8 @@ specIsShellGun(spec)
       const im = kids[i * stride + 1]!;
       const gunIm = kids[i * stride + 2 + nRotors]!;
       if (!cameraPointVisible(r.z, r.y)) return;
-      const key = this.textures.exists(r.spec.look)
-        ? r.spec.look
+      const key = this.textures.exists(r.spec.body)
+        ? r.spec.body
         : this.textures.exists("craft_hover_tank")
           ? "craft_hover_tank"
           : "craft_quad_drone";
@@ -11753,7 +12162,7 @@ specIsShellGun(spec)
         }
         applyThermalHeat(rotor, this.thermalOn, 0.48);
       }
-      if (r.spec.gun && gunIm) {
+      if (craftGunId(r.spec) && gunIm) {
         this.poseRemoteGun(r, bodyPose, key, gunIm);
         gunIm.setDepth(worldDepth(r.z, ZOff.body + 0.4, r.y));
         applyThermalHeat(gunIm, this.thermalOn, 0.55);
@@ -14353,7 +14762,7 @@ specIsShellGun(spec)
           ...beh,
           payload: { detonate: { look: "fire" } },
           guidance: undefined,
-          exhaust: undefined,
+          exhaust: cluster?.bombletExhaust,
         },
         st: {
           age: 0,
@@ -15164,7 +15573,7 @@ specIsShellGun(spec)
 
   /** Smoke screen on a piloted remote (HOUND). Own cooldown, cloud stays on the vehicle. */
   tryRemoteCountermeasure(r: RemoteCraft): void {
-    const id = craftCountermeasure(remoteHull(r.spec).countermeasure);
+    const id = craftCountermeasure(r.spec.countermeasure);
     if (id !== "smoke_screen" || (r.cmCd ?? 0) > 0 || (r.smokeT ?? 0) > 0) return;
     const spec = COUNTERMEASURES.smoke_screen;
     r.cmCd = spec.cooldown;
@@ -18792,25 +19201,13 @@ specIsShellGun(spec)
     }
   }
 
-  /**
-   * Infantry under a moving Wraith or Hound hull, or under a lift-rotor disc
-   * low enough to reach them.
-   */
+  /** Roadkill (rotor strike / crush) is a player-side mechanic — the player's craft and its remotes, never enemies. */
   tickRoadkill(): void {
     const h = this.player;
     if (h.phase === "flight") this.roadkillCraft(h.x, h.y, h.z, h.vx, h.vy, h.spec, 1);
     for (const r of this.remotes) {
       if (r.detonate || r.dock || r.airborne || !r.spec.craftLook) continue;
-      this.roadkillCraft(r.x, r.y, r.z, r.vx, r.vy, remoteHull(r.spec), r.spec.scale);
-    }
-    for (const u of this.units) {
-      if (u.dead || !isAerial(u.kind)) continue;
-      const sp = specOf(u.kind);
-      if (!isHeliBehavior(sp.behavior) || sp.behavior === "suicide_attack_heli") continue;
-      const rotor = sp.rotors[0];
-      if (!rotor) continue;
-      const span = rotorDrawSpan(rotor.tex, rotor.scale ?? 1);
-      this.roadkillBlades(u.x, u.y, u.z, u.vx, u.vy, sp.height, span * 0.5);
+      this.roadkillCraft(r.x, r.y, r.z, r.vx, r.vy, r.spec, r.spec.scale);
     }
   }
 
@@ -20977,6 +21374,7 @@ specIsShellGun(spec)
     );
     this.syncLiftPrompt();
     this.syncRemotePrompt();
+    this.syncDockAglAlert();
     this.syncThreatHud();
 
     const lines = this.world.hv.map((spec) => this.hvLine(spec));
@@ -21159,7 +21557,7 @@ specIsShellGun(spec)
     return (
       this.remoteView &&
       !!remote &&
-      !remoteGunId(remote.spec) &&
+      !craftGunId(remote.spec) &&
       !remote.spec.pilotable &&
       payloadIsRemote(this.loadout[this.player.weapon]?.payload)
     );
@@ -21174,7 +21572,8 @@ specIsShellGun(spec)
     this.remotePrompt.setVisible(show);
     if (!show) return;
     const armed = this.remoteDetonateArmed();
-    const gun = !!this.pilotingRemote()?.spec.gun;
+    const pilotedSpec = this.pilotingRemote()?.spec;
+    const gun = !!pilotedSpec && !!craftGunId(pilotedSpec);
     this.remotePrompt.setText(
       gun
         ? "HOLD LMB  FIRE\n1–N / Q  RELEASE"
@@ -21187,6 +21586,15 @@ specIsShellGun(spec)
     this.remotePrompt.setPosition(lp.x, lp.y);
     const blink = 0.72 + 0.28 * (0.5 + 0.5 * Math.sin(this.time.now * 0.006));
     this.remotePrompt.setAlpha(blink);
+  }
+
+  /** Brief flash after a Q recall couldn't dock a ground remote — host AGL too high. */
+  syncDockAglAlert(): void {
+    const show = this.dockAglAlertT > 0 && !this.mapView && !this.over;
+    this.dockAglAlertTxt.setVisible(show);
+    if (!show) return;
+    const fade = Math.min(1, this.dockAglAlertT / 0.4);
+    this.dockAglAlertTxt.setAlpha(fade);
   }
 
   drawWeaponHud(): void {
@@ -21217,7 +21625,7 @@ specIsShellGun(spec)
     const x0 = this.scale.width / 2 - total / 2;
     const anyAuto =
       !pov && h.spec.sockets.some((s) => s.controller === "automatic");
-    const povCm = pov ? remoteHull(pov.spec).countermeasure : undefined;
+    const povCm = pov ? pov.spec.countermeasure : undefined;
     const showCm = !pov || !!povCm;
     const cmStripH = showCm ? 30 : 8;
     const crewPad = anyAuto || escortOn ? 15 : 2;
@@ -21241,7 +21649,7 @@ specIsShellGun(spec)
         pov && hostSpec && hostSlot >= 0
           ? craftSocketStartingAmmo(hostSpec.ammo, h.spec, hostSlot)
           : pov
-            ? remoteSocketStartingAmmo(wp.ammo, pov.spec, i)
+            ? craftSocketStartingAmmo(wp.ammo, pov.spec, i)
             : craftSocketStartingAmmo(wp.ammo, h.spec, i);
       // Launch gate uses hangar reserve; display can include live dockable remotes.
       const empty = !this.infAmmo && Number.isFinite(a) && a <= 0;
@@ -21428,7 +21836,7 @@ specIsShellGun(spec)
           .setStroke("#12100c", 2)
           .setAlpha(disabled ? 0.45 : player ? 0.95 : 0.85)
           .setFontSize("10px");
-      } else if (liveMark && liveRemote?.spec.recallWithQ) {
+      } else if (liveMark && liveRemote?.spec.dockable) {
         const statusLp = this.hudLocal(x + slotW / 2, y + slotH + 3);
         row.status
           .setVisible(true)
@@ -22009,6 +22417,7 @@ specIsShellGun(spec)
     this.aiGfx.clear();
     if (!this.debugAi || this.mapWorldHidden) {
       for (const t of this.aiLabels) t.setVisible(false);
+      for (const t of this.escortAiLabels) t.setVisible(false);
       return;
     }
     const ENEMY = 0xff5a4a;
@@ -22094,7 +22503,7 @@ specIsShellGun(spec)
     // Friendly wingman/HOUND AI gun-aim precision: cone toward their engaged target that narrows.
     for (const r of this.remotes) {
       if (r.detonate || r.dock || r.aimHoldT == null || r.aiTargetId == null) continue;
-      const gunId = remoteGunId(r.spec);
+      const gunId = craftGunId(r.spec);
       const spec = gunId ? PLAYER_WPNS[gunId] : undefined;
       if (!spec) continue;
       const tgt = this.units.find((u) => !u.dead && u.id === r.aiTargetId);
@@ -22103,6 +22512,101 @@ specIsShellGun(spec)
       const spread = aimPrecisionSpread(r.aimHoldT, AI_AIM_NARROW_BASE, baseJitter * AI_AIM_WIDE_MUL, baseJitter);
       this.strokeAimCone(r.x, r.y, r.z, tgt.x, tgt.y, tgt.z, spread, FRIENDLY);
     }
+
+    this.drawHumveeDebugAi(FRIENDLY);
+  }
+
+  /**
+   * Ground-escort (HUMVEE-style) debug: current state label, follow inner/outer radii around
+   * the host while idle, and the host→target attack-orbit circle while engaged — the same
+   * geometry `tickHumveeEscortAi` actually drives movement from, not an approximation.
+   */
+  drawHumveeDebugAi(color: number): void {
+    const escorts = this.remotes.filter((r) => !r.detonate && !r.dock && r.spec.orbitEscort);
+    while (this.escortAiLabels.length < escorts.length) {
+      const t = this.add
+        .text(0, 0, "", {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: "11px",
+          color: "#8ef0c8",
+        })
+        .setOrigin(0.5, 1)
+        .setDepth(Layer.FIELD + 9)
+        .setStroke("#12100c", 3);
+      this.escortAiLabels.push(t);
+    }
+    for (const t of this.escortAiLabels) t.setVisible(false);
+    escorts.forEach((r, i) => {
+      const host = this.wingmanOrbitHost(r);
+      const target = r.aiTargetId != null ? this.unitById(r.aiTargetId) : undefined;
+      const scr = worldToScreen(r.x, r.y, r.z);
+      const label = this.escortAiLabels[i]!;
+      label.setVisible(true);
+      label.setPosition(scr.x, scr.y - 18);
+      this.aiGfx.lineStyle(1, 0xff9a5a, 0.7);
+      this.aiGfx.strokeCircle(scr.x, scr.y, r.spec.radius * scr.scale);
+
+      if (target && !target.dead) {
+        label.setText(this.escortNavLabel(r, "ATTACK"));
+        const hostTargetDist = Math.hypot(target.x - host.x, target.y - host.y) || 1;
+        const bias = Phaser.Math.Clamp(r.spec.attackBias ?? 0.75, 0, 1);
+        const centerX = host.x + (target.x - host.x) * bias;
+        const centerY = host.y + (target.y - host.y) * bias;
+        const centerToTargetDist = hostTargetDist * (1 - bias);
+        const standoff = r.spec.attackStandoff ?? 60;
+        const desiredR = hostTargetDist * (r.spec.attackOrbitFrac ?? 0.5);
+        const orbitR = Math.min(desiredR, Math.max(20, centerToTargetDist - standoff));
+        const centerScr = worldToScreen(centerX, centerY, host.z);
+        this.aiGfx.lineStyle(1.4, color, 0.8);
+        this.aiGfx.strokeCircle(centerScr.x, centerScr.y, orbitR * centerScr.scale);
+        const hostScr = worldToScreen(host.x, host.y, host.z);
+        this.aiGfx.lineStyle(1, color, 0.4);
+        this.aiGfx.lineBetween(hostScr.x, hostScr.y, centerScr.x, centerScr.y);
+        this.aiGfx.fillStyle(color, 0.9);
+        this.aiGfx.fillCircle(centerScr.x, centerScr.y, 3);
+      } else {
+        label.setText(this.escortNavLabel(r, "FOLLOW"));
+        const innerR = r.spec.followInnerRadius ?? 90;
+        const outerR = r.spec.followOuterRadius ?? 220;
+        const hostScr = worldToScreen(host.x, host.y, host.z);
+        this.aiGfx.lineStyle(1.4, 0x8a8470, 0.4);
+        this.aiGfx.strokeCircle(hostScr.x, hostScr.y, innerR * hostScr.scale);
+        this.aiGfx.lineStyle(1.6, 0x8a8470, 0.5);
+        this.aiGfx.strokeCircle(hostScr.x, hostScr.y, outerR * hostScr.scale);
+      }
+      this.drawEscortNavDebug(r);
+    });
+  }
+
+  escortNavLabel(r: RemoteCraft, fallback: string): string {
+    const nav = r.nav;
+    if (!nav) return fallback;
+    const thr = nav.throttle > 0.2 ? "F" : nav.throttle < -0.2 ? "R" : "-";
+    const st = nav.steer < 0 ? "L" : nav.steer > 0 ? "R" : "";
+    return `${nav.state} ${thr}${st}`;
+  }
+
+  /** Movement wants: goal marker, raw vs avoidance heading, lookahead probe. */
+  drawEscortNavDebug(r: RemoteCraft): void {
+    const nav = r.nav;
+    if (!nav) return;
+    const from = worldToScreen(r.x, r.y, r.z);
+    const len = 46;
+    const ray = (ang: number, color: number, alpha: number) => {
+      const p = worldToScreen(r.x + Math.cos(ang) * len, r.y + Math.sin(ang) * len, r.z);
+      this.aiGfx.lineStyle(1.3, color, alpha);
+      this.aiGfx.lineBetween(from.x, from.y, p.x, p.y);
+    };
+    ray(nav.rawWant, 0xffd23a, 0.7);
+    if (Math.abs(Phaser.Math.Angle.Wrap(nav.steerWant - nav.rawWant)) > 0.02) ray(nav.steerWant, 0x5ec8ff, 0.8);
+    const goal = worldToScreen(nav.goalX, nav.goalY, r.z);
+    this.aiGfx.lineStyle(1, 0xffd23a, 0.55);
+    this.aiGfx.strokeCircle(goal.x, goal.y, 5);
+    const probe = worldToScreen(nav.probeX, nav.probeY, r.z);
+    const hitColor = nav.probeHit ? 0xff5a4a : 0x8a8470;
+    this.aiGfx.lineStyle(nav.probeHit ? 1.8 : 1, hitColor, nav.probeHit ? 0.9 : 0.5);
+    this.aiGfx.lineBetween(from.x, from.y, probe.x, probe.y);
+    this.aiGfx.strokeCircle(probe.x, probe.y, Math.max(3, r.spec.radius * probe.scale));
   }
 
   /** Barrels currently under live automatic AI control (not player-manual/spot-owned). */
@@ -22371,7 +22875,9 @@ specIsShellGun(spec)
 
   /** Craft-owned thermal look (sensor cams + T share this; linger must not override it). */
   craftSensorPalette(): ThermalPalette {
-    return this.player.spec.sensorPalette ?? "white_hot";
+    return (
+      this.pilotingRemote()?.spec.sensorPalette ?? this.player.spec.sensorPalette ?? "white_hot"
+    );
   }
 
   /** True when a remote or seeker cam wants thermal (palette always craft thermal). */

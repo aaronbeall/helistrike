@@ -151,6 +151,8 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
       { role: "gun", x: 0.685, y: 0.071, id: "fwd_r" },
       { role: "gun", x: 0.481, y: 0.96, id: "ramp" },
       ...pts("hardpoint", [uv(0.16, 0.487), uv(0.828, 0.483)]),
+      // Rear cargo bay, just ahead of the ramp gunner — ground remote drop point.
+      { role: "hardpoint", x: 0.48, y: 0.86, id: "cargo_ramp" },
     ],
   },
   craft_cobra: {
@@ -176,6 +178,8 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
       { role: "gun", x: 0.499, y: 0.41, id: "belly" },
       { role: "gun", x: 0.498, y: 0.938, id: "ramp" },
       ...pts("hardpoint", [uv(0.337, 0.48), uv(0.637, 0.48)]),
+      // Rear cargo bay, ahead of the ramp gunner — ground remote drop point.
+      { role: "hardpoint", x: 0.498, y: 0.86, id: "cargo_ramp" },
     ],
   },
   craft_stealthhawk: {
@@ -284,7 +288,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     points: [
       { role: "muzzle", x: 0.44, y: 0.18 },
       { role: "muzzle", x: 0.56, y: 0.18 },
-      { role: "prop", x: 0.5, y: 0.08, id: "prop" },
+      { role: "prop", x: 0.5, y: 0.163, id: "prop" },
       { role: "hardpoint", x: 0.22, y: 0.48, id: "wing_l" },
       { role: "hardpoint", x: 0.78, y: 0.48, id: "wing_r" },
       ...pts("exhaust", [uv(0.5, 0.9)]),
@@ -299,7 +303,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
     points: [
       { role: "muzzle", x: 0.339, y: 0.238 },
       { role: "muzzle", x: 0.625, y: 0.238 },
-      { role: "prop", x: 0.5, y: 0.06, id: "prop" },
+      { role: "prop", x: 0.5, y: 0.016, id: "prop" },
       { role: "hardpoint", x: 0.208, y: 0.533, id: "wing_l" },
       { role: "hardpoint", x: 0.756, y: 0.533, id: "wing_r" },
       { role: "hardpoint", x: 0.5, y: 0.62, id: "bay" },
@@ -317,7 +321,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
       { role: "muzzle", x: 0.452, y: 0.107 },
       { role: "muzzle", x: 0.54, y: 0.107 },
       // Nose tip (sprite nose-up).
-      { role: "prop", x: 0.5, y: 0.045, id: "prop" },
+      { role: "prop", x: 0.5, y: 0.162, id: "prop" },
       // Lower-wing forward hardpoints.
       { role: "hardpoint", x: 0.18, y: 0.40, id: "wing_l" },
       { role: "hardpoint", x: 0.82, y: 0.40, id: "wing_r" },
@@ -357,6 +361,39 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
       // Aft cupola deck — whip antenna (same role as HOUND).
       { role: "antenna", x: 0.811, y: 0.865, id: "whip" },
     ],
+  },
+  // HUMVEE UGV — RWS fire support. Hull's turret ring is empty; the RWS
+  // gun is a separate overlay (craft_humvee_turret) centered on the "gun" pivot below.
+  craft_humvee: {
+    origin: uv(0.501, 0.526),
+    points: [
+      { role: "gun", x: 0.501, y: 0.526, id: "main" },
+      // Rear vent, between the aft antennas — dust/exhaust plume.
+      { role: "exhaust", x: 0.5, y: 0.9 },
+      { role: "antenna", x: 0.665, y: 0.9, id: "whip" },
+    ],
+  },
+  // RWS overlay: pintle-mount .50 cal, rotated independently and centered on the
+  // hull's turret-ring pivot. Barrel points toward frame-top (forward) at rest.
+  craft_humvee_turret: {
+    origin: uv(0.5, 0.66),
+    points: [{ role: "muzzle", x: 0.492, y: -0.007 }],
+  },
+  // WOLF UGV — tracked, heavily-armored escort. Hull's turret ring is empty; the
+  // minigun is a separate overlay (craft_wolf_turret) centered on the "gun" pivot below.
+  craft_wolf: {
+    origin: uv(0.492, 0.492),
+    points: [
+      { role: "gun", x: 0.492, y: 0.492, id: "main" },
+      // Rear grille between the taillights — dust/exhaust plume.
+      { role: "exhaust", x: 0.5, y: 0.86 },
+    ],
+  },
+  // Rotary minigun overlay, rotated independently and centered on the hull's
+  // turret-ring pivot. Barrel points toward frame-top (forward) at rest.
+  craft_wolf_turret: {
+    origin: uv(0.5, 0.68),
+    points: [{ role: "muzzle", x: 0.495, y: -0.007 }],
   },
   // HOUND AGV chassis (gun is a separate overlay).
   craft_hound: {
