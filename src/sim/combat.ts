@@ -293,7 +293,6 @@ export type WeaponLaunch =
       softLoft?: number;
       leaveVz?: number;
       pitch?: number;
-      loftCap?: number;
     }
   | { mode: "drop"; inheritMomentum: 1; gravity: WeaponGravity }
   | { mode: "beam"; range: number; delivery: "ray" | "arc" };
@@ -396,6 +395,8 @@ export const MISSILE_IGNITE = 0.525;
 export const LOCK_ON_LOCK_T = 0.5;
 /** Default post-leave seek delay for lock_on weapons (seconds). */
 export const LOCK_ON_SEEK_DELAY = 0.42;
+/** Hellfire-family loft before homing — enough climb to turn around on a rear lock. */
+const HELLFIRE_SEEK_DELAY = 0.4;
 
 const HOLD = { mode: "hold_mouse_down" as const };
 const CLICK = { mode: "click" as const };
@@ -657,8 +658,8 @@ const PLAYER_WPNS_DEFS: Record<WpnId, Omit<PlayerWpnSpec, "id">> = {
     art: ordArt("laserGuided", 1, "heading"),
     exhaust: particleTrail(0.55, { fire: "burn", smoke: "linger", density: 1.35 }),
     cam: { ...CAM_LOCK, sight: "mouse" }, control: { mode: "lock_then_click" },
-    launch: motor(250, 500, 2.1, 1, { pitch: 1.15, loftCap: 0.3 }),
-    guidance: lockGuidance(lockOn(0.5, 160, RETICLE, 0.28), 7.8),
+    launch: motor(250, 500, 2.1, 1, { pitch: 1.1 }),
+    guidance: lockGuidance(lockOn(0.5, 160, RETICLE, HELLFIRE_SEEK_DELAY), 7.8),
     payload: HE_FIRE,
     fits: FIT_HARDPOINT,
     dmgMul: { vehicle: 1.25, building: 1.1, air: 0.55, troop: 0.7 },
@@ -1183,8 +1184,8 @@ const PLAYER_WPNS_DEFS: Record<WpnId, Omit<PlayerWpnSpec, "id">> = {
     art: ordArt("laserGuided", 0.98, "heading"),
     exhaust: particleTrail(0.55, { fire: "burn", smoke: "linger", density: 1.3 }),
     cam: CAM_LOCK, control: { mode: "lock_then_click" },
-    launch: motor(260, 520, 2.2, 1, { pitch: 1.05, loftCap: 0.28 }),
-    guidance: lockGuidance(lockOn(0.62, 225, RETICLE_AG), 6.8),
+    launch: motor(260, 520, 2.2, 1, { pitch: 1.05 }),
+    guidance: lockGuidance(lockOn(0.62, 225, RETICLE_AG, 0.28), 6.8),
     payload: HE_FIRE,
     fits: FIT_HARDPOINT,
     dmgMul: { vehicle: 1.35, building: 1.25, air: 0.35, troop: 0.5 },
@@ -1219,8 +1220,8 @@ const PLAYER_WPNS_DEFS: Record<WpnId, Omit<PlayerWpnSpec, "id">> = {
     art: ordArt("laserGuided", 0.31, "heading"),
     exhaust: particleTrail(0.55, { fire: "burn", smoke: "linger", density: 1.3 }),
     cam: { ...CAM_LOCK, sight: "mouse" }, control: { mode: "lock_then_click" },
-    launch: motor(200, 500, 1.65, 1, { pitch: 1.12, loftCap: 0.28 }),
-    guidance: lockGuidance(lockOn(0.32, 145), 8.9),
+    launch: motor(200, 500, 1.65, 1, { pitch: 1.1 }),
+    guidance: lockGuidance(lockOn(0.32, 145, RETICLE, HELLFIRE_SEEK_DELAY), 8.9),
     payload: HE_FIRE,
     fits: FIT_HARDPOINT,
     dmgMul: { vehicle: 1.25, building: 1.1, air: 0.55, troop: 0.7 },

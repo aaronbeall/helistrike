@@ -13488,7 +13488,14 @@ specIsShellGun(spec)
    * Self-propelled missiles face thrust/guidance (`s.angle`); ballistic shots face travel.
    */
   shotDrawRotation(s: Shot, x = s.x, y = s.y, z = s.z): number {
-    if (shotFacesHeading(s)) return projectHeading(s.angle, x, y, z);
+    if (shotFacesHeading(s)) {
+      // Yaw from heading (thrust / steer), pitch from actual climb or dive.
+      if (Math.abs(s.vz) < 1e-3) return projectHeading(s.angle, x, y, z);
+      const h = Math.hypot(s.vx, s.vy);
+      const hx = Math.cos(s.angle) * h;
+      const hy = Math.sin(s.angle) * h;
+      return Math.atan2(screenVelY(hy, s.vz, z, y), screenVelX(hx, hy, s.vz, x, y, z));
+    }
     return Math.atan2(
       screenVelY(s.vy, s.vz, z, y),
       screenVelX(s.vx, s.vy, s.vz, x, y, z)
@@ -14523,9 +14530,16 @@ specIsShellGun(spec)
           : (flight?.turnRate ?? 7.4);
         flyMissile(s, home, turnRate * dt, spd);
       } else {
-        s.vx = Math.cos(s.angle) * spd;
-        s.vy = Math.sin(s.angle) * spd;
-        if (cur > 1e-3) s.vz = (s.vz / cur) * spd;
+        // Loft coast: scale the full 3D velocity so the launch pitch holds (no per-frame flattening).
+        if (cur > 1e-3) {
+          const k = spd / cur;
+          s.vx *= k;
+          s.vy *= k;
+          s.vz *= k;
+        } else {
+          s.vx = Math.cos(s.angle) * spd;
+          s.vy = Math.sin(s.angle) * spd;
+        }
         if (loftProfile && typeof loftProfile.cruise === "object" && "agl" in loftProfile.cruise) {
           const gnd = groundZ(this.world, s.x, s.y);
           const floor = gnd + (loftProfile.clear?.coast ?? 120);
@@ -14989,14 +15003,11 @@ specIsShellGun(spec)
     if (s.from === "player" && g && guidanceIsLockOn(g)) {
       const pitch =
         launch?.mode === "kick_motor" && launch.pitch != null ? launch.pitch : 0.92;
-      const loftCap =
-        launch?.mode === "kick_motor" ? launch.loftCap : undefined;
       const spd = Math.max(Math.hypot(s.vx, s.vy), 90);
       s.vx = Math.cos(s.angle) * spd * Math.cos(pitch);
       s.vy = Math.sin(s.angle) * spd * Math.cos(pitch);
       s.vz = spd * Math.sin(pitch);
-      const seekDelay = g.targeting.seekDelay;
-      s.loft = loftCap != null ? Math.min(seekDelay, loftCap) : seekDelay;
+      s.loft = g.targeting.seekDelay;
     } else if (s.from === "player" && launch?.mode === "kick_motor") {
       if (launch.softLoft != null) {
         s.vz += 180;
