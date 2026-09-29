@@ -11184,9 +11184,6 @@ specIsShellGun(spec)
             return [this.remoteGunMuzzle(drone)];
           })();
     const fxInterval = spec.fireCd / Math.max(1, tips.length);
-    const muzzleMul = playerMuzzleFxMul(spec);
-    const gunSc = craftGunScale(drone.spec);
-    const fxScale = projectileFxScale("player", fxInterval) * 0.7;
 
     for (const muzzle of tips) {
       const mx = muzzle.x;
@@ -11234,64 +11231,80 @@ specIsShellGun(spec)
         fxInterval,
         energyTrail: exhaustIsEnergy(spec.exhaust) ? [] : undefined,
       });
-      this.emitVisualBurst(mx, my, mz, {
-        n: scaledProjectileFxCount(12, fxScale),
-        spdMin: 35,
-        spdMax: 420,
-        bx: Math.cos(aimAng),
-        by: Math.sin(aimAng),
-        bz: 0.2,
-        tight: 0.84,
-        scaleMul: 0.3,
-        stretchMul: 2.8,
-        coneHalf: (260 * Math.PI) / 360,
-      }, this.muzzleBurst);
-      const flashMul = 0.95 * muzzleMul * range(0.9, 1.12);
-      this.showMuzzle({
-        life: 0.12,
-        ang: aimAng,
-        scaleMul: flashMul,
-        // Keep bloom tiny — flash sprite can be large without a huge soft circle.
-        glowMul: 7 * gunSc,
-        worldX: mx,
-        worldY: my,
-        worldZ: mz,
+      this.emitRemoteMuzzleFx(drone, spec, mx, my, mz, aimAng, fxInterval);
+    }
+  }
+
+  /** Remote gun muzzle FX (sparks, flash, light, casing) — shared by AI and POV fire. */
+  emitRemoteMuzzleFx(
+    drone: RemoteCraft,
+    spec: PlayerWpnSpec,
+    mx: number,
+    my: number,
+    mz: number,
+    aimAng: number,
+    fxInterval: number
+  ): void {
+    const muzzleMul = playerMuzzleFxMul(spec);
+    const gunSc = craftGunScale(drone.spec);
+    const fxScale = projectileFxScale("player", fxInterval) * 0.7;
+    this.emitVisualBurst(mx, my, mz, {
+      n: scaledProjectileFxCount(12, fxScale),
+      spdMin: 35,
+      spdMax: 420,
+      bx: Math.cos(aimAng),
+      by: Math.sin(aimAng),
+      bz: 0.2,
+      tight: 0.84,
+      scaleMul: 0.3,
+      stretchMul: 2.8,
+      coneHalf: (260 * Math.PI) / 360,
+    }, this.muzzleBurst);
+    const flashMul = 0.95 * muzzleMul * range(0.9, 1.12);
+    this.showMuzzle({
+      life: 0.12,
+      ang: aimAng,
+      scaleMul: flashMul,
+      // Keep bloom tiny — flash sprite can be large without a huge soft circle.
+      glowMul: 7 * gunSc,
+      worldX: mx,
+      worldY: my,
+      worldZ: mz,
+    });
+    const at = worldToScreen(mx, my, mz);
+    this.spawnMuzzleLight(at.x, at.y, mz, 18 * at.scale);
+    this.emitVisualBurst(mx, my, mz, {
+      n: 4,
+      spdMin: 8,
+      spdMax: 90,
+      bx: Math.cos(aimAng),
+      by: Math.sin(aimAng),
+      bz: 0,
+      tight: 0.85,
+      scaleMul: 0.28,
+      stretchMul: 1.4,
+      coneHalf: (220 * Math.PI) / 360,
+      depthOff: ZOff.shot,
+    }, this.muzzleBurst);
+    if (specIsShellGun(spec)) {
+      const gunIm = this.remoteGunImage(drone);
+      const gunTips = gunIm ? lookupSpriteMuzzles(gunIm.texture.key) : [];
+      const side = this.shellEjectSide({ muzzleUv: gunTips[0] });
+      const ejectAt = gunIm
+        ? screenToWorldAtZ(gunIm.x, gunIm.y, mz)
+        : { x: mx, y: my };
+      this.spawnShellEject({
+        x: ejectAt.x,
+        y: ejectAt.y,
+        z: drone.spec.ground ? drone.z + drone.spec.height * 0.7 : mz - 4,
+        barrelAng: aimAng,
+        designation: spec.designation,
+        scale: spec.art.scale,
+        dmg: spec.dmg,
+        side,
+        aerial: !drone.spec.ground,
+        fireCd: fxInterval,
       });
-      const at = worldToScreen(mx, my, mz);
-      this.spawnMuzzleLight(at.x, at.y, mz, 18 * at.scale);
-      this.emitVisualBurst(mx, my, mz, {
-        n: 4,
-        spdMin: 8,
-        spdMax: 90,
-        bx: Math.cos(aimAng),
-        by: Math.sin(aimAng),
-        bz: 0,
-        tight: 0.85,
-        scaleMul: 0.28,
-        stretchMul: 1.4,
-        coneHalf: (220 * Math.PI) / 360,
-        depthOff: ZOff.shot,
-      }, this.muzzleBurst);
-      if (specIsShellGun(spec)) {
-        const gunIm = this.remoteGunImage(drone);
-        const gunTips = gunIm ? lookupSpriteMuzzles(gunIm.texture.key) : [];
-        const side = this.shellEjectSide({ muzzleUv: gunTips[0] });
-        const ejectAt = gunIm
-          ? screenToWorldAtZ(gunIm.x, gunIm.y, mz)
-          : { x: mx, y: my };
-        this.spawnShellEject({
-          x: ejectAt.x,
-          y: ejectAt.y,
-          z: drone.spec.ground ? drone.z + drone.spec.height * 0.7 : mz - 4,
-          barrelAng: aimAng,
-          designation: spec.designation,
-          scale: spec.art.scale,
-          dmg: spec.dmg,
-          side,
-          aerial: !drone.spec.ground,
-          fireCd: fxInterval,
-        });
-      }
     }
   }
 
@@ -11556,18 +11569,7 @@ specIsShellGun(spec)
             ? Array.from({ length: exhaustRibbons(spec.exhaust) }, () => [] as EnergyTrailNode[])
             : undefined,
       });
-      if (spec.fire?.muzzleFlash ?? true) {
-        const muzzleMul = playerMuzzleFxMul(spec);
-        this.showMuzzle({
-          life: 0.12,
-          ang,
-          scaleMul: 0.9 * muzzleMul * range(0.9, 1.12),
-          glowMul: 8 * craftGunScale(drone.spec),
-          worldX: mx,
-          worldY: my,
-          worldZ: mz,
-        });
-      }
+      if (spec.fire?.muzzleFlash ?? true) this.emitRemoteMuzzleFx(drone, spec, mx, my, mz, ang, fxInterval);
     }
   }
 
