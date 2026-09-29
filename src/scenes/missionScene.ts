@@ -14541,10 +14541,10 @@ specIsShellGun(spec)
       s.vy = Math.sin(s.angle) * spd;
     }
 
-    // Unguided muzzle boost (Hydra / AA rail): accel toward cruise, then coast if burnTime set.
+    // Muzzle boost (Hydra / AA rail / APKWS): accel toward cruise, then coast if burnTime set.
     if (
       lit &&
-      !g &&
+      (!g || tMode === "steer") &&
       beh.launch.mode === "muzzle" &&
       beh.launch.acceleration != null
     ) {
