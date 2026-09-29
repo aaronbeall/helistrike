@@ -220,8 +220,10 @@ import {
   remoteRotorPoolSize,
   remoteSpecOf,
   type EscortNav,
+  type BayRemote,
   type EscortNavState,
   type RemoteCraft,
+  type RemoteSpec,
 } from "../sim/remote";
 import {
   advanceAimHold,
@@ -329,8 +331,12 @@ const AUTO_GUN_SPEED_PENALTY_MAX = 0.06;
 const AUTO_GUN_SPEED_REF = 400;
 /** Host AGL a ground remote's dock bay must be under to actually dock (can't reel a ground vehicle up mid-air). */
 const DOCK_GROUND_MAX_AGL = 30;
-/** Seconds the "too high to dock" alert stays on screen after a blocked recall. */
-const DOCK_AGL_ALERT_HOLD = 2.2;
+/** Follow escort: remote speed above which the host keeps pace at the inner ring. */
+const ESCORT_MOVING_SPEED = 14;
+/** Follow escort: start pacing this far inside the inner ring so thrust doesn't chatter. */
+const ESCORT_RING_BAND = 12;
+/** Follow escort: extra host speed per unit of distance beyond the inner ring. */
+const ESCORT_RING_GAIN = 1.4;
 /** AI missile lock: base seconds of continuous tracking required to acquire lock before firing. */
 const AI_LOCK_BASE = 1.8;
 type FxPolicy = {
@@ -577,6 +583,8 @@ export class MissionScene extends Phaser.Scene {
   simParticles: SimParticle[] = [];
   loadout: PlayerWpnSpec[] = playerLoadoutFromSockets(craftOf().sockets);
   ammo = this.loadout.map((w) => w.ammo);
+  /** Per-slot docked dockable remotes (life/health), kept in step with `ammo`. */
+  bayRemotes: BayRemote[][] = [];
   keyW!: Phaser.Input.Keyboard.Key;
   keyA!: Phaser.Input.Keyboard.Key;
   keyS!: Phaser.Input.Keyboard.Key;
@@ -840,9 +848,8 @@ export class MissionScene extends Phaser.Scene {
   threatMissileTxt!: Phaser.GameObjects.Text;
   liftPrompt!: Phaser.GameObjects.Text;
   remotePrompt!: Phaser.GameObjects.Text;
-  /** Brief "TOO HIGH TO DOCK" flash when a ground dockable remote can't recall (host AGL too high). */
+  /** "TOO HIGH TO DOCK" while a docking ground remote waits on a too-high host. */
   dockAglAlertTxt!: Phaser.GameObjects.Text;
-  dockAglAlertT = 0;
   remoteArmedTxt!: Phaser.GameObjects.Text;
   hvHud!: Phaser.GameObjects.Text;
   hvRows: Phaser.GameObjects.Text[] = [];
@@ -1333,7 +1340,6 @@ export class MissionScene extends Phaser.Scene {
     this.autoGunDbg = [];
     this.aiLabels = [];
     this.escortAiLabels = [];
-    this.dockAglAlertT = 0;
     this.editOpen = false;
     this.editInvert = false;
     this.editDirty = null;
@@ -1369,6 +1375,7 @@ export class MissionScene extends Phaser.Scene {
     this.ammo = this.loadout.map((weapon, i) =>
       craftSocketStartingAmmo(weapon.ammo, selectedCraft, i)
     );
+    this.bayRemotes = this.loadout.map(() => []);
     this.stationFireCd = this.loadout.map((_, i) =>
       Array.from({ length: craftSocketBarrelCount(selectedCraft, i) }, () => 0)
     );
@@ -3096,7 +3103,7 @@ export class MissionScene extends Phaser.Scene {
       .setStroke("#12100c", 4)
       .setVisible(false);
     this.dockAglAlertTxt = this.add
-      .text(this.scale.width / 2, this.scale.height - 130, "TOO HIGH TO DOCK — DESCEND", {
+      .text(this.scale.width / 2, this.scale.height - 130, "TOO HIGH TO DOCK — DESCEND (SHIFT)", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "13px",
         color: "#ff8a5a",
@@ -3932,7 +3939,6 @@ export class MissionScene extends Phaser.Scene {
     }
     const wallDt = Math.min(dms / 1000, 0.05);
     this.frameWallDt = wallDt;
-    if (this.dockAglAlertT > 0) this.dockAglAlertT = Math.max(0, this.dockAglAlertT - wallDt);
     const mapPause = this.mapWant || this.mapBlend > 0.02;
     const uiPause = mapPause || this.helpOpen || this.exitOpen;
     let simScale = this.timeScale;
@@ -4006,14 +4012,19 @@ export class MissionScene extends Phaser.Scene {
         // POV remotes (HOUND): after Q exit the slot stays selected but bird flight returns.
         this.remotePilotActive =
           !!pilot && (this.remoteView || !remoteHasPovHud(pilot.spec));
-        if (this.remotePilotActive && pilot && !pilot.airborne) this.tickRemotePilot(pilot, dt, aim);
+        if (this.remotePilotActive && pilot && !pilot.airborne) {
+          if (!pilot.dockPending) this.tickRemotePilot(pilot, dt, aim);
+        }
         else {
           const parked = this.activeRemote();
           if (parked && !parked.spec.ai && !parked.airborne) this.tickRemoteIdle(parked, dt);
         }
         this.tickCountermeasures(dt, wallDt);
         {
-          const escort = this.hostEscortDrive(pilot);
+          // POV dock: host holds station (and descends if needed) instead of escorting.
+          const dockSeq = !!this.povDockRemote();
+          const escort = dockSeq ? undefined : this.hostEscortDrive(pilot);
+          const dockDescend = this.hostDockDescend();
           this.player.update(
             dt,
             this.world,
@@ -4028,13 +4039,13 @@ export class MissionScene extends Phaser.Scene {
                   }),
             escort?.aimX ?? aim.x,
             escort?.aimY ?? aim.y,
-            escort
+            escort || dockDescend
               ? false
               : this.keySpace.isDown &&
                   !(this.stingerStyle === "subtle" && this.stingerT > 0 && !this.stingerReleased),
-            escort ? false : this.keyShift.isDown
+            dockDescend || (escort ? false : this.keyShift.isDown)
           );
-          if (escort?.brake) this.brakeHostEscort(dt);
+          if (escort?.brake || dockSeq) this.brakeHostEscort(dt);
           if (escort?.speedCap != null) this.capHostEscortSpeed(escort.speedCap);
         }
         this.syncProjectionPose();
@@ -4080,14 +4091,19 @@ export class MissionScene extends Phaser.Scene {
         // POV remotes (HOUND): after Q exit the slot stays selected but bird flight returns.
         this.remotePilotActive =
           !!pilot && (this.remoteView || !remoteHasPovHud(pilot.spec));
-        if (this.remotePilotActive && pilot && !pilot.airborne) this.tickRemotePilot(pilot, dt, aim);
+        if (this.remotePilotActive && pilot && !pilot.airborne) {
+          if (!pilot.dockPending) this.tickRemotePilot(pilot, dt, aim);
+        }
         else {
           const parked = this.activeRemote();
           if (parked && !parked.spec.ai && !parked.airborne) this.tickRemoteIdle(parked, dt);
         }
         this.tickCountermeasures(dt, wallDt);
         {
-          const escort = this.hostEscortDrive(pilot);
+          // POV dock: host holds station (and descends if needed) instead of escorting.
+          const dockSeq = !!this.povDockRemote();
+          const escort = dockSeq ? undefined : this.hostEscortDrive(pilot);
+          const dockDescend = this.hostDockDescend();
           this.player.update(
             dt,
             this.world,
@@ -4102,13 +4118,13 @@ export class MissionScene extends Phaser.Scene {
                   }),
             escort?.aimX ?? aim.x,
             escort?.aimY ?? aim.y,
-            escort
+            escort || dockDescend
               ? false
               : this.keySpace.isDown &&
                   !(this.stingerStyle === "subtle" && this.stingerT > 0 && !this.stingerReleased),
-            escort ? false : this.keyShift.isDown
+            dockDescend || (escort ? false : this.keyShift.isDown)
           );
-          if (escort?.brake) this.brakeHostEscort(dt);
+          if (escort?.brake || dockSeq) this.brakeHostEscort(dt);
           if (escort?.speedCap != null) this.capHostEscortSpeed(escort.speedCap);
         }
 
@@ -5487,6 +5503,18 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 
+  /** Cursor texture: remote deploy, bomb drop, else the cam's round/square. */
+  reticleTexFor(spec: PlayerWpnSpec, square: boolean): string {
+    const want = payloadIsRemote(spec.payload)
+      ? "mark_reticle_remote"
+      : spec.launch.mode === "drop"
+        ? "mark_reticle_bomb"
+        : square
+          ? "mark_reticle_sq"
+          : "mark_reticle";
+    return this.textures.exists(want) ? want : "mark_reticle";
+  }
+
   syncReticles(): void {
     const p = this.input.activePointer;
     this.reticle.setPosition(p.x, p.y);
@@ -5501,9 +5529,7 @@ export class MissionScene extends Phaser.Scene {
       spec.launch.mode !== "drop" &&
       !spec.guidance &&
       (!!spec.art.tracer || (spec.launch.mode === "muzzle" && !spec.exhaust));
-    this.reticle.setTexture(
-      !bombDrop && square && this.textures.exists("mark_reticle_sq") ? "mark_reticle_sq" : "mark_reticle"
-    );
+    this.reticle.setTexture(this.reticleTexFor(spec, square));
     const ammoLeft = this.ammo[h.weapon] ?? 0;
     const ammoShown = this.remotePoolDisplayAmmo(h.weapon, ammoLeft);
     const ammoCap = Math.max(
@@ -5513,9 +5539,18 @@ export class MissionScene extends Phaser.Scene {
     if (spec.launch.mode === "beam") {
       this.drawReticleAmmoBar(p.x, p.y, ammoShown, ammoCap);
     } else {
-      this.drawReticleTally(p.x, p.y, !gunSight ? ammoShown : 0, ammoCap);
+      // Remotes: filled = ready in the bay, outline = deployed (alive pool).
+      const remote = payloadIsRemote(spec.payload);
+      if (remote) {
+        const alive = Number.isFinite(ammoShown) ? ammoShown : ammoCap;
+        const ready = this.infAmmo ? alive : Math.min(ammoLeft, alive);
+        this.drawReticleTally(p.x, p.y, ready, alive, "vehicle");
+      } else {
+        this.drawReticleTally(p.x, p.y, !gunSight ? ammoShown : 0, ammoCap);
+      }
     }
-    if (spec.fireCd >= RETICLE_CD_MIN) {
+    const outOfAmmo = !this.infAmmo && Number.isFinite(ammoLeft) && ammoLeft <= 0;
+    if (spec.fireCd >= RETICLE_CD_MIN && !outOfAmmo) {
       this.drawReticleCooldown(p.x, p.y, h.fireCd, craftSocketFireCd(spec.fireCd, h.spec, h.weapon));
     }
     // Remote slot: gun remotes keep a POV sight while selected; others have no laser.
@@ -5557,11 +5592,7 @@ export class MissionScene extends Phaser.Scene {
         remSpec.launch.mode !== "drop" &&
         !remSpec.guidance &&
         (!!remSpec.art.tracer || (remSpec.launch.mode === "muzzle" && !remSpec.exhaust));
-      this.reticle.setTexture(
-        remSpec.cam.reticle === "square" && this.textures.exists("mark_reticle_sq")
-          ? "mark_reticle_sq"
-          : "mark_reticle"
-      );
+      this.reticle.setTexture(this.reticleTexFor(remSpec, remSpec.cam.reticle === "square"));
       const hostAmmoId = this.remoteHostAmmoWeapon(remSpec);
       const hostSlot = hostAmmoId ? this.hostWeaponSlot(hostAmmoId) : -1;
       const hostSpec = hostAmmoId ? PLAYER_WPNS[hostAmmoId as WpnId] : undefined;
@@ -5577,7 +5608,10 @@ export class MissionScene extends Phaser.Scene {
         this.drawReticleTally(p.x, p.y, !remGunSight ? ammoLeft : 0, remAmmoCap);
       }
       const remCdTotal = hostSpec && payloadIsHostFire(remSpec.payload) ? hostSpec.fireCd : remSpec.fireCd;
-      if (remCdTotal >= RETICLE_CD_MIN) this.drawReticleCooldown(p.x, p.y, povRem.fireCd ?? 0, remCdTotal);
+      const remOut = !this.infAmmo && Number.isFinite(ammoLeft) && ammoLeft <= 0;
+      if (remCdTotal >= RETICLE_CD_MIN && !remOut) {
+        this.drawReticleCooldown(p.x, p.y, povRem.fireCd ?? 0, remCdTotal);
+      }
       this.sight.setVisible(true);
       this.sight.clear();
       if (bombDrop) {
@@ -6422,17 +6456,50 @@ designatorSightOrigins(slot = this.player.weapon): { x: number; y: number }[] {
     g.fillCircle(x, y, r * 0.22);
   }
 
-  drawReticleTally(cx: number, cy: number, count: number, max = count): void {
+  drawReticleTally(
+    cx: number,
+    cy: number,
+    count: number,
+    max = count,
+    shape: "tick" | "vehicle" = "tick"
+  ): void {
     const g = this.reticleMark;
     g.clear();
     const n = Math.max(0, Math.floor(count));
-    if (n <= 0 || !Number.isFinite(max) || max <= 0) {
+    // Vehicles stay up with none ready so deployed outlines still show.
+    const none = shape === "vehicle" ? Math.floor(max) <= 0 : n <= 0;
+    if (none || !Number.isFinite(max) || max <= 0) {
       g.setVisible(false);
       return;
     }
     g.setVisible(true);
     // Capacity must cover live count (socket mul / remote pool can exceed catalog ammo).
     const cap = Math.max(Math.floor(max), n);
+    if (shape === "vehicle") {
+      // One diamond per vehicle: filled = ready, outline = deployed.
+      const r = 3.6;
+      const step = 9.5;
+      const perRow = 5;
+      const color = 0xe8b84a;
+      for (let i = 0; i < cap; i++) {
+        const x = cx + 44 + (i % perRow) * step;
+        const y = cy - 26 + Math.floor(i / perRow) * step;
+        const pts = [
+          new Phaser.Math.Vector2(x, y - r),
+          new Phaser.Math.Vector2(x + r, y),
+          new Phaser.Math.Vector2(x, y + r),
+          new Phaser.Math.Vector2(x - r, y),
+        ];
+        if (i < n) {
+          g.fillStyle(color, 0.92);
+          g.fillPoints(pts, true);
+        } else {
+          g.lineStyle(1.2, color, 0.45);
+          g.strokePoints(pts, true);
+        }
+      }
+      return;
+    }
     // Low: groups of 5 ticks. High: same section footprint as 5×4 dots (20).
     const highCap = cap > 25;
     const perGroup = highCap ? 20 : 5;
@@ -9251,6 +9318,11 @@ specIsShellGun(spec)
       : this.pilotingRemote();
     // Near-host dockable POV (Raptor): Q docks instead of just dropping the cam.
     if (hound && remoteHasPovHud(hound.spec) && hound.spec.dockable && this.remoteNearHost(hound)) {
+      // POV stays on the remote through the auto-dock; arrival returns to the host.
+      if (this.remoteView && this.pilotingRemote() === hound) {
+        hound.dockPending = true;
+        return;
+      }
       hound.dock = true;
       this.remoteView = false;
       this.applyThermalMode();
@@ -9301,32 +9373,52 @@ specIsShellGun(spec)
     return Math.max(160, this.player.spec.radius * 0.55 + drone.spec.radius + 48);
   }
 
+  /** Ground remotes can't reach the bay unless the host is near the ground. */
+  groundDockBlocked(drone: RemoteCraft): boolean {
+    if (!drone.spec.ground) return false;
+    const h = this.player;
+    return castZ(this.world, h.x, h.y, h.z) > DOCK_GROUND_MAX_AGL;
+  }
+
+  /** Remote the player is watching dock from its POV (host is automated meanwhile). */
+  povDockRemote(): RemoteCraft | undefined {
+    const pilot = this.remoteView ? this.pilotingRemote() : undefined;
+    return pilot?.dockPending ? pilot : undefined;
+  }
+
+  /** Host auto-descends only during a POV dock that needs it. */
+  hostDockDescend(): boolean {
+    const r = this.povDockRemote();
+    return !!r && this.groundDockBlocked(r);
+  }
+
+  /** Left the POV mid-dock: finish as a normal autonomous dock. */
+  tickPendingDock(): void {
+    const pov = this.povDockRemote();
+    for (const r of this.remotes) {
+      if (!r.dockPending || r === pov) continue;
+      r.dockPending = false;
+      if (!r.detonate) r.dock = true;
+    }
+  }
+
   remoteNearHost(drone: RemoteCraft): boolean {
     const d = Math.hypot(drone.x - this.player.x, drone.y - this.player.y, drone.z - this.player.z);
     return d < this.remoteDockRange(drone);
   }
 
   /**
-   * Q from bird-cam — send every live dockable remote home to dock. A ground remote can't
-   * reel up into a hovering host — it only docks if the host is near the ground; otherwise it
-   * stays out and flashes an alert instead of silently teleporting up to the bay.
+   * Q from bird-cam — send every live dockable remote home. The player flies the host, so a
+   * ground remote parks under a too-high bay and the alert prompts them to descend.
    */
   recallDockables(): void {
-    const h = this.player;
     let any = false;
-    let blockedByAgl = false;
-    const hostAgl = castZ(this.world, h.x, h.y, h.z);
     for (const r of this.remotes) {
       if (r.detonate || r.dock || !r.spec.dockable) continue;
-      if (r.spec.ground && hostAgl > DOCK_GROUND_MAX_AGL) {
-        blockedByAgl = true;
-        continue;
-      }
       r.dock = true;
       any = true;
     }
     if (any) this.applyThermalMode();
-    if (blockedByAgl) this.dockAglAlertT = DOCK_AGL_ALERT_HOLD;
   }
 
   /** Toggle dropship FOLLOW / HOLD while piloting a POV remote with `hostEscort`. */
@@ -9341,7 +9433,8 @@ specIsShellGun(spec)
    * Host craft drive while a POV remote is piloted.
    * Spoofs stick + aim into the normal heli controller (no custom locomotion):
    * - `hostFace`: yaw toward the remote (orbit hosts use A/D; plane hosts aim-turn).
-   * - `hostEscort` Hold parks; Follow aims at the leash target, turns first, then thrusts.
+   * - `hostEscort` Hold parks; Follow paces a moving remote at the inner ring, catches up
+   *   (turn first, then thrust) past the outer ring, and parks without yawing when idle.
    * - Hold + howitzer under remote direction (spot / strike select, or active barrage):
    *   yaw toward the mouse — same for remote howitzer and artillery strike.
    *   Follow keeps leash rules (face/crawl to remote).
@@ -9394,35 +9487,43 @@ specIsShellGun(spec)
 
     const { innerRadius, outerRadius } = pilot.spec.hostEscort;
     const dist = Math.hypot(h.x - pilot.x, h.y - pilot.y);
+    const pilotSpd = Math.hypot(pilot.vx, pilot.vy);
+    const moving = pilotSpd > ESCORT_MOVING_SPEED;
     if (this.hostEscortSeeking) {
       if (dist <= innerRadius) this.hostEscortSeeking = false;
     } else if (dist > outerRadius) {
       this.hostEscortSeeking = true;
     }
+    // Remote on the move: hold the inner ring rather than waiting for the leash to break.
+    const chase = this.hostEscortSeeking || (moving && dist > innerRadius - ESCORT_RING_BAND);
 
-    // Always face the Hound in follow — even while parked inside the leash.
-    if (!this.hostEscortSeeking) {
-      return this.hostFacePointStick(pilot.x, pilot.y, zero, true);
+    if (!chase) {
+      // Idle inside the leash: only yaw toward the remote while directing the howitzer.
+      if (faceAim) return this.hostFacePointStick(pilot.x, pilot.y, zero, true);
+      return { stick: zero, aimX: parkAimX, aimY: parkAimY, brake: !moving };
     }
 
-    // Catch-up: turn toward the inner ring, thrust only once the nose is close enough.
-    const dx = h.x - pilot.x;
-    const dy = h.y - pilot.y;
-    const inv = dist > 1e-3 ? 1 / dist : 0;
-    const tx = pilot.x + dx * inv * innerRadius;
-    const ty = pilot.y + dy * inv * innerRadius;
-    const want = Math.atan2(ty - h.y, tx - h.x);
+    // Catch-up: turn toward the remote, thrust only once the nose is close enough.
+    // Steer at the remote itself: the ring point flips behind the host once inside the ring.
+    const want = Math.atan2(pilot.y - h.y, pilot.x - h.x);
     const err = Math.abs(Phaser.Math.Angle.Wrap(want - h.angle));
     // ~28° — yaw first, then crawl; avoids thrusting off-axis.
     const aligned = err < 0.49;
+    // Inside the band: track heading but coast, so it settles on the ring.
+    const outside = dist > innerRadius;
+    // Match the remote's pace plus a gain on ring error; leash breaks keep the old crawl floor.
+    const pace = pilotSpd + Math.max(0, dist - innerRadius) * ESCORT_RING_GAIN;
+    const cap = Math.min(
+      h.spec.maxSpeed,
+      this.hostEscortSeeking ? Math.max(h.spec.maxSpeed * 0.42, pace) : pace
+    );
     return {
-      stick: { up: aligned, down: false, left: false, right: false },
-      aimX: tx,
-      aimY: ty,
+      stick: { up: aligned && outside, down: false, left: false, right: false },
+      aimX: pilot.x,
+      aimY: pilot.y,
       // Kill residual speed while lining up so it doesn't coast the wrong way.
-      brake: !aligned,
-      // Follow crawl — well under player full-throttle max.
-      speedCap: aligned ? h.spec.maxSpeed * 0.42 : undefined,
+      brake: !aligned && outside,
+      speedCap: aligned && outside ? cap : undefined,
     };
   }
 
@@ -9527,6 +9628,8 @@ specIsShellGun(spec)
     const gnd = groundZ(this.world, pylon.x, pylon.y);
     const pad = gnd + remoteSpec.cruiseAgl;
     const drop = !!remoteSpec.ground && h.z > pad + 8;
+    const duration = spec.payload.remote!.duration;
+    const bay = remoteSpec.dockable ? this.takeBayRemote(slot) : undefined;
     this.remotes.push({
       id: nextId(),
       spec: remoteSpec,
@@ -9537,9 +9640,9 @@ specIsShellGun(spec)
       vy: h.vy * (drop ? 0.55 : 0.85) + Math.sin(ang) * kick * cp,
       vz: drop ? h.vz * 0.35 - 30 : remoteSpec.ground ? 0 : h.vz * 0.4 + kick * sp,
       angle: ang,
-      health: remoteSpec.health,
-      life: spec.payload.remote!.duration,
-      lifeMax: spec.payload.remote!.duration,
+      health: bay?.health ?? remoteSpec.health,
+      life: remoteSpec.unlimitedLife ? duration : (bay?.life ?? duration),
+      lifeMax: duration,
       rotor: Math.random() * Math.PI * 2,
       orbit: Math.random() * Math.PI * 2,
       gunAngle: ang,
@@ -10059,6 +10162,15 @@ specIsShellGun(spec)
     const dz = bay.z - drone.z;
     const dist = Math.hypot(dx, dy, dz);
     if (dist < 24) return true;
+    // Ground remote under the bay: park until the host is low enough.
+    if (drone.spec.ground && Math.hypot(dx, dy) < 24) {
+      const ahead = { x: drone.x + Math.cos(drone.angle) * 100, y: drone.y + Math.sin(drone.angle) * 100 };
+      const idle = { up: false, down: false, left: false, right: false };
+      this.driveRemoteCraft(drone, dt, idle, ahead, { syncGun: false });
+      drone.vx *= Math.pow(0.02, dt);
+      drone.vy *= Math.pow(0.02, dt);
+      return false;
+    }
 
     const want = Math.atan2(dy, dx);
     const approach = Phaser.Math.Clamp(dist / 220, 0.22, 1);
@@ -10588,22 +10700,87 @@ specIsShellGun(spec)
     drone.vz *= Math.pow(0.2, dt);
   }
 
-  refundRemoteAmmo(kind: string): void {
+  refundRemoteAmmo(r: RemoteCraft): void {
     for (let i = 0; i < this.loadout.length; i++) {
       const w = this.loadout[i]!;
       if (!payloadIsRemote(w.payload)) continue;
-      if (w.payload!.remote!.kind !== kind) continue;
+      if (w.payload!.remote!.kind !== r.spec.kind) continue;
       // Match hangar capacity (craft ammoScale / socket mul), not bare catalog ammo.
       const cap = craftSocketStartingAmmo(w.ammo, this.player.spec, i);
       if (!Number.isFinite(cap)) return;
       if ((this.ammo[i] ?? 0) < cap) {
         this.ammo[i] = (this.ammo[i] ?? 0) + 1;
+        const roster = this.bayRemotes[i] ?? (this.bayRemotes[i] = []);
+        roster.push({ life: Math.max(0, r.life), health: Math.max(0, r.health) });
         return;
       }
     }
   }
 
+  /** Dockable remote spec launched from this loadout slot, if any. */
+  dockableSlotRemote(slot: number): RemoteSpec | undefined {
+    const kind = this.loadout[slot]?.payload?.remote?.kind;
+    if (!kind) return undefined;
+    const spec = remoteSpecOf(kind);
+    return spec.dockable ? spec : undefined;
+  }
+
+  /** Bay roster for a dockable slot, padded with fresh remotes / trimmed to the hangar count. */
+  bayRoster(slot: number): BayRemote[] {
+    const roster = this.bayRemotes[slot] ?? (this.bayRemotes[slot] = []);
+    const spec = this.dockableSlotRemote(slot);
+    const n = this.ammo[slot] ?? 0;
+    if (!spec || !Number.isFinite(n)) return roster;
+    const lifeMax = this.loadout[slot]!.payload!.remote!.duration;
+    while (roster.length < n) roster.push({ life: lifeMax, health: spec.health });
+    if (roster.length > n) {
+      roster.sort(bayRemoteRank);
+      roster.length = Math.max(0, n);
+    }
+    return roster;
+  }
+
+  /** Pull the best docked remote (life first, then health) for launch. */
+  takeBayRemote(slot: number): BayRemote | undefined {
+    const roster = this.bayRemotes[slot];
+    if (!roster?.length) return undefined;
+    roster.sort(bayRemoteRank);
+    return roster.shift();
+  }
+
+  /** Docked remotes recharge battery and slowly repair up to their spec cap. */
+  tickBayRemotes(dt: number): void {
+    for (let i = 0; i < this.loadout.length; i++) {
+      const spec = this.dockableSlotRemote(i);
+      if (!spec) continue;
+      const lifeMax = this.loadout[i]!.payload!.remote!.duration;
+      const repairCap = spec.health * spec.dockRepairMax;
+      for (const b of this.bayRoster(i)) {
+        b.life = Math.min(lifeMax, b.life + (lifeMax / Math.max(0.1, spec.dockRechargeTime)) * dt);
+        if (b.health < repairCap) {
+          b.health = Math.min(repairCap, b.health + spec.health * spec.dockRepairRate * dt);
+        }
+      }
+    }
+  }
+
+  /** Summed health fraction of a dockable slot's whole pool (bay + live, excluding lost). */
+  remotePoolHealth(slot: number): number {
+    const spec = this.dockableSlotRemote(slot);
+    if (!spec) return 0;
+    const max = Math.max(1, spec.health);
+    let sum = 0;
+    for (const b of this.bayRoster(slot)) sum += Phaser.Math.Clamp(b.health / max, 0, 1);
+    for (const r of this.remotes) {
+      if (r.detonate || r.spec.kind !== spec.kind) continue;
+      sum += Phaser.Math.Clamp(r.health / max, 0, 1);
+    }
+    return sum;
+  }
+
   updateRemotes(dt: number): void {
+    this.tickBayRemotes(dt);
+    this.tickPendingDock();
     // Keep HOUND cam/view latched while its HUD slot is selected and it's alive.
     // Spectre view is sticky across weapon changes — do not clear just because the
     // selected slot is a gun (railgun, etc.).
@@ -10632,7 +10809,7 @@ specIsShellGun(spec)
     // Drive AI pods / dock approaches every frame (piloted remotes steered earlier via shadow Craft).
     for (const r of this.remotes) {
       if (r.detonate || r.airborne) continue;
-      if (r.dock) {
+      if (r.dock || r.dockPending) {
         this.tickRemoteDockApproach(r, dt);
         continue;
       }
@@ -10645,31 +10822,38 @@ specIsShellGun(spec)
       const r = this.remotes[i]!;
       const trackX0 = r.x;
       const trackY0 = r.y;
-      r.life -= dt;
+      if (!r.spec.unlimitedLife) r.life -= dt;
       // Shadow-Craft remotes (pilot + AI) already integrated inside Craft.update this frame.
       if (!this.remoteCraftDriven.has(r.id)) {
         r.x += r.vx * dt;
         r.y += r.vy * dt;
         r.z += r.vz * dt;
       }
-      if (!r.dock) this.snapRemoteGround(r, dt);
+      const docking = r.dock || !!r.dockPending;
+      if (!docking) this.snapRemoteGround(r, dt);
       // Craft-driven remotes stamp tracks inside driveRemoteCraft.
       if (r.spec.track && !r.airborne && !this.remoteCraftDriven.has(r.id)) {
         this.stampRemoteTracks(r, dt, trackX0, trackY0);
       }
-      if (r.life <= 0) {
+      if (r.life <= 0 && !r.dockPending) {
         if (r.spec.dockable) r.dock = true;
         else r.detonate = true;
       }
-      if (r.dock) {
+      if (r.dock || r.dockPending) {
         const bay = this.remoteDockBayPos(r);
-        const arrived = Math.hypot(r.x - bay.x, r.y - bay.y, r.z - bay.z) < 28;
+        // Ground remotes can't climb to the bay — under it with the host low enough counts.
+        const arrived = r.spec.ground
+          ? Math.hypot(r.x - bay.x, r.y - bay.y) < 28 && !this.groundDockBlocked(r)
+          : Math.hypot(r.x - bay.x, r.y - bay.y, r.z - bay.z) < 28;
         if (!arrived) {
           this.remotes[w++] = r;
           continue;
         }
+        // Mark docked so POV lookups drop it before the view exits.
+        r.dock = true;
+        r.dockPending = false;
         this.releaseRemotePilotCraft(r.id);
-        this.refundRemoteAmmo(r.spec.kind);
+        this.refundRemoteAmmo(r);
         if (!r.spec.ai || r.spec.pilotable) this.exitRemoteView();
         continue;
       }
@@ -21588,13 +21772,19 @@ specIsShellGun(spec)
     this.remotePrompt.setAlpha(blink);
   }
 
-  /** Brief flash after a Q recall couldn't dock a ground remote — host AGL too high. */
+  /** Player-flown host too high for a docking ground remote. */
+  dockAglBlocked(): boolean {
+    const pov = this.povDockRemote();
+    return this.remotes.some((r) => r.dock && !r.detonate && r !== pov && this.groundDockBlocked(r));
+  }
+
+  /** Persistent "TOO HIGH TO DOCK" while the player-flown host blocks a ground dock. */
   syncDockAglAlert(): void {
-    const show = this.dockAglAlertT > 0 && !this.mapView && !this.over;
+    const show = !this.mapView && !this.over && this.dockAglBlocked();
     this.dockAglAlertTxt.setVisible(show);
     if (!show) return;
-    const fade = Math.min(1, this.dockAglAlertT / 0.4);
-    this.dockAglAlertTxt.setAlpha(fade);
+    const lp = this.hudLocal(this.scale.width / 2, this.scale.height - 130);
+    this.dockAglAlertTxt.setPosition(lp.x, lp.y);
   }
 
   drawWeaponHud(): void {
@@ -21653,10 +21843,12 @@ specIsShellGun(spec)
             : craftSocketStartingAmmo(wp.ammo, h.spec, i);
       // Launch gate uses hangar reserve; display can include live dockable remotes.
       const empty = !this.infAmmo && Number.isFinite(a) && a <= 0;
+      // Dockable pools fill by summed remote health, not head count.
+      const pooled = !pov && !!this.dockableSlotRemote(i);
       const frac =
         this.infAmmo || !Number.isFinite(a) || !Number.isFinite(cap) || cap <= 0
           ? 1
-          : Phaser.Math.Clamp(a / cap, 0, 1);
+          : Phaser.Math.Clamp((pooled ? this.remotePoolHealth(i) : a) / cap, 0, 1);
       const low = !empty && Number.isFinite(a) && frac > 0 && frac <= 0.25;
       const sel = i === selected;
       const socket = pov ? pov.spec.sockets?.[i] : h.spec.sockets[i];
@@ -23775,6 +23967,7 @@ specIsShellGun(spec)
       this.threatMissileTxt,
       this.liftPrompt,
       this.remotePrompt,
+      this.dockAglAlertTxt,
       this.hvHud,
       ...this.hvRows,
       this.playerHud,
@@ -24883,6 +25076,19 @@ specIsShellGun(spec)
       if (!cameraPointVisible(r.z, r.y)) continue;
       const at = worldToScreen(r.x, r.y, r.z);
       const zs = at.scale;
+      const batY = at.y - r.spec.height * zs - 22 * zs;
+      if (r.health < r.spec.health - 0.5) {
+        const hw = 26.4 * zs;
+        const hr = Phaser.Math.Clamp(r.health / Math.max(1, r.spec.health), 0, 1);
+        const hx = at.x - hw / 2;
+        // Sits above the battery; takes its slot when there is none.
+        const hy = r.spec.unlimitedLife ? batY + 2 * zs : batY - 6 * zs;
+        g.fillStyle(0x10100c, 0.7);
+        g.fillRect(hx, hy, hw, 4 * zs);
+        g.fillStyle(hr > 0.5 ? 0x6dbb4a : hr > 0.25 ? 0xe8b84a : 0xff4a2a, 1);
+        g.fillRect(hx, hy, hw * hr, 4 * zs);
+      }
+      if (r.spec.unlimitedLife) continue;
       const segs = 4;
       const bodyW = 24 * zs;
       const bodyH = 8 * zs;
@@ -24901,7 +25107,7 @@ specIsShellGun(spec)
       const pulse = low ? 0.38 + 0.62 * (0.5 + 0.5 * Math.sin(this.time.now * 0.022)) : 1;
       const totalW = bodyW + nubW;
       const x = at.x - totalW / 2;
-      const y = at.y - r.spec.height * zs - 22 * zs;
+      const y = batY;
       g.fillStyle(0x10100c, 0.72 * pulse);
       g.fillRoundedRect(x, y, bodyW, bodyH, rBody);
       g.lineStyle(Math.max(1, 1.15 * zs), low ? col : 0xd8d8cc, 0.92 * pulse);
@@ -24929,7 +25135,10 @@ specIsShellGun(spec)
       this.remoteArmedTxt
         .setVisible(true)
         .setText("ARMED")
-        .setPosition(at.x, at.y - drone.spec.height * zs - 34 * zs)
+        .setPosition(
+          at.x,
+          at.y - drone.spec.height * zs - (drone.health < drone.spec.health - 0.5 ? 40 : 34) * zs
+        )
         .setScale(zs)
         .setAlpha(blink)
         .setDepth(worldDepth(drone.z, ZOff.body + 2, drone.y));
@@ -25113,6 +25322,7 @@ specIsShellGun(spec)
   emitDamageFx(): void {
     const h = this.player;
     this.emitUnitDamageFx();
+    this.emitRemoteDamageFx();
     const hp = h.health / h.spec.health;
     if (h.phase !== "dead" && hp < 0.98) {
       const want = hp < 0.25 ? 3 : hp < 0.45 ? 2 : hp < 0.75 ? 1 : 0;
@@ -25137,6 +25347,38 @@ specIsShellGun(spec)
       }
     } else if (h.phase !== "dead") {
       h.dmgSites.length = 0;
+    }
+  }
+
+  emitRemoteDamageFx(): void {
+    for (const r of this.remotes) {
+      if (r.detonate) continue;
+      const ratio = r.health / Math.max(1, r.spec.health);
+      const want = ratio < 0.25 ? 3 : ratio < 0.45 ? 2 : ratio < 0.75 ? 1 : 0;
+      if (!r.dmgSites) r.dmgSites = [];
+      if (!want) {
+        if (r.dmgSites.length) r.dmgSites.length = 0;
+        continue;
+      }
+      const body = this.remoteBodyImage(r);
+      if (!body?.visible || !cameraPointVisible(r.z, r.y)) continue;
+      while (r.dmgSites.length > want) r.dmgSites.pop();
+      while (r.dmgSites.length < want) {
+        const uv = this.sampleSolidUv(body.texture.key, r.spec.radius);
+        r.dmgSites.push({ ...uv, scale: range(0.38, 0.75) });
+      }
+      const { fire, smoke } = this.pairHurtFx(r.z, r.y, this.flame, this.hurtSmoke);
+      const sizeMul = r.spec.ground ? 1 : 1.65;
+      for (const site of r.dmgSites) {
+        const base = spriteUvPos(body, site.u, site.v);
+        const p = jitterDisk(base.x, base.y, 0.5 + site.scale * 0.4);
+        this.withDmgFlameScale(site.scale * sizeMul, () => {
+          const nFire = this.fxEmitCount(0.45);
+          const nSmoke = this.fxEmitCount(0.26);
+          if (nFire) this.emitBudgeted("fire", fire, p.x, p.y, nFire);
+          if (nSmoke) this.emitBudgeted("smoke", smoke, p.x, p.y, nSmoke);
+        });
+      }
     }
   }
 
@@ -25676,6 +25918,11 @@ function simParticleLook(_kind: SimParticleKind, biome: Biome, blood = false): {
   };
   const pal = dirt[biome];
   return { tint: pal[(Math.random() * pal.length) | 0]!, add: false };
+}
+
+/** Launch order: most battery first, then most health. */
+function bayRemoteRank(a: BayRemote, b: BayRemote): number {
+  return b.life - a.life || b.health - a.health;
 }
 
 function norm3(x: number, y: number, z: number): { x: number; y: number; z: number } {

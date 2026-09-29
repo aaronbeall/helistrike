@@ -432,6 +432,54 @@ function drawReticleSquare(): HTMLCanvasElement {
   return c;
 }
 
+/** Remote deploy: diamond hull with a center pip. */
+function drawReticleRemote(): HTMLCanvasElement {
+  const c = canvas(96, 96);
+  const g = ctxOf(c);
+  const cx = 48;
+  const cy = 48;
+  const r = 32;
+  g.strokeStyle = "#e8b84a";
+  g.lineWidth = 2;
+  g.lineCap = "butt";
+  g.lineJoin = "miter";
+  g.beginPath();
+  g.moveTo(cx, cy - r);
+  g.lineTo(cx + r, cy);
+  g.lineTo(cx, cy + r);
+  g.lineTo(cx - r, cy);
+  g.closePath();
+  g.stroke();
+  g.strokeRect(cx - 5, cy - 5, 10, 10);
+  return c;
+}
+
+/** Bomb drop: broken outer ring over a bullseye impact point. */
+function drawReticleBomb(): HTMLCanvasElement {
+  const c = canvas(96, 96);
+  const g = ctxOf(c);
+  const cx = 48;
+  const cy = 48;
+  g.strokeStyle = "#e8b84a";
+  g.lineWidth = 2;
+  g.lineCap = "butt";
+  const gap = 0.32;
+  for (let i = 0; i < 4; i++) {
+    const a = (i * Math.PI) / 2 + Math.PI / 4;
+    g.beginPath();
+    g.arc(cx, cy, 34, a - Math.PI / 4 + gap, a + Math.PI / 4 - gap);
+    g.stroke();
+  }
+  g.beginPath();
+  g.arc(cx, cy, 16, 0, Math.PI * 2);
+  g.stroke();
+  g.fillStyle = "#e8b84a";
+  g.beginPath();
+  g.arc(cx, cy, 3.5, 0, Math.PI * 2);
+  g.fill();
+  return c;
+}
+
 /**
  * Intentional procedural chrome (no PNG sheet). Runs before prepareArt.
  * Sheet art may overwrite rockets / FX / blasts when present.
@@ -446,6 +494,8 @@ export function bakeAll(textures: Phaser.Textures.TextureManager): void {
   add(textures, "fx_muzzle", drawMuzzle());
   add(textures, "mark_reticle", drawReticle());
   add(textures, "mark_reticle_sq", drawReticleSquare());
+  add(textures, "mark_reticle_remote", drawReticleRemote());
+  add(textures, "mark_reticle_bomb", drawReticleBomb());
   add(textures, "fx_flame", drawFlame());
   add(textures, "fx_tesla_glow", drawSoftGlow(64));
   add(textures, "fx_tesla_halo", drawSoftGlow(96));

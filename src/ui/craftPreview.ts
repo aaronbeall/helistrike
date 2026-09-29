@@ -2,7 +2,6 @@ import Phaser from "phaser";
 import {
   craftComposite,
   craftCompositePartScale,
-  craftExhaustFlameHue,
   craftExhaustMounts,
   craftGunSocketSlots,
   craftPreviewExhaustScale,
@@ -73,33 +72,25 @@ export function buildCraftPreviewOverlay(
     return { img, part, gunScale, isOverride };
   });
 
-  // Same art/color rig as the real renderer (paintExhaustNozzle): no nozzle glow at all when
-  // flame is 0 (smoke-only hulls, e.g. Skiff), else a tinted glow plus a hue-rotated flame layer
-  // — just as a static pulse here instead of live sim-driven scale/flicker.
+  // Subtle tinted glow pulse only; no nozzle glow for smoke-only hulls (flame 0, e.g. Skiff).
   const hasFlame = (craft.exhaustProfile?.flame ?? 0) !== 0;
   const exhaustMounts = hasFlame ? craftExhaustMounts(craft) : [];
   const exhaustTint = craftPreviewExhaustTint(craft.kind);
-  const exhaustFlameHue = craft.exhaustProfile?.flameHue ?? craftExhaustFlameHue(craft.kind);
   const exhaust = exhaustMounts.map((mount, i) => {
     const glow = scene.add
       .image(0, 0, "fx_exhaust_glow")
       .setOrigin(0.5, 0)
       .setBlendMode(Phaser.BlendModes.ADD)
       .setTint(exhaustTint);
-    const flame = scene.add
-      .image(0, 0, "fx_exhaust")
-      .setOrigin(0.5, 0)
-      .setBlendMode(Phaser.BlendModes.ADD);
-    flame.preFX?.addColorMatrix()?.hue(exhaustFlameHue);
     scene.tweens.add({
-      targets: [glow, flame],
+      targets: glow,
       alpha: { from: 0.5 + (i % 2) * 0.08, to: 0.96 },
       duration: 780 + i * 90,
       yoyo: true,
       repeat: -1,
       ease: "Sine.InOut",
     });
-    return { img: glow, flame, mount };
+    return { img: glow, mount };
   });
 
   const rotors = composite.rotors.map((part) => {
@@ -124,7 +115,6 @@ export function buildCraftPreviewOverlay(
   const below = gunsBelow;
   const above = [
     ...exhaust.map((e) => e.img),
-    ...exhaust.map((e) => e.flame),
     ...gunsAbove,
     ...rotors.map((r) => r.host),
   ];
@@ -137,11 +127,10 @@ export function buildCraftPreviewOverlay(
       const gunSc = isOverride ? gunScale * art.scaleX : (craft.gunOverlayScale ?? 1) * gunScale * art.scaleX;
       img.setPosition(at.x, at.y).setScale(gunSc);
     });
-    exhaust.forEach(({ img, flame, mount }) => {
+    exhaust.forEach(({ img, mount }) => {
       const at = spriteUvPos(art, mount.x, mount.y);
       const sc = craftPreviewExhaustScale(art.scaleX);
       img.setPosition(at.x, at.y).setScale(sc.x, sc.y);
-      flame.setPosition(at.x, at.y).setScale(sc.x, sc.y);
     });
     rotors.forEach(({ host, rotor, part }) => {
       const at = spriteUvPos(art, part.mount.x, part.mount.y);

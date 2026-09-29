@@ -55,6 +55,14 @@ export interface RemoteSpec extends CraftSpec {
   pilotable?: boolean;
   /** Can re-dock with host craft (refunds ammo / despawns peacefully). */
   dockable?: boolean;
+  /** Battery never drains and no battery bar — health only (HUMVEE). */
+  unlimitedLife?: boolean;
+  /** Docked: seconds to recharge an empty battery to full. */
+  dockRechargeTime: number;
+  /** Docked: health repaired per second, as a fraction of max health. */
+  dockRepairRate: number;
+  /** Docked: repair stops at this fraction of max health. */
+  dockRepairMax: number;
   /** Ground-hugging AGV — clamps to terrain. */
   ground?: boolean;
   /**
@@ -149,6 +157,10 @@ type RemoteDef = {
   ai?: boolean;
   pilotable?: boolean;
   dockable?: boolean;
+  unlimitedLife?: boolean;
+  dockRechargeTime?: number;
+  dockRepairRate?: number;
+  dockRepairMax?: number;
   ground?: boolean;
   orbitEscort?: boolean;
   attackPass?: boolean;
@@ -227,6 +239,10 @@ export interface RemoteCraft {
   detonate?: boolean;
   /** Peaceful dock — no boom, refunds launch ammo when possible. */
   dock?: boolean;
+  /** POV dock requested but host too high — host auto-descends, then docks. */
+  dockPending?: boolean;
+  /** Hurt fire/smoke pins (sprite UV). */
+  dmgSites?: { u: number; v: number; scale: number }[];
   /** Orbit phase for AI wingmen / HOUND. */
   orbit?: number;
   /** Onboard gun cooldown (AI / legacy single-gun). */
@@ -287,6 +303,12 @@ export interface RemoteCraft {
   ammo?: number[];
   /** Selected POV loadout slot. */
   weapon?: number;
+}
+
+/** A docked dockable remote waiting in the bay — recharges / repairs until launched. */
+export interface BayRemote {
+  life: number;
+  health: number;
 }
 
 /** True when this remote replaces the player weapon HUD while piloted. */
@@ -355,7 +377,14 @@ function mergeRemoteDef(def: RemoteDef): RemoteSpec {
   // `pilotable` — piloting is a behavior switch (does the player fly it), not a change to
   // what's physically mounted. Gun weapon/art (craftGunId/craftGunTex/craftGunScale, in
   // crafts.ts) are derived from `sockets` on demand, not stored here — one source, not two.
-  return { ...craftOf(def.craftLook), ...def, ...def.overrides };
+  return {
+    ...craftOf(def.craftLook),
+    dockRechargeTime: 30,
+    dockRepairRate: 0.02,
+    dockRepairMax: 0.5,
+    ...def,
+    ...def.overrides,
+  };
 }
 
 /**
@@ -435,7 +464,7 @@ const REMOTE_DEFS: Record<RemoteKind, Omit<RemoteDef, "kind">> = {
     orbitRange: 150,
     mouseStopRange: 80,
     mouseLeashRange: 420,
-    hostEscort: { innerRadius: 220, outerRadius: 380 },
+    hostEscort: { innerRadius: 220, outerRadius: 300 },
   },
   ground_escort: {
     name: "HUMVEE",
@@ -452,6 +481,7 @@ const REMOTE_DEFS: Record<RemoteKind, Omit<RemoteDef, "kind">> = {
     orbitEscort: true,
     // Live deployed units still count as available "ammo" on the HUD (dropped only on loss).
     dockable: true,
+    unlimitedLife: true,
     antenna: { length: 9, aft: 1.6, stiffness: 26, damping: 2.6, yawWhip: 9, lag: 1.4 },
     awareRange: 480,
     followInnerRadius: 90,
@@ -480,7 +510,7 @@ const REMOTE_DEFS: Record<RemoteKind, Omit<RemoteDef, "kind">> = {
     orbitRange: 150,
     mouseStopRange: 80,
     mouseLeashRange: 420,
-    hostEscort: { innerRadius: 220, outerRadius: 380 },
+    hostEscort: { innerRadius: 220, outerRadius: 300 },
   },
 };
 

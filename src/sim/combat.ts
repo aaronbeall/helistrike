@@ -971,7 +971,7 @@ const PLAYER_WPNS_DEFS: Record<WpnId, Omit<PlayerWpnSpec, "id">> = {
     ],
   },
   humvee_drop: {
-    name: "HUMVEE", fullName: "HUMVEE", designation: "MANNED GROUND FIRE SUPPORT", ammo: 2, fireCd: 5, speed: 40,
+    name: "HUMVEE", fullName: "HUMVEE", designation: "MANNED GROUND FIRE SUPPORT", ammo: 2, fireCd: 1.5, speed: 40,
     dmg: 110, blast: 60, life: 480,
     art: ordArt("guided", 0.7, "velocity"),
     cam: { reticle: "square", look: LOOK_GUN },

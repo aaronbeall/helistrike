@@ -1257,7 +1257,7 @@ const CRAFTS_DEFS: Record<CraftKind, Omit<CraftSpec, "kind">> = {
         points: [{ id: "main" }],
         traverse: 360,
         gunTex: "craft_wolf_turret",
-        gunScale: 0.82,
+        gunScale: 0.95,
         hullPlacement: "above",
       },
       {
@@ -1356,7 +1356,7 @@ const CRAFTS_DEFS: Record<CraftKind, Omit<CraftSpec, "kind">> = {
       },
       { id: "cargo_bay", class: "hardpoint", controller: "pilot", weapon: "agv_drop", points: [{ id: "ramp" }], heading: 180 },
     ],
-    countermeasure: "smoke_screen",
+    countermeasure: "flares",
   },
   airship: {
     name: "Leviathan",
