@@ -160,10 +160,9 @@ export function tipsForWeapon(id: WpnId, catalog: readonly TacticalTip[] = TACTI
   return catalog.filter((tip) => !!tip.context?.weapons?.includes(id) || !!tip.context?.forWeapon?.(id));
 }
 
-/** Flavor description for a countermeasure — reuses its tip text (single source of truth). */
-export function cmDescription(id: CountermeasureId, catalog: readonly TacticalTip[] = TACTICAL_TIPS): string {
-  const tip = catalog.find((t) => t.context?.cms?.includes(id));
-  return tip ? tipText(tip, {}) : COUNTERMEASURES[id].name;
+/** Role / fantasy description for a countermeasure (tips carry the mechanics). */
+export function cmDescription(id: CountermeasureId): string {
+  return COUNTERMEASURES[id].description;
 }
 
 // —— Weapon system classification — shared by the tip catalog and the field manual's badges. ——
@@ -291,7 +290,7 @@ export const TACTICAL_TIPS: TacticalTip[] = [
   },
   {
     id: "cm_timewarp",
-    text: "Timewarp slows the battlefield. You can exit and resume at will.",
+    text: "Timewarp slows the battlefield to a crawl while your craft keeps much of its speed. You can exit and resume at will.",
     context: { cms: ["timewarp"] },
   },
   {

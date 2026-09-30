@@ -686,7 +686,8 @@ export class FieldManual {
     for (const go of this.craftRemoteInlays) go.destroy();
 
     const composite = craftComposite(craft);
-    this.craftBody = scene.add.image(leftX, previewY, composite.body.tex).setOrigin(composite.body.origin.x, composite.body.origin.y);
+    // Center on the sprite bounds, not the pivot — pivots vary per craft (overlays follow origin).
+    this.craftBody = scene.add.image(leftX, previewY, composite.body.tex).setOrigin(0.5, 0.5);
     const scale = craftPreviewFitScale(this.craftBody.width, this.craftBody.height, this.previewBox.w - 16, this.previewBox.h - 16);
     this.craftBody.setScale(scale);
 
@@ -715,12 +716,11 @@ export class FieldManual {
     const inlayY = previewY + this.previewBox.h / 2 - inlaySize / 2 - inlayMargin;
     this.craftRemoteInlays = remoteKinds.flatMap((kind, i) => {
       const hull = remoteSpecOf(kind);
-      const hullOrigin = craftComposite(hull).body.origin;
       const inlayX = leftX + this.previewBox.w / 2 - inlaySize / 2 - inlayMargin - i * (inlaySize + inlayMargin);
       const frame = scene.add
         .rectangle(inlayX, inlayY, inlaySize, inlaySize, 0x0c0b09, 0.85)
         .setStrokeStyle(1, 0x5d5544, 0.9);
-      const icon = scene.add.image(inlayX, inlayY, hull.body).setOrigin(hullOrigin.x, hullOrigin.y);
+      const icon = scene.add.image(inlayX, inlayY, hull.body).setOrigin(0.5, 0.5);
       icon.setScale(craftPreviewFitScale(icon.width, icon.height, inlaySize - 6, inlaySize - 6));
       this.root.add([frame, icon]);
       return [frame, icon];
@@ -801,7 +801,7 @@ export class FieldManual {
     const cmY = loadoutRow0 + weapons.length * this.loadoutRowH;
     const cm = COUNTERMEASURES[craftCountermeasure(craft.countermeasure)];
     this.cmRow.frame.setPosition(this.cmRow.frame.x, cmY).setVisible(true);
-    this.cmRow.slot.setPosition(this.cmRow.slot.x, cmY).setVisible(true).setText("E").setColor("#7ad0ff");
+    this.cmRow.slot.setPosition(this.cmRow.slot.x, cmY).setVisible(true).setText("F").setColor("#7ad0ff");
     this.cmRow.name.setPosition(this.cmRow.name.x, cmY).setVisible(true).setText(cm.name).setColor("#c8d4e8");
     this.cmRow.ammo.setPosition(this.cmRow.ammo.x, cmY).setVisible(true).setText(countermeasureTimingLabel(cm)).setColor("#8ec8e8");
   }
@@ -1574,7 +1574,7 @@ export class FieldManual {
     if (remoteSpec) {
       // It's a launched craft, not a static shot — the full preview system (body + rotors +
       // guns + exhaust glow), same as the main craft preview and menu carousel, not just the hull sprite.
-      const body = scene.add.image(this.rightX0 + this.rightW / 2, y + 34, remoteSpec.body).setOrigin(origin.x, origin.y);
+      const body = scene.add.image(this.rightX0 + this.rightW / 2, y + 34, remoteSpec.body).setOrigin(0.5, 0.5);
       const fit = craftPreviewFitScale(body.width, body.height, 150, 66);
       body.setScale(fit);
       // In-mission a remote's hull draws at spec.scale × zoom but its gun at craftGunScale ×

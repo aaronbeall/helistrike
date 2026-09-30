@@ -309,7 +309,7 @@ export interface CraftSpec {
   enemySeekerMul?: number;
   /** Enemy spotting / chase-engage range multiplier. Does not change aim accuracy or weapon fire range. Helis also get a slight extra cut at low AGL. */
   enemyAwareMul?: number;
-  /** Countermeasure on E. Omit → flares. */
+  /** Countermeasure on F. Omit → flares. */
   countermeasure?: CountermeasureId;
 }
 
@@ -637,7 +637,8 @@ const CRAFTS_DEFS: Record<CraftKind, Omit<CraftSpec, "kind">> = {
     flightModel: "heli",
     sizeM: 14.7,
     ammoScale: 1.05,
-    health: 120,
+    // Glass cannon: Time Warp is its survival tool, not the hull.
+    health: 80,
     radius: 20,
     height: 14,
     body: "craft_cyberhawk",

@@ -203,7 +203,7 @@ export function createControlLegend(
   craft: CraftSpec = craftOf()
 ): Phaser.GameObjects.GameObject[] {
   const objects: Phaser.GameObjects.GameObject[] = [];
-  const controlW = panelW / 8;
+  const controlW = panelW / 9;
   const x0 = -panelW / 2;
   const controlX = (i: number) => x0 + i * controlW + controlW / 2;
   const orbit = craftControlScheme(craft) === "orbit";
@@ -261,14 +261,17 @@ export function createControlLegend(
   for (let i = 0; i < 4; i++) keycap(weaponX - 42 + i * 20, iconY, String(i + 1), 16, 19);
   mouse(weaponX + 46, iconY, false, true);
   label(3, "SELECT WEAPON");
-  keycap(controlX(4), iconY, "E", 30, 26);
+  keycap(controlX(4), iconY, "F", 30, 26);
   label(4, "COUNTERMEASURE");
-  keycap(controlX(5), iconY, "M", 30, 26);
-  label(5, "MAP");
-  keycap(controlX(6), iconY, "T", 30, 26);
-  label(6, "THERMAL VISION");
-  keycap(controlX(7), iconY, "H", 30, 26);
-  label(7, "HELP / TIPS");
+  keycap(controlX(5), iconY, "E", 30, 26);
+  // Time Warp crafts put their CM on E too — no separate bullet time.
+  label(5, craft.countermeasure === "timewarp" ? "TIME WARP" : "BULLET TIME");
+  keycap(controlX(6), iconY, "M", 30, 26);
+  label(6, "MAP");
+  keycap(controlX(7), iconY, "T", 30, 26);
+  label(7, "THERMAL VISION");
+  keycap(controlX(8), iconY, "H", 30, 26);
+  label(8, "HELP / TIPS");
   return objects;
 }
 

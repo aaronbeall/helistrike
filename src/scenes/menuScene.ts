@@ -10,7 +10,6 @@ import {
   craftAgility,
   craftLoadoutParts,
   craftOf,
-  craftOrigin,
   craftPreviewFitScale,
   craftSocketStartingAmmo,
   selectCraft,
@@ -328,8 +327,8 @@ export class MenuScene extends Phaser.Scene {
         .setStrokeStyle(1, 0x5d5544, 0.8)
         .setDepth(2)
         .setInteractive({ useHandCursor: true });
-      const bodyOrigin = craftOrigin(craft);
-      const art = this.add.image(craftX, craftCardY - 8, craft.body).setOrigin(bodyOrigin.x, bodyOrigin.y).setDepth(3);
+      // Center on the sprite bounds, not the pivot — pivots vary per craft (overlays follow origin).
+      const art = this.add.image(craftX, craftCardY, craft.body).setOrigin(0.5, 0.5).setDepth(3);
       // Fit the card box; never upscale past native 1:1 (keeps drones crisp).
       const artScale = craftPreviewFitScale(art.width, art.height, 138, 106);
       art.setScale(artScale);
@@ -342,9 +341,11 @@ export class MenuScene extends Phaser.Scene {
         })
         .setOrigin(0.5)
         .setDepth(5);
+      // Side tiles step one toward themselves (prev / next), never jump.
       frame.on("pointerdown", () => {
         row = 0;
-        craftIndex = i;
+        const step = Math.sign(ringOffset(i, craftIndex, crafts.length));
+        craftIndex = (craftIndex + step + crafts.length) % crafts.length;
         refreshSelection();
       });
       return { frame, art, label, artScale };
@@ -376,7 +377,8 @@ export class MenuScene extends Phaser.Scene {
         .setDepth(5);
       frame.on("pointerdown", () => {
         row = 1;
-        missionIndex = i;
+        const step = Math.sign(ringOffset(i, missionIndex, missions.length));
+        missionIndex = (missionIndex + step + missions.length) % missions.length;
         refreshSelection();
       });
       return { frame, art, label, artScale };
@@ -965,7 +967,7 @@ export class MenuScene extends Phaser.Scene {
         const offset = ringOffset(i, craftIndex, crafts.length);
         const focused = offset === 0;
         applyRing(card.frame, craftX, craftCardY, offset, 1, animate, RING_LAYER.frame);
-        applyRing(card.art, craftX, craftCardY - 8, offset, card.artScale, animate, RING_LAYER.art);
+        applyRing(card.art, craftX, craftCardY, offset, card.artScale, animate, RING_LAYER.art);
         applyRing(card.label, craftX, craftLabelY, offset, 1, animate, RING_LAYER.label, focused ? 1 : 0);
         card.frame
           .setFillStyle(0x0c0b09, focused ? 1 : 0.7)
@@ -1031,7 +1033,7 @@ export class MenuScene extends Phaser.Scene {
       const cm = COUNTERMEASURES[craftCountermeasure(craft.countermeasure)];
       const cmY = loadoutRow0 + weapons.length * 20;
       cmRow.frame.setVisible(true).setPosition(weaponX + rowW / 2, cmY);
-      cmRow.slot.setVisible(true).setPosition(weaponX + 7, cmY).setText("E").setColor("#7ad0ff");
+      cmRow.slot.setVisible(true).setPosition(weaponX + 7, cmY).setText("F").setColor("#7ad0ff");
       cmRow.name.setVisible(true).setPosition(weaponX + 23, cmY).setText(cm.name).setColor("#c8d4e8");
       cmRow.crew.setVisible(false).setText("");
       cmRow.ammo.setVisible(true).setPosition(weaponX + rowW, cmY).setText(countermeasureTimingLabel(cm)).setColor("#8ec8e8");

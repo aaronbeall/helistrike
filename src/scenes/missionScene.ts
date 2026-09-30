@@ -331,6 +331,14 @@ const AUTO_GUN_SPEED_PENALTY_MAX = 0.06;
 const AUTO_GUN_SPEED_REF = 400;
 /** Host AGL a ground remote's dock bay must be under to actually dock (can't reel a ground vehicle up mid-air). */
 const DOCK_GROUND_MAX_AGL = 30;
+/** Bullet time (E): world rate while on, real seconds a full meter lasts, seconds empty → full. */
+const BULLET_TIME_SCALE = 0.25;
+const BULLET_TIME_DURATION = 6;
+const BULLET_TIME_RECHARGE = 9;
+/** Time Warp CM: world rate while active. */
+const TIMEWARP_WORLD_SCALE = 0.035;
+/** Time Warp CM: player craft motion rate while the world crawls at the warp rate. */
+const TIMEWARP_PLAYER_SCALE = 0.4;
 /** Threat arc half-width (deg) at paint start — widest point of the paint → lock shape. */
 const THREAT_ARC_PAINT_HALF = 22.5;
 /** Threat arc half-width (deg) at full paint charge = red lock arc at missile launch. */
@@ -541,7 +549,7 @@ const DEBUG_MENU_ITEMS = [
   { action: "blast", label: "Blast radii" },
   { section: "RENDERING" },
   { action: "terrainMesh", label: "Terrain mesh" },
-  { action: "fx", label: "Post FX", shortcut: "F" },
+  { action: "fx", label: "Post FX", shortcut: "O" },
   { section: "TOOLS" },
   { action: "relief", label: "Terrain editor", shortcut: "B" },
   { action: "camera", label: "Camera…" },
@@ -765,7 +773,7 @@ export class MissionScene extends Phaser.Scene {
   fxBandH = 48;
   /** Last applied sim timeScale (skip walking ~N emitters when unchanged). */
   lastSimScale = Number.NaN;
-  /** Effective world rate this frame (debug scale × timewarp / stinger / warp shots). */
+  /** Effective world rate this frame (debug scale × timewarp / bullet time / stinger / warp shots). */
   liveSimScale = 1;
   /** Scratch used only by synchronous onEmit callbacks; particles retain update state themselves. */
   burstLaunch = {
@@ -880,6 +888,8 @@ export class MissionScene extends Phaser.Scene {
   /** Countermeasure prompt under the weapon slots. */
   cmHudLabel!: Phaser.GameObjects.Text;
   cmHudTime!: Phaser.GameObjects.Text;
+  btHudLabel!: Phaser.GameObjects.Text;
+  btHudTime!: Phaser.GameObjects.Text;
   hpGfx!: Phaser.GameObjects.Graphics;
   /** Paint / missile-lock arcs around the targeted friendly craft. */
   threatArcGfx!: Phaser.GameObjects.Graphics;
@@ -1033,8 +1043,17 @@ export class MissionScene extends Phaser.Scene {
   keyE!: Phaser.Input.Keyboard.Key;
   cmCd = 0;
   flares: Flare[] = [];
+  /** Time Warp active seconds left (0 = off) — pausable, like bullet time. */
   timewarpT = 0;
-  timewarpMax = 0;
+  /** Time Warp charge 0..1: drains while on (over `duration`), recharges while off (over `cooldown`). */
+  timewarpCharge = 1;
+  /** Player craft's own step this frame (Time Warp privileged time) — motion + turret slew. */
+  playerDt = 0;
+  /** Time Warp screen-edge refraction strength (eases in / out, real time). */
+  timewarpFx = 0;
+  /** Bullet time (E): toggled slow-mo draining a rechargeable meter (0..1). */
+  bulletOn = false;
+  bulletMeter = 1;
   cloakT = 0;
   cmPulseT = 0;
   reactiveArmorT = 0;
@@ -1324,7 +1343,10 @@ export class MissionScene extends Phaser.Scene {
     this.teslaAnimT = 0;
     this.cmCd = 0;
     this.timewarpT = 0;
-    this.timewarpMax = 0;
+    this.timewarpCharge = 1;
+    this.bulletOn = false;
+    this.bulletMeter = 1;
+    this.timewarpFx = 0;
     this.cloakT = 0;
     this.cmPulseT = 0;
     this.reactiveArmorT = 0;
@@ -2875,7 +2897,13 @@ export class MissionScene extends Phaser.Scene {
     this.keySpace = this.input.keyboard!.addKey("SPACE");
     this.keyShift = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT);
     this.keyE = this.input.keyboard!.addKey("E");
-    this.keyE.on("down", () => this.tryCountermeasure());
+    this.keyE.on("down", () => this.toggleBulletTime());
+    this.input.keyboard!.addKey("F").on("down", () => this.tryCountermeasure());
+    // POV remote host escort FOLLOW / HOLD.
+    this.input.keyboard!.addKey("C").on("down", () => {
+      if (this.editOpen || this.debugOpen || this.helpOpen || this.exitOpen) return;
+      if (this.povHudRemote()?.spec.hostEscort) this.toggleHostEscortMode();
+    });
     this.input.keyboard!.addKey("ONE").on("down", () => {
       if (this.editOpen) this.setEditBrush(0);
       else if (this.debugOpen || this.helpOpen) return;
@@ -2992,11 +3020,9 @@ export class MissionScene extends Phaser.Scene {
       for (const policy of Object.values(this.fxPolicies)) policy.emitters.clear();
     });
     installRigHotkeys(this);
-    this.input.keyboard!.addKey("F").on("down", () => {
+    this.input.keyboard!.addKey("O").on("down", () => {
       if (this.editOpen || this.debugOpen || this.helpOpen || this.exitOpen) return;
-      // POV remotes with host escort claim F; otherwise F toggles test FX.
-      if (this.povHudRemote()?.spec.hostEscort) this.toggleHostEscortMode();
-      else this.toggleTestFx();
+      this.toggleTestFx();
     });
     this.input.keyboard!.addKey("T").on("down", () => this.toggleThermal());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.UP).on("down", () => {
@@ -3244,6 +3270,8 @@ export class MissionScene extends Phaser.Scene {
         .setStroke("#12100c", 3);
     this.cmHudLabel = cmMk("11px", "#e8b84a", 1);
     this.cmHudTime = cmMk("11px", "#c4a24a", 0);
+    this.btHudLabel = cmMk("11px", "#a898d8", 1);
+    this.btHudTime = cmMk("11px", "#a898d8", 0);
     this.hpGfx = this.add.graphics().setDepth(Layer.FIELD);
     this.threatArcGfx = this.add.graphics().setDepth(Layer.FIELD).setBlendMode(Phaser.BlendModes.ADD);
     this.playerHud = this.add.graphics().setScrollFactor(0).setDepth(Layer.HUD + 12);
@@ -3950,13 +3978,10 @@ export class MissionScene extends Phaser.Scene {
     const uiPause = mapPause || this.helpOpen || this.exitOpen;
     let simScale = this.timeScale;
     if (this.stingerT > 0) simScale = Math.min(simScale, 0.18);
-    if (this.timewarpT > 0) {
-      this.timewarpT = Math.max(0, this.timewarpT - wallDt);
-      simScale = Math.min(simScale, 0.22);
-      if (this.timewarpT <= 0) {
-        this.beginCmCooldown(0, this.timewarpMax || COUNTERMEASURES.timewarp.duration);
-      }
-    }
+    if (!uiPause && !this.over) this.tickTimewarpCharge(wallDt);
+    if (this.timewarpT > 0) simScale = Math.min(simScale, TIMEWARP_WORLD_SCALE);
+    if (!uiPause && !this.over) this.tickBulletTime(wallDt);
+    if (this.bulletOn) simScale = Math.min(simScale, BULLET_TIME_SCALE);
     for (const shot of this.shots) {
       if (shot.from === "player" && shot.warpTimeScale != null) {
         simScale = Math.min(simScale, shot.warpTimeScale);
@@ -3968,6 +3993,10 @@ export class MissionScene extends Phaser.Scene {
       else this.warpLingerScale = null;
     }
     const dt = uiPause ? 0 : wallDt * simScale;
+    // Time Warp bonus: the player craft's own motion only slows to TIMEWARP_PLAYER_SCALE.
+    const playerDt =
+      !uiPause && this.timewarpT > 0 ? Math.max(dt, wallDt * TIMEWARP_PLAYER_SCALE) : dt;
+    this.playerDt = playerDt;
     this.liveSimScale = simScale;
     this.setSimTimeScale(uiPause ? 0 : simScale);
     this.tickStinger(wallDt);
@@ -4033,7 +4062,7 @@ export class MissionScene extends Phaser.Scene {
           const escort = dockSeq ? undefined : this.hostEscortDrive(pilot);
           const dockDescend = this.hostDockDescend();
           this.player.update(
-            dt,
+            playerDt,
             this.world,
             escort?.stick ??
               (this.remotePilotActive
@@ -4113,7 +4142,7 @@ export class MissionScene extends Phaser.Scene {
           const escort = dockSeq ? undefined : this.hostEscortDrive(pilot);
           const dockDescend = this.hostDockDescend();
           this.player.update(
-            dt,
+            playerDt,
             this.world,
             escort?.stick ??
               (this.remotePilotActive
@@ -4208,6 +4237,7 @@ export class MissionScene extends Phaser.Scene {
       }
     }
     this.tickEmpFx(dt, wallDt);
+    this.tickTimewarpFx(wallDt);
     this.tickWarpDistortFx();
     this.tickCloakFx();
     this.tickTestPostFx(wallDt);
@@ -4673,7 +4703,8 @@ export class MissionScene extends Phaser.Scene {
           want = Math.atan2(aim.y - howFrom.y, aim.x - howFrom.x);
         }
       }
-      this.slewCraftTurretStations(h, want, dt, spotSlot >= 0 ? spotSlot : h.weapon);
+      // Turret slew runs on the craft's privileged time so aiming works in Time Warp.
+      this.slewCraftTurretStations(h, want, this.playerDt, spotSlot >= 0 ? spotSlot : h.weapon);
       if (aimSlot != null) h.gunAngle = h.stationAim[aimSlot]?.[0] ?? want;
     }
     this.guns.forEach((gun, i) => {
@@ -4821,8 +4852,10 @@ export class MissionScene extends Phaser.Scene {
     this.muzzle.setDepth(worldDepth(h.z, ZOff.muzzle, h.y));
     this.syncReticles();
     this.emitDustOff(dt);
-    this.emitCraftExhaust(dt);
-    this.emitJetWingTrails(dt);
+    // Craft-driven trails pace on the craft's own (Time Warp privileged) step, or each emit
+    // spans a huge gap and the stretched segments smear.
+    this.emitCraftExhaust(this.playerDt);
+    this.emitJetWingTrails(this.playerDt);
     this.syncReactiveArmorGlow();
   }
 
@@ -8877,7 +8910,7 @@ specIsShellGun(spec)
         holdTargets[b] = tgt.id;
         holdTs[b] = advanceAimHold(holdTs[b] ?? 0, dt, sameTarget);
         let aim = barrels[b] ?? h.angle;
-        aim = Phaser.Math.Angle.RotateTo(aim, want, GUN_STATION_TURN_RATE * dt);
+        aim = Phaser.Math.Angle.RotateTo(aim, want, GUN_STATION_TURN_RATE * this.playerDt);
         if (trav) aim = clampAimToStationArc(aim, h.angle, trav);
         barrels[b] = aim;
         const err = Math.abs(Phaser.Math.Angle.Wrap(want - aim));
@@ -9843,7 +9876,7 @@ specIsShellGun(spec)
       }
     );
     if (drone.spec.dockable) {
-      if (this.remoteNearHost(drone) && (this.keyE.isDown || drone.life < 10)) drone.dock = true;
+      if (this.remoteNearHost(drone) && drone.life < 10) drone.dock = true;
     }
   }
 
@@ -15694,8 +15727,10 @@ specIsShellGun(spec)
     }
     const id = this.craftCmId();
     const spec = COUNTERMEASURES[id];
-    if (id === "timewarp" && this.timewarpT > 0) {
-      this.cancelTimewarp();
+    if (id === "timewarp") {
+      // Pausable: toggle off keeps the remaining charge; toggle on resumes from it.
+      if (this.timewarpT > 0) this.timewarpT = 0;
+      else if (this.timewarpCharge > 0.02) this.timewarpT = this.timewarpCharge * spec.duration;
       return;
     }
     if (id === "phase_cloak" && this.cloakT > 0) {
@@ -15706,9 +15741,6 @@ specIsShellGun(spec)
     if (id === "flares") {
       this.cmCd = spec.cooldown;
       this.fireFlares(spec.duration);
-    } else if (id === "timewarp") {
-      this.timewarpT = spec.duration;
-      this.timewarpMax = spec.duration;
     } else if (id === "phase_cloak") {
       this.cloakT = spec.duration;
       this.breakEnemyPlayerContact();
@@ -15726,12 +15758,16 @@ specIsShellGun(spec)
     }
   }
 
-  cancelTimewarp(): void {
-    if (this.timewarpT <= 0) return;
-    const rem = this.timewarpT;
-    const max = this.timewarpMax || COUNTERMEASURES.timewarp.duration;
-    this.timewarpT = 0;
-    this.beginCmCooldown(rem, max);
+  /** Real-time Time Warp charge: drains while on, recharges while off; auto-off when empty. */
+  tickTimewarpCharge(wallDt: number): void {
+    const spec = COUNTERMEASURES.timewarp;
+    if (this.timewarpT > 0) {
+      this.timewarpCharge = Math.max(0, this.timewarpCharge - wallDt / spec.duration);
+      this.timewarpT =
+        this.timewarpCharge <= 0 || this.player.phase === "dead" ? 0 : this.timewarpCharge * spec.duration;
+    } else {
+      this.timewarpCharge = Math.min(1, this.timewarpCharge + wallDt / spec.cooldown);
+    }
   }
 
   cancelCloak(): void {
@@ -15770,11 +15806,53 @@ specIsShellGun(spec)
         }
       }
     }
-    if (!on) {
+    // Time Warp CM shares the warpwire lens (eased by timewarpFx); strongest source wins.
+    const amount = Math.max(on ? 0.92 : 0, this.timewarpFx * 0.92);
+    if (amount <= 0.001) {
       setWarpDistortPipeline(cam, false);
       return;
     }
-    setWarpDistortPipeline(cam, true, 0.92);
+    setWarpDistortPipeline(cam, true, amount);
+  }
+
+  /** Host craft whose countermeasure is Time Warp — E drives it too, no separate bullet time. */
+  hostHasTimewarp(): boolean {
+    return craftCountermeasure(this.player.spec.countermeasure) === "timewarp";
+  }
+
+  /** Time Warp CM lens strength, eased in / out over ~0.35s real time (drives the warpwire lens). */
+  tickTimewarpFx(wallDt: number): void {
+    const want = this.timewarpT > 0 ? 1 : 0;
+    this.timewarpFx = Phaser.Math.Clamp(
+      this.timewarpFx + Math.sign(want - this.timewarpFx) * wallDt * 3,
+      Math.min(want, this.timewarpFx),
+      Math.max(want, this.timewarpFx)
+    );
+  }
+
+  /** E: toggle bullet time (needs meter); auto-off when the meter empties. */
+  toggleBulletTime(): void {
+    if (this.hostHasTimewarp()) {
+      this.tryCountermeasure();
+      return;
+    }
+    if (this.editOpen || this.debugOpen || this.helpOpen || this.exitOpen || this.over) return;
+    if (this.bulletOn) {
+      this.bulletOn = false;
+      return;
+    }
+    if (this.player.phase === "dead" || this.bulletMeter <= 0.02) return;
+    this.bulletOn = true;
+  }
+
+  /** Real-time meter: drains while on (full → empty in BULLET_TIME_DURATION), recharges while off. */
+  tickBulletTime(wallDt: number): void {
+    if (this.bulletOn) {
+      this.bulletMeter = Math.max(0, this.bulletMeter - wallDt / BULLET_TIME_DURATION);
+      if (this.bulletMeter <= 0 || this.player.phase === "dead") this.bulletOn = false;
+    } else {
+      this.bulletMeter = Math.min(1, this.bulletMeter + wallDt / BULLET_TIME_RECHARGE);
+    }
   }
 
   /** Phase cloak rim shimmer — detached when idle. */
@@ -22328,7 +22406,7 @@ specIsShellGun(spec)
       this.escortHudSlot.key
         .setVisible(true)
         .setPosition(keyLp.x, keyLp.y)
-        .setText("F")
+        .setText("C")
         .setColor(follow ? "#6aa8c8" : "#a89868")
         .setStroke("#12100c", 3)
         .setFontSize("12px")
@@ -22393,6 +22471,7 @@ specIsShellGun(spec)
       this.cmHudLabel?.setVisible(false);
       this.cmHudTime?.setVisible(false);
     }
+    this.drawBulletTimeHud(y + slotH + crewPad + 2 + (showCm ? 18 : 0));
     this.syncRemotePrompt(y);
     // Hide unused rows if loadout shrank (shouldn't normally).
     for (let i = n; i < this.wpnHudSlots.length; i++) {
@@ -22418,9 +22497,11 @@ specIsShellGun(spec)
     let activeT = 0;
     let activeMax = 0;
     let barCol = 0xc4a24a;
-    if (!pov && id === "timewarp" && this.timewarpT > 0 && this.timewarpMax > 0) {
+    // Time Warp is a charge meter (pausable): bar = charge, recharge shows as a percentage.
+    const warpMeter = !pov && id === "timewarp";
+    if (warpMeter && this.timewarpT > 0) {
       activeT = this.timewarpT;
-      activeMax = this.timewarpMax;
+      activeMax = spec.duration;
       barCol = 0x5ce8ff;
     } else if (!pov && id === "phase_cloak" && this.cloakT > 0) {
       activeT = this.cloakT;
@@ -22435,18 +22516,23 @@ specIsShellGun(spec)
       activeMax = spec.duration;
       barCol = 0xa8a090;
     }
-    const cooling = cd > 0;
-    const frac = cooling
-      ? Phaser.Math.Clamp(1 - cd / spec.cooldown, 0, 1)
-      : activeT > 0
-        ? Phaser.Math.Clamp(activeT / Math.max(0.05, activeMax), 0, 1)
-        : 1;
-    const label = `(E) ${spec.name}`;
+    const warpCharging = warpMeter && activeT <= 0 && this.timewarpCharge < 0.999;
+    const cooling = warpMeter ? warpCharging : cd > 0;
+    const frac = warpMeter
+      ? this.timewarpCharge
+      : cooling
+        ? Phaser.Math.Clamp(1 - cd / spec.cooldown, 0, 1)
+        : activeT > 0
+          ? Phaser.Math.Clamp(activeT / Math.max(0.05, activeMax), 0, 1)
+          : 1;
+    const label = `(${warpMeter ? "E/F" : "F"}) ${spec.name}`;
     const timeS = activeT > 0
       ? `${activeT.toFixed(1)}s`
-      : cooling
-        ? `${cd.toFixed(1)}s`
-        : "READY";
+      : warpCharging
+        ? `${Math.round(this.timewarpCharge * 100)}%`
+        : cooling
+          ? `${cd.toFixed(1)}s`
+          : "READY";
     const labelCol = activeT > 0 ? (id === "timewarp" || id === "emp" ? "#8ee8ff" : "#f0d56a") : cooling ? "#c4a24a" : "#e8b84a";
     const timeCol = activeT > 0 ? (id === "timewarp" || id === "emp" ? "#b8ffff" : "#f0d56a") : cooling ? "#e89a3a" : "#8a8470";
     const barW = 168;
@@ -22480,6 +22566,42 @@ specIsShellGun(spec)
       .setPosition(timeLp.x, timeLp.y)
       .setColor(timeCol)
       .setAlpha(1);
+  }
+
+  /** Bullet-time meter row (E), same layout as the CM row — only while below full. */
+  drawBulletTimeHud(y: number): void {
+    const show = this.bulletMeter < 0.999 && !!this.btHudLabel;
+    this.btHudLabel?.setVisible(show);
+    this.btHudTime?.setVisible(show);
+    if (!show) return;
+    const g = this.wpnBar;
+    const on = this.bulletOn;
+    const barW = 168;
+    const barH = 5;
+    const timeGap = 8;
+    const labelGap = 10;
+    this.btHudTime
+      .setText(on ? `${(this.bulletMeter * BULLET_TIME_DURATION).toFixed(1)}s` : `${Math.round(this.bulletMeter * 100)}%`)
+      .setFontSize("11px");
+    const rowW = barW + timeGap + this.btHudTime.width;
+    const barX = this.scale.width / 2 - rowW / 2;
+    const barY = y + 13;
+    g.fillStyle(0x000000, 0.4);
+    g.fillRoundedRect(barX - 2, barY - 2, barW + 4, barH + 4, 2);
+    g.fillStyle(on ? 0x221638 : 0x1c1812, 0.88);
+    g.fillRoundedRect(barX, barY, barW, barH, 2);
+    if (this.bulletMeter > 0) {
+      g.fillStyle(on ? 0xb48cff : 0x7a6cc8, 0.95);
+      g.fillRoundedRect(barX, barY, Math.max(2, barW * this.bulletMeter), barH, 2);
+    }
+    const midY = barY + barH / 2;
+    const labelLp = this.hudLocal(barX - labelGap, midY);
+    this.btHudLabel
+      .setPosition(labelLp.x, labelLp.y)
+      .setText("(E) BULLET TIME")
+      .setColor(on ? "#d6c2ff" : "#a898d8");
+    const timeLp = this.hudLocal(barX + barW + timeGap, midY);
+    this.btHudTime.setPosition(timeLp.x, timeLp.y).setColor(on ? "#e8dcff" : "#8a80a8");
   }
 
   /** Truncate a HUD label so `text` width stays within `maxW` (ellipsis). */
@@ -23530,7 +23652,7 @@ specIsShellGun(spec)
 
   syncTestFxHud(): void {
     if (!this.fxHud) return;
-    this.fxHud.setText(`FX  F  ${this.fxOn ? "ON" : "off"}`);
+    this.fxHud.setText(`FX  O  ${this.fxOn ? "ON" : "off"}`);
   }
 
   setupDebugMenu(): void {
@@ -24251,6 +24373,8 @@ specIsShellGun(spec)
       this.escortHudSlot.status,
       this.cmHudLabel,
       this.cmHudTime,
+      this.btHudLabel,
+      this.btHudTime,
       this.hvGfx,
       ...this.hvArrowLabels,
       this.parentArrowLabel,
