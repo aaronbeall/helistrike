@@ -1231,7 +1231,8 @@ const PLAYER_WPNS_DEFS: Record<WpnId, Omit<PlayerWpnSpec, "id">> = {
     name: "KINETIC SLUGS", fullName: "KINETIC SLUGS", description: "High-velocity, unguided solid darts designed to punch straight through thick vehicular armor plating.", designation: "KINETIC DROP SLUGS", ammo: 14, fireCd: 0.6, speed: 180,
     dmg: 130, blast: 42, life: 5.5,
     art: ordArt("miniRocket", 0.58, "velocity"),
-    exhaust: particleTrail(0.52, { smoke: "rocket", align: "heading" }),
+    // Solid darts: light contrail streak along the fall, no motor smoke.
+    exhaust: particleTrail(0.42, { density: 0.5, contrail: true }),
     cam: CAM_DROP, fire: { muzzleFlash: true, jitter: 0.08, salvo: { count: 2, interval: 0.035, spread: 0.08 } },
     control: CLICK, launch: DROP,
     payload: { penetration: 1.05 },
