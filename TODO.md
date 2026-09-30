@@ -203,3 +203,4 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
   * Top Hat Double Tap -- kill a field officer with kinetic slugs
   * Flying Circus -- beat a mission with the biplane
   * Red Baron -- beat a mission with the biplane without taking any damage
+  * Buzzcut -- rotor kill a troop with the Murder Hornet

@@ -1517,6 +1517,10 @@ export interface Unit {
   debugAimSpreadRad?: number;
   /** Debug/HUD: 0..1 missile-lock charge progress this frame (undefined when not tracking). */
   debugLockT?: number;
+  /** HUD paint arc: 0..1 seeker lock charge on a friendly craft this frame (undefined when not painting). */
+  paintT?: number;
+  /** HUD paint arc: painting the host (vs the piloted combat-focus remote). */
+  paintHost?: boolean;
   killDx?: number;
   killDy?: number;
   /** Killing-shot vz (same frame as killDx/Dy). */
@@ -1810,6 +1814,8 @@ export interface Shot {
    */
   povCam?: boolean;
   homePlayer?: boolean;
+  /** HUD lock arc: distance to the target when the arc first showed (arc narrows by closure). */
+  lockD0?: number;
   motor?: number;
   cruise?: number;
   loft?: number;

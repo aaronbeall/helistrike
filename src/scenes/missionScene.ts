@@ -331,6 +331,10 @@ const AUTO_GUN_SPEED_PENALTY_MAX = 0.06;
 const AUTO_GUN_SPEED_REF = 400;
 /** Host AGL a ground remote's dock bay must be under to actually dock (can't reel a ground vehicle up mid-air). */
 const DOCK_GROUND_MAX_AGL = 30;
+/** Threat arc half-width (deg) at paint start — widest point of the paint → lock shape. */
+const THREAT_ARC_PAINT_HALF = 22.5;
+/** Threat arc half-width (deg) at full paint charge = red lock arc at missile launch. */
+const THREAT_ARC_LOCK_HALF = 6;
 /** Follow escort: remote speed above which the host keeps pace at the inner ring. */
 const ESCORT_MOVING_SPEED = 14;
 /** Follow escort: start pacing this far inside the inner ring so thrust doesn't chatter. */
@@ -877,6 +881,8 @@ export class MissionScene extends Phaser.Scene {
   cmHudLabel!: Phaser.GameObjects.Text;
   cmHudTime!: Phaser.GameObjects.Text;
   hpGfx!: Phaser.GameObjects.Graphics;
+  /** Paint / missile-lock arcs around the targeted friendly craft. */
+  threatArcGfx!: Phaser.GameObjects.Graphics;
   playerHud!: Phaser.GameObjects.Graphics;
   heliHudWire!: Phaser.GameObjects.Image;
   heliHudWireSh!: Phaser.GameObjects.Image;
@@ -1340,6 +1346,9 @@ export class MissionScene extends Phaser.Scene {
     this.autoGunDbg = [];
     this.aiLabels = [];
     this.escortAiLabels = [];
+    // Scene restart destroys pooled images — drop stale refs so they're rebuilt.
+    this.remoteExhaustFlames = [];
+    this.remoteExhaustGlows = [];
     this.editOpen = false;
     this.editInvert = false;
     this.editDirty = null;
@@ -3235,6 +3244,7 @@ export class MissionScene extends Phaser.Scene {
     this.cmHudLabel = cmMk("11px", "#e8b84a", 1);
     this.cmHudTime = cmMk("11px", "#c4a24a", 0);
     this.hpGfx = this.add.graphics().setDepth(Layer.FIELD);
+    this.threatArcGfx = this.add.graphics().setDepth(Layer.FIELD).setBlendMode(Phaser.BlendModes.ADD);
     this.playerHud = this.add.graphics().setScrollFactor(0).setDepth(Layer.HUD + 12);
     this.hurtVignette = this.add
       .image(0, 0, "hud_hurt_pulse")
@@ -4080,6 +4090,7 @@ export class MissionScene extends Phaser.Scene {
         t = performance.now();
         this.updateLock();
         this.drawUnitBars();
+        this.drawThreatArcs();
         this.emitDamageFx();
         this.emitHeliCrashDmgFlames();
         this.drawDebugHits();
@@ -4145,6 +4156,7 @@ export class MissionScene extends Phaser.Scene {
         this.updateSimParticles(dt);
         this.updateLock();
         this.drawUnitBars();
+        this.drawThreatArcs();
         this.emitDamageFx();
         this.emitHeliCrashDmgFlames();
         this.drawDebugHits();
@@ -10340,6 +10352,49 @@ specIsShellGun(spec)
       drone.aiTargetId = best?.id;
     }
 
+    // Gun picks its own target near the Humvee — aim / fire never depend on the move target,
+    // so it keeps shooting while following or chasing. Prefers the move target when in range.
+    const inGunRange = (u: Unit | undefined): u is Unit =>
+      !!u &&
+      !u.dead &&
+      this.unitKnownToFriendlies(u, aware) &&
+      Math.hypot(u.x - drone.x, u.y - drone.y) <= maxEngage;
+    let gunTarget: Unit | undefined = inGunRange(target)
+      ? target
+      : drone.gunTargetId != null
+        ? this.unitById(drone.gunTargetId)
+        : undefined;
+    if (!inGunRange(gunTarget)) {
+      gunTarget = undefined;
+      let bestD = maxEngage;
+      for (const u of this.units) {
+        if (!inGunRange(u)) continue;
+        const d = Math.hypot(u.x - drone.x, u.y - drone.y);
+        if (d < bestD) {
+          bestD = d;
+          gunTarget = u;
+        }
+      }
+    }
+    drone.gunTargetId = gunTarget?.id;
+
+    const aimWant = gunTarget
+      ? Math.atan2(gunTarget.y - drone.y, gunTarget.x - drone.x)
+      : drone.angle;
+    if (craftAimsWithTurret(spec)) {
+      drone.gunAngle = Phaser.Math.Angle.RotateTo(drone.gunAngle ?? drone.angle, aimWant, GUN_STATION_TURN_RATE * dt);
+    } else {
+      drone.gunAngle = aimWant;
+    }
+    if (gunTarget) {
+      const aimErr = Math.abs(Phaser.Math.Angle.Wrap((drone.gunAngle ?? 0) - aimWant));
+      if (aimErr < 0.22 || Math.hypot(gunTarget.x - drone.x, gunTarget.y - drone.y) < maxEngage * 0.45) {
+        this.fireRemoteGun(drone, dt, { x: gunTarget.x, y: gunTarget.y }, gunTarget.id);
+      } else {
+        drone.aimHoldT = 0; // out of cone/range — aim precision resets to max.
+      }
+    }
+
     let want: number;
     let throttle: number;
     let state: EscortNavState = "PARKED";
@@ -10347,19 +10402,6 @@ specIsShellGun(spec)
     let goalY = drone.y;
 
     if (target) {
-      const aimWant = Math.atan2(target.y - drone.y, target.x - drone.x);
-      if (craftAimsWithTurret(spec)) {
-        drone.gunAngle = Phaser.Math.Angle.RotateTo(drone.gunAngle ?? drone.angle, aimWant, GUN_STATION_TURN_RATE * dt);
-      } else {
-        drone.gunAngle = aimWant;
-      }
-      const aimErr = Math.abs(Phaser.Math.Angle.Wrap((drone.gunAngle ?? 0) - aimWant));
-      if (aimErr < 0.22 || Math.hypot(target.x - drone.x, target.y - drone.y) < maxEngage * 0.45) {
-        this.fireRemoteGun(drone, dt, { x: target.x, y: target.y });
-      } else {
-        drone.aimHoldT = 0; // out of cone/range — aim precision resets to max.
-      }
-
       const hostTargetDist = Math.hypot(target.x - host.x, target.y - host.y) || 1;
       const bias = Phaser.Math.Clamp(spec.attackBias ?? 0.75, 0, 1);
       const centerX = host.x + (target.x - host.x) * bias;
@@ -10386,13 +10428,6 @@ specIsShellGun(spec)
       goalX = ox;
       goalY = oy;
     } else {
-      const idleWant = drone.angle;
-      if (craftAimsWithTurret(spec)) {
-        drone.gunAngle = Phaser.Math.Angle.RotateTo(drone.gunAngle ?? drone.angle, idleWant, GUN_STATION_TURN_RATE * dt);
-      } else {
-        drone.gunAngle = idleWant;
-      }
-
       const dx = host.x - drone.x;
       const dy = host.y - drone.y;
       const d = Math.hypot(dx, dy) || 1;
@@ -11137,7 +11172,12 @@ specIsShellGun(spec)
   }
 
   /** Onboard remote gun — hold-fire in POV, or AI auto-fire toward aim. */
-  fireRemoteGun(drone: RemoteCraft, dt: number, aimAt?: { x: number; y: number }): void {
+  fireRemoteGun(
+    drone: RemoteCraft,
+    dt: number,
+    aimAt?: { x: number; y: number },
+    targetId = drone.aiTargetId
+  ): void {
     const gunId = craftGunId(drone.spec);
     if (!gunId) return;
     const spec = PLAYER_WPNS[gunId];
@@ -11145,8 +11185,8 @@ specIsShellGun(spec)
     // AI (not player-piloted POV): aim jitter narrows the longer it's held on the same target.
     const isAi = aimAt != null;
     if (isAi) {
-      const sameTarget = drone.aimHoldTargetId === drone.aiTargetId;
-      drone.aimHoldTargetId = drone.aiTargetId;
+      const sameTarget = drone.aimHoldTargetId === targetId;
+      drone.aimHoldTargetId = targetId;
       drone.aimHoldT = advanceAimHold(drone.aimHoldT ?? 0, dt, sameTarget);
     }
     drone.gunCd = (drone.gunCd ?? 0) - dt;
@@ -19515,6 +19555,7 @@ specIsShellGun(spec)
     this.tickRoadkill();
     for (const u of this.units) {
       if (u.dead) continue;
+      u.paintT = undefined;
       const prevAngle = u.angle;
       const prevTurret = u.turret;
       const prevTurrets = u.turrets.slice();
@@ -19849,6 +19890,10 @@ specIsShellGun(spec)
         u.lockT = tracking ? (u.lockT ?? 0) + dt : 0;
         const lockReq = lockAcquireTime(AI_LOCK_BASE, aimTgt.spec.enemySeekerMul ?? 1);
         u.debugLockT = tracking ? holdProgress(u.lockT, lockReq) : undefined;
+        if (tracking) {
+          u.paintT = holdProgress(u.lockT, lockReq);
+          u.paintHost = aimTgt === this.player;
+        }
       } else {
         u.debugLockT = undefined;
       }
@@ -19993,6 +20038,13 @@ specIsShellGun(spec)
           u.secLockT = secTracking ? (u.secLockT ?? 0) + dt : 0;
           const secLockReq = lockAcquireTime(AI_LOCK_BASE, secTgt.spec.enemySeekerMul ?? 1);
           u.debugLockT = secTracking ? holdProgress(u.secLockT, secLockReq) : u.debugLockT;
+          if (secTracking) {
+            const p = holdProgress(u.secLockT, secLockReq);
+            if (p >= (u.paintT ?? -1)) {
+              u.paintT = p;
+              u.paintHost = secTgt === this.player;
+            }
+          }
           u.missileCd = (u.missileCd ?? (4 + Math.random() * 3)) - dt;
           if (u.missileCd <= 0 && secTracking && u.secLockT >= secLockReq) {
             u.missileCd = sec.fireCdMin + Math.random() * (sec.fireCdMax - sec.fireCdMin);
@@ -21765,6 +21817,69 @@ specIsShellGun(spec)
       const blink = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(this.time.now * 0.016));
       this.threatMissileTxt.setAlpha(blink);
     }
+  }
+
+  /**
+   * Arcs around the targeted craft, one continuous shape per threat: paint starts widest and
+   * fades in as lock charges, narrowing to the lock width; the red seeker arc starts there and
+   * narrows with closure to a dot at point blank.
+   */
+  drawThreatArcs(): void {
+    const g = this.threatArcGfx;
+    g.clear();
+    if (this.player.phase !== "flight" || this.mapView || this.over) return;
+    const now = this.time.now;
+    const focus = this.combatFocus();
+    const ring = (c: Craft) => {
+      const at = worldToScreen(c.x, c.y, c.z);
+      return { at, r: (c.spec.radius * 2.6 + 36) * at.scale };
+    };
+    const paintBlink = 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(now * 0.004));
+    for (const u of this.units) {
+      if (u.dead || u.paintT == null) continue;
+      const { at, r } = ring(u.paintHost ? this.player : focus);
+      const ut = worldToScreen(u.x, u.y, u.z);
+      const half = Phaser.Math.DegToRad(Phaser.Math.Linear(THREAT_ARC_PAINT_HALF, THREAT_ARC_LOCK_HALF, u.paintT));
+      const alpha = u.paintT * 0.8 * paintBlink;
+      this.strokeThreatArc(g, at.x, at.y, r, Math.atan2(ut.y - at.y, ut.x - at.x), half, 2, 0xfff0c8, alpha);
+    }
+    // Seekers home on the host when the combat focus is dirt-locked (matches stinger homing).
+    const seekTgt = this.combatFocusIsGround() ? this.player : focus;
+    const lockA = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(now * 0.016));
+    for (const s of this.shots) {
+      if (s.deadfall || s.from !== "enemy" || !s.homePlayer || s.seekDisabled) continue;
+      if (this.closestFlare(s.x, s.y, s.z)) continue; // decoyed — not homing on us
+      const { at, r } = ring(seekTgt);
+      const st = worldToScreen(s.x, s.y, s.z);
+      const dist = Math.hypot(s.x - seekTgt.x, s.y - seekTgt.y, s.z - seekTgt.z);
+      s.lockD0 ??= Math.max(1, dist);
+      const closure = Phaser.Math.Clamp(dist / s.lockD0, 0, 1);
+      const half = Phaser.Math.DegToRad(Phaser.Math.Linear(0.5, THREAT_ARC_LOCK_HALF, closure));
+      this.strokeThreatArc(g, at.x, at.y, r, Math.atan2(st.y - at.y, st.x - at.x), half, 4, 0xff3a22, lockA);
+    }
+  }
+
+  /** Plain arc; once shorter than its line width it becomes a single dot (no stacked caps). */
+  strokeThreatArc(
+    g: Phaser.GameObjects.Graphics,
+    cx: number,
+    cy: number,
+    r: number,
+    dir: number,
+    half: number,
+    width: number,
+    color: number,
+    alpha: number
+  ): void {
+    if (half * 2 * r <= width) {
+      g.fillStyle(color, alpha);
+      g.fillCircle(cx + Math.cos(dir) * r, cy + Math.sin(dir) * r, width / 2);
+      return;
+    }
+    g.lineStyle(width, color, alpha);
+    g.beginPath();
+    g.arc(cx, cy, r, dir - half, dir + half, false);
+    g.strokePath();
   }
 
   remoteDetonateArmed(): boolean {
@@ -24031,7 +24146,7 @@ specIsShellGun(spec)
     this.hudSet.delete(this.sight);
     this.sight.cameraFilter = this.hudCam.id | this.fieldHudCam.id;
     // World-anchored tracking HUD: lock boxes, unit HP — not thermalized.
-    for (const go of [this.lockGfx, this.lockTxt, this.lockInbdTxt, this.hpGfx, this.remoteArmedTxt]) {
+    for (const go of [this.lockGfx, this.lockTxt, this.lockInbdTxt, this.hpGfx, this.threatArcGfx, this.remoteArmedTxt]) {
       this.bindFieldHud(go);
     }
     // TOW wire / Tesla / Refractor / energy ribbons stay on the main cam (world depth).
@@ -24964,6 +25079,7 @@ specIsShellGun(spec)
     this.hudRoot.setVisible(on);
     if (this.editRoot) this.editRoot.setVisible(this.editOpen && (on || this.mapBlend > 0.12));
     this.hpGfx.setVisible(on);
+    this.threatArcGfx.setVisible(on);
     if (!on) this.remoteArmedTxt?.setVisible(false);
     if (on) {
       this.reticle.setVisible(true);

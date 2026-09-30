@@ -280,6 +280,8 @@ export interface RemoteCraft {
   };
   /** AI engage unit id. */
   aiTargetId?: number;
+  /** AI gun target id when it can differ from the move target (HUMVEE fires on the move). */
+  gunTargetId?: number;
   /** Seconds continuously AI-firing on `aiTargetId` — narrows gun-aim jitter over time. */
   aimHoldT?: number;
   /** Target id `aimHoldT` was last accumulated against — reset the hold when this changes. */
