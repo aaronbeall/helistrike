@@ -2793,6 +2793,25 @@ export function bakeShadows(textures: Phaser.Textures.TextureManager, key: strin
   });
 }
 
+/** Soft white radial glow (`fx_glow`) — impact flashes, muzzle light, preview lights. Idempotent. */
+export function ensureImpactGlow(textures: Phaser.Textures.TextureManager): void {
+  if (textures.exists("fx_glow")) return;
+  const s = 96;
+  const c = document.createElement("canvas");
+  c.width = s;
+  c.height = s;
+  const g = c.getContext("2d", { willReadFrequently: true })!;
+  const grd = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+  grd.addColorStop(0, "rgba(255,255,255,1)");
+  grd.addColorStop(0.2, "rgba(255,255,255,0.72)");
+  grd.addColorStop(0.52, "rgba(255,255,255,0.2)");
+  grd.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = grd;
+  g.fillRect(0, 0, s, s);
+  textures.addCanvas("fx_glow", c);
+  registerArt("fx_glow", "generated");
+}
+
 /** Soft engine glow: top-middle = nozzle; short soft wash behind the flame root. */
 export function ensureExhaustGlow(textures: Phaser.Textures.TextureManager): void {
   if (textures.exists("fx_exhaust_glow")) {

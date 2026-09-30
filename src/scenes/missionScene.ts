@@ -272,7 +272,7 @@ import { setGlitchPipeline } from "../render/glitch";
 import { setWarpDistortPipeline } from "../render/warpDistort";
 import { setCloakFxPipeline } from "../render/cloakFx";
 import { createTerrain25D, type Terrain25D } from "../render/terrain25d";
-import { extractBiomeTiles, bakeHeliHudWireTexture, heliHudWireUv, shadowAlpha, shadowKey, spriteUvPos, FX_SHEET_SIZE, FX_VARIANTS, FX_BLAST_CELLS, registerArt, nameGameTexture, spritePivot, muzzleGlowKey, ensureExhaustGlow, type HeliHudWireBake } from "../art/sprites";
+import { extractBiomeTiles, bakeHeliHudWireTexture, heliHudWireUv, shadowAlpha, shadowKey, spriteUvPos, FX_SHEET_SIZE, FX_VARIANTS, FX_BLAST_CELLS, registerArt, nameGameTexture, spritePivot, muzzleGlowKey, ensureExhaustGlow, ensureImpactGlow, type HeliHudWireBake } from "../art/sprites";
 import { FieldManual } from "../ui/fieldManual";
 import {
   generateWorld,
@@ -26470,23 +26470,6 @@ function ensureBlastRingGradient(textures: Phaser.Textures.TextureManager): void
 }
 
 
-function ensureImpactGlow(textures: Phaser.Textures.TextureManager): void {
-  if (textures.exists("fx_glow")) return;
-  const s = 96;
-  const c = document.createElement("canvas");
-  c.width = s;
-  c.height = s;
-  const g = c.getContext("2d", { willReadFrequently: true })!;
-  const grd = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
-  grd.addColorStop(0, "rgba(255,255,255,1)");
-  grd.addColorStop(0.2, "rgba(255,255,255,0.72)");
-  grd.addColorStop(0.52, "rgba(255,255,255,0.2)");
-  grd.addColorStop(1, "rgba(255,255,255,0)");
-  g.fillStyle = grd;
-  g.fillRect(0, 0, s, s);
-  textures.addCanvas("fx_glow", c);
-  registerArt("fx_glow", "generated");
-}
 
 function projectAlong(x: number, y: number, ang: number, tx: number, ty: number): number {
   const dx = tx - x;

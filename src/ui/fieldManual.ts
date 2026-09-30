@@ -50,7 +50,7 @@ import {
   type TacticalTip,
   type TipKnown,
 } from "../sim/tips";
-import { spritePivot, spriteUvPos } from "../art/sprites";
+import { ensureImpactGlow, spritePivot, spriteUvPos } from "../art/sprites";
 import { CLOAK_PREVIEW_PIPELINE, ensureCloakPreviewPipeline } from "../render/cloakPreviewFx";
 import { WARP_PREVIEW_PIPELINE, ensureWarpPreviewPipeline } from "../render/warpPreviewFx";
 import { lookupSpriteMuzzles } from "../art/spriteOrigin";
@@ -2186,6 +2186,8 @@ export class FieldManual {
    */
   private buildReactiveArmorPreview(cx: number, cy: number): void {
     const scene = this.scene;
+    // Baked on demand (mission create does it too) — the home-screen manual may be first.
+    ensureImpactGlow(scene.textures);
     const dots = 6;
     const ringR = 22;
     const sparkTint = [0xffffff, 0xff90b0, 0xff2858, 0xc01030];
