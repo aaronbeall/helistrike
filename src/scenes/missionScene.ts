@@ -249,7 +249,7 @@ import {
   toonBlastKey,
 } from "../render/toonBlast";
 import { ensureAllArtGenAnims } from "../art/artGen";
-import { isAerial, isGroundVehicle, isInfantry, isOrganic, hasSoftBlood, specOf, driveOf, spawnAngle, pickTroop, labelOf, allKinds, gunsOf, rollParts, crewOf, muzzlesOfGun, type ShotKind, type ShotLook } from "../sim/roster";
+import { isAerial, isGroundVehicle, isInfantry, isOrganic, hasSoftBlood, specOf, driveOf, spawnAngle, pickTroop, labelOf, allKinds, gunsOf, rollParts, crewOf, muzzlesOfGun, type ShotKind, type ShotLook, type WeaponSpec } from "../sim/roster";
 import {
   circumRadiusOf,
   closestOnFootprint,
@@ -19383,6 +19383,213 @@ specIsShellGun(spec)
   }
 
   /**
+   * Independent enemy turrets: each gun part picks its own target (AA ignores a dirt HOUND),
+   * checks its own range / elevation / facing, and runs its own lock, aim hold, cooldown, burst
+   * and muzzle-tip cycle — same as player turret stations. Writes unit-level summaries after.
+   */
+  tickEnemyTurretFire(
+    u: Unit,
+    focus: Craft,
+    dt: number,
+    vision: number,
+    holdFire: boolean,
+    elevCeilFor: (aa: boolean) => number
+  ): void {
+    const sp = specOf(u.kind);
+    const guns = gunsOf(u);
+    const states = u.gunStates ?? (u.gunStates = []);
+    let burstMax = 0;
+    let lockMax = 0;
+    let holdMax = 0;
+    let flashUsed = false;
+    u.debugLockT = undefined;
+    u.debugAimT = undefined;
+    u.debugAimSpreadRad = undefined;
+    for (let gi = 0; gi < guns.length; gi++) {
+      const wpn = guns[gi]!.weapon ?? sp.weapon;
+      if (!wpn) continue;
+      // Random first cooldown so turrets (and units) don't open fire in lockstep.
+      const st =
+        states[gi] ??
+        (states[gi] = { cd: Math.random() * wpn.fireCd, burst: 0, lockT: 0, holdT: 0, tip: 0 });
+      st.cd -= dt;
+      const aa = this.enemyWeaponIsAa(wpn);
+      const tgt = aa && this.combatFocusIsGround() ? this.player : focus;
+      const gp = this.gunMountPos(u, gi);
+      const dist = Math.hypot(tgt.x - gp.x, tgt.y - gp.y);
+      const inRange =
+        dist < wpn.range * vision && dist > 40 && tgt.phase === "flight" && tgt.z - u.z < elevCeilFor(aa);
+      const want = Math.atan2(tgt.y - gp.y, tgt.x - gp.x);
+      const barrelAng = u.turrets[gi] ?? u.turret;
+      const facingOk = Math.abs(Phaser.Math.Angle.Wrap(want - barrelAng)) < 0.16;
+      const engaging = !holdFire && vision > 0 && inRange;
+      st.holdT = advanceAimHold(st.holdT, dt, engaging);
+      const seeker = wpn.kind === "lock-on-missile";
+      const lockReq = lockAcquireTime(AI_LOCK_BASE, tgt.spec.enemySeekerMul ?? 1);
+      if (seeker) {
+        const tracking = engaging && facingOk;
+        st.lockT = tracking ? st.lockT + dt : 0;
+        if (tracking) {
+          const p = holdProgress(st.lockT, lockReq);
+          u.debugLockT = Math.max(u.debugLockT ?? 0, p);
+          if (p >= (u.paintT ?? -1)) {
+            u.paintT = p;
+            u.paintHost = tgt === this.player;
+          }
+        }
+      } else if (engaging && gi === 0) {
+        const narrowT = aimNarrowTime(AI_AIM_NARROW_BASE, tgt.spec.enemyAwareMul ?? 1);
+        u.debugAimT = holdProgress(st.holdT, narrowT);
+        u.debugAimSpreadRad = aimPrecisionSpread(st.holdT, narrowT, (wpn.jitter ?? 0) * AI_AIM_WIDE_MUL, wpn.jitter ?? 0);
+      }
+      const lockReady = !seeker || st.lockT >= lockReq;
+      if (st.cd <= 0 && engaging && facingOk && lockReady) {
+        const burstN = wpn.burst ?? 0;
+        const fxInterval = burstN > 0 ? (wpn.burstGap ?? 0.075) : wpn.fireCd;
+        if (burstN) {
+          if (!st.burst) st.burst = burstN;
+          st.burst--;
+          st.cd = st.burst > 0 ? (wpn.burstGap ?? 0.075) : wpn.fireCd;
+        } else {
+          st.cd = wpn.fireCd;
+        }
+        if (seeker) st.lockT = 0; // fire-and-forget — re-acquire lock for the next shot.
+        // Multi-tip turrets (dual barrels) still honor muzzleFire on their own tips.
+        const tipCount = guns[gi]!.muzzles?.length || 1;
+        const simultaneous = wpn.muzzleFire === "simultaneous" && tipCount > 1;
+        const tipI = wpn.muzzleFire === "alternate" ? st.tip % tipCount : 0;
+        const fireTips = simultaneous ? Array.from({ length: tipCount }, (_, i) => i) : [tipI];
+        st.tip = tipCount > 1 && wpn.muzzleFire === "alternate" ? (tipI + 1) % tipCount : tipI;
+        for (const tip of fireTips) {
+          const extra = flashUsed || (simultaneous && tip !== tipI);
+          this.fireEnemyRound(u, wpn, gi, tip, barrelAng, tgt, st.holdT, fxInterval, extra);
+        }
+        flashUsed = true;
+        this.noteEnemyVolley(u, st.burst <= 0);
+      } else if (!engaging) {
+        st.burst = 0;
+      }
+      burstMax = Math.max(burstMax, st.burst);
+      lockMax = Math.max(lockMax, st.lockT);
+      holdMax = Math.max(holdMax, st.holdT);
+    }
+    // Unit-level summaries for AI state, HUD paint text and debug.
+    u.burstLeft = burstMax;
+    u.lockT = lockMax;
+    u.aimHoldT = holdMax;
+  }
+
+  /**
+   * Spawn one enemy round from gun `gunI` (hull when the unit has no gun parts) at muzzle `tip`.
+   * `extraFlash`: another round already owns the unit's pooled flash this frame — use a one-shot.
+   */
+  fireEnemyRound(
+    u: Unit,
+    wpn: WeaponSpec,
+    gunI: number,
+    tip: number,
+    barrelAng: number,
+    aimTgt: Craft,
+    holdT: number,
+    fxInterval: number,
+    extraFlash: boolean
+  ): void {
+    const sp = specOf(u.kind);
+    const guns = gunsOf(u);
+    const home = wpn.kind === "lock-on-missile";
+    const muzzleZ = u.z + heightOf(u.kind) * 0.7 + ZOff.shot;
+    const tgtZ = aimTgt.z + aimTgt.height * 0.5;
+    const leaveSpd = home ? Math.max(70, wpn.speed * 0.3) : wpn.speed;
+    const jitter = home
+      ? (Math.random() - 0.5) * (wpn.jitter ?? 0)
+      : (Math.random() - 0.5) *
+        aimPrecisionSpread(
+          holdT,
+          aimNarrowTime(AI_AIM_NARROW_BASE, aimTgt.spec.enemyAwareMul ?? 1),
+          (wpn.jitter ?? 0) * AI_AIM_WIDE_MUL,
+          wpn.jitter ?? 0
+        );
+    const muzzle = this.enemyMuzzle(u, gunI, tip);
+    if (extraFlash) {
+      this.spawnExtraMuzzleFlash(muzzle.x, muzzle.y, u.z, barrelAng, sp.organic ? 0.7 : 1.15);
+    } else {
+      u.muzzleGun = gunI;
+      u.muzzleFireTip = tip;
+      u.muzzleT = 0.07;
+      u.muzzleJitS = range(0.9, 1.12);
+      u.muzzleJitR = range(-0.1, 0.1);
+      u.muzzleFrame = (Math.random() * FX_VARIANTS) | 0;
+    }
+    const fireAng = barrelAng + jitter;
+    // Flight time from post-nudge tip (spawnShot advances by SHOT_ORIGIN).
+    const spawn = this.shotSpawnXY(muzzle.x, muzzle.y, fireAng, muzzleZ, wpn.look, wpn.scale);
+    const shotDist = Math.max(40, Math.hypot(aimTgt.x - spawn.x, aimTgt.y - spawn.y));
+    const muzzleAt = worldToScreen(muzzle.x, muzzle.y, u.z);
+    this.spawnMuzzleLight(
+      muzzleAt.x,
+      muzzleAt.y,
+      u.z,
+      (sp.organic ? 18 : 28) * muzzleAt.scale * (u.muzzleJitS ?? 1)
+    );
+    const flightT = Math.max(0.12, shotDist / (home ? wpn.speed * 0.72 : wpn.speed));
+    this.spawnShot({
+      from: "enemy",
+      x: muzzle.x,
+      y: muzzle.y,
+      z: muzzleZ,
+      vx: Math.cos(fireAng) * leaveSpd,
+      vy: Math.sin(fireAng) * leaveSpd,
+      vz: Phaser.Math.Clamp((tgtZ - muzzleZ) / flightT, -280, 420),
+      angle: fireAng,
+      life: flightT + (home ? 1.1 : 0.35),
+      blast: wpn.blast,
+      dmg: wpn.dmg,
+      look: wpn.look,
+      homePlayer: home,
+      motor: home ? -0.06 : undefined,
+      cruise: home ? wpn.speed : undefined,
+      scale: wpn.scale,
+      beh: enemyShotBeh(wpn),
+      fxInterval,
+    });
+    if (wpn.kind === "cannon") {
+      const ejectAt = guns.length ? this.gunMountPos(u, gunI) : { x: u.x, y: u.y };
+      const shellZ = sp.aerial ? u.z - 10 : u.z + heightOf(u.kind) + 6;
+      // Casing side reads the firing tip; keep the pooled flash's tip intact.
+      const flashTip = u.muzzleFireTip;
+      u.muzzleFireTip = tip;
+      const side = this.enemyShellEjectSide(u, gunI);
+      u.muzzleFireTip = flashTip;
+      this.spawnShellEject({
+        x: ejectAt.x,
+        y: ejectAt.y,
+        z: shellZ,
+        barrelAng: fireAng,
+        scale: wpn.scale,
+        dmg: wpn.dmg,
+        side,
+        aerial: !!sp.aerial,
+        fireCd: (wpn.burst ?? 0) > 0 ? (wpn.burstGap ?? 0.075) : wpn.fireCd,
+      });
+    }
+  }
+
+  /** Combat mood: kite while firing; each finished volley is a strike, enough and it flees. */
+  noteEnemyVolley(u: Unit, volleyDone: boolean): void {
+    const mood = specOf(u.kind).combatMood;
+    if (!mood) return;
+    if (u.aiMood !== "flee") u.aiMood = "kite";
+    if (!volleyDone) return;
+    u.strike = (u.strike ?? 0) + 1;
+    if (u.strike >= mood.strikesBeforeFlee) {
+      u.aiMood = "flee";
+      const [lo, hi] = mood.fleeDuration;
+      u.moodT = lo + Math.random() * (hi - lo);
+      u.strike = 0;
+    }
+  }
+
+  /**
    * Wounded troops bleed toward death past the downed floor. HV troops never bleed out;
    * others only expire once off screen. Returns true if the unit died.
    */
@@ -19788,8 +19995,8 @@ specIsShellGun(spec)
       }
       this.containOnMap(u, dt);
       const guns = gunsOf(u);
-      const gunI = guns.length ? u.muzzleGun % guns.length : 0;
-      const wpn = guns[gunI]?.weapon ?? sp.weapon;
+      // Unit-level decisions (movement, mood, building aim) use the primary gun.
+      const wpn = guns[0]?.weapon ?? sp.weapon;
       const aaWpn = this.enemyWeaponIsAa(wpn);
       // Mixed hulls (e.g. battleship): AA mounts still aim the host, never the HOUND.
       const aimTgt =
@@ -19803,17 +20010,19 @@ specIsShellGun(spec)
       // Elevation lob limit: troops stay low; tanks can reach jet cruise; dedicated
       // AA / seekers go higher. Reaper-class cruise (~620) sits above tank/building HE;
       // enemy drones stay low and cannot lob/kamikaze to it — helis can climb.
-      const elevCeil = sp.aerial
-        ? sp.behavior === "suicide_attack_heli"
-          ? MissionScene.DRONE_KAMIKAZE_AGL
-          : 1e9
-        : aaWpn
-          ? 720
-          : sp.building
-            ? 560
-            : isGroundVehicle(u.kind)
-              ? 360
-              : 130;
+      const elevCeilFor = (aa: boolean) =>
+        sp.aerial
+          ? sp.behavior === "suicide_attack_heli"
+            ? MissionScene.DRONE_KAMIKAZE_AGL
+            : 1e9
+          : aa
+            ? 720
+            : sp.building
+              ? 560
+              : isGroundVehicle(u.kind)
+                ? 360
+                : 130;
+      const elevCeil = elevCeilFor(aaWpn);
       const inRange = !!(
         atkRange &&
         aimDist < atkRange &&
@@ -19827,13 +20036,19 @@ specIsShellGun(spec)
           const gw = guns[gi]?.weapon ?? sp.weapon;
           const trackTgt =
             this.enemyWeaponIsAa(gw) && this.combatFocusIsGround() ? this.player : h;
+          const trav = guns[gi]?.traverse;
+          // Keep a limited turret inside its arc as the hull turns under it.
+          if (trav) u.turrets[gi] = clampAimToStationArc(u.turrets[gi] ?? u.angle, u.angle, trav);
           const trackR = (gw?.range ?? 0) * vision;
           const td = Math.hypot(trackTgt.x - u.x, trackTgt.y - u.y);
           if (td >= trackR * 1.15) continue;
           const gp = this.gunMountPos(u, gi);
-          const want = Math.atan2(trackTgt.y - gp.y, trackTgt.x - gp.x);
+          const rawWant = Math.atan2(trackTgt.y - gp.y, trackTgt.x - gp.x);
+          // Out-of-arc targets park the barrel at the arc edge; facing check then blocks fire.
+          const want = trav ? clampAimToStationArc(rawWant, u.angle, trav) : rawWant;
           const cur = u.turrets[gi] ?? 0;
           u.turrets[gi] = this.steerUnitAngle(cur, want, trackRate, dt);
+          if (trav) u.turrets[gi] = clampAimToStationArc(u.turrets[gi]!, u.angle, trav);
         }
         u.turret = u.turrets[0] ?? u.turret;
       }
@@ -19868,153 +20083,66 @@ specIsShellGun(spec)
         inf && (u.burstLeft ?? 0) > 0 && aimTgt.phase === "flight" && (soldierDown || u.aiMood !== "flee");
       const soldierFlee = inf && u.aiMood === "flee" && !soldierDown && !this.snapHost(u);
       const scoutFlee = sp.behavior === "kite_attack_heli" && u.aiMood === "flee";
-      const aimFrom = guns.length ? this.gunMountPos(u, gunI) : { x: u.x, y: u.y };
-      const gunAim = Math.atan2(aimTgt.y - aimFrom.y, aimTgt.x - aimFrom.x);
-      const barrelAng = softTurret ? u.turret : !guns.length ? u.angle : (u.turrets[gunI] ?? u.turret);
-      const facingOk = Math.abs(Phaser.Math.Angle.Wrap(gunAim - barrelAng)) < 0.16;
       if (vision <= 0 && u.aware) {
         u.aware = false;
         if (u.aiMood === "kite") u.aiMood = undefined;
       }
-      // Aim precision: jitter narrows the longer this unit has been continuously tracking its
-      // target (reset the moment it stops engaging) — harder-to-spot target craft (enemyAwareMul)
-      // narrow slower. Seeker weapons instead gate on a separate lock-on hold below.
-      const engaging = !!wpn && !soldierFlee && !scoutFlee && vision > 0 && (inRange || continueBurst);
-      u.aimHoldT = advanceAimHold(u.aimHoldT ?? 0, dt, engaging);
-      const isSeekerWpn = wpn?.kind === "lock-on-missile";
-      if (isSeekerWpn) {
-        const tracking = engaging && facingOk;
-        u.lockT = tracking ? (u.lockT ?? 0) + dt : 0;
-        const lockReq = lockAcquireTime(AI_LOCK_BASE, aimTgt.spec.enemySeekerMul ?? 1);
-        u.debugLockT = tracking ? holdProgress(u.lockT, lockReq) : undefined;
-        if (tracking) {
-          u.paintT = holdProgress(u.lockT, lockReq);
-          u.paintHost = aimTgt === this.player;
-        }
+      if (guns.length) {
+        // Turret units: every gun part targets, aims, locks and fires independently.
+        this.tickEnemyTurretFire(u, h, dt, vision, soldierFlee || scoutFlee, elevCeilFor);
       } else {
-        u.debugLockT = undefined;
-      }
-      if (engaging && !isSeekerWpn && wpn) {
-        const narrowT = aimNarrowTime(AI_AIM_NARROW_BASE, aimTgt.spec.enemyAwareMul ?? 1);
-        u.debugAimT = holdProgress(u.aimHoldT, narrowT);
-        u.debugAimSpreadRad = aimPrecisionSpread(u.aimHoldT, narrowT, (wpn.jitter ?? 0) * AI_AIM_WIDE_MUL, wpn.jitter ?? 0);
-      } else {
-        u.debugAimT = undefined;
-        u.debugAimSpreadRad = undefined;
-      }
-      const lockReady =
-        !isSeekerWpn || (u.lockT ?? 0) >= lockAcquireTime(AI_LOCK_BASE, aimTgt.spec.enemySeekerMul ?? 1);
-      if (wpn && u.fireCd <= 0 && !soldierFlee && !scoutFlee && facingOk && vision > 0 && (inRange || continueBurst) && lockReady) {
-        const burstN = wpn.burst ?? 0;
-        const fxInterval = burstN > 0 ? (wpn.burstGap ?? 0.075) : wpn.fireCd;
-        if (burstN) {
-          if (!u.burstLeft) u.burstLeft = burstN;
-          u.burstLeft--;
-          u.fireCd = u.burstLeft > 0 ? (wpn.burstGap ?? 0.075) : wpn.fireCd;
+        // Fixed mounts (hull muzzles / troops): one weapon; muzzleFire picks alternate / simultaneous tips.
+        const gunAim = Math.atan2(aimTgt.y - u.y, aimTgt.x - u.x);
+        const barrelAng = softTurret ? u.turret : u.angle;
+        const facingOk = Math.abs(Phaser.Math.Angle.Wrap(gunAim - barrelAng)) < 0.16;
+        // Aim precision: jitter narrows the longer this unit has been continuously tracking its
+        // target (reset the moment it stops engaging) — harder-to-spot target craft (enemyAwareMul)
+        // narrow slower. Seeker weapons instead gate on a separate lock-on hold below.
+        const engaging = !!wpn && !soldierFlee && !scoutFlee && vision > 0 && (inRange || continueBurst);
+        u.aimHoldT = advanceAimHold(u.aimHoldT ?? 0, dt, engaging);
+        const isSeekerWpn = wpn?.kind === "lock-on-missile";
+        if (isSeekerWpn) {
+          const tracking = engaging && facingOk;
+          u.lockT = tracking ? (u.lockT ?? 0) + dt : 0;
+          const lockReq = lockAcquireTime(AI_LOCK_BASE, aimTgt.spec.enemySeekerMul ?? 1);
+          u.debugLockT = tracking ? holdProgress(u.lockT, lockReq) : undefined;
+          if (tracking) {
+            u.paintT = holdProgress(u.lockT, lockReq);
+            u.paintHost = aimTgt === this.player;
+          }
         } else {
-          u.fireCd = wpn.fireCd;
+          u.debugLockT = undefined;
         }
-        if (isSeekerWpn) u.lockT = 0; // fire-and-forget — re-acquire lock for the next shot.
-        const tipCount =
-          guns[gunI]?.muzzles?.length || lookupSpriteMuzzles(textureOf(u.kind)).length || 1;
-        const simultaneous = wpn.muzzleFire === "simultaneous" && tipCount > 1;
-        const tipI = wpn.muzzleFire === "alternate" ? u.muzzleTip % tipCount : 0;
-        const fireTips = simultaneous ? Array.from({ length: tipCount }, (_, i) => i) : [tipI];
-        u.muzzleFireTip = tipI;
-        u.muzzleTip = tipI;
-        if (tipCount > 1 && wpn.muzzleFire === "alternate") {
-          u.muzzleTip = (tipI + 1) % tipCount;
+        if (engaging && !isSeekerWpn && wpn) {
+          const narrowT = aimNarrowTime(AI_AIM_NARROW_BASE, aimTgt.spec.enemyAwareMul ?? 1);
+          u.debugAimT = holdProgress(u.aimHoldT, narrowT);
+          u.debugAimSpreadRad = aimPrecisionSpread(u.aimHoldT, narrowT, (wpn.jitter ?? 0) * AI_AIM_WIDE_MUL, wpn.jitter ?? 0);
+        } else {
+          u.debugAimT = undefined;
+          u.debugAimSpreadRad = undefined;
         }
-        // Stay on the same gun for the whole burst so each mount keeps its own ammo type.
-        if (guns.length > 1 && sp.gunFire === "alternate" && (u.burstLeft ?? 0) <= 0) {
-          u.muzzleGun = (gunI + 1) % guns.length;
-        }
-        const muzzleZ = u.z + heightOf(u.kind) * 0.7 + ZOff.shot;
-        const tgtZ = aimTgt.z + aimTgt.height * 0.5;
-        const home = wpn.kind === "lock-on-missile";
-        const leaveSpd = home ? Math.max(70, wpn.speed * 0.3) : wpn.speed;
-        for (const tip of fireTips) {
-          const jitter = isSeekerWpn
-            ? (Math.random() - 0.5) * (wpn.jitter ?? 0)
-            : (Math.random() - 0.5) *
-              aimPrecisionSpread(
-                u.aimHoldT,
-                aimNarrowTime(AI_AIM_NARROW_BASE, aimTgt.spec.enemyAwareMul ?? 1),
-                (wpn.jitter ?? 0) * AI_AIM_WIDE_MUL,
-                wpn.jitter ?? 0
-              );
-          const muzzle = this.enemyMuzzle(u, gunI, tip);
-          // Simultaneous multi-tip fire: the unit's own pooled flash sprite tracks tipI (below),
-          // so any other tip firing this volley needs its own one-shot flash to actually show.
-          if (simultaneous && tip !== tipI) {
-            this.spawnExtraMuzzleFlash(muzzle.x, muzzle.y, u.z, barrelAng, sp.organic ? 0.7 : 1.15);
+        const lockReady =
+          !isSeekerWpn || (u.lockT ?? 0) >= lockAcquireTime(AI_LOCK_BASE, aimTgt.spec.enemySeekerMul ?? 1);
+        if (wpn && u.fireCd <= 0 && !soldierFlee && !scoutFlee && facingOk && vision > 0 && (inRange || continueBurst) && lockReady) {
+          const burstN = wpn.burst ?? 0;
+          const fxInterval = burstN > 0 ? (wpn.burstGap ?? 0.075) : wpn.fireCd;
+          if (burstN) {
+            if (!u.burstLeft) u.burstLeft = burstN;
+            u.burstLeft--;
+            u.fireCd = u.burstLeft > 0 ? (wpn.burstGap ?? 0.075) : wpn.fireCd;
+          } else {
+            u.fireCd = wpn.fireCd;
           }
-          const fireAng = barrelAng + jitter;
-          // Flight time from post-nudge tip (spawnShot advances by SHOT_ORIGIN).
-          const spawn = this.shotSpawnXY(muzzle.x, muzzle.y, fireAng, muzzleZ, wpn.look, wpn.scale);
-          const shotDist = Math.max(40, Math.hypot(aimTgt.x - spawn.x, aimTgt.y - spawn.y));
-          u.muzzleT = 0.07;
-          u.muzzleJitS = range(0.9, 1.12);
-          u.muzzleJitR = range(-0.1, 0.1);
-          u.muzzleFrame = (Math.random() * FX_VARIANTS) | 0;
-          const muzzleAt = worldToScreen(muzzle.x, muzzle.y, u.z);
-          this.spawnMuzzleLight(
-            muzzleAt.x,
-            muzzleAt.y,
-            u.z,
-            (sp.organic ? 18 : 28) * muzzleAt.scale * (u.muzzleJitS ?? 1)
-          );
-          const flightT = Math.max(0.12, shotDist / (home ? wpn.speed * 0.72 : wpn.speed));
-          this.spawnShot({
-            from: "enemy",
-            x: muzzle.x,
-            y: muzzle.y,
-            z: muzzleZ,
-            vx: Math.cos(fireAng) * leaveSpd,
-            vy: Math.sin(fireAng) * leaveSpd,
-            vz: Phaser.Math.Clamp((tgtZ - muzzleZ) / flightT, -280, 420),
-            angle: fireAng,
-            life: flightT + (home ? 1.1 : 0.35),
-            blast: wpn.blast,
-            dmg: wpn.dmg,
-            look: wpn.look,
-            homePlayer: home,
-            motor: home ? -0.06 : undefined,
-            cruise: home ? wpn.speed : undefined,
-            scale: wpn.scale,
-            beh: enemyShotBeh(wpn),
-            fxInterval,
-          });
-          if (wpn.kind === "cannon") {
-            const ejectAt = guns.length ? this.gunMountPos(u, gunI) : { x: u.x, y: u.y };
-            const shellZ = sp.aerial
-              ? u.z - 10
-              : u.z + heightOf(u.kind) + 6;
-            this.spawnShellEject({
-              x: ejectAt.x,
-              y: ejectAt.y,
-              z: shellZ,
-              barrelAng: fireAng,
-              scale: wpn.scale,
-              dmg: wpn.dmg,
-              side: this.enemyShellEjectSide(u, gunI),
-              aerial: !!sp.aerial,
-              fireCd: (wpn.burst ?? 0) > 0 ? (wpn.burstGap ?? 0.075) : wpn.fireCd,
-            });
+          if (isSeekerWpn) u.lockT = 0; // fire-and-forget — re-acquire lock for the next shot.
+          const tipCount = lookupSpriteMuzzles(textureOf(u.kind)).length || 1;
+          const simultaneous = wpn.muzzleFire === "simultaneous" && tipCount > 1;
+          const tipI = wpn.muzzleFire === "alternate" ? u.muzzleTip % tipCount : 0;
+          const fireTips = simultaneous ? Array.from({ length: tipCount }, (_, i) => i) : [tipI];
+          u.muzzleTip = tipCount > 1 && wpn.muzzleFire === "alternate" ? (tipI + 1) % tipCount : tipI;
+          for (const tip of fireTips) {
+            this.fireEnemyRound(u, wpn, 0, tip, barrelAng, aimTgt, u.aimHoldT ?? 0, fxInterval, simultaneous && tip !== tipI);
           }
-        }
-        const mood = sp.combatMood;
-        if (mood) {
-          if (u.aiMood !== "flee") u.aiMood = "kite";
-          if ((u.burstLeft ?? 0) <= 0) {
-            u.strike = (u.strike ?? 0) + 1;
-            if (u.strike >= mood.strikesBeforeFlee) {
-              u.aiMood = "flee";
-              const [lo, hi] = mood.fleeDuration;
-              u.moodT = lo + Math.random() * (hi - lo);
-              u.strike = 0;
-            }
-          }
+          this.noteEnemyVolley(u, (u.burstLeft ?? 0) <= 0);
         }
       }
       const sec = sp.secondary;

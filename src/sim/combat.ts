@@ -1474,6 +1474,8 @@ export interface Unit {
   rotor: number;
   track: number;
   turrets: number[];
+  /** Per-turret fire state (index = gun part) — each turret targets, locks and fires on its own. */
+  gunStates?: { cd: number; burst: number; lockT: number; holdT: number; tip: number }[];
   muzzleT: number;
   muzzleGun: number;
   muzzleTip: number;

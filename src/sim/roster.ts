@@ -80,6 +80,11 @@ export interface PartMount {
   muzzles?: { x: number; y: number }[];
   scale?: number;
   weapon?: WeaponSpec;
+  /**
+   * Turret traverse limit (degrees): `arc` total width centered on `center` (0 = hull nose,
+   * −90 = left, +90 = right). Omit = full 360° — same model as player turret stations.
+   */
+  traverse?: { arc: number; center: number };
 }
 
 export type MuzzleFireMode = "alternate" | "simultaneous";
@@ -210,8 +215,6 @@ export interface UnitSpec {
    */
   secondary?: SecondaryWpnSpec;
   guns: PartMount[];
-  /** Explicitly cycle separate gun mounts after each completed burst. */
-  gunFire?: "alternate";
   rotors: PartMount[];
   dish?: PartMount;
   building?: boolean;
@@ -913,7 +916,6 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     noCrater: true,
     throwGuns: true,
     weapon: WPN.arty,
-    gunFire: "alternate",
     guns: [],
     rotors: [],
     partsRoll: {
@@ -1234,9 +1236,11 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
       scale: 0.72,
       motor: -0.06
     },
+    // Side door guns: each covers its own flank, not through the fuselage.
     guns: mountsOf("enemy_heli_heavy", "gun").map((m) => ({
       ...gun("enemy_heli_heavy_gun", 0.78, { ...m }),
-      scale: 0.58
+      scale: 0.58,
+      traverse: { arc: 200, center: m.x < 0.5 ? -90 : 90 }
     })),
     rotors: mountsOf("enemy_heli_heavy", "rotor").map((m) => ({
       tex: "enemy_heli_rotor",
