@@ -1462,7 +1462,9 @@ export interface Unit {
   max: number;
   hv?: string;
   dead: boolean;
+  /** Fixed-mount fire cooldown (turret units use `gunStates[].cd`). */
   fireCd: number;
+  /** Fixed-mount burst rounds left; turret units: busiest turret's burst (summary). */
   burstLeft?: number;
   orbit: number;
   aware?: boolean;
@@ -1477,7 +1479,9 @@ export interface Unit {
   /** Per-turret fire state (index = gun part) — each turret targets, locks and fires on its own. */
   gunStates?: { cd: number; burst: number; lockT: number; holdT: number; tip: number }[];
   muzzleT: number;
+  /** Gun part owning the pooled muzzle flash (last turret to fire). */
   muzzleGun: number;
+  /** Fixed-mount next hull tip (turret units cycle `gunStates[].tip`). */
   muzzleTip: number;
   /** Tip index used for the active muzzle flash (may differ from next-shot muzzleTip). */
   muzzleFireTip?: number;
@@ -1508,9 +1512,9 @@ export interface Unit {
   parts?: PartMount[];
   missileCd?: number;
   missileSide?: number;
-  /** Seconds continuously tracking the current gun target — narrows aim jitter over time. */
+  /** Fixed-mount aim hold (narrows jitter); turret units: longest turret hold (summary). */
   aimHoldT?: number;
-  /** Seconds charging missile lock on the primary weapon (fixed lock-on-missile hull). */
+  /** Fixed-mount lock charge; turret units: highest turret lock (summary, drives paint HUD). */
   lockT?: number;
   /** Seconds charging missile lock on the secondary missile rack. */
   secLockT?: number;

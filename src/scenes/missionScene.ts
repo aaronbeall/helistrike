@@ -9233,6 +9233,14 @@ specIsShellGun(spec)
     return wpn.kind === "lock-on-missile" || /aa|seeker|aam/i.test(wpn.look ?? "");
   }
 
+  /**
+   * Craft an enemy weapon engages: AA / seekers are blind to a dirt-locked combat focus
+   * (HOUND) and take the host bird; everything else takes the combat focus.
+   */
+  enemyTargetFor(aa: boolean, focus: Craft = this.combatFocus()): Craft {
+    return aa && this.combatFocusIsGround() ? this.player : focus;
+  }
+
   /** Dedicated AA platform (primary mount is AA / seeker). */
   unitIsAaEnemy(u: Unit): boolean {
     const sp = specOf(u.kind);
@@ -13977,7 +13985,7 @@ specIsShellGun(spec)
           const cur = Math.hypot(s.vx, s.vy, s.vz);
           const decoy = this.closestFlare(s.x, s.y, s.z);
           // Ground POV remotes (HOUND) are not AA targets — keep seekers on the host bird.
-          const seekTgt = this.combatFocusIsGround() ? this.player : this.combatFocus();
+          const seekTgt = this.enemyTargetFor(true);
           const tx = decoy ? decoy.x : seekTgt.x;
           const ty = decoy ? decoy.y : seekTgt.y;
           const tz = decoy ? decoy.z : seekTgt.z + seekTgt.height * 0.45;
@@ -19383,18 +19391,20 @@ specIsShellGun(spec)
   }
 
   /**
-   * Independent enemy turrets: each gun part picks its own target (AA ignores a dirt HOUND),
-   * checks its own range / elevation / facing, and runs its own lock, aim hold, cooldown, burst
-   * and muzzle-tip cycle — same as player turret stations. Writes unit-level summaries after.
+   * Independent enemy turrets, one pass per gun part: pick its own target (AA ignores a dirt
+   * HOUND), slew within its traverse arc, check its own range / elevation / facing, and run its
+   * own lock, aim hold, cooldown, burst and muzzle-tip cycle — same as player turret stations.
+   * Writes unit-level summaries after; returns the first target a turret engaged this frame.
    */
   tickEnemyTurretFire(
     u: Unit,
     focus: Craft,
     dt: number,
     vision: number,
+    aimMul: number,
     holdFire: boolean,
     elevCeilFor: (aa: boolean) => number
-  ): void {
+  ): Craft | undefined {
     const sp = specOf(u.kind);
     const guns = gunsOf(u);
     const states = u.gunStates ?? (u.gunStates = []);
@@ -19402,6 +19412,8 @@ specIsShellGun(spec)
     let lockMax = 0;
     let holdMax = 0;
     let flashUsed = false;
+    let engagedTgt: Craft | undefined;
+    const trackRate = 1.65 * aimMul * Math.max(0.12, vision);
     u.debugLockT = undefined;
     u.debugAimT = undefined;
     u.debugAimSpreadRad = undefined;
@@ -19414,15 +19426,26 @@ specIsShellGun(spec)
         (states[gi] = { cd: Math.random() * wpn.fireCd, burst: 0, lockT: 0, holdT: 0, tip: 0 });
       st.cd -= dt;
       const aa = this.enemyWeaponIsAa(wpn);
-      const tgt = aa && this.combatFocusIsGround() ? this.player : focus;
+      const tgt = this.enemyTargetFor(aa, focus);
       const gp = this.gunMountPos(u, gi);
       const dist = Math.hypot(tgt.x - gp.x, tgt.y - gp.y);
+      const trav = guns[gi]!.traverse;
+      // Keep a limited turret inside its arc as the hull turns under it.
+      if (trav) u.turrets[gi] = clampAimToStationArc(u.turrets[gi] ?? u.angle, u.angle, trav);
+      const want = Math.atan2(tgt.y - gp.y, tgt.x - gp.x);
+      // Slew slightly past fire range so the barrel is on target as it enters.
+      if (vision > 0 && dist < wpn.range * vision * 1.15) {
+        // Out-of-arc targets park the barrel at the arc edge; the facing check then blocks fire.
+        const slewTo = trav ? clampAimToStationArc(want, u.angle, trav) : want;
+        u.turrets[gi] = this.steerUnitAngle(u.turrets[gi] ?? 0, slewTo, trackRate, dt);
+        if (trav) u.turrets[gi] = clampAimToStationArc(u.turrets[gi]!, u.angle, trav);
+      }
       const inRange =
         dist < wpn.range * vision && dist > 40 && tgt.phase === "flight" && tgt.z - u.z < elevCeilFor(aa);
-      const want = Math.atan2(tgt.y - gp.y, tgt.x - gp.x);
       const barrelAng = u.turrets[gi] ?? u.turret;
       const facingOk = Math.abs(Phaser.Math.Angle.Wrap(want - barrelAng)) < 0.16;
       const engaging = !holdFire && vision > 0 && inRange;
+      if (engaging && !engagedTgt) engagedTgt = tgt;
       st.holdT = advanceAimHold(st.holdT, dt, engaging);
       const seeker = wpn.kind === "lock-on-missile";
       const lockReq = lockAcquireTime(AI_LOCK_BASE, tgt.spec.enemySeekerMul ?? 1);
@@ -19474,9 +19497,11 @@ specIsShellGun(spec)
       holdMax = Math.max(holdMax, st.holdT);
     }
     // Unit-level summaries for AI state, HUD paint text and debug.
+    u.turret = u.turrets[0] ?? u.turret;
     u.burstLeft = burstMax;
     u.lockT = lockMax;
     u.aimHoldT = holdMax;
+    return engagedTgt;
   }
 
   /**
@@ -19615,7 +19640,7 @@ specIsShellGun(spec)
    */
   tickStunnedUnit(u: Unit, dt: number): void {
     tickStunKinematics(u, dt);
-    u.fireCd -= dt;
+    if (!gunsOf(u).length) u.fireCd -= dt; // turrets keep their own cooldowns
     u.muzzleT = Math.max(0, u.muzzleT - dt);
     const sp = specOf(u.kind);
     if (sp.dish) u.rotor += 0.55 * dt;
@@ -19768,7 +19793,7 @@ specIsShellGun(spec)
         if (!u.dead) recordUnitSpin(u, prevAngle, prevTurret, prevTurrets, dt);
         continue;
       }
-      u.fireCd -= dt;
+      if (!gunsOf(u).length) u.fireCd -= dt; // turrets keep their own cooldowns
       // AA platforms are blind to dirt HOUND — chase/aim the host instead.
       const h = this.unitCombatFocus(u);
       const aimMul = h.spec.enemyAimMul ?? 1;
@@ -19995,12 +20020,10 @@ specIsShellGun(spec)
       }
       this.containOnMap(u, dt);
       const guns = gunsOf(u);
-      // Unit-level decisions (movement, mood, building aim) use the primary gun.
-      const wpn = guns[0]?.weapon ?? sp.weapon;
+      // Unit-level weapon / target are fixed-mount only; turret units target per turret below.
+      const wpn = guns.length ? undefined : sp.weapon;
       const aaWpn = this.enemyWeaponIsAa(wpn);
-      // Mixed hulls (e.g. battleship): AA mounts still aim the host, never the HOUND.
-      const aimTgt =
-        aaWpn && this.combatFocusIsGround() ? this.player : h;
+      const aimTgt = this.enemyTargetFor(aaWpn, h);
       const aimDx = aimTgt.x - u.x;
       const aimDy = aimTgt.y - u.y;
       const aimDist = Math.hypot(aimDx, aimDy);
@@ -20022,36 +20045,13 @@ specIsShellGun(spec)
               : isGroundVehicle(u.kind)
                 ? 360
                 : 130;
-      const elevCeil = elevCeilFor(aaWpn);
       const inRange = !!(
         atkRange &&
         aimDist < atkRange &&
         aimDist > 40 &&
         aimTgt.phase === "flight" &&
-        elev < elevCeil
+        elev < elevCeilFor(aaWpn)
       );
-      if (guns.length && vision > 0) {
-        const trackRate = 1.65 * aimMul * Math.max(0.12, vision);
-        for (let gi = 0; gi < guns.length; gi++) {
-          const gw = guns[gi]?.weapon ?? sp.weapon;
-          const trackTgt =
-            this.enemyWeaponIsAa(gw) && this.combatFocusIsGround() ? this.player : h;
-          const trav = guns[gi]?.traverse;
-          // Keep a limited turret inside its arc as the hull turns under it.
-          if (trav) u.turrets[gi] = clampAimToStationArc(u.turrets[gi] ?? u.angle, u.angle, trav);
-          const trackR = (gw?.range ?? 0) * vision;
-          const td = Math.hypot(trackTgt.x - u.x, trackTgt.y - u.y);
-          if (td >= trackR * 1.15) continue;
-          const gp = this.gunMountPos(u, gi);
-          const rawWant = Math.atan2(trackTgt.y - gp.y, trackTgt.x - gp.x);
-          // Out-of-arc targets park the barrel at the arc edge; facing check then blocks fire.
-          const want = trav ? clampAimToStationArc(rawWant, u.angle, trav) : rawWant;
-          const cur = u.turrets[gi] ?? 0;
-          u.turrets[gi] = this.steerUnitAngle(cur, want, trackRate, dt);
-          if (trav) u.turrets[gi] = clampAimToStationArc(u.turrets[gi]!, u.angle, trav);
-        }
-        u.turret = u.turrets[0] ?? u.turret;
-      }
       const hullFlee =
         (sp.behavior === "attack_infantry" && u.aiMood === "flee" && !(sp.organic && u.health <= 1) && !this.snapHost(u)) ||
         (sp.behavior === "kite_attack_heli" && u.aiMood === "flee");
@@ -20070,13 +20070,6 @@ specIsShellGun(spec)
         const turn = (sp.behavior === "orbit_attack_heli" || sp.behavior === "kite_attack_heli") ? 1.7 : 2.2;
         u.angle = this.steerUnitAngle(u.angle, aim, turn * aimMul * Math.max(0.12, vision), dt);
       }
-      if (sp.building || sp.behavior === "static_hold") {
-        u.aiState = inRange ? "ENGAGE" : u.aiState ?? "IDLE";
-        if (inRange) {
-          u.aiTx = aimTgt.x + aimTgt.vx * 0.15;
-          u.aiTy = aimTgt.y + aimTgt.vy * 0.15;
-        }
-      }
       const inf = sp.behavior === "attack_infantry";
       const soldierDown = inf && u.health <= 1 && u.health < u.max;
       const continueBurst =
@@ -20087,10 +20080,13 @@ specIsShellGun(spec)
         u.aware = false;
         if (u.aiMood === "kite") u.aiMood = undefined;
       }
+      // Target actually engaged this frame — drives static units' ENGAGE state / lead aim.
+      let engagedTgt: Craft | undefined;
       if (guns.length) {
         // Turret units: every gun part targets, aims, locks and fires independently.
-        this.tickEnemyTurretFire(u, h, dt, vision, soldierFlee || scoutFlee, elevCeilFor);
+        engagedTgt = this.tickEnemyTurretFire(u, h, dt, vision, aimMul, soldierFlee || scoutFlee, elevCeilFor);
       } else {
+        if (inRange) engagedTgt = aimTgt;
         // Fixed mounts (hull muzzles / troops): one weapon; muzzleFire picks alternate / simultaneous tips.
         const gunAim = Math.atan2(aimTgt.y - u.y, aimTgt.x - u.x);
         const barrelAng = softTurret ? u.turret : u.angle;
@@ -20145,11 +20141,17 @@ specIsShellGun(spec)
           this.noteEnemyVolley(u, (u.burstLeft ?? 0) <= 0);
         }
       }
+      if (sp.building || sp.behavior === "static_hold") {
+        u.aiState = engagedTgt ? "ENGAGE" : u.aiState ?? "IDLE";
+        if (engagedTgt) {
+          u.aiTx = engagedTgt.x + engagedTgt.vx * 0.15;
+          u.aiTy = engagedTgt.y + engagedTgt.vy * 0.15;
+        }
+      }
       const sec = sp.secondary;
       const secHomesPlayer = sec != null && sec.homePlayer !== false;
       // Seeker secondaries are blind to dirt HOUND — lock the host bird instead.
-      const secTgt =
-        secHomesPlayer && this.combatFocusIsGround() ? this.player : h;
+      const secTgt = this.enemyTargetFor(secHomesPlayer, h);
       const secDx = secTgt.x - u.x;
       const secDy = secTgt.y - u.y;
       const secDist = Math.hypot(secDx, secDy);
@@ -21969,7 +21971,7 @@ specIsShellGun(spec)
       this.strokeThreatArc(g, at.x, at.y, r, Math.atan2(ut.y - at.y, ut.x - at.x), half, 2, 0xfff0c8, alpha);
     }
     // Seekers home on the host when the combat focus is dirt-locked (matches stinger homing).
-    const seekTgt = this.combatFocusIsGround() ? this.player : focus;
+    const seekTgt = this.enemyTargetFor(true, focus);
     const lockA = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(now * 0.016));
     for (const s of this.shots) {
       if (s.deadfall || s.from !== "enemy" || !s.homePlayer || s.seekDisabled) continue;

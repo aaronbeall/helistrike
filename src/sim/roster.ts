@@ -568,8 +568,9 @@ export function rollParts(kind: UnitKind): PartMount[] | undefined {
   return roll.slots.map((s) => partFromOption(roll.options[s.id]!, { ...s.mount }));
 }
 
+/** Rolled parts, else the spec's guns (roll defaults are baked into `spec.guns` at load). */
 export function gunsOf(u: { kind: UnitKind; parts?: PartMount[] }): PartMount[] {
-  return u.parts ?? defaultGunsFromRoll(u.kind) ?? UNIT_SPECS[u.kind].guns;
+  return u.parts ?? UNIT_SPECS[u.kind].guns;
 }
 
 /**
@@ -1252,7 +1253,7 @@ const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
   }
 };
 
-/** `partsRoll` owns SPECS.guns for those units (preview / gunsOf fallback). */
+/** `partsRoll` owns SPECS.guns for those units — the single default `gunsOf` falls back to. */
 for (const kind of Object.keys(UNIT_SPECS) as UnitKind[]) {
   const guns = defaultGunsFromRoll(kind);
   if (guns) UNIT_SPECS[kind].guns = guns;
