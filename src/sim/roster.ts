@@ -568,6 +568,12 @@ export function rollParts(kind: UnitKind): PartMount[] | undefined {
   return roll.slots.map((s) => partFromOption(roll.options[s.id]!, { ...s.mount }));
 }
 
+/** AA / seeker weapon — blind to a dirt-locked combat focus (HOUND), engages the host instead. */
+export function weaponIsAa(wpn: { kind?: string; look?: string } | undefined): boolean {
+  if (!wpn) return false;
+  return wpn.kind === "lock-on-missile" || /aa|seeker|aam/i.test(wpn.look ?? "");
+}
+
 /** Rolled parts, else the spec's guns (roll defaults are baked into `spec.guns` at load). */
 export function gunsOf(u: { kind: UnitKind; parts?: PartMount[] }): PartMount[] {
   return u.parts ?? UNIT_SPECS[u.kind].guns;

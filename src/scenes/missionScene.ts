@@ -249,7 +249,7 @@ import {
   toonBlastKey,
 } from "../render/toonBlast";
 import { ensureAllArtGenAnims } from "../art/artGen";
-import { isAerial, isGroundVehicle, isInfantry, isOrganic, hasSoftBlood, specOf, driveOf, spawnAngle, pickTroop, labelOf, allKinds, gunsOf, rollParts, crewOf, muzzlesOfGun, type ShotKind, type ShotLook, type WeaponSpec } from "../sim/roster";
+import { isAerial, isGroundVehicle, isInfantry, isOrganic, hasSoftBlood, specOf, driveOf, spawnAngle, pickTroop, labelOf, allKinds, gunsOf, rollParts, crewOf, muzzlesOfGun, weaponIsAa, type ShotKind, type ShotLook, type WeaponSpec } from "../sim/roster";
 import {
   circumRadiusOf,
   closestOnFootprint,
@@ -9229,8 +9229,7 @@ specIsShellGun(spec)
 
   /** AA burst / seeker / AAM — blind to ground HOUND. */
   enemyWeaponIsAa(wpn: { kind?: string; look?: string } | undefined): boolean {
-    if (!wpn) return false;
-    return wpn.kind === "lock-on-missile" || /aa|seeker|aam/i.test(wpn.look ?? "");
+    return weaponIsAa(wpn);
   }
 
   /**

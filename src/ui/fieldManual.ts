@@ -51,6 +51,7 @@ import {
   type TipKnown,
 } from "../sim/tips";
 import { spritePivot, spriteUvPos } from "../art/sprites";
+import { CLOAK_PREVIEW_PIPELINE, ensureCloakPreviewPipeline } from "../render/cloakPreviewFx";
 import { lookupSpriteMuzzles } from "../art/spriteOrigin";
 import {
   adjustThreeRegionMadMul,
@@ -1986,8 +1987,43 @@ export class FieldManual {
     spawn(-45);
   }
 
-  /** A slow breathing ring (out of phase with an inner one) suggesting a flickering stealth field. */
+  /**
+   * The real phase-cloak screen distortion (same shader as the in-mission camera FX) over a
+   * disc of grid lines, warped edge-to-center with a slight fisheye.
+   * Canvas renderer has no shaders — falls back to the breathing rings.
+   */
   private buildCloakPreview(cx: number, cy: number): void {
+    const scene = this.scene;
+    const pipeline = ensureCloakPreviewPipeline(scene.game);
+    if (!pipeline) {
+      this.buildCloakRingsPreview(cx, cy);
+      return;
+    }
+    // Fits between the CM name (≈18px above) and its description (44px below center).
+    const d = 54;
+    const r = d / 2;
+    const rt = scene.add.renderTexture(cx, cy, d, d).setOrigin(0.5, 0.5);
+    const g = scene.make.graphics({}, false);
+    // Grid lines only, as chords clipped to the disc — the shader cuts the circle and warps
+    // them; violet / blue alternating so the warp and color split read strongly.
+    const step = 7;
+    let li = 0;
+    for (let o = -r + step / 2; o < r; o += step, li++) {
+      const half = Math.sqrt(Math.max(0, r * r - o * o));
+      g.lineStyle(1, li % 2 ? 0x6a8cff : 0x9a6cff, 0.95);
+      g.lineBetween(r + o, r - half, r + o, r + half);
+      g.lineBetween(r - half, r + o, r + half, r + o);
+    }
+    rt.draw(g);
+    g.destroy();
+    // Filament scale matches the full-screen effect.
+    pipeline.freq = d / scene.scale.width;
+    rt.setPipeline(CLOAK_PREVIEW_PIPELINE);
+    this.addDetail(rt);
+  }
+
+  /** A slow breathing ring (out of phase with an inner one) suggesting a flickering stealth field. */
+  private buildCloakRingsPreview(cx: number, cy: number): void {
     const scene = this.scene;
     const outer = scene.add.graphics();
     const inner = scene.add.graphics();

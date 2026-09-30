@@ -39,6 +39,7 @@ import {
   type UnitKind,
   type UnitSpec,
   type WeaponSpec,
+  weaponIsAa,
 } from "../sim/roster";
 import {
   allRemoteKinds,
@@ -49,6 +50,7 @@ import {
 } from "../sim/remote";
 import { PLAYER_WPNS, type PlayerWpnSpec } from "../sim/combat";
 import {
+  lookupSpriteMuzzles,
   lookupSpriteOrigin,
   lookupSpritePoints,
   rigMuzzleMarkRadius,
@@ -79,7 +81,7 @@ const STATS_W = 400;
 const LINE_H = 16;
 const PART_SLOTS = 16;
 const LABEL_SLOTS = 16;
-const SHOT_SLOTS = 4;
+const SHOT_SLOTS = 6;
 
 type Filter = "all" | "ground" | "air" | "water" | "building" | "troop" | "remote";
 const FILTERS: Filter[] = ["all", "ground", "air", "water", "building", "troop", "remote"];
@@ -717,7 +719,7 @@ export class RosterRig {
       this.board.clear();
       this.overlay.clear();
       for (const t of this.mountLabels) t.setVisible(false);
-      const block = formatSpec(kind, sp);
+      const block = formatSpec(kind, sp, sp.guns, tex);
       this.statsXY = { x: listRight, y: LIST_Y };
       this.pendingStats = block.stats;
       this.pendingInfo = block.info;
@@ -739,7 +741,8 @@ export class RosterRig {
         tex: g.tex,
         origin: g.origin,
         mount: g.mount,
-        rot: 0,
+        // Limited turrets preview at their arc center (nose-up art, barrel-up guns).
+        rot: g.traverse ? (g.traverse.center * Math.PI) / 180 : 0,
         scale: g.scale ?? 1,
         layer: (sp.behavior === "orbit_attack_heli" || sp.behavior === "kite_attack_heli") ? "below" : "above",
       });
@@ -770,13 +773,16 @@ export class RosterRig {
       });
     }
 
+    // One preview per distinct projectile: unit weapon, per-gun weapons, secondary launcher.
     const wpns: WeaponSpec[] = [];
-    if (sp.weapon) wpns.push(sp.weapon);
-    for (const g of guns) {
-      if (g.weapon) wpns.push(g.weapon);
-    }
+    const addWpn = (w: WeaponSpec | undefined) => {
+      if (w && !wpns.some((o) => o.look === w.look)) wpns.push(w);
+    };
+    addWpn(sp.weapon);
+    for (const g of guns) addWpn(g.weapon);
+    addWpn(sp.secondary?.wpn);
 
-    const block = formatSpec(kind, sp);
+    const block = formatSpec(kind, sp, guns, tex);
     this.pendingStats = block.stats;
     this.pendingInfo = block.info;
     if (pickId && pickIds.length > 1) {
@@ -817,6 +823,7 @@ export class RosterRig {
         h,
         showShots: true,
         wpns,
+        unitGuns: guns,
       });
       return;
     }
@@ -857,6 +864,7 @@ export class RosterRig {
       cy,
       s,
       hullTex: tex,
+      unitGuns: guns,
     });
   }
 
@@ -878,6 +886,7 @@ export class RosterRig {
     /** Override roster zoom (1× = native texture pixels). */
     zoom?: number;
     craft?: CraftSpec;
+    unitGuns?: PartMount[];
   }): void {
     const s = opts.zoom ?? this.zoom;
     const pad = 10;
@@ -1023,6 +1032,7 @@ export class RosterRig {
       s,
       hullTex: opts.hullTex,
       craft: opts.craft,
+      unitGuns: opts.unitGuns,
     });
   }
 
@@ -1195,6 +1205,8 @@ export class RosterRig {
     s: number;
     hullTex: string;
     craft?: CraftSpec;
+    /** Unit gun parts — limited turrets get traverse wedges. */
+    unitGuns?: PartMount[];
   }): void {
     const g = this.overlay;
     g.clear();
@@ -1265,6 +1277,7 @@ export class RosterRig {
     if (!this.showMarks) return;
 
     if (opts.craft) this.drawCraftSocketTraverseArcs(opts.craft, opts.pivot, s);
+    if (opts.unitGuns) this.drawUnitGunTraverseArcs(opts.unitGuns, opts.pivot, opts.rotOff, opts.radius, s);
 
     let labelI = 0;
     const drawTex = (im: Phaser.GameObjects.Image, texKey: string) => {
@@ -1314,38 +1327,33 @@ export class RosterRig {
         const mount = craftGunMountForBarrel(craft, slot, b);
         const at = toWorld(mount.x, mount.y);
         const headDeg = craftGunPreferDegrees(craft, slot, b);
-        const center = nose + (headDeg * Math.PI) / 180;
-        const half = ((socket.traverse * Math.PI) / 180) * 0.5;
-        let a0 = center - half;
-        let a1 = center + half;
-        if (a1 - a0 < 0.05) {
-          a0 = center - half;
-          a1 = center + half;
-        }
-        const steps = Math.max(10, Math.ceil((socket.traverse / 360) * 36));
-        g.fillStyle(0xffc857, 0.12);
-        g.lineStyle(1.35, 0xffc857, 0.8);
-        g.beginPath();
-        g.moveTo(at.x, at.y);
-        for (let i = 0; i <= steps; i++) {
-          const a = a0 + ((a1 - a0) * i) / steps;
-          g.lineTo(at.x + Math.cos(a) * len, at.y + Math.sin(a) * len);
-        }
-        g.closePath();
-        g.fillPath();
-        g.strokePath();
-        g.lineStyle(1.6, 0xffc857, 0.9);
-        g.lineBetween(at.x, at.y, at.x + Math.cos(a0) * len, at.y + Math.sin(a0) * len);
-        g.lineBetween(at.x, at.y, at.x + Math.cos(a1) * len, at.y + Math.sin(a1) * len);
-        // Rest heading ray.
-        g.lineStyle(1.7, 0x7ad0ff, 0.95);
-        g.lineBetween(
-          at.x,
-          at.y,
-          at.x + Math.cos(center) * len * 0.92,
-          at.y + Math.sin(center) * len * 0.92
-        );
+        strokeTraverseWedge(g, at, nose + (headDeg * Math.PI) / 180, socket.traverse, len);
       }
+    }
+  }
+
+  /**
+   * Unit gun `traverse` wedges (same look as craft sockets). Rig draws the hull unrotated,
+   * so the nose points at −rotOff; `center` is degrees off that nose.
+   */
+  private drawUnitGunTraverseArcs(
+    guns: PartMount[],
+    pivot: { x: number; y: number },
+    rotOff: number,
+    radius: number,
+    s: number
+  ): void {
+    const hull = this.hull;
+    if (!hull.visible) return;
+    const len = Math.max(36, radius * s * 1.35);
+    const nose = -rotOff;
+    for (const gun of guns) {
+      if (!gun.traverse) continue;
+      const at = {
+        x: hull.x + (gun.mount.x - pivot.x) * hull.displayWidth,
+        y: hull.y + (gun.mount.y - pivot.y) * hull.displayHeight,
+      };
+      strokeTraverseWedge(this.overlay, at, nose + (gun.traverse.center * Math.PI) / 180, gun.traverse.arc, len);
     }
   }
 
@@ -1573,8 +1581,77 @@ function formatRemote(remote: RemoteSpec): { stats: string[]; info: string[] } {
   return { stats, info };
 }
 
-function formatSpec(kind: UnitKind, sp: UnitSpec): { stats: string[]; info: string[] } {
-  const info = ["source: roster.ts SPECS + craft.ts CRAFTS (partsRoll / crew / drive / hardpoint)"];
+/** Traverse wedge: filled arc + edge rays + blue rest-heading ray (craft sockets and unit guns). */
+function strokeTraverseWedge(
+  g: Phaser.GameObjects.Graphics,
+  at: { x: number; y: number },
+  center: number,
+  arcDeg: number,
+  len: number
+): void {
+  const half = ((arcDeg * Math.PI) / 180) * 0.5;
+  const a0 = center - half;
+  const a1 = center + half;
+  const steps = Math.max(10, Math.ceil((arcDeg / 360) * 36));
+  g.fillStyle(0xffc857, 0.12);
+  g.lineStyle(1.35, 0xffc857, 0.8);
+  g.beginPath();
+  g.moveTo(at.x, at.y);
+  for (let i = 0; i <= steps; i++) {
+    const a = a0 + ((a1 - a0) * i) / steps;
+    g.lineTo(at.x + Math.cos(a) * len, at.y + Math.sin(a) * len);
+  }
+  g.closePath();
+  g.fillPath();
+  g.strokePath();
+  g.lineStyle(1.6, 0xffc857, 0.9);
+  g.lineBetween(at.x, at.y, at.x + Math.cos(a0) * len, at.y + Math.sin(a0) * len);
+  g.lineBetween(at.x, at.y, at.x + Math.cos(a1) * len, at.y + Math.sin(a1) * len);
+  g.lineStyle(1.7, 0x7ad0ff, 0.95);
+  g.lineBetween(at.x, at.y, at.x + Math.cos(center) * len * 0.92, at.y + Math.sin(center) * len * 0.92);
+}
+
+/** One-line weapon summary for the fire-model info. */
+function wpnLine(w: WeaponSpec): string {
+  const burst = w.burst ? ` burst ${w.burst}` : "";
+  const mode = w.muzzleFire ? ` ${w.muzzleFire}` : "";
+  return `${w.kind} r${w.range} cd${w.fireCd}${burst}${mode}${weaponIsAa(w) ? " · AA (HOUND→host)" : ""}`;
+}
+
+/** How the unit actually fires: independent turrets vs fixed hull mounts, plus secondaries. */
+function fireModelInfo(sp: UnitSpec, guns: PartMount[], tex: string): string[] {
+  const out: string[] = [];
+  if (guns.length) {
+    out.push(`fire: ${guns.length} independent turret${guns.length > 1 ? "s" : ""} (own target / aim / cd / lock)`);
+    guns.forEach((g, i) => {
+      const w = g.weapon ?? sp.weapon;
+      const arc = g.traverse ? `arc ${g.traverse.arc}° @ ${g.traverse.center}°` : "arc 360°";
+      const tips = g.muzzles?.length ?? 1;
+      out.push(`· gun${i} ${g.tex} ×${tips} tip · ${arc}${w ? ` · ${wpnLine(w)}` : " · no weapon"}`);
+    });
+  } else if (sp.weapon) {
+    const tips = lookupSpriteMuzzles(tex).length || 1;
+    out.push(`fire: fixed hull mount ×${tips} tip (muzzleFire picks tips) · ${wpnLine(sp.weapon)}`);
+  } else {
+    out.push("fire: unarmed");
+  }
+  if (sp.secondary) {
+    const sec = sp.secondary;
+    out.push(`· secondary ×${sec.mounts.length} ${sec.mountFire ?? "single"} · ${wpnLine(sec.wpn)}`);
+  }
+  return out;
+}
+
+function formatSpec(
+  kind: UnitKind,
+  sp: UnitSpec,
+  guns: PartMount[],
+  tex: string
+): { stats: string[]; info: string[] } {
+  const info = [
+    "source: roster.ts SPECS + craft.ts CRAFTS (partsRoll / crew / drive / hardpoint)",
+    ...fireModelInfo(sp, guns, tex),
+  ];
   if (sp.crew?.mounts.length) {
     const total = TROOP_WEIGHTS.reduce((s, [, w]) => s + w, 0);
     info.push(`pickTroop n=${TROOP_WEIGHTS.length}`);
