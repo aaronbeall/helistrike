@@ -39,10 +39,20 @@ void main() {
   warped = 0.5 + rot * (warped * 2.0 - 1.0) * 0.5;
   warped = clamp(warped, 0.0, 1.0);
 
+  // Duochrome plate separation at the outer rim: a red plate and a cyan (G+B) plate slip
+  // opposite ways (slowly rotating) and scale apart around center — misregistered prints.
+  float plateEdge = smoothstep(0.55, 1.15, r) * amt;
+  float pa = uTime * 0.35;
+  vec2 plateDir = vec2(cos(pa), sin(pa) * 1.4);
+  vec2 fromC = warped - 0.5;
+  vec2 offR = (plateDir * 0.011 + fromC * 0.028) * plateEdge;
+  vec2 offB = (-plateDir * 0.011 - fromC * 0.028) * plateEdge;
   float split = (0.003 + 0.01 * amt) * edge * pulse;
-  float rr = texture2D(uMainSampler, warped + dir * split).r;
-  float gg = texture2D(uMainSampler, warped).g;
-  float bb = texture2D(uMainSampler, warped - dir * split).b;
+  float rr = texture2D(uMainSampler, clamp(warped + dir * split + offR, 0.0, 1.0)).r;
+  vec2 cyanUv = clamp(warped - dir * split + offB, 0.0, 1.0);
+  vec4 cyan = texture2D(uMainSampler, cyanUv);
+  float gg = cyan.g;
+  float bb = cyan.b;
   vec3 color = vec3(rr, gg, bb);
   // Cool rim cast so the warp reads as space bending, not just blur.
   color = mix(color, color * vec3(0.72, 0.9, 1.35), edge * amt * 0.55);

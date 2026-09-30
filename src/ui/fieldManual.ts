@@ -52,6 +52,7 @@ import {
 } from "../sim/tips";
 import { spritePivot, spriteUvPos } from "../art/sprites";
 import { CLOAK_PREVIEW_PIPELINE, ensureCloakPreviewPipeline } from "../render/cloakPreviewFx";
+import { WARP_PREVIEW_PIPELINE, ensureWarpPreviewPipeline } from "../render/warpPreviewFx";
 import { lookupSpriteMuzzles } from "../art/spriteOrigin";
 import {
   adjustThreeRegionMadMul,
@@ -1943,9 +1944,7 @@ export class FieldManual {
         this.buildFlarePreview(cx, cy);
         break;
       case "timewarp":
-        // Warp is a camera post-process in-mission (edge refraction) — a static preview can't
-        // show that, so this stands in with the same purple the warp bomb's ribbon uses.
-        this.buildExpandingRings(cx, cy, 0xc86cff, 26, 1.6, 2, 1.6);
+        this.buildTimewarpPreview(cx, cy);
         break;
       case "phase_cloak":
         this.buildCloakPreview(cx, cy);
@@ -2019,6 +2018,81 @@ export class FieldManual {
     // Filament scale matches the full-screen effect.
     pipeline.freq = d / scene.scale.width;
     rt.setPipeline(CLOAK_PREVIEW_PIPELINE);
+    this.addDetail(rt);
+  }
+
+  /**
+   * Time Warp: a replica of the in-mission warpwire lens as a bubble in the middle of a strip.
+   * Rounds streak in fast from the left, crawl while crossing the bubble (grid + fisheye +
+   * plate split), then snap back to speed on the way out — entering a time-warp field.
+   * Canvas renderer has no shaders — falls back to purple expanding rings.
+   */
+  private buildTimewarpPreview(cx: number, cy: number): void {
+    const scene = this.scene;
+    const pipeline = ensureWarpPreviewPipeline(scene.game);
+    if (!pipeline) {
+      this.buildExpandingRings(cx, cy, 0xc86cff, 26, 1.6, 2, 1.6);
+      return;
+    }
+    // Height fits between the CM name and its description; the bubble spans the height.
+    const w = 150;
+    const h = 54;
+    const r = h / 2;
+    const bx = w / 2;
+    const by = h / 2;
+    const rt = scene.add.renderTexture(cx, cy, w, h).setOrigin(0.5, 0.5);
+    const grid = scene.make.graphics({}, false);
+    const step = 7;
+    grid.lineStyle(1, 0x6a4ca8, 0.75);
+    for (let o = -r + step / 2; o < r; o += step) {
+      const half = Math.sqrt(Math.max(0, r * r - o * o));
+      grid.lineBetween(bx + o, by - half, bx + o, by + half);
+      grid.lineBetween(bx - half, by + o, bx + half, by + o);
+    }
+    const rounds = scene.make.graphics({}, false);
+    const fast = 190;
+    const slow = 7;
+    const respawn = (p: { x: number; y: number }) => {
+      p.x = -14 - Math.random() * 90;
+      p.y = by + (Math.random() * 2 - 1) * r * 0.8;
+    };
+    const ps = Array.from({ length: 6 }, () => {
+      const p = { x: 0, y: 0 };
+      respawn(p);
+      p.x = Math.random() * w; // start spread across the strip
+      return p;
+    });
+    // Sharp ease between fast (outside) and a crawl (inside the bubble).
+    const insideness = (x: number, y: number) => {
+      const d = Math.hypot(x - bx, y - by);
+      return 1 - Phaser.Math.Clamp((d - (r - 5)) / 7, 0, 1);
+    };
+    const redraw = (_t: number, dms: number) => {
+      const dt = Math.min(dms, 50) / 1000;
+      rounds.clear();
+      for (const p of ps) {
+        const k = insideness(p.x, p.y);
+        const spd = Phaser.Math.Linear(fast, slow, k);
+        p.x += spd * dt;
+        if (p.x > w + 14) respawn(p);
+        // Streak length follows speed: long motion blur outside, a dot inside.
+        const tail = Phaser.Math.Clamp(spd * 0.07, 2, 16);
+        rounds.lineStyle(1.4, 0xc86cff, 0.6).lineBetween(p.x - tail, p.y, p.x, p.y);
+        rounds.fillStyle(0xf0e4ff, 1).fillCircle(p.x, p.y, 1.5);
+      }
+      rt.clear();
+      rt.draw(grid);
+      rt.draw(rounds);
+    };
+    redraw(0, 0);
+    scene.events.on("update", redraw);
+    rt.once("destroy", () => {
+      scene.events.off("update", redraw);
+      grid.destroy();
+      rounds.destroy();
+    });
+    pipeline.aspect = w / h;
+    rt.setPipeline(WARP_PREVIEW_PIPELINE);
     this.addDetail(rt);
   }
 
