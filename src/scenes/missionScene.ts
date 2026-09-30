@@ -887,7 +887,7 @@ export class MissionScene extends Phaser.Scene {
   heliHudWire!: Phaser.GameObjects.Image;
   heliHudWireSh!: Phaser.GameObjects.Image;
   heliHudWireScale = 1;
-  heliHudWireBake: HeliHudWireBake = { w: 1, h: 1, pivot: { x: 0.5, y: 0.5 }, srcW: 1, srcH: 1, cropX: 0, cropY: 0 };
+  heliHudWireBake: HeliHudWireBake = { w: 1, h: 1, pivot: { x: 0.5, y: 0.5 }, srcW: 1, srcH: 1, cropX: 0, cropY: 0, scale: 1, shadowPivot: { x: 0.5, y: 0.5 } };
   /** Soft OOF blood edges (under). */
   hurtVignette!: Phaser.GameObjects.Image;
   /** Static window cracks (over). */
@@ -3133,13 +3133,14 @@ export class MissionScene extends Phaser.Scene {
       .setDepth(Layer.FIELD)
       .setVisible(false)
       .setStroke("#1c100c", 3);
+    // Lower left, just above the minimap ring (ring top ≈ height − 198).
     this.fxHud = this.add
-      .text(16, 12, "", {
+      .text(16, this.scale.height - 206, "", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "12px",
         color: "#8a8470",
       })
-      .setOrigin(0, 0)
+      .setOrigin(0, 1)
       .setScrollFactor(0)
       .setDepth(Layer.HUD + 5);
     this.fpsHud = this.add
@@ -3261,28 +3262,24 @@ export class MissionScene extends Phaser.Scene {
       .setDepth(Layer.HUD + 5)
       .setAlpha(0)
       .setVisible(false);
-    const wireBake = bakeHeliHudWireTexture(this);
     // Square status panel matches minimap diameter; wire fits the area right of the HP bar.
     const statusPanel = 180;
     const wireRestW = statusPanel - 9 - 12 - 6; // bar + gap + pad
+    // Baked at its display scale (≤2× craft sprite) — images draw 1:1.
+    const wireBake = bakeHeliHudWireTexture(this, { w: wireRestW - 16, h: statusPanel - 28 });
     if (wireBake && this.textures.exists("hud_wire")) {
       this.heliHudWireBake = wireBake;
-      this.heliHudWireScale = Math.min(
-        (wireRestW - 16) / wireBake.w,
-        (statusPanel - 28) / wireBake.h
-      );
+      this.heliHudWireScale = wireBake.scale;
       const origin = wireBake.pivot;
       this.heliHudWireSh = this.add
         .image(0, 0, "hud_wire_sh")
-        .setOrigin(origin.x, origin.y)
-        .setScale(this.heliHudWireScale)
+        .setOrigin(wireBake.shadowPivot.x, wireBake.shadowPivot.y)
         .setScrollFactor(0)
         .setDepth(Layer.HUD + 10)
         .setAlpha(0.72);
       this.heliHudWire = this.add
         .image(0, 0, "hud_wire")
         .setOrigin(origin.x, origin.y)
-        .setScale(this.heliHudWireScale)
         .setScrollFactor(0)
         .setDepth(Layer.HUD + 11)
         .setTint(0x66cc55);

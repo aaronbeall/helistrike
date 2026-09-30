@@ -329,7 +329,14 @@ export type HeliHudWireBake = {
   srcH: number;
   cropX: number;
   cropY: number;
+  /** Screen px per crop px — the wire is baked at this scale and drawn 1:1. */
+  scale: number;
+  /** Shadow texture is padded (offset + blur room), so it has its own origin. */
+  shadowPivot: { x: number; y: number };
 };
+
+/** HUD wire never bakes / draws larger than this multiple of the craft sprite. */
+const HUD_WIRE_MAX_SCALE = 2;
 
 /** Map a full craft-body UV into cropped HUD wireframe UV space. */
 export function heliHudWireUv(bake: HeliHudWireBake, u: number, v: number): { u: number; v: number } {
@@ -379,45 +386,132 @@ export function extractHeliHudWireframe(tex: Phaser.Textures.Texture, step = 2):
   return pts;
 }
 
-function stampHudWireDots(
-  ctx: CanvasRenderingContext2D,
-  points: HudWirePoint[],
-  srcW: number,
-  srcH: number,
-  cropX: number,
-  cropY: number,
-  radius: number,
-  ox = 0,
-  oy = 0
-): void {
-  for (const p of points) {
-    ctx.beginPath();
-    ctx.arc(p.u * srcW - cropX + ox, p.v * srcH - cropY + oy, radius, 0, Math.PI * 2);
-    ctx.fill();
-  }
+/** 3×3 Sobel gradient magnitude of a scalar field (edge-clamped). */
+function sobelMag(f: Float32Array, w: number, h: number, x: number, y: number): number {
+  const at = (px: number, py: number) => f[clampN(py, 0, h - 1) * w + clampN(px, 0, w - 1)]!;
+  const gx =
+    -at(x - 1, y - 1) - 2 * at(x - 1, y) - at(x - 1, y + 1) +
+    at(x + 1, y - 1) + 2 * at(x + 1, y) + at(x + 1, y + 1);
+  const gy =
+    -at(x - 1, y - 1) - 2 * at(x, y - 1) - at(x + 1, y - 1) +
+    at(x - 1, y + 1) + 2 * at(x, y + 1) + at(x + 1, y + 1);
+  return Math.hypot(gx, gy);
 }
 
-function bakeHudWireShadowCanvas(
-  points: HudWirePoint[],
-  srcW: number,
-  srcH: number,
+function clampN(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
+/** Transparent margin (body px) around the sprite so the crop can extend past trimmed edges. */
+const HUD_WIRE_SRC_MARGIN = 8;
+
+/**
+ * White-on-transparent wireframe at `scale` × crop: silhouette from the local alpha range
+ * (full-strength even on thin, faint tips), overlaid with softer interior detail edges
+ * (luminance Sobel inside the hull, contrast normalized per craft so faint panel lines survive).
+ * `cropX/Y` may be negative — the sprite sits on a transparent margin.
+ */
+function bakeHudWireCanvas(
+  src: HTMLCanvasElement | HTMLImageElement,
   cropX: number,
   cropY: number,
   cw: number,
-  ch: number
+  ch: number,
+  scale: number
 ): HTMLCanvasElement {
+  const m = HUD_WIRE_SRC_MARGIN;
+  const padded = document.createElement("canvas");
+  padded.width = src.width + m * 2;
+  padded.height = src.height + m * 2;
+  padded.getContext("2d")!.drawImage(src, m, m);
+  const tw = Math.max(1, Math.round(cw * scale));
+  const th = Math.max(1, Math.round(ch * scale));
   const canvas = document.createElement("canvas");
-  canvas.width = cw;
-  canvas.height = ch;
+  canvas.width = tw;
+  canvas.height = th;
+  const g = canvas.getContext("2d", { willReadFrequently: true })!;
+  g.imageSmoothingEnabled = true;
+  g.imageSmoothingQuality = "high";
+  g.drawImage(padded, cropX + m, cropY + m, cw, ch, 0, 0, tw, th);
+  const img = g.getImageData(0, 0, tw, th);
+  const px = img.data;
+  const n = tw * th;
+  const alpha = new Float32Array(n);
+  const lum = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const a = px[i * 4 + 3]! / 255;
+    alpha[i] = a;
+    lum[i] = (a * (0.299 * px[i * 4]! + 0.587 * px[i * 4 + 1]! + 0.114 * px[i * 4 + 2]!)) / 255;
+  }
+  // Interior = solid hull pulled back ~2px from the silhouette, so detail never doubles the outline.
+  const inset = Math.max(2, Math.round(2 * scale));
+  const solid = (x: number, y: number) =>
+    x >= 0 && y >= 0 && x < tw && y < th && alpha[y * tw + x]! >= 0.9;
+  const outline = new Float32Array(n);
+  const detail = new Float32Array(n);
+  const samples: number[] = [];
+  for (let y = 0; y < th; y++) {
+    for (let x = 0; x < tw; x++) {
+      const i = y * tw + x;
+      // 3×3 alpha range relative to the local peak: 1 on any silhouette edge, however faint.
+      let lo = 1;
+      let hi = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        const yy = clampN(y + dy, 0, th - 1) * tw;
+        for (let dx = -1; dx <= 1; dx++) {
+          const a = alpha[yy + clampN(x + dx, 0, tw - 1)]!;
+          if (a < lo) lo = a;
+          if (a > hi) hi = a;
+        }
+      }
+      outline[i] = hi < 0.1 ? 0 : clampN(((hi - lo) / hi - 0.3) * 1.6, 0, 1);
+      if (
+        solid(x, y) &&
+        solid(x - inset, y) &&
+        solid(x + inset, y) &&
+        solid(x, y - inset) &&
+        solid(x, y + inset)
+      ) {
+        const m = sobelMag(lum, tw, th, x, y);
+        detail[i] = m;
+        if (m > 0.01) samples.push(m);
+      }
+    }
+  }
+  samples.sort((a, b) => a - b);
+  const norm = samples.length ? Math.max(0.02, samples[Math.floor(samples.length * 0.92)]!) : 1;
+  for (let i = 0; i < n; i++) {
+    const t = clampN(detail[i]! / norm, 0, 1);
+    // Noise floor, then lift faint lines so interior structure survives.
+    const d = t <= 0.14 ? 0 : Math.pow((t - 0.14) / 0.86, 0.75);
+    const a = Math.max(outline[i]!, d * 0.55);
+    px[i * 4] = 255;
+    px[i * 4 + 1] = 255;
+    px[i * 4 + 2] = 255;
+    px[i * 4 + 3] = Math.round(a * 255);
+  }
+  g.putImageData(img, 0, 0);
+  return canvas;
+}
+
+/** Dark drop shadow of the finished wire, padded so its offset + blur never crop. */
+function bakeHudWireShadowCanvas(
+  wire: HTMLCanvasElement,
+  scale: number
+): { canvas: HTMLCanvasElement; pad: number } {
+  const offX = 2 * scale;
+  const offY = 3 * scale;
+  const blur = 2.6 * scale;
+  const pad = Math.ceil(Math.max(offX, offY) + blur * 3);
+  const canvas = document.createElement("canvas");
+  canvas.width = wire.width + pad * 2;
+  canvas.height = wire.height + pad * 2;
   const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-  const offX = 2;
-  const offY = 3;
-  ctx.fillStyle = "#ffffff";
-  ctx.filter = "blur(2.6px)";
-  stampHudWireDots(ctx, points, srcW, srcH, cropX, cropY, 1.7, offX, offY);
+  ctx.filter = `blur(${blur}px)`;
+  ctx.drawImage(wire, pad + offX, pad + offY);
   ctx.filter = "none";
-  stampHudWireDots(ctx, points, srcW, srcH, cropX, cropY, 1.05, offX, offY);
-  const pix = ctx.getImageData(0, 0, cw, ch);
+  ctx.drawImage(wire, pad + offX, pad + offY);
+  const pix = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const d = pix.data;
   for (let p = 0; p < d.length; p += 4) {
     const a = d[p + 3]!;
@@ -428,30 +522,16 @@ function bakeHudWireShadowCanvas(
     d[p + 3] = Math.min(150, Math.round(a * 0.7));
   }
   ctx.putImageData(pix, 0, 0);
-  return canvas;
+  return { canvas, pad };
 }
 
-function bakeHudWireCanvas(
-  points: HudWirePoint[],
-  srcW: number,
-  srcH: number,
-  cropX: number,
-  cropY: number,
-  cw: number,
-  ch: number
-): HTMLCanvasElement {
-  const canvas = document.createElement("canvas");
-  canvas.width = cw;
-  canvas.height = ch;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-  ctx.fillStyle = "#ffffff";
-  stampHudWireDots(ctx, points, srcW, srcH, cropX, cropY, 1.4);
-  return canvas;
-}
-
-/** Bake a white-on-transparent wireframe texture from the player heli body sprite. */
+/**
+ * Bake the HUD wireframe (+ shadow) from the player craft body sprite, directly at the scale
+ * that fits `fitBox` (capped at HUD_WIRE_MAX_SCALE) — drawn 1:1, never stretched.
+ */
 export function bakeHeliHudWireTexture(
   scene: Phaser.Scene,
+  fitBox: { w: number; h: number },
   bodyKey = craftOf().body,
   outKey = "hud_wire",
   shadowKey = "hud_wire_sh"
@@ -476,33 +556,43 @@ export function bakeHeliHudWireTexture(
     if (px > maxX) maxX = px;
     if (py > maxY) maxY = py;
   }
+  // Trimmed sprites touch their texture edge — let the crop run into the transparent margin
+  // so tips / nose / tail keep an outline.
   const pad = 6;
-  minX = Math.max(0, Math.floor(minX - pad));
-  minY = Math.max(0, Math.floor(minY - pad));
-  maxX = Math.min(w, Math.ceil(maxX + pad));
-  maxY = Math.min(h, Math.ceil(maxY + pad));
+  const lim = HUD_WIRE_SRC_MARGIN;
+  minX = Math.max(-lim, Math.floor(minX - pad));
+  minY = Math.max(-lim, Math.floor(minY - pad));
+  maxX = Math.min(w + lim, Math.ceil(maxX + pad));
+  maxY = Math.min(h + lim, Math.ceil(maxY + pad));
   const cw = Math.max(1, maxX - minX);
   const ch = Math.max(1, maxY - minY);
 
+  const scale = Math.min(HUD_WIRE_MAX_SCALE, fitBox.w / cw, fitBox.h / ch);
+  const wire = bakeHudWireCanvas(src, minX, minY, cw, ch, scale);
+  const shadow = bakeHudWireShadowCanvas(wire, scale);
   if (scene.textures.exists(outKey)) scene.textures.remove(outKey);
-  scene.textures.addCanvas(outKey, bakeHudWireCanvas(points, w, h, minX, minY, cw, ch));
+  scene.textures.addCanvas(outKey, wire);
   registerArt(outKey, "generated");
   if (scene.textures.exists(shadowKey)) scene.textures.remove(shadowKey);
-  scene.textures.addCanvas(shadowKey, bakeHudWireShadowCanvas(points, w, h, minX, minY, cw, ch));
+  scene.textures.addCanvas(shadowKey, shadow.canvas);
   registerArt(shadowKey, "generated");
 
   const bodyPivot = spritePivot(bodyKey);
+  const pivotX = Math.max(0, Math.min(1, (bodyPivot.x * w - minX) / cw));
+  const pivotY = Math.max(0, Math.min(1, (bodyPivot.y * h - minY) / ch));
   return {
     w: cw,
     h: ch,
-    pivot: {
-      x: Math.max(0, Math.min(1, (bodyPivot.x * w - minX) / cw)),
-      y: Math.max(0, Math.min(1, (bodyPivot.y * h - minY) / ch)),
-    },
+    pivot: { x: pivotX, y: pivotY },
     srcW: w,
     srcH: h,
     cropX: minX,
     cropY: minY,
+    scale,
+    shadowPivot: {
+      x: (pivotX * wire.width + shadow.pad) / shadow.canvas.width,
+      y: (pivotY * wire.height + shadow.pad) / shadow.canvas.height,
+    },
   };
 }
 
