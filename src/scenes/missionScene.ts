@@ -2911,7 +2911,10 @@ export class MissionScene extends Phaser.Scene {
     });
     this.heliDust.setDepth(Layer.WORLD);
     this.registerFx("dust", this.heliDust);
-    this.events.on(Phaser.Scenes.Events.POST_UPDATE, () => this.tintThermalParticles());
+    // Scene events survive restart — drop on shutdown or handlers stack per mission.
+    const onPostUpdate = () => this.tintThermalParticles();
+    this.events.on(Phaser.Scenes.Events.POST_UPDATE, onPostUpdate);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.events.off(Phaser.Scenes.Events.POST_UPDATE, onPostUpdate));
     this.applyTimeScale();
 
     this.keyW = this.input.keyboard!.addKey("W");
@@ -4062,10 +4065,16 @@ export class MissionScene extends Phaser.Scene {
 
     if (!mapPause) {
       this.rebuildUnitIdMap();
-      if (perfOn) {
-        const timings = this.perfCurrent!;
-        timings.fill(0);
-        let t = performance.now();
+      // One pipeline; `stage` times a slot (minus its nested sub-slot) only when perf is on.
+      const timings = perfOn ? this.perfCurrent! : undefined;
+      timings?.fill(0);
+      const stage = (slot: number, nested: number | undefined, fn: () => void): void => {
+        if (!timings) return fn();
+        const t = performance.now();
+        fn();
+        timings[slot] = performance.now() - t - (nested != null ? timings[nested]! : 0);
+      };
+      stage(2, undefined, () => {
         const aim = this.worldPointer();
         const pilot = this.pilotingRemote();
         this.remoteCraftDriven.clear();
@@ -4118,26 +4127,13 @@ export class MissionScene extends Phaser.Scene {
         this.updateFlares(dt);
         this.tickTeslaZaps(dt);
         this.tickExtraMuzzleFlashes(dt);
-        timings[2] = performance.now() - t;
-
-        t = performance.now();
-        this.updateUnits(dt);
-        timings[3] = performance.now() - t - timings[4]!;
-
-        t = performance.now();
-        this.updateShots(dt);
-        timings[5] = performance.now() - t - timings[6]!;
-
-        if (this.player.phase === "dead" && !this.playerCrashStarted) this.beginPlayerCrash();
-        t = performance.now();
-        this.updateDebris(dt);
-        timings[7] = performance.now() - t - timings[8]!;
-
-        t = performance.now();
-        this.updateSimParticles(dt);
-        timings[9] = performance.now() - t - timings[10]!;
-
-        t = performance.now();
+      });
+      stage(3, 4, () => this.updateUnits(dt));
+      stage(5, 6, () => this.updateShots(dt));
+      if (this.player.phase === "dead" && !this.playerCrashStarted) this.beginPlayerCrash();
+      stage(7, 8, () => this.updateDebris(dt));
+      stage(9, 10, () => this.updateSimParticles(dt));
+      stage(11, undefined, () => {
         this.updateLock();
         this.drawUnitBars();
         this.drawThreatArcs();
@@ -4145,74 +4141,7 @@ export class MissionScene extends Phaser.Scene {
         this.emitHeliCrashDmgFlames();
         this.drawDebugHits();
         if (this.debugSideView) this.drawDebugSideView();
-        timings[11] = performance.now() - t;
-      } else {
-        const aim = this.worldPointer();
-        const pilot = this.pilotingRemote();
-        this.remoteCraftDriven.clear();
-        // POV remotes (HOUND): after Q exit the slot stays selected but bird flight returns.
-        this.remotePilotActive =
-          !!pilot && (this.remoteView || !remoteHasPovHud(pilot.spec));
-        if (this.remotePilotActive && pilot && !pilot.airborne) {
-          if (!pilot.dockPending) this.tickRemotePilot(pilot, dt, aim);
-        }
-        else {
-          const parked = this.activeRemote();
-          if (parked && !parked.spec.ai && !parked.airborne) this.tickRemoteIdle(parked, dt);
-        }
-        this.tickCountermeasures(dt, wallDt);
-        {
-          // POV dock: host holds station (and descends if needed) instead of escorting.
-          const dockSeq = !!this.povDockRemote();
-          const escort = dockSeq ? undefined : this.hostEscortDrive(pilot);
-          const dockDescend = this.hostDockDescend();
-          this.player.update(
-            playerDt,
-            this.world,
-            escort?.stick ??
-              (this.remotePilotActive
-                ? { up: false, down: false, left: false, right: false }
-                : {
-                    up: this.keyW.isDown,
-                    down: this.keyS.isDown,
-                    left: this.keyA.isDown,
-                    right: this.keyD.isDown,
-                  }),
-            escort?.aimX ?? aim.x,
-            escort?.aimY ?? aim.y,
-            escort || dockDescend
-              ? false
-              : this.keySpace.isDown &&
-                  !(this.stingerStyle === "subtle" && this.stingerT > 0 && !this.stingerReleased),
-            dockDescend || (escort ? false : this.keyShift.isDown)
-          );
-          if (escort?.brake || dockSeq) this.brakeHostEscort(dt);
-          if (escort?.speedCap != null) this.capHostEscortSpeed(escort.speedCap);
-        }
-
-        this.syncProjectionPose();
-        this.syncLeaveTheaterPeaks();
-        this.syncHeliGfx(dt);
-        this.handleFire(dt);
-        this.tickPlayerMuzzles(dt);
-        this.updateSmokePuffs(dt);
-        this.updateRemotes(dt);
-        this.updateFlares(dt);
-        this.tickTeslaZaps(dt);
-        this.tickExtraMuzzleFlashes(dt);
-        this.updateUnits(dt);
-        this.updateShots(dt);
-        if (this.player.phase === "dead" && !this.playerCrashStarted) this.beginPlayerCrash();
-        this.updateDebris(dt);
-        this.updateSimParticles(dt);
-        this.updateLock();
-        this.drawUnitBars();
-        this.drawThreatArcs();
-        this.emitDamageFx();
-        this.emitHeliCrashDmgFlames();
-        this.drawDebugHits();
-        if (this.debugSideView) this.drawDebugSideView();
-      }
+      });
     }
     this.updateThermalWreckMarks(dt);
     this.updateEmberGlows(dt);
@@ -24791,7 +24720,7 @@ specIsShellGun(spec)
     this.children.each((obj) => {
       if (!this.hudSet.has(obj)) this.bindWorld(obj);
     });
-    this.events.on("addedtoscene", (obj: Phaser.GameObjects.GameObject) => {
+    const onAdded = (obj: Phaser.GameObjects.GameObject) => {
       if (this.hudSet.has(obj)) return;
       this.bindWorld(obj);
       if (this.mapWorldHidden && !this.theaterWorldKeep(obj)) {
@@ -24799,7 +24728,9 @@ specIsShellGun(spec)
         this.mapWorldVisibility.set(obj, visible);
         (obj as Phaser.GameObjects.GameObject & { setVisible(value: boolean): unknown }).setVisible(false);
       }
-    });
+    };
+    this.events.on(Phaser.Scenes.Events.ADDED_TO_SCENE, onAdded);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.events.off(Phaser.Scenes.Events.ADDED_TO_SCENE, onAdded));
   }
 
   /** Keep field HUD camera aligned with the thermalized main view. */
