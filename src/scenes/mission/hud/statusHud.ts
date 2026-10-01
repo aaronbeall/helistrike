@@ -1,6 +1,6 @@
 import Phaser from "phaser";
-import { heliHudWireUv, type HeliHudWireBake } from "../../art/sprites";
-import type { MissionScene } from "../missionScene";
+import { heliHudWireUv, type HeliHudWireBake } from "../../../art/sprites";
+import type { MissionScene } from "../../missionScene";
 
 /** Lower-left status panel: HP bar, hull wireframe with damage pins, hurt vignette. */
 export class StatusHud {

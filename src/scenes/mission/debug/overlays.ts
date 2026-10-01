@@ -1,13 +1,13 @@
 import Phaser from "phaser";
-import { AI_AIM_NARROW_BASE, AI_AIM_WIDE_MUL } from "../../sim/weaponRuntime";
-import { heightOf, PLAYER_WPNS, type Unit } from "../../sim/combat";
-import { type RemoteCraft } from "../../sim/remote";
-import { aimPrecisionSpread, type StationTraverse } from "../../sim/weaponRuntime";
-import { Layer } from "../../render/depth";
-import { footprintOf } from "../../render/footprint";
-import { craftGunId } from "../../sim/crafts";
-import { groundZ, worldToScreen, WORLD } from "../../worldgen/world";
-import type { MissionScene } from "../missionScene";
+import { AI_AIM_NARROW_BASE, AI_AIM_WIDE_MUL } from "../../../sim/weaponRuntime";
+import { heightOf, PLAYER_WPNS, type Unit } from "../../../sim/combat";
+import { type RemoteCraft } from "../../../sim/remote";
+import { aimPrecisionSpread, type StationTraverse } from "../../../sim/weaponRuntime";
+import { Layer } from "../../../render/depth";
+import { footprintOf } from "../../../render/footprint";
+import { craftGunId } from "../../../sim/crafts";
+import { groundZ, worldToScreen, WORLD } from "../../../worldgen/world";
+import type { MissionScene } from "../../missionScene";
 
 /** Debug world overlays: AI state, escort nav, gun arcs/aim cones, hit + collider shapes, blast radii, height map. */
 export class DebugOverlays {
@@ -30,7 +30,7 @@ export class DebugOverlays {
     aim: number;
     want: number | null;
     targetId: number | null;
-    /** Acquire / engage radius used by this.s station (world units). */
+    /** Acquire / engage radius used by this station (world units). */
     range: number;
     /** Gun mount world position — search origin and cone apex are the same real point now. */
     mountX: number;
@@ -40,7 +40,7 @@ export class DebugOverlays {
     /** Socket traverse (center filled from mount); omit = full circle. */
     traverse?: StationTraverse;
     state: string;
-    /** True only while this.s barrel is actually under live automatic AI control this.s frame
+    /** True only while this barrel is actually under live automatic AI control this frame
      * (not player-manual/spot-owned) — debug overlay only draws the traverse cone when true. */
     auto: boolean;
     /** Current effective jitter full-width (radians) while tracking `targetId` — same aim
@@ -271,7 +271,7 @@ export class DebugOverlays {
     for (const dbg of this.stationGunDebugList()) {
       const traverse = dbg.traverse ?? { arc: 360, center: 0 };
       this.strokeAutoGunTraverseArc(dbg.mountX, dbg.mountY, h.z, dbg.range, dbg.heading, traverse, FRIENDLY);
-      // Same aim-precision cone as enemy/wingman AI — this.s station's aim narrows the same way.
+      // Same aim-precision cone as enemy/wingman AI — this station's aim narrows the same way.
       if (dbg.aimSpreadRad != null && dbg.targetId != null) {
         const tgt = this.s.units.find((u) => !u.dead && u.id === dbg.targetId);
         if (tgt) this.strokeAimCone(dbg.mountX, dbg.mountY, h.z, tgt.x, tgt.y, tgt.z, dbg.aimSpreadRad, FRIENDLY);
@@ -283,7 +283,7 @@ export class DebugOverlays {
       if (r.detonate || r.dock || !r.spec.hostEscort) continue;
       const { innerRadius, outerRadius } = r.spec.hostEscort;
       const scr = worldToScreen(r.x, r.y, r.z);
-      const follow = this.s.remoteCore.hostEscortMode === "follow" && this.s.remoteCore.remoteView;
+      const follow = this.s.remoteFleet.hostEscortMode === "follow" && this.s.remoteFleet.remoteView;
       const innerCol = follow ? 0x5ec8ff : 0x8a8470;
       const outerCol = follow ? 0xff9a3a : 0x8a8470;
       this.aiGfx.lineStyle(1.4, innerCol, follow ? 0.75 : 0.35);

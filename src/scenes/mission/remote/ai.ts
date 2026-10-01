@@ -1,12 +1,12 @@
 import Phaser from "phaser";
-import { GUN_STATION_TURN_RATE } from "./tuning";
-import { PLAYER_WPNS, type Unit } from "../../sim/combat";
-import { remoteSpecOf, type EscortNav, type EscortNavState, type RemoteCraft } from "../../sim/remote";
-import { isGroundVehicle, specOf } from "../../sim/roster";
-import { circumRadiusOf, closestOnFootprint, distToFootprint, footprintInto } from "../../render/footprint";
-import { craftAimsWithTurret, craftGunId, craftControlScheme, craftOf, craftSocketBarrelCount, craftSocketFireCd } from "../../sim/crafts";
-import { isWater } from "../../worldgen/world";
-import type { MissionScene } from "../missionScene";
+import { GUN_STATION_TURN_RATE } from "../tuning";
+import { PLAYER_WPNS, type Unit } from "../../../sim/combat";
+import { remoteSpecOf, type EscortNav, type EscortNavState, type RemoteCraft } from "../../../sim/remote";
+import { isGroundVehicle, specOf } from "../../../sim/roster";
+import { circumRadiusOf, closestOnFootprint, distToFootprint, footprintInto } from "../../../render/footprint";
+import { craftAimsWithTurret, craftGunId, craftControlScheme, craftOf, craftSocketBarrelCount, craftSocketFireCd } from "../../../sim/crafts";
+import { isWater } from "../../../worldgen/world";
+import type { MissionScene } from "../../missionScene";
 
 /** Auto-launch skips the bay until a remote has at least this battery fraction. */
 const AUTO_LAUNCH_MIN_BATTERY = 0.25;
@@ -105,7 +105,7 @@ export class RemoteAi {
     const near = Math.hypot(tx - drone.x, ty - drone.y);
     const throttle = near < 40 ? 0.35 : 1;
     const { stick, aim } = this.remoteAiStickAim(drone, want, throttle);
-    this.s.remoteCore.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false });
+    this.s.remoteFleet.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false });
     drone.gunAngle = want;
     if (spec.dockable && drone.life < 8) {
       const d = Math.hypot(drone.x - h.x, drone.y - h.y, drone.z - h.z);
@@ -182,7 +182,7 @@ export class RemoteAi {
     // Launch picks the fullest bay remote — hold the scramble while even that one is low.
     if (remoteFlags.dockable && !remoteFlags.unlimitedLife) {
       const lifeMax = Math.max(0.1, spec.payload!.remote!.duration);
-      const best = this.s.remoteBay.bayRoster(slot).reduce((m, b) => Math.max(m, b.life), 0);
+      const best = this.s.remoteFleet.bayRoster(slot).reduce((m, b) => Math.max(m, b.life), 0);
       if (best / lifeMax < AUTO_LAUNCH_MIN_BATTERY) return;
     }
 
@@ -259,12 +259,12 @@ export class RemoteAi {
       const near = Math.hypot(tx - drone.x, ty - drone.y);
       const throttle = near < 40 ? 0.35 : 1;
       const { stick, aim } = this.remoteAiStickAim(drone, face, throttle);
-      this.s.remoteCore.driveRemoteCraft(drone, dt, stick, aim, {
+      this.s.remoteFleet.driveRemoteCraft(drone, dt, stick, aim, {
         gunAim: { x: target.x, y: target.y },
       });
       const aimErr = Math.abs(Phaser.Math.Angle.Wrap(drone.angle - aimWant));
       if (aimErr < 0.7 || Math.hypot(target.x - drone.x, target.y - drone.y) < maxEngage * 0.45) {
-        this.s.remoteWeapons.fireRemoteGun(drone, dt, { x: target.x, y: target.y });
+        this.s.remoteBody.fireRemoteGun(drone, dt, { x: target.x, y: target.y });
       } else {
         drone.aimHoldT = 0; // out of cone/range — aim precision resets to max.
       }
@@ -277,7 +277,7 @@ export class RemoteAi {
       const catchUp = near > escortR * 0.85;
       const throttle = near < 50 ? 0 : catchUp ? 1 : 0.35;
       const { stick, aim } = this.remoteAiStickAim(drone, want, throttle);
-      this.s.remoteCore.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false });
+      this.s.remoteFleet.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false });
       drone.gunAngle = drone.angle;
     }
 
@@ -286,7 +286,7 @@ export class RemoteAi {
     drone.vz += (band - drone.z) * 1.8 * dt;
     drone.vz *= Math.pow(0.25, dt);
 
-    if (spec.dockable && drone.life < 8 && this.s.remoteCore.remoteNearHost(drone)) {
+    if (spec.dockable && drone.life < 8 && this.s.remoteFleet.remoteNearHost(drone)) {
       drone.dock = true;
     }
   }
@@ -318,13 +318,13 @@ export class RemoteAi {
 
     if (drone.aiPass === "run") {
       const { stick, aim } = this.remoteAiStickAim(drone, aimWant, 1);
-      this.s.remoteCore.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false });
+      this.s.remoteFleet.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false });
       drone.gunAngle = drone.angle;
       // Fire window: nose on target, not too close to clip through the burst.
       const fireMax = Math.min(420, this.wingmanMaxEngageRange() * 0.55);
       const fireMin = 55;
       if (ahead > 0 && aimErr < 0.22 && dist < fireMax && dist > fireMin) {
-        this.s.remoteWeapons.fireRemoteGun(drone, dt, { x: aimX, y: aimY });
+        this.s.remoteBody.fireRemoteGun(drone, dt, { x: aimX, y: aimY });
       } else {
         drone.aimHoldT = 0; // out of the fire window — aim precision resets to max.
       }
@@ -338,12 +338,12 @@ export class RemoteAi {
       const blend = Phaser.Math.Angle.Wrap(away - drone.angle);
       const outbound = drone.angle + Phaser.Math.Clamp(blend, -0.55, 0.55);
       const { stick, aim } = this.remoteAiStickAim(drone, outbound, 1);
-      this.s.remoteCore.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false });
+      this.s.remoteFleet.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false });
       drone.gunAngle = drone.angle;
     } else {
       // Far enough out — reverse and re-commit when the nose is back on target.
       const { stick, aim } = this.remoteAiStickAim(drone, aimWant, 0.95);
-      this.s.remoteCore.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false });
+      this.s.remoteFleet.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false });
       drone.gunAngle = drone.angle;
       if (ahead > Math.max(110, dist * 0.4) && aimErr < 0.5) {
         drone.aiPass = "run";
@@ -403,7 +403,7 @@ export class RemoteAi {
       }
       const aimErr = Math.abs(Phaser.Math.Angle.Wrap((drone.gunAngle ?? 0) - aimWant));
       if (aimErr < 0.22 || Math.hypot(target.x - drone.x, target.y - drone.y) < engage * 0.45) {
-        this.s.remoteWeapons.fireRemoteGun(drone, dt, { x: target.x, y: target.y });
+        this.s.remoteBody.fireRemoteGun(drone, dt, { x: target.x, y: target.y });
       } else {
         drone.aimHoldT = 0; // out of cone/range — aim precision resets to max.
       }
@@ -464,7 +464,7 @@ export class RemoteAi {
     }
     if (throttle > 0) want = this.waterSteerWant(drone, want);
     const { stick, aim } = this.remoteAiStickAim(drone, want, throttle);
-    this.s.remoteCore.driveRemoteCraft(drone, dt, stick, aim, {
+    this.s.remoteFleet.driveRemoteCraft(drone, dt, stick, aim, {
       syncGun: false,
       gunAim,
     });
@@ -547,7 +547,7 @@ export class RemoteAi {
     if (gunTarget) {
       const aimErr = Math.abs(Phaser.Math.Angle.Wrap((drone.gunAngle ?? 0) - aimWant));
       if (aimErr < 0.22 || Math.hypot(gunTarget.x - drone.x, gunTarget.y - drone.y) < maxEngage * 0.45) {
-        this.s.remoteWeapons.fireRemoteGun(drone, dt, { x: gunTarget.x, y: gunTarget.y }, gunTarget.id);
+        this.s.remoteBody.fireRemoteGun(drone, dt, { x: gunTarget.x, y: gunTarget.y }, gunTarget.id);
       } else {
         drone.aimHoldT = 0; // out of cone/range — aim precision resets to max.
       }
@@ -609,7 +609,7 @@ export class RemoteAi {
 
     this.driveGroundEscort(drone, dt, want, throttle, state, goalX, goalY, target ? { x: target.x, y: target.y } : undefined);
 
-    if (spec.dockable && drone.life < 8 && this.s.remoteCore.remoteNearHost(drone)) {
+    if (spec.dockable && drone.life < 8 && this.s.remoteFleet.remoteNearHost(drone)) {
       drone.dock = true;
     }
   }
@@ -806,7 +806,7 @@ export class RemoteAi {
     }
     nav.steer = stick.right ? 1 : stick.left ? -1 : 0;
 
-    this.s.remoteCore.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false, gunAim });
+    this.s.remoteFleet.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false, gunAim });
     const pen = this.resolveGroundRemote(drone);
     if (pen > 0.5 && moving) nav.stuckT += dt;
   }

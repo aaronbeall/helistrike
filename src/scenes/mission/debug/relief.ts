@@ -1,9 +1,9 @@
 import Phaser from "phaser";
-import { camoForBiome, resolveSkin } from "../../render/camo";
-import { Layer } from "../../render/depth";
-import { HEIGHT_BRUSHES, bakeHeightBrushes } from "../../worldgen/brushes";
-import { groundZ, worldToScreen, projectHeading, paintHeightMapRect, stampHeightBrush, rebuildWorldPatch, paintRoadsRect, sampleBiome, SCALE, doodadTex } from "../../worldgen/world";
-import type { MissionScene } from "../missionScene";
+import { camoForBiome, resolveSkin } from "../../../render/camo";
+import { Layer } from "../../../render/depth";
+import { HEIGHT_BRUSHES, bakeHeightBrushes } from "../../../worldgen/brushes";
+import { groundZ, worldToScreen, projectHeading, paintHeightMapRect, stampHeightBrush, rebuildWorldPatch, paintRoadsRect, sampleBiome, SCALE, doodadTex } from "../../../worldgen/world";
+import type { MissionScene } from "../../missionScene";
 
 /** Debug terrain relief editor (B): brush painting onto the height map + decor. */
 export class ReliefEditor {

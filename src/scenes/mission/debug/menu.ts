@@ -1,8 +1,8 @@
 import Phaser from "phaser";
-import { Layer } from "../../render/depth";
-import { labelOf, allKinds } from "../../sim/roster";
-import { CamTune } from "../../worldgen/world";
-import type { MissionScene } from "../missionScene";
+import { Layer } from "../../../render/depth";
+import { labelOf, allKinds } from "../../../sim/roster";
+import { CamTune } from "../../../worldgen/world";
+import type { MissionScene } from "../../missionScene";
 
 const DEBUG_MENU_ITEMS = [
   { section: "GAMEPLAY" },

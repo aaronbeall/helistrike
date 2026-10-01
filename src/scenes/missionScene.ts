@@ -1,38 +1,35 @@
 import Phaser from "phaser";
-import { RemoteCore } from "./mission/remoteCore";
+import { RemoteBody } from "./mission/remote/body";
+import { RemoteFleet } from "./mission/remote/fleet";
 import { planeLookCam } from "./mission/shared";
-import { PostFxTest } from "./mission/postFxTest";
-import { DebugOverlays } from "./mission/debugOverlays";
-import { HelpPanel } from "./mission/helpPanel";
-import { CornerHud } from "./mission/cornerHud";
-import { PromptsHud } from "./mission/promptsHud";
+import { PostFxTest } from "./mission/debug/postFx";
+import { DebugOverlays } from "./mission/debug/overlays";
+import { HelpPanel } from "./mission/hud/help";
+import { CornerHud } from "./mission/hud/cornerHud";
+import { PromptsHud } from "./mission/hud/prompts";
 import { jitterDisk } from "../util/rng";
-import { UnitSim } from "./mission/unitSim";
-import { EnemyFire } from "./mission/enemyFire";
-import { EnemyTargeting } from "./mission/enemyTargeting";
+import { UnitSim } from "./mission/enemy/unitSim";
+import { EnemyFire } from "./mission/enemy/enemyFire";
+import { EnemyTargeting } from "./mission/enemy/targeting";
 import { gunWorldRot } from "../art/spriteOrigin";
-import { RemoteAi } from "./mission/remoteAi";
-import { RemoteWeapons } from "./mission/remoteWeapons";
-import { RemoteVisuals } from "./mission/remoteVisuals";
-import { Antennas } from "./mission/antennas";
-import { RemoteBay } from "./mission/remoteBay";
+import { RemoteAi } from "./mission/remote/ai";
 import { GUN_STATION_TURN_RATE } from "./mission/tuning";
 import { AI_AIM_NARROW_BASE } from "../sim/weaponRuntime";
 import { simParticleTexKey, simParticleLook } from "../render/simParticleLook";
 import { thermalSignalTint, applyThermalHeat } from "../render/thermal";
 import { projectileFxScale, playerMuzzleFxMul, scaledProjectileFxCount } from "../render/fxScale";
 import { launchGravity, targetingMode, specIsShellGun, specIsRocketPod, hardpointAmmoIndex } from "../sim/weaponRuntime";
-import { ReticleHud } from "./mission/reticleHud";
-import { Minimap } from "./mission/minimap";
-import { StatusHud } from "./mission/statusHud";
-import { WeaponHud } from "./mission/weaponHud";
+import { ReticleHud } from "./mission/hud/reticleHud";
+import { Minimap } from "./mission/hud/minimap";
+import { StatusHud } from "./mission/hud/statusHud";
+import { WeaponHud } from "./mission/hud/weaponHud";
 import { BATTERY_ICON_W, BULLET_TIME_SCALE, BULLET_TIME_DURATION, BULLET_TIME_RECHARGE } from "./mission/tuning";
 import { payloadIsRemote, payloadIsCluster, payloadIsSmoke, payloadIsCallStrike, payloadIsHelix, payloadIsHe, payloadIsKinetic } from "../sim/payload";
-import { ThreatHud } from "./mission/threatHud";
-import { DebugMenu } from "./mission/debugMenu";
-import { ReliefEditor } from "./mission/reliefEditor";
-import { SideView } from "./mission/sideView";
-import { PerfMonitor } from "./mission/perfMonitor";
+import { ThreatHud } from "./mission/hud/threatHud";
+import { DebugMenu } from "./mission/debug/menu";
+import { ReliefEditor } from "./mission/debug/relief";
+import { SideView } from "./mission/debug/sideView";
+import { PerfMonitor } from "./mission/debug/perf";
 import { createFxEmitters } from "../render/fxEmitters";
 import { camoForBiome, resolveSkin } from "../render/camo";
 import { debrisKeys, heightOf, hulkOf, nextId, radius, textureOf, wheelDebrisKeys, playerLoadoutFromSockets, SHOT_ORIGIN, SHOT_TAIL, shotBehaviorOf, applyKineticCombatMix, payloadDustMul, payloadHeBlend, guidanceUsesLock, guidanceIsLockOn, exhaustIsEnergy, exhaustIsGunSpark, exhaustRibbons, exhaustHue, exhaustWarpMotes, exhaustIsSignalFlare, launchIsArcBeam, launchIsRayBeam, ENERGY_TRAIL_NODE_LIFE, HELIX_TRAIL_NODE_LIFE, PLAYER_WPNS, COUNTERMEASURES, craftCountermeasure, wpnIdOf, stunUnit, unitStunned, type Debris, type Shot, type ShotState, type SmokePuff, type SimParticle, type Unit, type PlayerWpnSpec, type WpnId, type LockAcquire, type Flare, type EnergyTrailNode, type WeaponGravity, type WeaponPayload, heatClassScore, heatClassCategory } from "../sim/combat";
@@ -261,15 +258,15 @@ let bloodStampScratch: HTMLCanvasElement | null = null;
 
 export class MissionScene extends Phaser.Scene {
   // Subsystems — each owns its state + methods, holds the scene as `s`.
+  // enemy
   targeting = new EnemyTargeting(this);
   unitSim = new UnitSim(this);
   enemyFire = new EnemyFire(this);
-  remoteCore = new RemoteCore(this);
+  // remote
+  remoteFleet = new RemoteFleet(this);
   remoteAi = new RemoteAi(this);
-  remoteBay = new RemoteBay(this);
-  remoteWeapons = new RemoteWeapons(this);
-  remoteVisuals = new RemoteVisuals(this);
-  antennas = new Antennas(this);
+  remoteBody = new RemoteBody(this);
+  // hud
   weaponHud = new WeaponHud(this);
   statusHud = new StatusHud(this);
   threatHud = new ThreatHud(this);
@@ -278,6 +275,7 @@ export class MissionScene extends Phaser.Scene {
   cornerHud = new CornerHud(this);
   prompts = new PromptsHud(this);
   help = new HelpPanel(this);
+  // debug
   debugMenu = new DebugMenu(this);
   overlays = new DebugOverlays(this);
   relief = new ReliefEditor(this);
@@ -821,8 +819,6 @@ export class MissionScene extends Phaser.Scene {
     this.callStrikeEtaTxt = [];
     this.refractorBeams = [];
     this.remotes = [];
-    this.remoteCore.reset();
-    this.antennas.reset();
     this.flares = [];
     this.teslaZaps = [];
     this.extraMuzzleFlashes = [];
@@ -851,7 +847,7 @@ export class MissionScene extends Phaser.Scene {
     this.exitOpen = false;
     this.debugMenu.reset();
     // Scene restart destroys pooled images — drop stale refs so they're rebuilt.
-    this.remoteVisuals.reset();
+    this.remoteBody.reset();
     this.relief.reset();
     this.shots = [];
     this.energyLinger = [];
@@ -885,7 +881,7 @@ export class MissionScene extends Phaser.Scene {
     this.ammo = this.loadout.map((weapon, i) =>
       craftSocketStartingAmmo(weapon.ammo, selectedCraft, i)
     );
-    this.remoteBay.reset();
+    this.remoteFleet.reset();
     this.stationFireCd = this.loadout.map((_, i) =>
       Array.from({ length: craftSocketBarrelCount(selectedCraft, i) }, () => 0)
     );
@@ -930,7 +926,7 @@ export class MissionScene extends Phaser.Scene {
     });
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
       if (this.debugMenu.open || this.help.open || this.exitOpen || this.relief.open || this.mapView) return;
-      if (p.rightButtonDown()) this.remoteCore.exitRemoteView();
+      if (p.rightButtonDown()) this.remoteFleet.exitRemoteView();
     });
 
     this.physics.world.setBounds(0, 0, WORLD, WORLD);
@@ -964,7 +960,7 @@ export class MissionScene extends Phaser.Scene {
     this.unitG = this.add.group();
     this.shotG = this.add.group();
     this.photonFxG = this.add.group();
-    this.remoteVisuals.remoteG = this.add.group();
+    this.remoteBody.remoteG = this.add.group();
     this.debrisG = this.add.group();
     this.simParticleG = this.add.group();
     this.smokePuffG = this.add.group();
@@ -1080,7 +1076,7 @@ export class MissionScene extends Phaser.Scene {
     this.reticleHud.create();
     this.lockGfx = this.add.graphics().setDepth(Layer.FIELD).setVisible(false);
     this.towWireGfx = this.add.graphics().setDepth(Layer.WORLD);
-    this.antennas.remoteAntennaGfx = this.add.graphics().setDepth(Layer.WORLD);
+    this.remoteBody.remoteAntennaGfx = this.add.graphics().setDepth(Layer.WORLD);
     this.teslaGfx = this.add.graphics().setDepth(Layer.WORLD).setBlendMode(Phaser.BlendModes.ADD);
     this.energyTrailGfx = this.add.graphics().setDepth(Layer.WORLD).setBlendMode(Phaser.BlendModes.ADD);
     this.refractorGfx = this.add.graphics().setDepth(Layer.WORLD).setBlendMode(Phaser.BlendModes.ADD);
@@ -1198,7 +1194,7 @@ export class MissionScene extends Phaser.Scene {
     // POV remote host escort FOLLOW / HOLD.
     this.input.keyboard!.addKey("C").on("down", () => {
       if (this.relief.open || this.debugMenu.open || this.help.open || this.exitOpen) return;
-      if (this.remoteCore.povHudRemote()?.spec.hostEscort) this.remoteCore.toggleHostEscortMode();
+      if (this.remoteFleet.povHudRemote()?.spec.hostEscort) this.remoteFleet.toggleHostEscortMode();
     });
     this.input.keyboard!.addKey("ONE").on("down", () => {
       if (this.relief.open) this.relief.setBrush(0);
@@ -1235,8 +1231,8 @@ export class MissionScene extends Phaser.Scene {
     });
     this.input.keyboard!.addKey("Q").on("down", () => {
       if (this.relief.open) this.relief.nudgeRot(-1);
-      else if (this.remoteCore.remoteView && this.remoteCore.pilotingRemote()) this.remoteCore.exitRemoteView();
-      else this.remoteCore.recallDockables();
+      else if (this.remoteFleet.remoteView && this.remoteFleet.pilotingRemote()) this.remoteFleet.exitRemoteView();
+      else this.remoteFleet.recallDockables();
     });
     this.input.keyboard!.addKey("COMMA").on("down", () => {
       if (this.relief.open) this.relief.nudgeOff(-1, 0);
@@ -2313,7 +2309,7 @@ export class MissionScene extends Phaser.Scene {
       this.minimap.draw();
       this.statusHud.draw();
       this.towWireGfx.clear();
-      this.antennas.remoteAntennaGfx?.clear();
+      this.remoteBody.remoteAntennaGfx?.clear();
       this.teslaGfx.clear();
       this.hideTeslaVisuals();
       this.energyTrailGfx.clear();
@@ -2341,18 +2337,18 @@ export class MissionScene extends Phaser.Scene {
       };
       stage(2, undefined, () => {
         const aim = this.worldPointer();
-        const pilot = this.remoteCore.tickControl(dt, aim);
+        const pilot = this.remoteFleet.tickControl(dt, aim);
         this.tickCountermeasures(dt, wallDt);
         {
           // POV dock: host holds station (and descends if needed) instead of escorting.
-          const dockSeq = !!this.remoteCore.povDockRemote();
-          const escort = dockSeq ? undefined : this.remoteCore.hostEscortDrive(pilot);
-          const dockDescend = this.remoteCore.hostDockDescend();
+          const dockSeq = !!this.remoteFleet.povDockRemote();
+          const escort = dockSeq ? undefined : this.remoteFleet.hostEscortDrive(pilot);
+          const dockDescend = this.remoteFleet.hostDockDescend();
           this.player.update(
             playerDt,
             this.world,
             escort?.stick ??
-              (this.remoteCore.remotePilotActive
+              (this.remoteFleet.remotePilotActive
                 ? { up: false, down: false, left: false, right: false }
                 : {
                     up: this.keyW.isDown,
@@ -2368,8 +2364,8 @@ export class MissionScene extends Phaser.Scene {
                   !(this.stingerStyle === "subtle" && this.stingerT > 0 && !this.stingerReleased),
             dockDescend || (escort ? false : this.keyShift.isDown)
           );
-          if (escort?.brake || dockSeq) this.remoteCore.brakeHostEscort(dt);
-          if (escort?.speedCap != null) this.remoteCore.capHostEscortSpeed(escort.speedCap);
+          if (escort?.brake || dockSeq) this.remoteFleet.brakeHostEscort(dt);
+          if (escort?.speedCap != null) this.remoteFleet.capHostEscortSpeed(escort.speedCap);
         }
         this.syncProjectionPose();
         this.syncLeaveTheaterPeaks();
@@ -2377,7 +2373,7 @@ export class MissionScene extends Phaser.Scene {
         this.handleFire(dt);
         this.tickPlayerMuzzles(dt);
         this.updateSmokePuffs(dt);
-        this.remoteCore.updateRemotes(dt);
+        this.remoteFleet.updateRemotes(dt);
         this.updateFlares(dt);
         this.tickTeslaZaps(dt);
         this.tickExtraMuzzleFlashes(dt);
@@ -2413,7 +2409,7 @@ export class MissionScene extends Phaser.Scene {
     if (mapOn) {
       this.drawMapOverlay();
       this.towWireGfx.clear();
-      this.antennas.remoteAntennaGfx?.clear();
+      this.remoteBody.remoteAntennaGfx?.clear();
       this.teslaGfx.clear();
       this.hideTeslaVisuals();
       this.energyTrailGfx.clear();
@@ -2427,7 +2423,7 @@ export class MissionScene extends Phaser.Scene {
       this.drawHvArrows();
       this.statusHud.draw();
       this.drawTowWires();
-      this.antennas.drawRemoteAntennas();
+      this.remoteBody.drawRemoteAntennas();
       this.drawEnergyTrails();
       this.drawRefractorBeams();
       this.drawTeslaArcs();
@@ -2970,7 +2966,7 @@ export class MissionScene extends Phaser.Scene {
       if (wrap?.scene) wrap.setAlpha(cloakA);
     }
     for (const gun of this.guns) gun.setAlpha(cloakA);
-    if (this.player.spec.antenna) this.antennas.tickHeliAntenna(dt);
+    if (this.player.spec.antenna) this.remoteBody.tickHeliAntenna(dt);
     const bodyDepth = worldDepth(h.z, ZOff.body, h.y);
     const bodyWrap = this.body.getData("tiltWrap") as Phaser.GameObjects.Container | undefined;
     if (bodyWrap?.scene) {
@@ -3974,7 +3970,7 @@ export class MissionScene extends Phaser.Scene {
 
   /** Host hangar craft or POV remote hull — jets share gun-depress clamp. */
   aimCraftIsPlane(): boolean {
-    const pov = this.remoteCore.povHudRemote();
+    const pov = this.remoteFleet.povHudRemote();
     if (pov?.spec.craftLook) {
       return craftControlScheme(craftOf(pov.spec.craftLook)) === "plane";
     }
@@ -4283,9 +4279,9 @@ export class MissionScene extends Phaser.Scene {
     }
 
     // POV remote loadout owns fire while piloting (HOUND) — bird guns stay parked.
-    const pov = this.remoteCore.povHudRemote();
+    const pov = this.remoteFleet.povHudRemote();
     if (pov && !pov.airborne) {
-      this.remoteWeapons.handlePovRemoteFire(pov, dt, ptr, down, pressed, released);
+      this.remoteBody.handlePovRemoteFire(pov, dt, ptr, down, pressed, released);
       this.pointerWasDown = down;
       return;
     }
@@ -4364,7 +4360,7 @@ export class MissionScene extends Phaser.Scene {
     // Remote: live pod for this HUD slot — POV remotes stay in their HUD; Spectre detonates in view.
     // AI wingmen (Skiffs) never bind mouse fire — fall through so more can launch while LIVE.
     if (payloadIsRemote(spec.payload)) {
-      const live = this.remoteCore.selectedSlotRemote();
+      const live = this.remoteFleet.selectedSlotRemote();
       if (live) {
         if (remoteHasPovHud(live.spec)) {
           // POV-HUD remotes fire only inside their own HUD (handlePovRemoteFire).
@@ -4377,12 +4373,12 @@ export class MissionScene extends Phaser.Scene {
           // Skiffs / AI-only: launch more if ammo remains.
         } else if (craftGunId(live.spec)) {
           // Legacy single-gun remotes: selected + alive = player fire only.
-          if (down) this.remoteWeapons.fireRemoteGun(live, dt);
+          if (down) this.remoteBody.fireRemoteGun(live, dt);
           this.pointerWasDown = down;
           return;
         } else if (pressed) {
-          if (this.remoteCore.remoteView) live.detonate = true;
-          else this.remoteCore.enterRemoteView();
+          if (this.remoteFleet.remoteView) live.detonate = true;
+          else this.remoteFleet.enterRemoteView();
           this.pointerWasDown = down;
           return;
         } else {
@@ -4885,7 +4881,7 @@ export class MissionScene extends Phaser.Scene {
         if (tips.length) {
           if (socket.muzzleFire === "simultaneous") {
             for (const uv of tips) {
-              this.remoteCore.launchRemote(spec, slot, yawOff, pitchOff, this.craftBodyMountWorldPos(uv));
+              this.remoteFleet.launchRemote(spec, slot, yawOff, pitchOff, this.craftBodyMountWorldPos(uv));
             }
             return;
           }
@@ -4893,11 +4889,11 @@ export class MissionScene extends Phaser.Scene {
             socket.muzzleFire === "alternate"
               ? tips[this.playerGunSide++ % tips.length]!
               : tips[0]!;
-          this.remoteCore.launchRemote(spec, slot, yawOff, pitchOff, this.craftBodyMountWorldPos(uv));
+          this.remoteFleet.launchRemote(spec, slot, yawOff, pitchOff, this.craftBodyMountWorldPos(uv));
           return;
         }
       }
-      this.remoteCore.launchRemote(spec, slot, yawOff, pitchOff);
+      this.remoteFleet.launchRemote(spec, slot, yawOff, pitchOff);
       return;
     }
     const mixed = applyKineticCombatMix(
@@ -6472,7 +6468,7 @@ specIsShellGun(spec)
   }
 
   craftCmId() {
-    const pov = this.remoteCore.povHudRemote();
+    const pov = this.remoteFleet.povHudRemote();
     if (pov) return craftCountermeasure(pov.spec.countermeasure);
     return craftCountermeasure(this.player.spec.countermeasure);
   }
@@ -6481,15 +6477,15 @@ specIsShellGun(spec)
 
   /** Active weapon strip — remote POV loadout or bird loadout. */
   hudLoadout(): PlayerWpnSpec[] {
-    return this.remoteCore.povHudRemote()?.loadout ?? this.loadout;
+    return this.remoteFleet.povHudRemote()?.loadout ?? this.loadout;
   }
 
   hudAmmo(): number[] {
-    const rem = this.remoteCore.povHudRemote();
+    const rem = this.remoteFleet.povHudRemote();
     if (!rem?.ammo || !rem.loadout) return this.ammo;
     // Host-linked slots (howitzer spot / call-strike) show the dropship bank.
     return rem.loadout.map((wp, i) => {
-      const hostId = this.remoteCore.remoteHostAmmoWeapon(wp);
+      const hostId = this.remoteFleet.remoteHostAmmoWeapon(wp);
       if (hostId) {
         const n = this.hostWeaponAmmoLeft(hostId);
         return n ?? rem.ammo![i]!;
@@ -6512,10 +6508,10 @@ specIsShellGun(spec)
       const slot = this.hostWeaponSlot(hostWalk.hostWeapon);
       if (slot >= 0) return slot;
     }
-    const rem = this.remoteCore.povHudRemote();
+    const rem = this.remoteFleet.povHudRemote();
     if (rem && !rem.airborne) {
       const wp = rem.loadout?.[rem.weapon ?? 0];
-      const hostId = wp ? this.remoteCore.remoteHostAmmoWeapon(wp) : undefined;
+      const hostId = wp ? this.remoteFleet.remoteHostAmmoWeapon(wp) : undefined;
       if (hostId) {
         const slot = this.hostWeaponSlot(hostId);
         if (slot >= 0) return slot;
@@ -6576,7 +6572,7 @@ specIsShellGun(spec)
   }
 
   hudWeapon(): number {
-    const rem = this.remoteCore.povHudRemote();
+    const rem = this.remoteFleet.povHudRemote();
     return rem?.weapon ?? this.player.weapon;
   }
 
@@ -6602,21 +6598,21 @@ specIsShellGun(spec)
 
   selectWeapon(slot: number): void {
     // POV remote HUD owns 1–N while piloting — never switches the bird loadout.
-    const rem = this.remoteCore.povHudRemote();
+    const rem = this.remoteFleet.povHudRemote();
     if (rem?.loadout) {
       if (slot < 0 || slot >= rem.loadout.length) return;
       rem.weapon = slot;
       return;
     }
     if (slot < 0 || slot >= this.loadout.length) return;
-    const wasHound = !!this.remoteCore.selectedSlotRemote()?.spec.pilotable;
+    const wasHound = !!this.remoteFleet.selectedSlotRemote()?.spec.pilotable;
     this.player.weapon = slot;
-    const live = this.remoteCore.selectedSlotRemote();
+    const live = this.remoteFleet.selectedSlotRemote();
     if (live?.spec.pilotable || (live && !live.spec.ai)) {
-      this.remoteCore.enterRemoteView();
+      this.remoteFleet.enterRemoteView();
     } else if (wasHound) {
       // HOUND POV is HUD-tied; Spectre POV stays sticky when switching to guns.
-      this.remoteCore.remoteView = false;
+      this.remoteFleet.remoteView = false;
       this.applyThermalMode();
     }
   }
@@ -6753,7 +6749,7 @@ specIsShellGun(spec)
     if (n <= 0) return;
     r.exhaustCarry -= n;
 
-    const pose = this.remoteVisuals.remoteBodyDrawPose(body);
+    const pose = this.remoteBody.remoteBodyDrawPose(body);
     const wrap = body.getData("tiltWrap") as Phaser.GameObjects.Container | undefined;
     const bodyDepth = wrap?.depth ?? body.depth;
     const jetAng = projectHeading(r.angle + Math.PI, r.x, r.y, r.z);
@@ -8842,7 +8838,7 @@ specIsShellGun(spec)
     // Spider drones: mouse crawl + proximity dash onto hostiles.
     const spider = beh.payload.spider;
     if (spider && lit) {
-      this.remoteWeapons.tickSpiderDroneShot(s, beh, spider, dt, ptr);
+      this.remoteBody.tickSpiderDroneShot(s, beh, spider, dt, ptr);
       return;
     }
 
@@ -10017,9 +10013,9 @@ specIsShellGun(spec)
 
   tryCountermeasure(): void {
     if (this.player.phase !== "flight" || !this.canFire || this.debugMenu.open || this.help.open || this.exitOpen) return;
-    const pov = this.remoteCore.povHudRemote();
+    const pov = this.remoteFleet.povHudRemote();
     if (pov) {
-      this.remoteWeapons.tryRemoteCountermeasure(pov);
+      this.remoteBody.tryRemoteCountermeasure(pov);
       return;
     }
     const id = this.craftCmId();
@@ -14563,7 +14559,7 @@ specIsShellGun(spec)
   drawParentCraftArrow(pad = 40): void {
     const label = this.parentArrowLabel;
     if (!label) return;
-    if (!this.remoteCore.remoteView || !this.remoteCore.activeRemote()) {
+    if (!this.remoteFleet.remoteView || !this.remoteFleet.activeRemote()) {
       label.setVisible(false);
       return;
     }
@@ -14735,14 +14731,14 @@ specIsShellGun(spec)
   /** Craft-owned thermal look (sensor cams + T share this; linger must not override it). */
   craftSensorPalette(): ThermalPalette {
     return (
-      this.remoteCore.pilotingRemote()?.spec.sensorPalette ?? this.player.spec.sensorPalette ?? "white_hot"
+      this.remoteFleet.pilotingRemote()?.spec.sensorPalette ?? this.player.spec.sensorPalette ?? "white_hot"
     );
   }
 
   /** True when a remote or seeker cam wants thermal (palette always craft thermal). */
   activeSensorThermal(): boolean {
-    const remote = this.remoteCore.activeRemote();
-    if (remote?.spec.thermal && this.remoteCore.remoteCamT > 0.2) return true;
+    const remote = this.remoteFleet.activeRemote();
+    if (remote?.spec.thermal && this.remoteFleet.remoteCamT > 0.2) return true;
     return !!this.activeSensorShot();
   }
 
@@ -14996,8 +14992,8 @@ specIsShellGun(spec)
     // TOW wire / Tesla / Refractor / energy ribbons stay on the main cam (world depth).
     this.hudSet.delete(this.towWireGfx);
     this.towWireGfx.cameraFilter = this.hudCam.id | this.fieldHudCam.id;
-    this.hudSet.delete(this.antennas.remoteAntennaGfx);
-    this.antennas.remoteAntennaGfx.cameraFilter = this.hudCam.id | this.fieldHudCam.id;
+    this.hudSet.delete(this.remoteBody.remoteAntennaGfx);
+    this.remoteBody.remoteAntennaGfx.cameraFilter = this.hudCam.id | this.fieldHudCam.id;
     this.hudSet.delete(this.teslaGfx);
     this.teslaGfx.cameraFilter = this.hudCam.id | this.fieldHudCam.id;
     this.hudSet.delete(this.energyTrailGfx);
@@ -15581,11 +15577,11 @@ specIsShellGun(spec)
   playZoom(): number {
     const h = this.player;
     const hostZoom = this.craftPlayZoom(h.spec, h.z, h.vx, h.vy);
-    const remote = this.remoteCore.activeRemote();
-    if (!remote || this.remoteCore.remoteCamT < 0.001 || !remote.spec.craftLook) return hostZoom;
+    const remote = this.remoteFleet.activeRemote();
+    if (!remote || this.remoteFleet.remoteCamT < 0.001 || !remote.spec.craftLook) return hostZoom;
     const hull = craftOf(remote.spec.craftLook);
     const remZoom = this.craftPlayZoom(hull, remote.z, remote.vx, remote.vy);
-    return Phaser.Math.Linear(hostZoom, remZoom, this.remoteCore.remoteCamT);
+    return Phaser.Math.Linear(hostZoom, remZoom, this.remoteFleet.remoteCamT);
   }
 
   syncProjectionPose(): void {
@@ -15739,10 +15735,10 @@ specIsShellGun(spec)
         let restX = 0;
         let restY = 0;
         let restZ = anchor.z;
-        if (this.remoteCore.remoteView) {
-          const drone = this.remoteCore.activeRemote();
+        if (this.remoteFleet.remoteView) {
+          const drone = this.remoteFleet.activeRemote();
           if (drone) {
-            const seek = this.remoteCore.remoteLookOffset(drone);
+            const seek = this.remoteFleet.remoteLookOffset(drone);
             restX = seek.x;
             restY = seek.y;
             restZ = drone.z;
@@ -15779,8 +15775,8 @@ specIsShellGun(spec)
       this.syncProjectionPose();
       return;
     }
-    this.remoteCore.tickRemoteCamBlend(dt);
-    const remote = this.remoteCore.activeRemote();
+    this.remoteFleet.tickRemoteCamBlend(dt);
+    const remote = this.remoteFleet.activeRemote();
     const sensor = this.activeSensorShot();
     if (sensor) {
       const hx = this.player.x;
@@ -15832,11 +15828,11 @@ specIsShellGun(spec)
     const pointerAtFocus = screenToWorldAtZ(p.x, p.y, this.player.z);
     // While remote POV is active, look pull follows the HUD weapon (not host slot).
     const wpnSpec =
-      remote && this.remoteCore.remoteCamT > 0.2
+      remote && this.remoteFleet.remoteCamT > 0.2
         ? this.hudLoadout()[this.hudWeapon()]!
         : this.loadout[this.player.weapon]!;
     const lookPlane =
-      remote && this.remoteCore.remoteCamT > 0.2 && remote.spec.craftLook
+      remote && this.remoteFleet.remoteCamT > 0.2 && remote.spec.craftLook
         ? craftControlScheme(craftOf(remote.spec.craftLook)) === "plane"
         : craftControlScheme(this.player.spec) === "plane";
     const look = planeLookCam(wpnSpec, lookPlane);
@@ -15875,11 +15871,11 @@ specIsShellGun(spec)
     } else if (this.sensorLingerT <= 0) {
       this.sensorLingerPalette = null;
     }
-    if (remote && this.remoteCore.remoteCamT > 0.001) {
-      const seek = this.remoteCore.remoteLookOffset(remote);
-      ox = Phaser.Math.Linear(ox, seek.x, this.remoteCore.remoteCamT);
-      oy = Phaser.Math.Linear(oy, seek.y, this.remoteCore.remoteCamT);
-      rate = Phaser.Math.Linear(rate, 3.2, this.remoteCore.remoteCamT);
+    if (remote && this.remoteFleet.remoteCamT > 0.001) {
+      const seek = this.remoteFleet.remoteLookOffset(remote);
+      ox = Phaser.Math.Linear(ox, seek.x, this.remoteFleet.remoteCamT);
+      oy = Phaser.Math.Linear(oy, seek.y, this.remoteFleet.remoteCamT);
+      rate = Phaser.Math.Linear(rate, 3.2, this.remoteFleet.remoteCamT);
     }
     const k = 1 - Math.exp(-rate * dt);
     this.lookCamX = Phaser.Math.Linear(this.lookCamX, ox, k);
@@ -15896,7 +15892,7 @@ specIsShellGun(spec)
   setHudVisible(on: boolean): void {
     this.cornerHud.hud.setVisible(on);
     this.prompts.liftPrompt.setVisible(on && this.player.phase === "ready");
-    this.prompts.remotePrompt.setVisible(on && !!this.remoteCore.pilotingRemote() && !this.remoteCore.povHudRemote());
+    this.prompts.remotePrompt.setVisible(on && !!this.remoteFleet.pilotingRemote() && !this.remoteFleet.povHudRemote());
     this.cornerHud.hvHud.setVisible(on);
     for (const t of this.cornerHud.hvRows) t.setVisible(on);
     this.wpnHud.setVisible(on);
@@ -16077,8 +16073,8 @@ specIsShellGun(spec)
       if (r.spec.unlimitedLife) continue;
       this.drawBatteryIcon(g, at.x - BATTERY_ICON_W * zs * 0.5, batY, r.life / Math.max(0.05, r.lifeMax), zs);
     }
-    const armed = this.remoteCore.remoteDetonateArmed();
-    const drone = armed ? this.remoteCore.activeRemote() : undefined;
+    const armed = this.remoteFleet.remoteDetonateArmed();
+    const drone = armed ? this.remoteFleet.activeRemote() : undefined;
     if (!drone || !cameraPointVisible(drone.z, drone.y) || this.mapView || this.over) {
       this.prompts.remoteArmedTxt.setVisible(false);
     } else {
@@ -16140,7 +16136,7 @@ specIsShellGun(spec)
   emitDamageFx(): void {
     const h = this.player;
     this.emitUnitDamageFx();
-    this.remoteVisuals.emitRemoteDamageFx();
+    this.remoteBody.emitRemoteDamageFx();
     const hp = h.health / h.spec.health;
     if (h.phase !== "dead" && hp < 0.98) {
       const want = hp < 0.25 ? 3 : hp < 0.45 ? 2 : hp < 0.75 ? 1 : 0;
@@ -16302,7 +16298,7 @@ specIsShellGun(spec)
     if (this.stingerStyle === "subtle" && !this.stingerReleased) {
       // Spectre POV: Space is unused by the drone and was eating the focus cam
       // (mission complete is dramatic → no Space dismiss). Keep focus while remoteView.
-      if (this.remoteCore.remoteView) {
+      if (this.remoteFleet.remoteView) {
         this.stingerSpaceArmed = false;
       } else if (!this.stingerSpaceArmed) {
         if (!this.keySpace.isDown) this.stingerSpaceArmed = true;

@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import type { MissionScene } from "../missionScene";
+import type { MissionScene } from "../../missionScene";
 
 /** Survives MissionScene restart (R → load → mission). */
 let persistedFxOn = true;

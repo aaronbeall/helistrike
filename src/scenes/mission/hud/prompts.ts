@@ -1,6 +1,6 @@
 import Phaser from "phaser";
-import { craftGunId } from "../../sim/crafts";
-import type { MissionScene } from "../missionScene";
+import { craftGunId } from "../../../sim/crafts";
+import type { MissionScene } from "../../missionScene";
 
 /** Contextual prompts: lift-off, remote launch/recall, dock AGL alert, ARMED tag. */
 export class PromptsHud {
@@ -24,12 +24,12 @@ export class PromptsHud {
     const show =
       !this.s.mapView &&
       !this.s.over &&
-      !!this.s.remoteCore.pilotingRemote() &&
-      !this.s.remoteCore.povHudRemote();
+      !!this.s.remoteFleet.pilotingRemote() &&
+      !this.s.remoteFleet.povHudRemote();
     this.remotePrompt.setVisible(show);
     if (!show) return;
-    const armed = this.s.remoteCore.remoteDetonateArmed();
-    const pilotedSpec = this.s.remoteCore.pilotingRemote()?.spec;
+    const armed = this.s.remoteFleet.remoteDetonateArmed();
+    const pilotedSpec = this.s.remoteFleet.pilotingRemote()?.spec;
     const gun = !!pilotedSpec && !!craftGunId(pilotedSpec);
     this.remotePrompt.setText(
       gun
@@ -47,8 +47,8 @@ export class PromptsHud {
 
   /** Player-flown host too high for a docking ground remote. */
   dockAglBlocked(): boolean {
-    const pov = this.s.remoteCore.povDockRemote();
-    return this.s.remotes.some((r) => r.dock && !r.detonate && r !== pov && this.s.remoteCore.groundDockBlocked(r));
+    const pov = this.s.remoteFleet.povDockRemote();
+    return this.s.remotes.some((r) => r.dock && !r.detonate && r !== pov && this.s.remoteFleet.groundDockBlocked(r));
   }
 
   /** Persistent "TOO HIGH TO DOCK" while the player-flown host blocks a ground dock. */

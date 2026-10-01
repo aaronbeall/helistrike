@@ -1,10 +1,10 @@
 import Phaser from "phaser";
-import { radius, type Shot, type Unit } from "../../sim/combat";
-import { remoteHasPovHud, type RemoteCraft } from "../../sim/remote";
-import { smokeCoverAt, smokeVisionMul } from "../../sim/weaponRuntime";
-import { Craft, LOW_AGL } from "../../sim/craft";
-import { specOf, gunsOf, weaponIsAa } from "../../sim/roster";
-import type { MissionScene } from "../missionScene";
+import { radius, type Shot, type Unit } from "../../../sim/combat";
+import { remoteHasPovHud, type RemoteCraft } from "../../../sim/remote";
+import { smokeCoverAt, smokeVisionMul } from "../../../sim/weaponRuntime";
+import { Craft, LOW_AGL } from "../../../sim/craft";
+import { specOf, gunsOf, weaponIsAa } from "../../../sim/roster";
+import type { MissionScene } from "../../missionScene";
 
 /** Bullet time (E): world rate while on, real seconds a full meter lasts, seconds empty → full. */
 /** Enemy re-target cadence (ms). */
@@ -44,8 +44,8 @@ export class EnemyTargeting {
    * Spectre cam and parked-slot remotes stay off the threat board.
    */
   combatFocusRemote(): RemoteCraft | undefined {
-    if (!this.s.remoteCore.remotePilotActive) return undefined;
-    const pilot = this.s.remoteCore.pilotingRemote();
+    if (!this.s.remoteFleet.remotePilotActive) return undefined;
+    const pilot = this.s.remoteFleet.pilotingRemote();
     if (
       !pilot ||
       !remoteHasPovHud(pilot.spec) ||
@@ -66,7 +66,7 @@ export class EnemyTargeting {
   /** Remote behind a shadow Craft (undefined for the host). */
   remoteOfCraft(c: Craft): RemoteCraft | undefined {
     if (c === this.s.player) return undefined;
-    for (const r of this.s.remotes) if (this.s.remoteCore.remotePilotCraft.get(r.id) === c) return r;
+    for (const r of this.s.remotes) if (this.s.remoteFleet.remotePilotCraft.get(r.id) === c) return r;
     return undefined;
   }
 
@@ -77,7 +77,7 @@ export class EnemyTargeting {
 
   /** Shadow Craft for an enemy-targeted remote, pose/health synced. */
   remoteTargetCraft(r: RemoteCraft): Craft | undefined {
-    const craft = this.s.remoteCore.ensureRemotePilotCraft(r);
+    const craft = this.s.remoteFleet.ensureRemotePilotCraft(r);
     if (!craft || craft.phase === "dead") return undefined;
     craft.x = r.x;
     craft.y = r.y;
@@ -208,7 +208,7 @@ export class EnemyTargeting {
 
   /** Apply hit damage to a remote (detonates at 0 HP). */
   damageRemote(rem: RemoteCraft, n: number, dx?: number, dy?: number): void {
-    const craft = this.s.remoteCore.ensureRemotePilotCraft(rem);
+    const craft = this.s.remoteFleet.ensureRemotePilotCraft(rem);
     if (craft) {
       craft.damage(n, dx, dy);
       rem.health = craft.health;

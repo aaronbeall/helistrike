@@ -1,6 +1,6 @@
 import Phaser from "phaser";
-import { groundZ, castZ, type HvSpec } from "../../worldgen/world";
-import type { MissionScene } from "../missionScene";
+import { groundZ, castZ, type HvSpec } from "../../../worldgen/world";
+import type { MissionScene } from "../../missionScene";
 
 function bearing(deg: number): string {
   const d = ((deg % 360) + 360) % 360;
@@ -30,7 +30,7 @@ export class CornerHud {
     const h = this.s.player;
     const w = this.s.loadout[h.weapon]!;
     const ammo = this.s.ammo[h.weapon]!;
-    const ammoShown = this.s.remoteBay.remotePoolDisplayAmmo(h.weapon, ammo);
+    const ammoShown = this.s.remoteFleet.remotePoolDisplayAmmo(h.weapon, ammo);
     const ammoS =
       this.s.debugMenu.infAmmo && Number.isFinite(ammoShown)
         ? "∞"
@@ -46,7 +46,7 @@ export class CornerHud {
           ? "READY"
           : h.phase === "dead"
             ? "DOWN"
-            : this.s.remoteCore.remoteView && this.s.remoteCore.activeRemote()
+            : this.s.remoteFleet.remoteView && this.s.remoteFleet.activeRemote()
               ? "SPECTRE POV"
               : "AIRBORNE";
     const ptr = this.s.worldPointer();

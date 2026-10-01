@@ -1,10 +1,10 @@
 import Phaser from "phaser";
-import { BATTERY_ICON_W, BULLET_TIME_DURATION } from "./tuning";
-import { payloadIsRemote } from "../../sim/payload";
-import { PLAYER_WPNS, COUNTERMEASURES, type WpnId } from "../../sim/combat";
-import { Layer } from "../../render/depth";
-import { craftCrewHudTag, craftSocketMultiplicity, craftSocketStartingAmmo } from "../../sim/crafts";
-import type { MissionScene } from "../missionScene";
+import { BATTERY_ICON_W, BULLET_TIME_DURATION } from "../tuning";
+import { payloadIsRemote } from "../../../sim/payload";
+import { PLAYER_WPNS, COUNTERMEASURES, type WpnId } from "../../../sim/combat";
+import { Layer } from "../../../render/depth";
+import { craftCrewHudTag, craftSocketMultiplicity, craftSocketStartingAmmo } from "../../../sim/crafts";
+import type { MissionScene } from "../../missionScene";
 
 /** Bottom weapon bar: loadout slots, escort/exit chips, countermeasure + bullet-time strips. */
 export class WeaponHud {
@@ -62,7 +62,7 @@ export class WeaponHud {
     const h = this.s.player;
     const g = this.wpnBar;
     g.clear();
-    const pov = this.s.remoteCore.povHudRemote();
+    const pov = this.s.remoteFleet.povHudRemote();
     const loadout = this.s.hudLoadout();
     const ammoArr = this.s.hudAmmo();
     const selected = this.s.hudWeapon();
@@ -101,9 +101,9 @@ export class WeaponHud {
       const reserve = ammoArr[i]!;
       const a =
         !pov && payloadIsRemote(wp.payload)
-          ? this.s.remoteBay.remotePoolDisplayAmmo(i, reserve)
+          ? this.s.remoteFleet.remotePoolDisplayAmmo(i, reserve)
           : reserve;
-      const hostAmmoId = pov ? this.s.remoteCore.remoteHostAmmoWeapon(wp) : undefined;
+      const hostAmmoId = pov ? this.s.remoteFleet.remoteHostAmmoWeapon(wp) : undefined;
       const hostSlot = hostAmmoId ? this.s.hostWeaponSlot(hostAmmoId) : -1;
       const hostSpec = hostAmmoId ? PLAYER_WPNS[hostAmmoId as WpnId] : undefined;
       const cap =
@@ -115,11 +115,11 @@ export class WeaponHud {
       // Launch gate uses hangar reserve; display can include live dockable remotes.
       const empty = !this.s.debugMenu.infAmmo && Number.isFinite(a) && a <= 0;
       // Dockable pools fill by summed remote health, not head count.
-      const pooled = !pov && !!this.s.remoteBay.dockableSlotRemote(i);
+      const pooled = !pov && !!this.s.remoteFleet.dockableSlotRemote(i);
       const frac =
         this.s.debugMenu.infAmmo || !Number.isFinite(a) || !Number.isFinite(cap) || cap <= 0
           ? 1
-          : Phaser.Math.Clamp((pooled ? this.s.remoteBay.remotePoolHealth(i) : a) / cap, 0, 1);
+          : Phaser.Math.Clamp((pooled ? this.s.remoteFleet.remotePoolHealth(i) : a) / cap, 0, 1);
       const low = !empty && Number.isFinite(a) && frac > 0 && frac <= 0.25;
       const sel = i === selected;
       const socket = pov ? pov.spec.sockets?.[i] : h.spec.sockets[i];
@@ -184,7 +184,7 @@ export class WeaponHud {
         g.fillStyle(fill, disabled ? 0.55 : sel ? 0.85 : 0.95);
         g.fillRect(barX, barY, Math.max(2, barW * frac), barH);
         // Pool battery badge on the top-right edge, only while not full.
-        const batt = pooled ? this.s.remoteBay.remotePoolBattery(i) : undefined;
+        const batt = pooled ? this.s.remoteFleet.remotePoolBattery(i) : undefined;
         if (batt != null && batt < 0.999) {
           this.s.drawBatteryIcon(g, x + slotW - BATTERY_ICON_W - 6, y - 4, batt, 1);
         }
@@ -210,8 +210,8 @@ export class WeaponHud {
       const liveCount = liveRemotes.length;
       const pilotingThis =
         !!liveRemote &&
-        this.s.remoteCore.remoteView &&
-        this.s.remoteCore.pilotingRemote()?.id === liveRemote.id;
+        this.s.remoteFleet.remoteView &&
+        this.s.remoteFleet.pilotingRemote()?.id === liveRemote.id;
       const liveMark = liveCount > 0 && !pilotingThis && !disabled;
       const mult = pov ? 1 : craftSocketMultiplicity(h.spec, i);
       const rawName = liveRemote
@@ -322,7 +322,7 @@ export class WeaponHud {
     // POV remote: escort FOLLOW/HOLD chrome + Q EXIT (not weapon slots).
     if (escortOn) {
       const x = x0 + n * (slotW + gap);
-      const follow = this.s.remoteCore.hostEscortMode === "follow";
+      const follow = this.s.remoteFleet.hostEscortMode === "follow";
       g.fillStyle(follow ? 0x142028 : 0x12100c, follow ? 0.82 : 0.62);
       g.fillRoundedRect(x, y, escortW, slotH, 3);
       g.lineStyle(1.3, follow ? 0x4aa8e8 : 0x8a8470, follow ? 0.9 : 0.75);
@@ -377,7 +377,7 @@ export class WeaponHud {
         .setFontSize("12px")
         .setAlpha(0.9);
       const nameLp = this.s.hudLocal(x + padX + this.exitHudSlot.key.width + 6, midY);
-      const canDock = !!(pov.spec.dockable && this.s.remoteCore.remoteNearHost(pov));
+      const canDock = !!(pov.spec.dockable && this.s.remoteFleet.remoteNearHost(pov));
       this.exitHudSlot.name
         .setVisible(true)
         .setPosition(nameLp.x, nameLp.y)
@@ -411,7 +411,7 @@ export class WeaponHud {
 
   drawCountermeasureHud(y: number): void {
     const g = this.wpnBar;
-    const pov = this.s.remoteCore.povHudRemote();
+    const pov = this.s.remoteFleet.povHudRemote();
     const id = this.s.craftCmId();
     if (!this.cmHudLabel) {
       this.cmHudTime?.setVisible(false);

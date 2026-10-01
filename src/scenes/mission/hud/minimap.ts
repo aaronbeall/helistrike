@@ -1,7 +1,7 @@
 import Phaser from "phaser";
-import type { Shot } from "../../sim/combat";
-import { WORLD } from "../../worldgen/world";
-import type { MissionScene } from "../missionScene";
+import type { Shot } from "../../../sim/combat";
+import { WORLD } from "../../../worldgen/world";
+import type { MissionScene } from "../../missionScene";
 
 /** Minimap: missiles / rockets / seekers — not gun tracers or beams. */
 function shotShowsOnRadar(s: Shot): boolean {

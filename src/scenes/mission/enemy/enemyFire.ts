@@ -1,18 +1,18 @@
 import Phaser from "phaser";
-import { gunWorldRot } from "../../art/spriteOrigin";
-import { enemyShotBeh } from "../../sim/weaponRuntime";
-import { AI_LOCK_BASE, AI_AIM_NARROW_BASE, AI_AIM_WIDE_MUL } from "../../sim/weaponRuntime";
-import { resolveSkin } from "../../render/camo";
-import { heightOf, textureOf, type Unit } from "../../sim/combat";
-import { advanceAimHold, aimNarrowTime, aimPrecisionSpread, clampAimToStationArc, holdProgress, lockAcquireTime } from "../../sim/weaponRuntime";
-import { ZOff } from "../../render/depth";
-import { range } from "../../util/rng";
-import { Craft } from "../../sim/craft";
-import { specOf, gunsOf, muzzlesOfGun, type WeaponSpec } from "../../sim/roster";
-import { lookupSpriteMuzzles, lookupSpriteOrigin } from "../../art/spriteOrigin";
-import { FX_VARIANTS, spritePivot } from "../../art/sprites";
-import { worldToScreen } from "../../worldgen/world";
-import type { MissionScene } from "../missionScene";
+import { gunWorldRot } from "../../../art/spriteOrigin";
+import { enemyShotBeh } from "../../../sim/weaponRuntime";
+import { AI_LOCK_BASE, AI_AIM_NARROW_BASE, AI_AIM_WIDE_MUL } from "../../../sim/weaponRuntime";
+import { resolveSkin } from "../../../render/camo";
+import { heightOf, textureOf, type Unit } from "../../../sim/combat";
+import { advanceAimHold, aimNarrowTime, aimPrecisionSpread, clampAimToStationArc, holdProgress, lockAcquireTime } from "../../../sim/weaponRuntime";
+import { ZOff } from "../../../render/depth";
+import { range } from "../../../util/rng";
+import { Craft } from "../../../sim/craft";
+import { specOf, gunsOf, muzzlesOfGun, type WeaponSpec } from "../../../sim/roster";
+import { lookupSpriteMuzzles, lookupSpriteOrigin } from "../../../art/spriteOrigin";
+import { FX_VARIANTS, spritePivot } from "../../../art/sprites";
+import { worldToScreen } from "../../../worldgen/world";
+import type { MissionScene } from "../../missionScene";
 
 /** Enemy weapons: per-turret aim/lock/fire, rounds + seekers, muzzle points and volley notes. */
 export class EnemyFire {
@@ -41,7 +41,7 @@ export class EnemyFire {
    * Independent enemy turrets, one pass per gun part: pick its own target (AA ignores a dirt
    * HOUND), slew within its traverse arc, check its own range / elevation / facing, and run its
    * own lock, aim hold, cooldown, burst and muzzle-tip cycle — same as player turret stations.
-   * Writes unit-level summaries after; returns the first target a turret engaged this.s frame.
+   * Writes unit-level summaries after; returns the first target a turret engaged this frame.
    */
   tickEnemyTurretFire(
     u: Unit,
@@ -153,7 +153,7 @@ export class EnemyFire {
 
   /**
    * Spawn one enemy round from gun `gunI` (hull when the unit has no gun parts) at muzzle `tip`.
-   * `extraFlash`: another round already owns the unit's pooled flash this.s frame — use a one-shot.
+   * `extraFlash`: another round already owns the unit's pooled flash this frame — use a one-shot.
    */
   fireEnemyRound(
     u: Unit,

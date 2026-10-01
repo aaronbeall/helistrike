@@ -1,7 +1,7 @@
 import Phaser from "phaser";
-import { Layer } from "../../render/depth";
-import { FieldManual } from "../../ui/fieldManual";
-import type { MissionScene } from "../missionScene";
+import { Layer } from "../../../render/depth";
+import { FieldManual } from "../../../ui/fieldManual";
+import type { MissionScene } from "../../missionScene";
 
 /** In-mission help (H): Field Manual overlay + its button. */
 export class HelpPanel {

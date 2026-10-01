@@ -1,7 +1,7 @@
 import Phaser from "phaser";
-import { Craft } from "../../sim/craft";
-import { worldToScreen } from "../../worldgen/world";
-import type { MissionScene } from "../missionScene";
+import { Craft } from "../../../sim/craft";
+import { worldToScreen } from "../../../worldgen/world";
+import type { MissionScene } from "../../missionScene";
 
 /** Threat arc half-width (deg) at paint start — widest point of the paint → lock shape. */
 const THREAT_ARC_PAINT_HALF = 22.5;

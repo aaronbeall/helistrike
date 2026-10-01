@@ -1,9 +1,9 @@
 import Phaser from "phaser";
-import { heightOf, radius } from "../../sim/combat";
-import { Layer } from "../../render/depth";
-import { specOf } from "../../sim/roster";
-import { groundZ, worldToScreen, cameraPointVisible, screenToWorldOnGround } from "../../worldgen/world";
-import type { MissionScene } from "../missionScene";
+import { heightOf, radius } from "../../../sim/combat";
+import { Layer } from "../../../render/depth";
+import { specOf } from "../../../sim/roster";
+import { groundZ, worldToScreen, cameraPointVisible, screenToWorldOnGround } from "../../../worldgen/world";
+import type { MissionScene } from "../../missionScene";
 
 /** Debug strip: schematic side view (screen X × world Z) across the top. */
 export class SideView {

@@ -1,14 +1,14 @@
-import { thermalSignalTint } from "../../render/thermal";
-import { launchGravity, targetingMode, collapseSightTips } from "../../sim/weaponRuntime";
-import { lookupSpriteMuzzles } from "../../art/spriteOrigin";
-import { craftFixedMuzzles, craftSocketBarrelCount, craftSocketPoints, socketHullPlacement, craftGunId, craftControlScheme, craftOf, craftSocketFireCd, craftSocketStartingAmmo } from "../../sim/crafts";
-import { groundZ, worldToScreen, screenToWorldAtZ } from "../../worldgen/world";
+import { thermalSignalTint } from "../../../render/thermal";
+import { launchGravity, targetingMode, collapseSightTips } from "../../../sim/weaponRuntime";
+import { lookupSpriteMuzzles } from "../../../art/spriteOrigin";
+import { craftFixedMuzzles, craftSocketBarrelCount, craftSocketPoints, socketHullPlacement, craftGunId, craftControlScheme, craftOf, craftSocketFireCd, craftSocketStartingAmmo } from "../../../sim/crafts";
+import { groundZ, worldToScreen, screenToWorldAtZ } from "../../../worldgen/world";
 import Phaser from "phaser";
-import { payloadIsRemote, payloadIsHostFire } from "../../sim/payload";
-import { launchIsArcBeam, PLAYER_WPNS, type PlayerWpnSpec, type WpnId } from "../../sim/combat";
-import { remoteHasPovHud } from "../../sim/remote";
-import { Layer, ZOff, worldDepth } from "../../render/depth";
-import type { MissionScene } from "../missionScene";
+import { payloadIsRemote, payloadIsHostFire } from "../../../sim/payload";
+import { launchIsArcBeam, PLAYER_WPNS, type PlayerWpnSpec, type WpnId } from "../../../sim/combat";
+import { remoteHasPovHud } from "../../../sim/remote";
+import { Layer, ZOff, worldDepth } from "../../../render/depth";
+import type { MissionScene } from "../../missionScene";
 
 /** Weapons with an authored cooldown at least this long (s) show the reticle cooldown radial. */
 const RETICLE_CD_MIN = 1.0;
@@ -49,7 +49,7 @@ export class ReticleHud {
       (!!spec.art.tracer || (spec.launch.mode === "muzzle" && !spec.exhaust));
     this.reticle.setTexture(this.reticleTexFor(spec, square));
     const ammoLeft = this.s.ammo[h.weapon] ?? 0;
-    const ammoShown = this.s.remoteBay.remotePoolDisplayAmmo(h.weapon, ammoLeft);
+    const ammoShown = this.s.remoteFleet.remotePoolDisplayAmmo(h.weapon, ammoLeft);
     const ammoCap = Math.max(
       craftSocketStartingAmmo(spec.ammo, h.spec, h.weapon),
       Number.isFinite(ammoShown) ? ammoShown : 0
@@ -74,14 +74,14 @@ export class ReticleHud {
     // Remote slot: gun remotes keep a POV sight while selected; others have no laser.
     // POV-HUD remotes (HOUND) fall through to their own loadout sight below.
     if (payloadIsRemote(spec.payload)) {
-      const live = this.s.remoteCore.selectedSlotRemote();
+      const live = this.s.remoteFleet.selectedSlotRemote();
       if (live && remoteHasPovHud(live.spec)) {
         // Handled by povHudRemote sight path.
       } else if (live && craftGunId(live.spec) && !(live.spec.ai && !live.spec.pilotable)) {
         this.sight.setVisible(true);
         this.sight.clear();
         const aimAng = live.gunAngle ?? live.angle;
-        const muzzle = this.s.remoteWeapons.remoteGunMuzzle(live);
+        const muzzle = this.s.remoteBody.remoteGunMuzzle(live);
         const gunSpec = this.s.loadout[h.weapon]!;
         const origin = this.s.playerShotOrigin(muzzle, aimAng, gunSpec, h.weapon);
         const clip = this.s.playerSightAimWorld(origin.x, origin.y, origin.z, aimAng);
@@ -98,7 +98,7 @@ export class ReticleHud {
         return;
       }
     }
-    const povRem = this.s.remoteCore.povHudRemote();
+    const povRem = this.s.remoteFleet.povHudRemote();
     if (povRem) {
       const remSpec = this.s.hudLoadout()[this.s.hudWeapon()]!;
       const ammoLeft = this.s.hudAmmo()[this.s.hudWeapon()] ?? 0;
@@ -111,7 +111,7 @@ export class ReticleHud {
         !remSpec.guidance &&
         (!!remSpec.art.tracer || (remSpec.launch.mode === "muzzle" && !remSpec.exhaust));
       this.reticle.setTexture(this.reticleTexFor(remSpec, remSpec.cam.reticle === "square"));
-      const hostAmmoId = this.s.remoteCore.remoteHostAmmoWeapon(remSpec);
+      const hostAmmoId = this.s.remoteFleet.remoteHostAmmoWeapon(remSpec);
       const hostSlot = hostAmmoId ? this.s.hostWeaponSlot(hostAmmoId) : -1;
       const hostSpec = hostAmmoId ? PLAYER_WPNS[hostAmmoId as WpnId] : undefined;
       const remAmmoCap = Math.max(
@@ -133,7 +133,7 @@ export class ReticleHud {
       this.sight.setVisible(true);
       this.sight.clear();
       if (bombDrop) {
-        this.s.remoteWeapons.drawRemoteBombTrajectory(povRem, remSlot, remSpec, this.s.worldPointer());
+        this.s.remoteBody.drawRemoteBombTrajectory(povRem, remSlot, remSpec, this.s.worldPointer());
         return;
       }
       const hull = povRem.spec.craftLook ? craftOf(povRem.spec.craftLook) : undefined;
@@ -146,7 +146,7 @@ export class ReticleHud {
         : remSocket?.class === "hardpoint"
           ? povRem.angle
           : (povRem.gunAngle ?? povRem.angle);
-      const tips = this.s.remoteWeapons.remoteSightOrigins(povRem, remSlot);
+      const tips = this.s.remoteBody.remoteSightOrigins(povRem, remSlot);
       let drew = false;
       let tipZ = tips[0]?.z ?? povRem.z;
       const pivot = { x: povRem.x, y: povRem.y };
@@ -410,7 +410,7 @@ export class ReticleHud {
         for (let i = 0; i < muzzles.length; i++) tips.push(this.s.gunTip(gunI, i));
       }
     } else if (socket) {
-      // fixed → muzzle UVs; hardpoint → this.s socket's stores only (not every rack).
+      // fixed → muzzle UVs; hardpoint → this socket's stores only (not every rack).
       const mounts = craftSocketPoints(h.spec, socket);
       if (mounts.length) tips = mounts.map((m) => this.s.craftBodyMountWorldPos(m));
     }

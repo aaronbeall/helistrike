@@ -1,20 +1,20 @@
-import { camoForBiome, resolveSkin } from "../../render/camo";
-import { nextId, stats, textureOf, heightOf, radius, unitStunned, tickStunKinematics, recordUnitSpin, type Unit } from "../../sim/combat";
-import { specOf, spawnAngle, pickTroop, gunsOf, rollParts, crewOf, isGroundVehicle, isInfantry, driveOf } from "../../sim/roster";
-import { groundZ, sampleBiome, worldToScreen, cameraPointVisible, isWater, waterSurfaceZ, WORLD } from "../../worldgen/world";
+import { camoForBiome, resolveSkin } from "../../../render/camo";
+import { nextId, stats, textureOf, heightOf, radius, unitStunned, tickStunKinematics, recordUnitSpin, type Unit } from "../../../sim/combat";
+import { specOf, spawnAngle, pickTroop, gunsOf, rollParts, crewOf, isGroundVehicle, isInfantry, driveOf } from "../../../sim/roster";
+import { groundZ, sampleBiome, worldToScreen, cameraPointVisible, isWater, waterSurfaceZ, WORLD } from "../../../worldgen/world";
 import Phaser from "phaser";
-import { enemyShotBeh } from "../../sim/weaponRuntime";
+import { enemyShotBeh } from "../../../sim/weaponRuntime";
 
-import { AI_LOCK_BASE, AI_AIM_NARROW_BASE, AI_AIM_WIDE_MUL } from "../../sim/weaponRuntime";
-import { projectileFxScale } from "../../render/fxScale";
-import { advanceAimHold, aimNarrowTime, aimPrecisionSpread, holdProgress, lockAcquireTime } from "../../sim/weaponRuntime";
-import { range } from "../../util/rng";
-import { CRUISE_AGL, Craft, LOW_AGL, MAX_AGL, MAP_AIR_SOFT } from "../../sim/craft";
-import { circumRadiusOf, footprintInto, footprintOverlap, pointInFootprint } from "../../render/footprint";
-import { lookupSpriteMuzzles } from "../../art/spriteOrigin";
-import { craftRotorIsProp, craftRotorDrawSpan, type CraftSpec } from "../../sim/crafts";
-import { spritePivot } from "../../art/sprites";
-import type { MissionScene } from "../missionScene";
+import { AI_LOCK_BASE, AI_AIM_NARROW_BASE, AI_AIM_WIDE_MUL } from "../../../sim/weaponRuntime";
+import { projectileFxScale } from "../../../render/fxScale";
+import { advanceAimHold, aimNarrowTime, aimPrecisionSpread, holdProgress, lockAcquireTime } from "../../../sim/weaponRuntime";
+import { range } from "../../../util/rng";
+import { CRUISE_AGL, Craft, LOW_AGL, MAX_AGL, MAP_AIR_SOFT } from "../../../sim/craft";
+import { circumRadiusOf, footprintInto, footprintOverlap, pointInFootprint } from "../../../render/footprint";
+import { lookupSpriteMuzzles } from "../../../art/spriteOrigin";
+import { craftRotorIsProp, craftRotorDrawSpan, type CraftSpec } from "../../../sim/crafts";
+import { spritePivot } from "../../../art/sprites";
+import type { MissionScene } from "../../missionScene";
 
 /** Soft rim where map-edge steering ramps up. */
 const MAP_EDGE_MARGIN = 280;
@@ -474,7 +474,7 @@ export class UnitSim {
     return this.mapEdgeSteer(u.x, u.y, dry.x, dry.y);
   }
 
-  /** True when this.s hull is pressed into another solid — unlocks wheeled pivot. */
+  /** True when this hull is pressed into another solid — unlocks wheeled pivot. */
   groundUnitBlocked(u: Unit): boolean {
     const uR = circumRadiusOf(u.kind);
     for (const o of this.s.units) {
@@ -1303,7 +1303,7 @@ export class UnitSim {
         u.aware = false;
         if (u.aiMood === "kite") u.aiMood = undefined;
       }
-      // Target actually engaged this.s frame — drives static units' ENGAGE state / lead aim.
+      // Target actually engaged this frame — drives static units' ENGAGE state / lead aim.
       let engagedTgt: Craft | undefined;
       if (guns.length) {
         // Turret units: every gun part targets, aims, locks and fires independently.
@@ -1314,7 +1314,7 @@ export class UnitSim {
         const gunAim = Math.atan2(aimTgt.y - u.y, aimTgt.x - u.x);
         const barrelAng = softTurret ? u.turret : u.angle;
         const facingOk = Math.abs(Phaser.Math.Angle.Wrap(gunAim - barrelAng)) < 0.16;
-        // Aim precision: jitter narrows the longer this.s unit has been continuously tracking its
+        // Aim precision: jitter narrows the longer this unit has been continuously tracking its
         // target (reset the moment it stops engaging) — harder-to-spot target craft (enemyAwareMul)
         // narrow slower. Seeker weapons instead gate on a separate lock-on hold below.
         const engaging = !!wpn && !soldierFlee && !scoutFlee && vision > 0 && (inRange || continueBurst);

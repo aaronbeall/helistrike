@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import type { MissionScene } from "../missionScene";
+import type { MissionScene } from "../../missionScene";
 
 const PERF_LABELS = [
   "frame",
@@ -104,7 +104,7 @@ export class PerfMonitor {
     let measured = 0;
     for (let i = 2; i <= 11; i++) measured += timings[i]!;
     timings[12] = Math.max(0, sceneMs - measured);
-    // Includes Phaser/render work outside this.s scene and any vsync/idle time.
+    // Includes Phaser/render work outside this scene and any vsync/idle time.
     timings[13] = Math.max(0, frameMs - sceneMs);
 
     const samples = this.samples!;
