@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { AI_AIM_NARROW_BASE, AI_AIM_WIDE_MUL } from "./tuning";
+import { AI_AIM_NARROW_BASE, AI_AIM_WIDE_MUL } from "../../sim/weaponRuntime";
 import { heightOf, PLAYER_WPNS, type Unit } from "../../sim/combat";
 import { type RemoteCraft } from "../../sim/remote";
 import { aimPrecisionSpread, type StationTraverse } from "../../sim/weaponRuntime";

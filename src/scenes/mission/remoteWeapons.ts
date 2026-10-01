@@ -2,7 +2,7 @@ import { heightOf, COUNTERMEASURES, craftCountermeasure, nextId, shotBehaviorOf,
 import { ZOff } from "../../render/depth";
 import { craftBombDrop, craftOf, socketHullPlacement, craftAimsWithTurret, craftGunId, craftGunScale, craftControlScheme, socketPointsOnKey } from "../../sim/crafts";
 import Phaser from "phaser";
-import { AI_AIM_NARROW_BASE, AI_AIM_WIDE_MUL } from "./tuning";
+import { AI_AIM_NARROW_BASE, AI_AIM_WIDE_MUL } from "../../sim/weaponRuntime";
 import { projectileFxScale, playerMuzzleFxMul, scaledProjectileFxCount } from "../../render/fxScale";
 import { launchGravity, targetingMode, specIsShellGun, specIsRocketPod, hardpointAmmoIndex, collapseSightTips, advanceAimHold, aimPrecisionSpread } from "../../sim/weaponRuntime";
 import { payloadIsCallStrike, payloadIsHostFire } from "../../sim/payload";

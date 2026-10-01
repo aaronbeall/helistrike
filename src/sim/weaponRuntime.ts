@@ -1,3 +1,5 @@
+import { type ShotKind, type ShotLook } from "./roster";
+import { type ShotBehavior } from "./combat";
 import { type PlayerWpnSpec, type WeaponLaunch, type WeaponGravity, type WeaponGuidance, heatClassCategory, heatClassScore, type HeatClass, type SmokePuff, type Unit } from "./combat";
 import { payloadIsHelix, payloadIsKinetic } from "./payload";
 import Phaser from "phaser";
@@ -208,4 +210,63 @@ export function hardpointAmmoIndex(
   // Before spend with loaded A: same pylon as fire will use → (A - 2) % n
   const phase = afterSpend ? ammo - 1 : ammo - 2;
   return ((phase % mountCount) + mountCount) % mountCount;
+}
+
+/** AI gun-aim precision: seconds of continuous tracking to fully narrow from wide to tight jitter. */
+export const AI_AIM_NARROW_BASE = 2.5;
+
+/** AI gun-aim precision: freshly-acquired jitter is this many × the weapon's authored (fully-aimed) jitter. */
+export const AI_AIM_WIDE_MUL = 2.2;
+
+/** AI missile lock: base seconds of continuous tracking required to acquire lock before firing. */
+export const AI_LOCK_BASE = 1.8;
+
+/** Minimal behavior snapshot so enemy trails / gravity read the new exhaust model. */
+export function enemyShotBeh(wpn: {
+  look: ShotLook;
+  scale: number;
+  trailScale?: number;
+  kind: ShotKind;
+  speed: number;
+  dmg: number;
+  blast: number;
+}): ShotBehavior | undefined {
+  const rocket = wpn.kind === "rocket" || (wpn.trailScale != null && wpn.kind !== "cannon");
+  const seek = wpn.kind === "lock-on-missile";
+  if (!rocket && !seek && wpn.trailScale == null) {
+    // Guns: no exhaust — shotIsGunOrBeam uses !exhaust
+    return {
+      art: { look: wpn.look, scale: wpn.scale, face: "velocity" },
+      cam: { reticle: "round", look: { pull: 0.2, max: 88, rate: 10 } },
+      control: { mode: "click" },
+      launch: { mode: "muzzle", inheritMomentum: 0 },
+      payload: wpn.kind === "cannon" ? { penetration: 1 } : { detonate: { look: "fire" } },
+      cruiseSpeed: wpn.speed,
+      dmg: wpn.dmg,
+      blast: wpn.blast,
+    };
+  }
+  return {
+    art: { look: wpn.look, scale: wpn.scale, face: seek || rocket ? "heading" : "velocity" },
+    cam: { reticle: "round", look: { pull: 0.2, max: 88, rate: 10 } },
+    control: { mode: "click" },
+    launch: { mode: "muzzle", inheritMomentum: 0 },
+    payload: { detonate: { look: "fire" } },
+    exhaust:
+      wpn.trailScale != null
+        ? {
+            kind: "particles",
+            size: wpn.trailScale,
+            fire: "burn",
+            ...(wpn.kind === "rocket" ? { fireFor: 0.1 } : {}),
+            smoke: wpn.kind === "rocket" ? "rocket" : "linger",
+            ...(wpn.kind === "rocket" ? { align: "heading" as const } : {}),
+          }
+        : seek
+          ? { kind: "particles", size: 0.55, fire: "burn", smoke: "linger" }
+          : undefined,
+    cruiseSpeed: wpn.speed,
+    dmg: wpn.dmg,
+    blast: wpn.blast,
+  };
 }

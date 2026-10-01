@@ -3,8 +3,9 @@ import { nextId, stats, textureOf, heightOf, radius, unitStunned, tickStunKinema
 import { specOf, spawnAngle, pickTroop, gunsOf, rollParts, crewOf, isGroundVehicle, isInfantry, driveOf } from "../../sim/roster";
 import { groundZ, sampleBiome, worldToScreen, cameraPointVisible, isWater, waterSurfaceZ, WORLD } from "../../worldgen/world";
 import Phaser from "phaser";
-import { enemyShotBeh } from "./shared";
-import { AI_LOCK_BASE, DRONE_KAMIKAZE_AGL, AI_AIM_NARROW_BASE, AI_AIM_WIDE_MUL } from "./tuning";
+import { enemyShotBeh } from "../../sim/weaponRuntime";
+
+import { AI_LOCK_BASE, AI_AIM_NARROW_BASE, AI_AIM_WIDE_MUL } from "../../sim/weaponRuntime";
 import { projectileFxScale } from "../../render/fxScale";
 import { advanceAimHold, aimNarrowTime, aimPrecisionSpread, holdProgress, lockAcquireTime } from "../../sim/weaponRuntime";
 import { range } from "../../util/rng";
@@ -20,6 +21,9 @@ const MAP_EDGE_MARGIN = 280;
 
 /** Hard pad ground units cannot cross. */
 const MAP_EDGE_PAD = 40;
+
+/** Max AGL drones will climb/charge to — covers Lightning/Warthog, excludes Reaper (~620). */
+const DRONE_KAMIKAZE_AGL = 400;
 
 /** Enemy unit simulation: per-frame update loop, air/ground/boat drive, terrain + map-edge steering, stun, bleed-out, roadkill. */
 export class UnitSim {

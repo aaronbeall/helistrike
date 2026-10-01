@@ -1,6 +1,7 @@
 import Phaser from "phaser";
-import { gunWorldRot, enemyShotBeh } from "./shared";
-import { AI_LOCK_BASE, AI_AIM_NARROW_BASE, AI_AIM_WIDE_MUL } from "./tuning";
+import { gunWorldRot } from "../../art/spriteOrigin";
+import { enemyShotBeh } from "../../sim/weaponRuntime";
+import { AI_LOCK_BASE, AI_AIM_NARROW_BASE, AI_AIM_WIDE_MUL } from "../../sim/weaponRuntime";
 import { resolveSkin } from "../../render/camo";
 import { heightOf, textureOf, type Unit } from "../../sim/combat";
 import { advanceAimHold, aimNarrowTime, aimPrecisionSpread, clampAimToStationArc, holdProgress, lockAcquireTime } from "../../sim/weaponRuntime";

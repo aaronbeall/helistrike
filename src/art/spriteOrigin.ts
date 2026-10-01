@@ -714,3 +714,8 @@ export function mountOf(key: string, role: SpritePointRole, index = 0): Uv {
 export function mountsOf(key: string, role: SpritePointRole): Uv[] {
   return lookupSpriteMounts(key, role);
 }
+
+/** Overlay guns are drawn barrel-up (same as hulls). World aim 0 is +X, so +90°. */
+export function gunWorldRot(_tex: string, aim: number): number {
+  return aim + Math.PI / 2;
+}
