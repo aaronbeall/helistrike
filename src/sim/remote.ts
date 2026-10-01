@@ -183,6 +183,8 @@ type RemoteDef = {
   mouseStopRange?: number;
   mouseLeashRange?: number;
   hostFace?: boolean;
+  /** Enemy spotting multiplier (lower = harder to notice); overrides the hull's. */
+  enemyAwareMul?: number;
   /**
    * Rare one-off overrides of hull-derived fields — every remote today just inherits these
    * from its `craftLook` hull. Give the hull the right values instead, if you can.
@@ -311,6 +313,8 @@ export interface RemoteCraft {
 export interface BayRemote {
   life: number;
   health: number;
+  /** Onboard weapon ammo carried back into the bay (no free reload on dock). */
+  ammo?: number[];
 }
 
 /** True when this remote replaces the player weapon HUD while piloted. */
@@ -412,6 +416,8 @@ const REMOTE_DEFS: Record<RemoteKind, Omit<RemoteDef, "kind">> = {
     scale: 0.42,
     thermal: true,
     craftLook: "spectre",
+    // Near-invisible to enemy sensors — only noticed at very close range.
+    enemyAwareMul: 0.15,
   },
   wingman: {
     name: "SKIFF",

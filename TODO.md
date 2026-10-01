@@ -38,11 +38,11 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
   * [x] Warthog (Jet)
   * [x] Lightning II (extra)
   * [x] Gunship
-  * [x] Chinook (flyable; pick-up/drop still TODO)
+  * [x] Chinook (flyable; drops via Humvee cargo bay)
   * [x] Black Hawk (extra)
   * [x] Murder Hornet (extra)
   * [x] (Secret) Prometheus (cloak)
-  * [ ] Steamship (steampunk airship)
+  * [x] Steamship (steampunk airship — Leviathan)
 * [ ] Single player progress, mission/vehicle unlocks, weapon/upgrade purchases
   * [ ] Campaign: multiple theater hand crafted missions with a light story, craft/weapon unlocks, between mission resource management, and progress pathing
   * [ ] Rogue Operation: a roguelike mode that uses procedural generated series of increasingly difficult missions, unlocks (craft and weapons) stick across playthroughs
@@ -73,18 +73,18 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
   * [x] (Alien) Warp bomb
 * [x] Counter-measures (partial)
   * [x] Flares (default)
-  * [ ] Smokescreen (stealth) — smoke bomb weapon exists; not a CM
-  * [x] Timewarp (cyber)
+  * [x] Smokescreen (smoke_screen CM on several craft / remotes; smoke bomb weapon too)
+  * [x] Timewarp (cyber) — pausable charge meter; world crawls while the craft keeps a movement + turret-aim bonus; warpwire lens
   * [x] Phase cloak (prometheus)
   * [x] EMP
-  * [ ] Reactive Armor
+  * [x] Reactive Armor
   * [ ] Turtle (drone)
 * [ ] Last stand / base defense game mode
 * [ ] Enemy line-of-sight behavior (hide behind terrain, etc)
   * [ ] TOWs and Hellfire collide on launch making fire behind cover ineffective
 * [ ] Sound effects
 * [x] Night vision / thermal vision (thermal; dedicated NV still open)
-* [x] Slow motion mode (timewarp CM + warp bomb)
+* [x] Slow motion mode (timewarp CM + warp bomb + global bullet time on E, rechargeable meter)
 * [x] Stinger events (objective complete, mission complete)
 * [x] Mission briefing screen (light: mission briefing copy on menu — not a dedicated scene)
 * [x] Mission outcome screen (MISSION COMPLETE / AIRCRAFT DOWN)
@@ -138,12 +138,12 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
   * [ ] Hanger -> tanks
   * [ ] Docks -> boats
 * [ ] Rotors push smoke
-* [ ] Roadkill organic units with rotors
+* [x] Roadkill organic units with rotors (rotor blades + crushing hulls)
 * [ ] Unit speed impact by slope, slope limit
 * [ ] Tail rotor (with tilt)
 * [ ] Pseudo 3d tilt graphic (jets/gunship props partial)
 * [x] Clouds
-* [ ] Drive ground vehicles
+* [x] Drive ground vehicles (pilotable ground remotes: HOUND, WOLF)
 * [ ] Eject, infiltrate, hijack
 * [ ] Hulk break-apart effect (dynamic splitting of hulk graphics into individual parts)
 * [ ] Predictive firing (enemy units and craft gunners, fire at predicted location, accuracy of prediction falls off with range and speed)
@@ -161,7 +161,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [ ] Enemy collision/avoidance sucks/doesn't work -- should avoid unit-to-unit collisions and buildings
 * [ ] Building placement should avoid overlaps
 * [ ] Ground units should avoid water -- partially implemented but it sucks
-* [ ] Z-ordering is not ideal -- debris/missiles flicker above and below their flame trail
+* [ ] Z-ordering is not ideal -- debris/missiles flicker above and below their flame trail (trail smoke-over-flame across depth bands fixed; debris still open)
 * [ ] Mech debris should not include vehicle type specific parts (rotors, treads, wheels)
   * [ ] Add wheels to wheeled vehicle debris
 * [ ] Enemy helis rotar hulks are wrong -- should be the 5 point and sized correctly

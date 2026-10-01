@@ -1476,6 +1476,10 @@ export interface Unit {
   rotor: number;
   track: number;
   turrets: number[];
+  /** Acquired target: a remote id, or undefined = the host craft (re-picked every ~0.5s). */
+  tgtRemoteId?: number;
+  /** Scene time (ms) of the next target re-evaluation. */
+  tgtNextT?: number;
   /** Per-turret fire state (index = gun part) — each turret targets, locks and fires on its own. */
   gunStates?: { cd: number; burst: number; lockT: number; holdT: number; tip: number }[];
   muzzleT: number;
@@ -1821,6 +1825,8 @@ export interface Shot {
    */
   povCam?: boolean;
   homePlayer?: boolean;
+  /** Enemy seeker fired at a remote (id); undefined = homes on the host craft. */
+  homeRemoteId?: number;
   /** HUD lock arc: distance to the target when the arc first showed (arc narrows by closure). */
   lockD0?: number;
   motor?: number;

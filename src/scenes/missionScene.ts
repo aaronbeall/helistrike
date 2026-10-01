@@ -332,6 +332,20 @@ const AUTO_GUN_SPEED_REF = 400;
 /** Host AGL a ground remote's dock bay must be under to actually dock (can't reel a ground vehicle up mid-air). */
 const DOCK_GROUND_MAX_AGL = 30;
 /** Bullet time (E): world rate while on, real seconds a full meter lasts, seconds empty → full. */
+/** Enemy re-target cadence (ms). */
+const ENEMY_RETARGET_MS = 500;
+/** Spotting reach for autonomous remotes (× their enemyAwareMul, autonomous debuff, smoke). */
+const AUTO_TARGET_RANGE = 600;
+/** Enemy awareness debuff vs autonomous (unpiloted) remotes. */
+const AUTONOMOUS_AWARE_MUL = 0.6;
+/** Distance-score penalty — enemies strongly prefer the player-controlled craft. */
+const AUTO_TARGET_SCORE_MUL = 3;
+/** Host's score penalty while the player flies a remote. */
+const HOST_WHILE_PILOTING_SCORE_MUL = 1.6;
+/** Battery icon width (body + nub) at scale 1. */
+const BATTERY_ICON_W = 26.4;
+/** Auto-launch skips the bay until a remote has at least this battery fraction. */
+const AUTO_LAUNCH_MIN_BATTERY = 0.25;
 const BULLET_TIME_SCALE = 0.25;
 const BULLET_TIME_DURATION = 6;
 const BULLET_TIME_RECHARGE = 9;
@@ -9260,6 +9274,76 @@ specIsShellGun(spec)
     return !!this.combatFocusRemote()?.spec.ground;
   }
 
+  /** Remote behind a shadow Craft (undefined for the host). */
+  remoteOfCraft(c: Craft): RemoteCraft | undefined {
+    if (c === this.player) return undefined;
+    for (const r of this.remotes) if (this.remotePilotCraft.get(r.id) === c) return r;
+    return undefined;
+  }
+
+  /** Remote can be engaged by enemies (out in the world, alive, has a hull). */
+  remoteTargetable(r: RemoteCraft): boolean {
+    return !r.detonate && !r.dock && !r.dockPending && !r.airborne && r.health > 0 && !!r.spec.craftLook;
+  }
+
+  /** Shadow Craft for an enemy-targeted remote, pose/health synced. */
+  remoteTargetCraft(r: RemoteCraft): Craft | undefined {
+    const craft = this.ensureRemotePilotCraft(r);
+    if (!craft || craft.phase === "dead") return undefined;
+    craft.x = r.x;
+    craft.y = r.y;
+    craft.z = r.z;
+    craft.vx = r.vx;
+    craft.vy = r.vy;
+    craft.vz = r.vz ?? 0;
+    craft.health = r.health;
+    return craft;
+  }
+
+  /** Threat HUD covers the host and the piloted POV remote, not autonomous remotes. */
+  hudThreatTarget(c: Craft): boolean {
+    return c === this.player || c === this.combatFocus();
+  }
+
+  /** Spotting multiplier for a target craft — remote roster value, autonomous debuff. */
+  targetAwareMul(c: Craft): number {
+    const rem = this.remoteOfCraft(c);
+    if (!rem) return c.spec.enemyAwareMul ?? 1;
+    const mul = rem.spec.enemyAwareMul ?? 1;
+    return rem === this.combatFocusRemote() ? mul : mul * AUTONOMOUS_AWARE_MUL;
+  }
+
+  /** Score-pick the craft a unit engages; lower score wins, player-controlled heavily favored. */
+  pickEnemyTarget(u: Unit, aaUnit: boolean): RemoteCraft | undefined {
+    const focusRem = this.combatFocusRemote();
+    let best: RemoteCraft | undefined;
+    let bestScore = Infinity;
+    const hostOk = this.cloakT <= 0;
+    if (hostOk) {
+      const d = Math.hypot(this.player.x - u.x, this.player.y - u.y);
+      bestScore = focusRem ? d * HOST_WHILE_PILOTING_SCORE_MUL : d;
+    }
+    for (const r of this.remotes) {
+      if (!this.remoteTargetable(r)) continue;
+      if (aaUnit && r.spec.ground) continue;
+      const d = Math.hypot(r.x - u.x, r.y - u.y);
+      let score: number;
+      if (r === focusRem) score = d;
+      else {
+        const reach =
+          AUTO_TARGET_RANGE * (r.spec.enemyAwareMul ?? 1) * AUTONOMOUS_AWARE_MUL * this.smokeVisionAt(r.x, r.y, radius(u.kind));
+        if (d > reach) continue;
+        score = d * AUTO_TARGET_SCORE_MUL;
+      }
+      if (score < bestScore) {
+        bestScore = score;
+        best = r;
+      }
+    }
+    if (!best && !hostOk && focusRem && !(aaUnit && focusRem.spec.ground)) return focusRem;
+    return best;
+  }
+
   /** AA burst / seeker / AAM — blind to ground HOUND. */
   enemyWeaponIsAa(wpn: { kind?: string; look?: string } | undefined): boolean {
     return weaponIsAa(wpn);
@@ -9270,7 +9354,17 @@ specIsShellGun(spec)
    * (HOUND) and take the host bird; everything else takes the combat focus.
    */
   enemyTargetFor(aa: boolean, focus: Craft = this.combatFocus()): Craft {
-    return aa && this.combatFocusIsGround() ? this.player : focus;
+    return aa && focus !== this.player && this.remoteOfCraft(focus)?.spec.ground ? this.player : focus;
+  }
+
+  /** Craft an enemy seeker homes on — its launch remote while live (never dirt-locked), else the host. */
+  enemySeekerTarget(s: Shot): Craft {
+    if (s.homeRemoteId == null) return this.player;
+    const r = this.remotes.find((r) => r.id === s.homeRemoteId);
+    const c = r && !r.spec.ground && this.remoteTargetable(r) ? this.remoteTargetCraft(r) : undefined;
+    if (c) return c;
+    s.homeRemoteId = undefined;
+    return this.player;
   }
 
   /** Dedicated AA platform (primary mount is AA / seeker). */
@@ -9284,8 +9378,19 @@ specIsShellGun(spec)
    * Per-enemy chase/aim craft. AA is blind to dirt HOUND — they see the host bird only.
    */
   unitCombatFocus(u: Unit): Craft {
-    if (this.combatFocusIsGround() && this.unitIsAaEnemy(u)) return this.player;
-    return this.combatFocus();
+    const now = this.time.now;
+    if (u.tgtNextT == null || now >= u.tgtNextT) {
+      // Staggered re-pick — acquisition lags a little so many-to-many stays cheap.
+      u.tgtNextT = now + ENEMY_RETARGET_MS + (u.id % 7) * 40;
+      u.tgtRemoteId = this.pickEnemyTarget(u, this.unitIsAaEnemy(u))?.id;
+    }
+    if (u.tgtRemoteId == null) return this.player;
+    const rem = this.remotes.find((r) => r.id === u.tgtRemoteId);
+    const craft = rem && this.remoteTargetable(rem) ? this.remoteTargetCraft(rem) : undefined;
+    if (craft) return craft;
+    u.tgtRemoteId = undefined;
+    u.tgtNextT = undefined;
+    return this.player;
   }
 
   /**
@@ -9295,25 +9400,25 @@ specIsShellGun(spec)
   combatFocus(): Craft {
     const rem = this.combatFocusRemote();
     if (!rem) return this.player;
-    const craft = this.ensureRemotePilotCraft(rem);
-    if (!craft || craft.phase === "dead") return this.player;
-    craft.x = rem.x;
-    craft.y = rem.y;
-    craft.z = rem.z;
-    craft.vx = rem.vx;
-    craft.vy = rem.vy;
-    craft.vz = rem.vz ?? 0;
-    craft.health = rem.health;
-    return craft;
+    return this.remoteTargetCraft(rem) ?? this.player;
   }
 
   /** Apply hit damage to the current combat focus (remote detonates at 0 HP). */
   damageCombatFocus(n: number, dx?: number, dy?: number): void {
     const rem = this.combatFocusRemote();
-    if (!rem) {
-      this.player.damage(n, dx, dy);
-      return;
-    }
+    if (!rem) this.player.damage(n, dx, dy);
+    else this.damageRemote(rem, n, dx, dy);
+  }
+
+  /** Damage the host or a remote behind a shadow Craft. */
+  damageTarget(c: Craft, n: number, dx?: number, dy?: number): void {
+    const rem = this.remoteOfCraft(c);
+    if (!rem) this.player.damage(n, dx, dy);
+    else this.damageRemote(rem, n, dx, dy);
+  }
+
+  /** Apply hit damage to a remote (detonates at 0 HP). */
+  damageRemote(rem: RemoteCraft, n: number, dx?: number, dy?: number): void {
     const craft = this.ensureRemotePilotCraft(rem);
     if (craft) {
       craft.damage(n, dx, dy);
@@ -9698,7 +9803,9 @@ specIsShellGun(spec)
       track: 0,
       airborne: drop || undefined,
     });
-    initRemoteLoadout(this.remotes[this.remotes.length - 1]!);
+    const launched = this.remotes[this.remotes.length - 1]!;
+    initRemoteLoadout(launched);
+    if (bay?.ammo && launched.ammo) launched.ammo = bay.ammo.slice();
     // Spectre auto-views; HOUND takes control when dropped from its selected HUD slot.
     if (!remoteSpec.ai || remoteSpec.pilotable) {
       const selectedKind = payloadIsRemote(this.loadout[this.player.weapon]?.payload)
@@ -10007,6 +10114,12 @@ specIsShellGun(spec)
       this.stationFireCd[slot] ??
       (this.stationFireCd[slot] = Array.from({ length: n }, () => 0));
     if ((cds[0] ?? 0) > 0) return;
+    // Launch picks the fullest bay remote — hold the scramble while even that one is low.
+    if (remoteFlags.dockable && !remoteFlags.unlimitedLife) {
+      const lifeMax = Math.max(0.1, spec.payload!.remote!.duration);
+      const best = this.bayRoster(slot).reduce((m, b) => Math.max(m, b.life), 0);
+      if (best / lifeMax < AUTO_LAUNCH_MIN_BATTERY) return;
+    }
 
     const aware = remoteFlags.awareRange ?? 560;
     let threat = false;
@@ -10772,7 +10885,7 @@ specIsShellGun(spec)
     drone.vz *= Math.pow(0.2, dt);
   }
 
-  refundRemoteAmmo(r: RemoteCraft): void {
+  stowDockedRemote(r: RemoteCraft): void {
     for (let i = 0; i < this.loadout.length; i++) {
       const w = this.loadout[i]!;
       if (!payloadIsRemote(w.payload)) continue;
@@ -10783,7 +10896,7 @@ specIsShellGun(spec)
       if ((this.ammo[i] ?? 0) < cap) {
         this.ammo[i] = (this.ammo[i] ?? 0) + 1;
         const roster = this.bayRemotes[i] ?? (this.bayRemotes[i] = []);
-        roster.push({ life: Math.max(0, r.life), health: Math.max(0, r.health) });
+        roster.push({ life: Math.max(0, r.life), health: Math.max(0, r.health), ammo: r.ammo?.slice() });
         return;
       }
     }
@@ -10834,6 +10947,25 @@ specIsShellGun(spec)
         }
       }
     }
+  }
+
+  /** Battery fraction of a dockable slot's pool (bay + live); undefined if none or unlimited. */
+  remotePoolBattery(slot: number): number | undefined {
+    const spec = this.dockableSlotRemote(slot);
+    if (!spec || spec.unlimitedLife) return undefined;
+    const lifeMax = Math.max(0.1, this.loadout[slot]!.payload!.remote!.duration);
+    let sum = 0;
+    let n = 0;
+    for (const b of this.bayRoster(slot)) {
+      sum += Phaser.Math.Clamp(b.life / lifeMax, 0, 1);
+      n++;
+    }
+    for (const r of this.remotes) {
+      if (r.detonate || r.spec.kind !== spec.kind) continue;
+      sum += Phaser.Math.Clamp(r.life / lifeMax, 0, 1);
+      n++;
+    }
+    return n ? sum / n : undefined;
   }
 
   /** Summed health fraction of a dockable slot's whole pool (bay + live, excluding lost). */
@@ -10925,7 +11057,7 @@ specIsShellGun(spec)
         r.dock = true;
         r.dockPending = false;
         this.releaseRemotePilotCraft(r.id);
-        this.refundRemoteAmmo(r);
+        this.stowDockedRemote(r);
         if (!r.spec.ai || r.spec.pilotable) this.exitRemoteView();
         continue;
       }
@@ -14016,8 +14148,7 @@ specIsShellGun(spec)
         if (stingerHome) {
           const cur = Math.hypot(s.vx, s.vy, s.vz);
           const decoy = this.closestFlare(s.x, s.y, s.z);
-          // Ground POV remotes (HOUND) are not AA targets — keep seekers on the host bird.
-          const seekTgt = this.enemyTargetFor(true);
+          const seekTgt = this.enemySeekerTarget(s);
           const tx = decoy ? decoy.x : seekTgt.x;
           const ty = decoy ? decoy.y : seekTgt.y;
           const tz = decoy ? decoy.z : seekTgt.z + seekTgt.height * 0.45;
@@ -14181,7 +14312,7 @@ specIsShellGun(spec)
 
       let victim: Unit | undefined;
       let hitPlayer = false;
-      if (!s.deadfall && s.from === "enemy" && this.cloakT <= 0) {
+      if (!s.deadfall && s.from === "enemy") {
         const tryHit = (tgt: Craft, isHost: boolean): boolean => {
           if (tgt.phase !== "flight" && tgt.phase !== "grounded") return false;
           // Shadow remotes stay in "flight" phase; host must be airborne.
@@ -14193,26 +14324,24 @@ specIsShellGun(spec)
           if (Math.hypot(s.x - tgt.x, s.y - tgt.y) >= hitR) return false;
           if (s.z > tgt.z + tgt.height || s.z < tgt.z) return false;
           const dmg = s.dmg * 0.65 * (this.reactiveArmorT > 0 && isHost ? 0.22 : 1);
-          if (isHost) this.player.damage(dmg, s.vx, s.vy);
-          else this.damageCombatFocus(dmg, s.vx, s.vy);
+          this.damageTarget(tgt, dmg, s.vx, s.vy);
           if (this.reactiveArmorT > 0 && isHost) {
             this.spawnImpactFlash(tgt.x, tgt.y, tgt.z + 8, 0xffcc66, 48, 0.9, 140);
             this.fireReactiveArmorImpactBurst(s.vx, s.vy);
           }
           return true;
         };
-        // AA seekers ignore dirt HOUND — keep those hits on the host bird.
-        const preferHost = !!(s.homePlayer && this.combatFocusIsGround());
-        const focus = this.combatFocus();
-        if (preferHost) {
-          if (tryHit(this.player, true)) {
+        // Any live remote can be struck; AA seekers ignore dirt-locked ones.
+        for (const r of this.remotes) {
+          if (!this.remoteTargetable(r) || (s.homePlayer && r.spec.ground)) continue;
+          const c = this.remoteTargetCraft(r);
+          if (c && tryHit(c, false)) {
             hit = true;
             hitPlayer = true;
+            break;
           }
-        } else if (focus !== this.player && tryHit(focus, false)) {
-          hit = true;
-          hitPlayer = true;
-        } else if (tryHit(this.player, true)) {
+        }
+        if (!hitPlayer && this.cloakT <= 0 && tryHit(this.player, true)) {
           hit = true;
           hitPlayer = true;
         }
@@ -16037,11 +16166,10 @@ specIsShellGun(spec)
    * Spotting / chase-engage reach. Cloak zeros it; combat-focus `enemyAwareMul` scales it.
    * Helis (not VTOL / plane) get a slight further cut when flying low AGL.
    */
-  enemyAwareReach(base: number, vision = 1): number {
-    if (this.cloakT > 0) return 0;
-    const focus = this.combatFocus();
+  enemyAwareReach(base: number, vision = 1, focus: Craft = this.combatFocus()): number {
+    if (this.cloakT > 0 && focus === this.player) return 0;
     const craft = focus.spec;
-    let mul = craft.enemyAwareMul ?? 1;
+    let mul = this.targetAwareMul(focus);
     if (craft.flightModel === "heli" && focus.phase === "flight") {
       const agl = focus.z - focus.gndSmooth;
       const cruise = craft.cruiseAgl;
@@ -16471,12 +16599,20 @@ specIsShellGun(spec)
     }
     const focus = this.combatFocus();
     const hd = Math.hypot(focus.x - x, focus.y - y);
-    if (this.cloakT <= 0 && hd < blast * 0.55) {
+    if (hd < blast * 0.55) {
       if (focus === this.player) {
         const agl = castZ(this.world, this.player.x, this.player.y, this.player.z);
-        if (agl < 30) this.player.damage(dmg * 0.25, dx, dy);
+        if (this.cloakT <= 0 && agl < 30) this.player.damage(dmg * 0.25, dx, dy);
       } else {
         this.damageCombatFocus(dmg * 0.25, dx, dy);
+      }
+    }
+    // Enemy blasts also catch autonomous remotes.
+    if (shot?.from === "enemy") {
+      const focusRem = this.combatFocusRemote();
+      for (const r of this.remotes) {
+        if (r === focusRem || !this.remoteTargetable(r)) continue;
+        if (Math.hypot(r.x - x, r.y - y) < blast * 0.55) this.damageRemote(r, dmg * 0.25, dx, dy);
       }
     }
   }
@@ -18703,7 +18839,7 @@ specIsShellGun(spec)
   static readonly DRONE_KAMIKAZE_AGL = 400;
 
   driveDrone(u: Unit, dt: number, h: Craft, dist: number, _dx: number, _dy: number, vision = 1): void {
-    if (vision > 0 && dist < this.enemyAwareReach(1400, vision) && h.phase === "flight") {
+    if (vision > 0 && dist < this.enemyAwareReach(1400, vision, h) && h.phase === "flight") {
       const playerAgl = Math.max(LOW_AGL + 8, h.z - h.gndSmooth);
       const inAltReach = playerAgl <= MissionScene.DRONE_KAMIKAZE_AGL;
       // Lead the intercept — Lightning / jets outrun pure pursuit easily.
@@ -18755,7 +18891,7 @@ specIsShellGun(spec)
       if (inAltReach) {
         const dist3 = Math.hypot(h.x - u.x, h.y - u.y, h.z - u.z);
         if (dist3 < h.spec.radius + radius(u.kind)) {
-          this.damageCombatFocus(38, u.vx, u.vy);
+          this.damageTarget(h, 38, u.vx, u.vy);
           // Kamikaze: explode in place — no falling crash hull.
           this.destroyUnit(u, false, false, true);
           return;
@@ -18778,7 +18914,7 @@ specIsShellGun(spec)
     const side = (u.id & 1) === 0 ? 1 : -1;
     const prefDist = 380;
 
-    if (vision > 0 && dist < this.enemyAwareReach(1600, vision) && h.phase === "flight") {
+    if (vision > 0 && dist < this.enemyAwareReach(1600, vision, h) && h.phase === "flight") {
       const fwdX = dx / (dist || 1);
       const fwdY = dy / (dist || 1);
       const latX = -fwdY * side;
@@ -18823,7 +18959,7 @@ specIsShellGun(spec)
     const heavy = !specOf(u.kind).combatMood;
     if (heavy) {
       // Heavy: always orbit and shoot, no kiting
-      if (vision > 0 && dist < this.enemyAwareReach(1500, vision) && h.phase === "flight") {
+      if (vision > 0 && dist < this.enemyAwareReach(1500, vision, h) && h.phase === "flight") {
         u.orbit += 0.2 * dt;
         const ring = 430;
         const ox = h.x + Math.cos(u.orbit) * ring;
@@ -18853,7 +18989,7 @@ specIsShellGun(spec)
       const closeDist = 280;
       const orbitRing = 380;
 
-      if (vision > 0 && dist < this.enemyAwareReach(1500, vision) && h.phase === "flight") {
+      if (vision > 0 && dist < this.enemyAwareReach(1500, vision, h) && h.phase === "flight") {
         const fwdX = dx / (dist || 1);
         const fwdY = dy / (dist || 1);
         const latX = -fwdY * side;
@@ -19323,7 +19459,7 @@ specIsShellGun(spec)
     let wantX = u.x;
     let wantY = u.y;
     if (combat) {
-      if (vision > 0 && dist < this.enemyAwareReach(980, vision) && h.phase === "flight") {
+      if (vision > 0 && dist < this.enemyAwareReach(980, vision, h) && h.phase === "flight") {
         u.orbit += 0.24 * dt;
         const ring = 350 + (u.id % 5) * 28;
         // Chase a lead point on the ring so we rarely sit on the waypoint
@@ -19341,7 +19477,7 @@ specIsShellGun(spec)
         u.aiTy = undefined;
       }
     } else if (
-      dist < this.enemyAwareReach(sp.fleeAwareRange ?? 520, vision) &&
+      dist < this.enemyAwareReach(sp.fleeAwareRange ?? 520, vision, h) &&
       h.phase === "flight"
     ) {
       if (vision > 0) {
@@ -19532,13 +19668,13 @@ specIsShellGun(spec)
         if (tracking) {
           const p = holdProgress(st.lockT, lockReq);
           u.debugLockT = Math.max(u.debugLockT ?? 0, p);
-          if (p >= (u.paintT ?? -1)) {
+          if (p >= (u.paintT ?? -1) && this.hudThreatTarget(tgt)) {
             u.paintT = p;
             u.paintHost = tgt === this.player;
           }
         }
       } else if (engaging && gi === 0) {
-        const narrowT = aimNarrowTime(AI_AIM_NARROW_BASE, tgt.spec.enemyAwareMul ?? 1);
+        const narrowT = aimNarrowTime(AI_AIM_NARROW_BASE, this.targetAwareMul(tgt));
         u.debugAimT = holdProgress(st.holdT, narrowT);
         u.debugAimSpreadRad = aimPrecisionSpread(st.holdT, narrowT, (wpn.jitter ?? 0) * AI_AIM_WIDE_MUL, wpn.jitter ?? 0);
       }
@@ -19607,7 +19743,7 @@ specIsShellGun(spec)
       : (Math.random() - 0.5) *
         aimPrecisionSpread(
           holdT,
-          aimNarrowTime(AI_AIM_NARROW_BASE, aimTgt.spec.enemyAwareMul ?? 1),
+          aimNarrowTime(AI_AIM_NARROW_BASE, this.targetAwareMul(aimTgt)),
           (wpn.jitter ?? 0) * AI_AIM_WIDE_MUL,
           wpn.jitter ?? 0
         );
@@ -19648,6 +19784,7 @@ specIsShellGun(spec)
       dmg: wpn.dmg,
       look: wpn.look,
       homePlayer: home,
+      homeRemoteId: home ? this.remoteOfCraft(aimTgt)?.id : undefined,
       motor: home ? -0.06 : undefined,
       cruise: home ? wpn.speed : undefined,
       scale: wpn.scale,
@@ -19878,8 +20015,8 @@ specIsShellGun(spec)
       const dy = h.y - u.y;
       const dist = Math.hypot(dx, dy);
       // Cloak: complete sensor blackout. Smoke: blinds all enemies when the player is covered.
-      const vision = this.cloakT > 0 ? 0 : this.enemySmokeVision(u, h);
-      if (this.cloakT > 0 && (u.aware || u.aiMood || u.aiTx != null)) {
+      const vision = this.cloakT > 0 && h === this.player ? 0 : this.enemySmokeVision(u, h);
+      if (this.cloakT > 0 && h === this.player && (u.aware || u.aiMood || u.aiTx != null)) {
         u.aware = false;
         u.aiMood = undefined;
         u.moodT = 0;
@@ -19969,7 +20106,7 @@ specIsShellGun(spec)
         if ((sp.behavior === "attack_infantry" || sp.behavior === "flee_infantry") && !this.snapHost(u)) {
           const canShoot = !!sp.weapon;
           if (sp.organic && u.health < u.max && this.tickBleedOut(u, dt)) continue;
-          const seeR = this.enemyAwareReach(400, vision);
+          const seeR = this.enemyAwareReach(400, vision, h);
           const screenR = this.scale.width / Math.max(this.cameras.main.zoom, 0.001);
           const wounded = u.health < u.max;
           const downed = sp.organic && wounded && u.health <= 1;
@@ -20179,7 +20316,7 @@ specIsShellGun(spec)
           u.lockT = tracking ? (u.lockT ?? 0) + dt : 0;
           const lockReq = lockAcquireTime(AI_LOCK_BASE, aimTgt.spec.enemySeekerMul ?? 1);
           u.debugLockT = tracking ? holdProgress(u.lockT, lockReq) : undefined;
-          if (tracking) {
+          if (tracking && this.hudThreatTarget(aimTgt)) {
             u.paintT = holdProgress(u.lockT, lockReq);
             u.paintHost = aimTgt === this.player;
           }
@@ -20187,7 +20324,7 @@ specIsShellGun(spec)
           u.debugLockT = undefined;
         }
         if (engaging && !isSeekerWpn && wpn) {
-          const narrowT = aimNarrowTime(AI_AIM_NARROW_BASE, aimTgt.spec.enemyAwareMul ?? 1);
+          const narrowT = aimNarrowTime(AI_AIM_NARROW_BASE, this.targetAwareMul(aimTgt));
           u.debugAimT = holdProgress(u.aimHoldT, narrowT);
           u.debugAimSpreadRad = aimPrecisionSpread(u.aimHoldT, narrowT, (wpn.jitter ?? 0) * AI_AIM_WIDE_MUL, wpn.jitter ?? 0);
         } else {
@@ -20244,7 +20381,7 @@ specIsShellGun(spec)
           u.debugLockT = secTracking ? holdProgress(u.secLockT, secLockReq) : u.debugLockT;
           if (secTracking) {
             const p = holdProgress(u.secLockT, secLockReq);
-            if (p >= (u.paintT ?? -1)) {
+            if (p >= (u.paintT ?? -1) && this.hudThreatTarget(secTgt)) {
               u.paintT = p;
               u.paintHost = secTgt === this.player;
             }
@@ -20300,6 +20437,7 @@ specIsShellGun(spec)
                 dmg: pw.dmg,
                 look: pw.look,
                 homePlayer: home,
+                homeRemoteId: home ? this.remoteOfCraft(secTgt)?.id : undefined,
                 motor: sec.motor,
                 cruise: pw.speed,
                 scale: pw.scale * (sec.scale ?? 1),
@@ -22008,9 +22146,12 @@ specIsShellGun(spec)
    */
   syncThreatHud(): void {
     const show = this.player.phase === "flight" && !this.mapView && !this.over;
-    const painted = show && this.units.some((u) => !u.dead && ((u.lockT ?? 0) > 0 || (u.secLockT ?? 0) > 0));
+    const painted = show && this.units.some((u) => !u.dead && u.paintT != null);
     const missileInbound =
-      show && this.shots.some((s) => !s.deadfall && s.from === "enemy" && s.homePlayer);
+      show &&
+      this.shots.some(
+        (s) => !s.deadfall && s.from === "enemy" && s.homePlayer && this.hudThreatTarget(this.enemySeekerTarget(s))
+      );
     this.threatPaintTxt.setVisible(painted && !missileInbound);
     if (painted && !missileInbound) {
       const blink = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(this.time.now * 0.006));
@@ -22047,12 +22188,12 @@ specIsShellGun(spec)
       const alpha = u.paintT * 0.8 * paintBlink;
       this.strokeThreatArc(g, at.x, at.y, r, Math.atan2(ut.y - at.y, ut.x - at.x), half, 2, 0xfff0c8, alpha);
     }
-    // Seekers home on the host when the combat focus is dirt-locked (matches stinger homing).
-    const seekTgt = this.enemyTargetFor(true, focus);
     const lockA = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(now * 0.016));
     for (const s of this.shots) {
       if (s.deadfall || s.from !== "enemy" || !s.homePlayer || s.seekDisabled) continue;
       if (this.closestFlare(s.x, s.y, s.z)) continue; // decoyed — not homing on us
+      const seekTgt = this.enemySeekerTarget(s);
+      if (seekTgt !== this.player && seekTgt !== focus) continue;
       const { at, r } = ring(seekTgt);
       const st = worldToScreen(s.x, s.y, s.z);
       const dist = Math.hypot(s.x - seekTgt.x, s.y - seekTgt.y, s.z - seekTgt.z);
@@ -22262,6 +22403,11 @@ specIsShellGun(spec)
                 : 0xc4a24a;
         g.fillStyle(fill, disabled ? 0.55 : sel ? 0.85 : 0.95);
         g.fillRect(barX, barY, Math.max(2, barW * frac), barH);
+        // Pool battery badge on the top-right edge, only while not full.
+        const batt = pooled ? this.remotePoolBattery(i) : undefined;
+        if (batt != null && batt < 0.999) {
+          this.drawBatteryIcon(g, x + slotW - BATTERY_ICON_W - 6, y - 4, batt, 1);
+        }
       }
 
       const row = this.wpnHudSlots[i]!;
@@ -25483,40 +25629,7 @@ specIsShellGun(spec)
         g.fillRect(hx, hy, hw * hr, 4 * zs);
       }
       if (r.spec.unlimitedLife) continue;
-      const segs = 4;
-      const bodyW = 24 * zs;
-      const bodyH = 8 * zs;
-      const nubW = 2.4 * zs;
-      const nubH = 4.2 * zs;
-      const pad = 1.5 * zs;
-      const gap = 1.15 * zs;
-      const rBody = 1.5 * zs;
-      const innerW = bodyW - pad * 2;
-      const innerH = bodyH - pad * 2;
-      const segW = (innerW - gap * (segs - 1)) / segs;
-      const ratio = Phaser.Math.Clamp(r.life / Math.max(0.05, r.lifeMax), 0, 1);
-      const filled = ratio > 0.001 ? Math.min(segs, Math.max(1, Math.ceil(ratio * segs - 1e-6))) : 0;
-      const low = filled <= 1;
-      const col = low ? 0xff2a18 : filled >= 3 ? 0x5caa3a : 0xe8c44a;
-      const pulse = low ? 0.38 + 0.62 * (0.5 + 0.5 * Math.sin(this.time.now * 0.022)) : 1;
-      const totalW = bodyW + nubW;
-      const x = at.x - totalW / 2;
-      const y = batY;
-      g.fillStyle(0x10100c, 0.72 * pulse);
-      g.fillRoundedRect(x, y, bodyW, bodyH, rBody);
-      g.lineStyle(Math.max(1, 1.15 * zs), low ? col : 0xd8d8cc, 0.92 * pulse);
-      g.strokeRoundedRect(x, y, bodyW, bodyH, rBody);
-      g.fillStyle(low ? col : 0xd8d8cc, 0.92 * pulse);
-      g.fillRoundedRect(x + bodyW - 0.4 * zs, y + (bodyH - nubH) / 2, nubW, nubH, 0.7 * zs);
-      for (let i = 0; i < segs; i++) {
-        const sx = x + pad + i * (segW + gap);
-        const sy = y + pad;
-        g.fillStyle(0x080806, 0.85);
-        g.fillRect(sx, sy, segW, innerH);
-        if (i >= filled) continue;
-        g.fillStyle(col, pulse);
-        g.fillRect(sx, sy, segW, innerH);
-      }
+      this.drawBatteryIcon(g, at.x - BATTERY_ICON_W * zs * 0.5, batY, r.life / Math.max(0.05, r.lifeMax), zs);
     }
     const armed = this.remoteDetonateArmed();
     const drone = armed ? this.activeRemote() : undefined;
@@ -25536,6 +25649,41 @@ specIsShellGun(spec)
         .setScale(zs)
         .setAlpha(blink)
         .setDepth(worldDepth(drone.z, ZOff.body + 2, drone.y));
+    }
+  }
+
+  /** Segmented battery icon (remote overhead + HUD pool); x/y = top-left, width BATTERY_ICON_W × zs. */
+  drawBatteryIcon(g: Phaser.GameObjects.Graphics, x: number, y: number, frac: number, zs: number): void {
+    const segs = 4;
+    const bodyW = 24 * zs;
+    const bodyH = 8 * zs;
+    const nubW = 2.4 * zs;
+    const nubH = 4.2 * zs;
+    const pad = 1.5 * zs;
+    const gap = 1.15 * zs;
+    const rBody = 1.5 * zs;
+    const innerW = bodyW - pad * 2;
+    const innerH = bodyH - pad * 2;
+    const segW = (innerW - gap * (segs - 1)) / segs;
+    const ratio = Phaser.Math.Clamp(frac, 0, 1);
+    const filled = ratio > 0.001 ? Math.min(segs, Math.max(1, Math.ceil(ratio * segs - 1e-6))) : 0;
+    const low = filled <= 1;
+    const col = low ? 0xff2a18 : filled >= 3 ? 0x5caa3a : 0xe8c44a;
+    const pulse = low ? 0.38 + 0.62 * (0.5 + 0.5 * Math.sin(this.time.now * 0.022)) : 1;
+    g.fillStyle(0x10100c, 0.72 * pulse);
+    g.fillRoundedRect(x, y, bodyW, bodyH, rBody);
+    g.lineStyle(Math.max(1, 1.15 * zs), low ? col : 0xd8d8cc, 0.92 * pulse);
+    g.strokeRoundedRect(x, y, bodyW, bodyH, rBody);
+    g.fillStyle(low ? col : 0xd8d8cc, 0.92 * pulse);
+    g.fillRoundedRect(x + bodyW - 0.4 * zs, y + (bodyH - nubH) / 2, nubW, nubH, 0.7 * zs);
+    for (let i = 0; i < segs; i++) {
+      const sx = x + pad + i * (segW + gap);
+      const sy = y + pad;
+      g.fillStyle(0x080806, 0.85);
+      g.fillRect(sx, sy, segW, innerH);
+      if (i >= filled) continue;
+      g.fillStyle(col, pulse);
+      g.fillRect(sx, sy, segW, innerH);
     }
   }
 
