@@ -49,3 +49,9 @@ export class Rng {
     return this.next() < p;
   }
 }
+
+export function jitterDisk(x: number, y: number, r: number): { x: number; y: number } {
+  const a = Math.random() * Math.PI * 2;
+  const d = Math.sqrt(Math.random()) * r;
+  return { x: x + Math.cos(a) * d, y: y + Math.sin(a) * d };
+}

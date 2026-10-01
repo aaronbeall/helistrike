@@ -1,5 +1,6 @@
+import { type PlayerWpnSpec, type WeaponLaunch, type WeaponGravity, type WeaponGuidance, heatClassCategory, heatClassScore, type HeatClass, type SmokePuff, type Unit } from "./combat";
+import { payloadIsHelix, payloadIsKinetic } from "./payload";
 import Phaser from "phaser";
-import { heatClassCategory, heatClassScore, type HeatClass, type SmokePuff, type Unit } from "./combat";
 import { isAerial, isGroundVehicle, isOrganic, specOf } from "./roster";
 
 /** Classify a unit for heat-seeker preference ordering. */
@@ -133,4 +134,78 @@ export function heatSeekScore(
   const classN = heatClassScore(heatClassOf(u));
   const off = Math.abs(Phaser.Math.Angle.Wrap(aimAng - craftHeading));
   return classN * 1e6 + u.max * 10 - off * 40;
+}
+
+/** Gravity from drop / lobbed muzzle launch. */
+export function launchGravity(launch: WeaponLaunch | undefined): WeaponGravity | undefined {
+  if (!launch) return undefined;
+  if (launch.mode === "drop") return launch.gravity;
+  if (launch.mode === "muzzle") return launch.gravity;
+  return undefined;
+}
+
+export function targetingMode(g: WeaponGuidance | undefined): WeaponGuidance["targeting"]["mode"] | undefined {
+  return g?.targeting.mode;
+}
+
+/** Shell-ejecting player guns. */
+export function specIsShellGun(spec: PlayerWpnSpec): boolean {
+  if (spec.launch.mode !== "muzzle" || spec.guidance) return false;
+  const p = spec.payload;
+  if (
+    payloadIsHelix(p) ||
+    p.remote ||
+    p.warp ||
+    p.cluster ||
+    p.smoke ||
+    p.stun ||
+    p.callStrike ||
+    p.hostFire
+  )
+    return false;
+  // Kinetic (incl. empty / no pen) or HE shell guns.
+  return payloadIsKinetic(p, spec.launch) || !!p.detonate;
+}
+
+/** Unguided Hydra-style rocket pod (muzzle + rocket smoke, no guidance). */
+export function specIsRocketPod(spec: PlayerWpnSpec): boolean {
+  const ex = spec.exhaust;
+  return (
+    spec.launch.mode === "muzzle" &&
+    !spec.guidance &&
+    !!ex &&
+    ex.kind === "particles" &&
+    ex.smoke === "rocket"
+  );
+}
+
+/** One laser at the average of multi-barrel / multi-gun emit tips. */
+export function collapseSightTips<T extends { x: number; y: number }>(tips: T[]): T[] {
+  if (tips.length <= 1) return tips;
+  let sx = 0;
+  let sy = 0;
+  for (const t of tips) {
+    sx += t.x;
+    sy += t.y;
+  }
+  const n = tips.length;
+  const head = tips[0]!;
+  return [{ ...head, x: sx / n, y: sy / n }];
+}
+
+/**
+ * Hardpoint pylon phase from ammo count.
+ * Fire spends first then indexes with remaining (`afterSpend`);
+ * sight uses loaded count so the laser matches the *next* shot, not the last.
+ */
+export function hardpointAmmoIndex(
+  ammo: number,
+  mountCount: number,
+  afterSpend = false
+): number {
+  if (mountCount <= 1) return 0;
+  // After spend with remaining R: (R - 1) % n
+  // Before spend with loaded A: same pylon as fire will use → (A - 2) % n
+  const phase = afterSpend ? ammo - 1 : ammo - 2;
+  return ((phase % mountCount) + mountCount) % mountCount;
 }

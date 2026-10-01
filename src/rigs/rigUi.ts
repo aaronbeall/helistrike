@@ -530,25 +530,9 @@ export function syncRigSystemCursor(from: Phaser.Scene, prefer?: string): void {
     apply(prefer ?? "default");
     return;
   }
-  const mission = from.scene.get("mission") as
-    | (Phaser.Scene & {
-        helpOpen?: boolean;
-        exitOpen?: boolean;
-        editOpen?: boolean;
-        debugOpen?: boolean;
-        debugCamOpen?: boolean;
-        debugSpawnOpen?: boolean;
-      })
-    | null;
+  const mission = from.scene.get("mission") as (Phaser.Scene & { uiOverlayOpen?: () => boolean }) | null;
   if (mission?.sys.isActive()) {
-    const ui =
-      !!mission.helpOpen ||
-      !!mission.exitOpen ||
-      !!mission.editOpen ||
-      !!mission.debugOpen ||
-      !!mission.debugCamOpen ||
-      !!mission.debugSpawnOpen;
-    apply(ui ? "default" : "none");
+    apply(mission.uiOverlayOpen?.() ? "default" : "none");
     return;
   }
   apply(prefer ?? "default");

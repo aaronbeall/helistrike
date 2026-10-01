@@ -173,3 +173,23 @@ export function setThermalPipeline(
   }
   return true;
 }
+
+export function thermalSignalTint(heat: number): number {
+  const signal = Phaser.Math.Clamp(Math.round((0.06 + heat * 0.94) * 255), 0, 255);
+  // Magenta is an internal semantic heat signal. The thermal post shader decodes
+  // it to white-hot; this separates authored heat from bright terrain albedo.
+  return (signal << 16) | signal;
+}
+
+export function applyThermalHeat(
+  image: Phaser.GameObjects.Image,
+  enabled: boolean,
+  heat: number,
+  normalTint?: number
+): void {
+  if (enabled) image.setTintFill(thermalSignalTint(heat));
+  else {
+    image.clearTint();
+    if (normalTint != null) image.setTint(normalTint);
+  }
+}
