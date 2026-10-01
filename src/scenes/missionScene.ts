@@ -9955,6 +9955,13 @@ specIsShellGun(spec)
       drone.spec.ground ? false : !!opts?.space,
       drone.spec.ground ? false : !!opts?.shift
     );
+    // Ground remotes can't drive into water: refuse the move (AI stuck→reverse kicks in; pilot must turn/back up).
+    if (drone.spec.ground && !drone.airborne && this.groundRemoteEntersWater(drone, trackX0, trackY0, craft.x, craft.y)) {
+      craft.x = trackX0;
+      craft.y = trackY0;
+      craft.vx = 0;
+      craft.vy = 0;
+    }
     drone.x = craft.x;
     drone.y = craft.y;
     drone.z = craft.z;
@@ -10480,6 +10487,7 @@ specIsShellGun(spec)
         throttle = spd > 12 ? -0.6 : 0;
       }
     }
+    if (throttle > 0) want = this.waterSteerWant(drone, want);
     const { stick, aim } = this.remoteAiStickAim(drone, want, throttle);
     this.driveRemoteCraft(drone, dt, stick, aim, {
       syncGun: false,
@@ -10684,6 +10692,8 @@ specIsShellGun(spec)
   /** Push a ground remote out of solids and cancel velocity into them; returns total penetration. */
   resolveGroundRemote(drone: RemoteCraft): number {
     const r = drone.spec.radius;
+    const x0 = drone.x;
+    const y0 = drone.y;
     let total = 0;
     for (let i = 0; i < 3; i++) {
       const hit = this.groundObstacleAt(drone, drone.x, drone.y, r);
@@ -10697,6 +10707,7 @@ specIsShellGun(spec)
       }
       total += hit.depth;
     }
+    this.gateGroundRemoteWater(drone, x0, y0);
     return total;
   }
 
@@ -10781,7 +10792,7 @@ specIsShellGun(spec)
         nav.avoidOs = nav.reverseSteer;
       }
     } else {
-      let steerWant = want;
+      let steerWant = moving ? this.waterSteerWant(drone, want) : want;
       let thr = throttle;
       nav.state = state;
       if (moving || spd > 20) {
@@ -10823,6 +10834,43 @@ specIsShellGun(spec)
     this.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false, gunAim });
     const pen = this.resolveGroundRemote(drone);
     if (pen > 0.5 && moving) nav.stuckT += dt;
+  }
+
+  /** Bend an autonomous ground remote's heading away from water ahead (shared enemy look-ahead). */
+  waterSteerWant(drone: RemoteCraft, want: number): number {
+    const tx = drone.x + Math.cos(want) * 120;
+    const ty = drone.y + Math.sin(want) * 120;
+    const p = this.terrainSteer(drone.x, drone.y, tx, ty, false, drone.angle);
+    return Math.atan2(p.y - drone.y, p.x - drone.x);
+  }
+
+  /** Wet samples over the hull footprint (center + ring), heading-independent. */
+  groundRemoteWetness(drone: RemoteCraft, x: number, y: number): number {
+    const r = drone.spec.radius * 0.75;
+    let n = isWater(this.world, x, y) ? 1 : 0;
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2;
+      if (isWater(this.world, x + Math.cos(a) * r, y + Math.sin(a) * r)) n++;
+    }
+    return n;
+  }
+
+  /** True when a ground move leaves more of the hull over water (only drying moves allowed once wet). */
+  groundRemoteEntersWater(drone: RemoteCraft, x0: number, y0: number, x1: number, y1: number): boolean {
+    if (Math.abs(x1 - x0) < 1e-4 && Math.abs(y1 - y0) < 1e-4) return false;
+    const wet1 = this.groundRemoteWetness(drone, x1, y1);
+    if (wet1 === 0) return false;
+    return wet1 >= this.groundRemoteWetness(drone, x0, y0);
+  }
+
+  /** Revert a ground remote's move that would put it (further) over water. */
+  gateGroundRemoteWater(drone: RemoteCraft, x0: number, y0: number): void {
+    if (!drone.spec.ground || drone.airborne) return;
+    if (!this.groundRemoteEntersWater(drone, x0, y0, drone.x, drone.y)) return;
+    drone.x = x0;
+    drone.y = y0;
+    drone.vx = 0;
+    drone.vy = 0;
   }
 
   /**
@@ -11057,6 +11105,7 @@ specIsShellGun(spec)
         r.x += r.vx * dt;
         r.y += r.vy * dt;
         r.z += r.vz * dt;
+        this.gateGroundRemoteWater(r, trackX0, trackY0);
       }
       const docking = r.dock || !!r.dockPending;
       if (!docking) this.snapRemoteGround(r, dt);
