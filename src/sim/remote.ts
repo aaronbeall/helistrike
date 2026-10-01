@@ -4,6 +4,7 @@
  * Hull / flight / sockets live on a CraftSpec (`craftLook`); this file only authors
  * lifecycle (battery, dock, AI flags, host escort), plus a rare hull-field override.
  */
+import { REMOTE_DEFS } from "../catalog/remotes";
 import {
   allCrafts,
   craftFirepower,
@@ -144,7 +145,7 @@ export interface RemoteSpec extends CraftSpec {
  * Authored remote roster entry — lifecycle + optional overrides.
  * Hull fields are filled from `craftLook` in `remoteSpecOf`.
  */
-type RemoteDef = {
+export type RemoteDef = {
   kind: RemoteKind;
   name: string;
   life: number;
@@ -402,125 +403,6 @@ export function remoteHull(spec: RemoteSpec): CraftSpec & { kind: CraftKind } {
   return craftOf(spec.craftLook);
 }
 
-/**
- * Authored remote roster — lifecycle + overrides only.
- * Hull / flight / default sockets come from `craftLook`.
- */
-const REMOTE_DEFS: Record<RemoteKind, Omit<RemoteDef, "kind">> = {
-  drone: {
-    name: "SPECTRE",
-    life: 45,
-    detonateDmg: 258,
-    detonateBlast: 140,
-    launchSpeed: 280,
-    scale: 0.42,
-    thermal: true,
-    craftLook: "spectre",
-    // Near-invisible to enemy sensors — only noticed at very close range.
-    enemyAwareMul: 0.15,
-  },
-  wingman: {
-    name: "SKIFF",
-    life: 90,
-    detonateDmg: 40,
-    detonateBlast: 48,
-    launchSpeed: 200,
-    scale: 0.55,
-    craftLook: "skiff",
-    ai: true,
-    dockable: true,
-    attackPass: true,
-    sensorNet: true,
-    orbitPreferRemote: true,
-    autoLaunch: true,
-    orbitRange: 160,
-    awareRange: 560,
-    escortRange: 200,
-  },
-  fighter: {
-    name: "RAPTOR",
-    life: 75,
-    detonateDmg: 120,
-    detonateBlast: 70,
-    launchSpeed: 260,
-    scale: 0.72,
-    craftLook: "raptor",
-    ai: true,
-    pilotable: true,
-    dockable: true,
-    sensorNet: true,
-    hostFace: true,
-    engageRange: 520,
-    orbitRange: 160,
-    awareRange: 560,
-    escortRange: 240,
-  },
-  agv: {
-    name: "HOUND",
-    life: 600,
-    detonateDmg: 180,
-    detonateBlast: 90,
-    launchSpeed: 220,
-    scale: 0.44,
-    craftLook: "hound",
-    ai: true,
-    pilotable: true,
-    ground: true,
-    dockable: true,
-    antenna: { length: 11, aft: 1.8, stiffness: 28, damping: 2.8, yawWhip: 10, lag: 1.6 },
-    engageRange: 320,
-    orbitRange: 150,
-    mouseStopRange: 80,
-    mouseLeashRange: 420,
-    hostEscort: { innerRadius: 220, outerRadius: 300 },
-  },
-  ground_escort: {
-    name: "HUMVEE",
-    life: 480,
-    detonateDmg: 110,
-    detonateBlast: 60,
-    launchSpeed: 220,
-    scale: 0.4,
-    craftLook: "humvee",
-    ai: true,
-    ground: true,
-    // Manned, fully autonomous fire-support escort — never pilotable. Tight leash-follow
-    // on the host when idle, orbits a point between host and target when engaged.
-    orbitEscort: true,
-    // Live deployed units still count as available "ammo" on the HUD (dropped only on loss).
-    dockable: true,
-    unlimitedLife: true,
-    antenna: { length: 9, aft: 1.6, stiffness: 26, damping: 2.6, yawWhip: 9, lag: 1.4 },
-    awareRange: 480,
-    followInnerRadius: 90,
-    followOuterRadius: 220,
-    pursueRadius: 500,
-    attackOrbitFrac: 0.5,
-    attackBias: 0.75,
-    attackStandoff: 60,
-  },
-  ugv: {
-    name: "WOLF",
-    // Heavier hull than the Hound's fantasy sci-fi loadout, but a lighter, no-frills
-    // real-world weapons fit and no countermeasure — same manned/pilotable, mouse-park-
-    // when-autonomous behavior as the Hound.
-    life: 560,
-    detonateDmg: 165,
-    detonateBlast: 85,
-    launchSpeed: 220,
-    scale: 0.44,
-    craftLook: "wolf",
-    ai: true,
-    pilotable: true,
-    ground: true,
-    dockable: true,
-    engageRange: 320,
-    orbitRange: 150,
-    mouseStopRange: 80,
-    mouseLeashRange: 420,
-    hostEscort: { innerRadius: 220, outerRadius: 300 },
-  },
-};
 
 const REMOTES: Record<RemoteKind, RemoteDef> = Object.fromEntries(
   Object.entries(REMOTE_DEFS).map(([kind, def]) => [kind, { ...def, kind }])
