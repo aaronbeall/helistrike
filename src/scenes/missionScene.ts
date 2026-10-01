@@ -561,6 +561,7 @@ const DEBUG_MENU_ITEMS = [
   { action: "height", label: "Height + colliders", shortcut: "K" },
   { action: "ai", label: "AI" },
   { action: "blast", label: "Blast radii" },
+  { action: "sideView", label: "Side view" },
   { section: "RENDERING" },
   { action: "terrainMesh", label: "Terrain mesh" },
   { action: "fx", label: "Post FX", shortcut: "O" },
@@ -1186,6 +1187,12 @@ export class MissionScene extends Phaser.Scene {
   debugHit = false;
   /** Draw fading rings for explosion damage / heli splash radii. */
   debugBlast = false;
+  /** Schematic side-view strip (screen X × world Z) across the top. */
+  debugSideView = false;
+  sideViewGfx?: Phaser.GameObjects.Graphics;
+  sideViewTxt?: Phaser.GameObjects.Text;
+  sideViewZMin = 0;
+  sideViewZMax = 300;
   blastRings: { x: number; y: number; z: number; r: number; heliR: number; life: number; max: number }[] = [];
   blastGfx!: Phaser.GameObjects.Graphics;
   showHeightMap = false;
@@ -1327,6 +1334,9 @@ export class MissionScene extends Phaser.Scene {
     this.playLastFrame = false;
     this.debugHit = false;
     this.debugBlast = false;
+    this.debugSideView = false;
+    this.sideViewGfx = undefined;
+    this.sideViewTxt = undefined;
     this.blastRings = [];
     this.fxOn = persistedFxOn;
     this.thermalOn = false;
@@ -4134,6 +4144,7 @@ export class MissionScene extends Phaser.Scene {
         this.emitDamageFx();
         this.emitHeliCrashDmgFlames();
         this.drawDebugHits();
+        if (this.debugSideView) this.drawDebugSideView();
         timings[11] = performance.now() - t;
       } else {
         const aim = this.worldPointer();
@@ -4200,6 +4211,7 @@ export class MissionScene extends Phaser.Scene {
         this.emitDamageFx();
         this.emitHeliCrashDmgFlames();
         this.drawDebugHits();
+        if (this.debugSideView) this.drawDebugSideView();
       }
     }
     this.updateThermalWreckMarks(dt);
@@ -23106,6 +23118,149 @@ specIsShellGun(spec)
     }
   }
 
+  setDebugSideView(on: boolean): void {
+    this.debugSideView = on;
+    if (!on) {
+      // Destroy so nothing lingers in the display list while off.
+      for (const go of [this.sideViewGfx, this.sideViewTxt]) {
+        if (!go) continue;
+        this.hudSet.delete(go);
+        go.destroy();
+      }
+      this.sideViewGfx = undefined;
+      this.sideViewTxt = undefined;
+    }
+    this.syncDebugMenu();
+  }
+
+  /** Side-view strip: X = on-screen X, Y = world Z; objects drawn as height rects (min 1px). */
+  drawDebugSideView(): void {
+    if (!this.debugSideView) return;
+    if (!this.sideViewGfx?.scene) {
+      this.sideViewGfx = this.add.graphics().setDepth(Layer.HUD + 4);
+      this.bindHud(this.sideViewGfx);
+      this.sideViewTxt = this.add
+        .text(8, 4, "", { fontFamily: "Share Tech Mono, monospace", fontSize: "11px", color: "#8ee6ff" })
+        .setDepth(Layer.HUD + 5)
+        .setStroke("#101418", 3);
+      this.bindHud(this.sideViewTxt);
+    }
+    const g = this.sideViewGfx.clear().setVisible(!this.mapView);
+    this.sideViewTxt!.setVisible(!this.mapView);
+    if (this.mapView) return;
+    const cam = this.cameras.main;
+    const view = cam.worldView;
+    const W = this.scale.width;
+    const toSx = (wx: number) => (wx - view.x) * cam.zoom;
+
+    // Terrain profile along the screen row under the host.
+    const p = this.player;
+    const rowAt = worldToScreen(p.x, p.y, groundZ(this.world, p.x, p.y));
+    const rowY = rowAt.y;
+    // Z uses the same px/unit as X at the host's row — true proportions.
+    const ppu = Math.max(1e-3, rowAt.scale * cam.zoom);
+    let zMin = Infinity;
+    let zMax = -Infinity;
+    const sampleRow = (wy: number, step: number): number[] => {
+      const out: number[] = [];
+      for (let sx = 0; sx <= W; sx += step) {
+        const gp = screenToWorldOnGround(this.world, view.x + sx / cam.zoom, wy);
+        out.push(gp.z);
+        zMin = Math.min(zMin, gp.z);
+        zMax = Math.max(zMax, gp.z);
+      }
+      return out;
+    };
+    const step = 4;
+    const ground = sampleRow(rowY, step);
+    // Lighter slices toward the top / bottom screen edges (3 each way).
+    const bandStep = 8;
+    const hostSy = (rowY - view.y) * cam.zoom;
+    const screenH = this.scale.height;
+    const bands: { z: number[]; k: number }[] = [];
+    for (let k = 1; k <= 3; k++) {
+      const up = hostSy * (1 - k / 3);
+      const down = hostSy + (screenH - hostSy) * (k / 3);
+      bands.push({ z: sampleRow(view.y + up / cam.zoom, bandStep), k });
+      bands.push({ z: sampleRow(view.y + down / cam.zoom, bandStep), k });
+    }
+
+    type Box = { sx: number; w: number; z0: number; z1: number; col: number };
+    const boxes: Box[] = [];
+    const add = (x: number, y: number, z: number, h: number, r: number, col: number) => {
+      if (!cameraPointVisible(z, y)) return;
+      const at = worldToScreen(x, y, z);
+      const sx = toSx(at.x);
+      const w = Math.max(1, r * 2 * at.scale * cam.zoom);
+      if (sx + w / 2 < 0 || sx - w / 2 > W) return;
+      // On-screen vertical extent (base → top) must overlap the viewport.
+      const syBase = (at.y - view.y) * cam.zoom;
+      const syTop = (worldToScreen(x, y, z + h).y - view.y) * cam.zoom;
+      if (Math.max(syBase, syTop) < 0 || Math.min(syBase, syTop) > this.scale.height) return;
+      boxes.push({ sx, w, z0: z, z1: z + h, col });
+      zMax = Math.max(zMax, z + h);
+      zMin = Math.min(zMin, z);
+    };
+    for (const u of this.units) {
+      if (u.dead) continue;
+      add(u.x, u.y, u.z, heightOf(u.kind), radius(u.kind), specOf(u.kind).building ? 0x8a8470 : 0xff4a2a);
+    }
+    for (const r of this.remotes) {
+      if (r.detonate) continue;
+      add(r.x, r.y, r.z, r.spec.height, r.spec.radius, 0x5ec8ff);
+    }
+    if (p.phase !== "dead") add(p.x, p.y, p.z, p.spec.height, p.spec.radius, 0x6dff6a);
+    for (const sh of this.shots) {
+      if (sh.deadfall) continue;
+      add(sh.x, sh.y, sh.z, 0, 1, sh.from === "enemy" ? 0xff9a3a : 0xffe08a);
+    }
+
+    // Smoothed Z range so the strip doesn't jitter.
+    const k = 0.12;
+    this.sideViewZMin = Phaser.Math.Linear(this.sideViewZMin, Math.min(zMin, 0), k);
+    this.sideViewZMax = Phaser.Math.Linear(this.sideViewZMax, Math.max(zMax + 20, this.sideViewZMin + 120), k);
+    const z0 = this.sideViewZMin;
+    // Strip grows to fit the Z range; beyond the cap, tall things clip at the top.
+    const H = Phaser.Math.Clamp((this.sideViewZMax - z0) * ppu + 6, 60, this.scale.height * 0.45);
+    const span = (H - 2) / ppu;
+    const toY = (z: number) => H - 2 - (z - z0) * ppu;
+
+    g.fillStyle(0x0a0e10, 0.72);
+    g.fillRect(0, 0, W, H);
+    g.lineStyle(1, 0x2a3a40, 0.8);
+    const grid = span > 600 ? 100 : 50;
+    for (let z = Math.ceil(z0 / grid) * grid; z < z0 + span; z += grid) g.lineBetween(0, toY(z), W, toY(z));
+    for (const b of bands) {
+      g.lineStyle(1, 0xc4a24a, 0.45 - b.k * 0.1);
+      g.beginPath();
+      for (let i = 0; i < b.z.length; i++) {
+        const gy = Math.max(0, toY(b.z[i]!));
+        if (i === 0) g.moveTo(0, gy);
+        else g.lineTo(i * bandStep, gy);
+      }
+      g.strokePath();
+    }
+    g.lineStyle(1.5, 0xc4a24a, 0.9);
+    g.beginPath();
+    for (let i = 0; i < ground.length; i++) {
+      const gy = Math.max(0, toY(ground[i]!));
+      if (i === 0) g.moveTo(0, gy);
+      else g.lineTo(i * step, gy);
+    }
+    g.strokePath();
+    for (const b of boxes) {
+      const yBase = toY(b.z0);
+      if (yBase < 0) continue;
+      const yTop = Math.max(0, toY(b.z1));
+      const hPx = Math.max(1, yBase - yTop);
+      g.fillStyle(b.col, 0.9);
+      g.fillRect(b.sx - b.w / 2, yTop, b.w, hPx);
+    }
+    g.lineStyle(1, 0x8ee6ff, 0.5);
+    g.lineBetween(0, H, W, H);
+    this.sideViewTxt!.setText(`SIDE  Z ${z0 | 0}–${(z0 + span) | 0}  grid ${grid}`);
+  }
+
   setDebugBlast(on: boolean): void {
     this.debugBlast = on;
     if (!on) {
@@ -24006,6 +24161,8 @@ specIsShellGun(spec)
                   ? this.debugAi
                   : item.action === "blast"
                     ? this.debugBlast
+                    : item.action === "sideView"
+                    ? this.debugSideView
                     : item.action === "terrainMesh"
                       ? this.terrainMesh
                       : item.action === "fx"
@@ -24043,6 +24200,7 @@ specIsShellGun(spec)
     else if (item.action === "height") this.toggleHeightMap();
     else if (item.action === "ai") this.setDebugAi(!this.debugAi);
     else if (item.action === "blast") this.setDebugBlast(!this.debugBlast);
+    else if (item.action === "sideView") this.setDebugSideView(!this.debugSideView);
     else if (item.action === "terrainMesh") this.toggleTerrainMesh();
     else if (item.action === "fx") this.toggleTestFx();
     else if (item.action === "relief") this.toggleReliefEditor();
