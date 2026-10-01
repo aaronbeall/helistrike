@@ -1339,7 +1339,7 @@ const CRAFTS_DEFS: Record<CraftKind, Omit<CraftSpec, "kind">> = {
       {
         id: "howitzer_turret",
         class: "turret",
-        controller: "automatic",
+        controller: "pilot",
         weapon: "heavy_artillery",
         points: [{ id: "howitzer" }],
         traverse: 200,
