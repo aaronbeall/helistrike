@@ -6278,6 +6278,19 @@ designatorSightOrigins(slot = this.player.weapon): { x: number; y: number }[] {
     const clamped = Phaser.Math.Clamp(pitch, -JET_GUN_MAX_DEPRESS, JET_GUN_MAX_ELEV);
     if (Math.abs(clamped - pitch) < 1e-4) return hit;
     const along = distXY;
+    if (pitch < clamped) {
+      // Too steep: follow the clamped ray to the ground, not a mid-air point above the cursor.
+      const agl = Math.max(0, oz - hit.z);
+      const far = Math.max(along, (agl / Math.tan(-clamped)) * 1.5 + 60);
+      return this.sightTerrainHitWorld(
+        ox,
+        oy,
+        oz,
+        ox + Math.cos(aimAng) * far,
+        oy + Math.sin(aimAng) * far,
+        oz + Math.tan(clamped) * far
+      );
+    }
     return {
       x: ox + Math.cos(aimAng) * along,
       y: oy + Math.sin(aimAng) * along,

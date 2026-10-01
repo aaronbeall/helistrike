@@ -66,7 +66,7 @@ const DUST_ROTOR_MIN_REF_PEAK = 26;
 /** Pad sit height above ground while waiting for lift-off (landing-gear clearance). */
 const PAD_AGL = 5.5;
 /** Max gun depression below horizontal for jets (radians). */
-export const JET_GUN_MAX_DEPRESS = (28 * Math.PI) / 180;
+export const JET_GUN_MAX_DEPRESS = (45 * Math.PI) / 180;
 /** Mild upward elevation cap for jet guns. */
 export const JET_GUN_MAX_ELEV = (12 * Math.PI) / 180;
 
