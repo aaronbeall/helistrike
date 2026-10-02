@@ -1,8 +1,7 @@
 import Phaser from "phaser";
 import { type FxClass } from "../fx/fx";
-import { thermalSignalTint } from "../../../render/thermal";
+import { thermalSignalTint, setThermalPipeline, type ThermalPalette } from "../../../render/thermal";
 import { PLAYER_WPNS, type Shot } from "../../../sim/combat";
-import { setThermalPipeline, type ThermalPalette } from "../../../render/thermal";
 import type { MissionScene } from "../../missionScene";
 
 /** Thermal view: toggle, sensor palette + shot-linger, camera pipeline, thermal blend + particle tint. */

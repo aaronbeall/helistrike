@@ -1,11 +1,12 @@
 import Phaser from "phaser";
+import { gateGroundRemoteWater, waterSteerWant } from "../../../sim/navigation";
+import { remoteAiStickAim } from "../../../sim/remoteRules";
 import { GUN_STATION_TURN_RATE } from "../weapons/fireControl";
 import { PLAYER_WPNS, type Unit } from "../../../sim/combat";
 import { remoteSpecOf, type EscortNav, type EscortNavState, type RemoteCraft } from "../../../sim/remote";
 import { isGroundVehicle, specOf } from "../../../sim/roster";
 import { circumRadiusOf, closestOnFootprint, distToFootprint, footprintInto } from "../../../render/footprint";
-import { craftAimsWithTurret, craftGunId, craftControlScheme, craftOf, craftSocketBarrelCount, craftSocketFireCd } from "../../../sim/crafts";
-import { isWater } from "../../../worldgen/world";
+import { craftAimsWithTurret, craftGunId, craftSocketBarrelCount, craftSocketFireCd } from "../../../sim/crafts";
 import type { MissionScene } from "../../missionScene";
 
 /** Auto-launch skips the bay until a remote has at least this battery fraction. */
@@ -15,46 +16,6 @@ const AUTO_LAUNCH_MIN_BATTERY = 0.25;
 export class RemoteAi {
 
   constructor(readonly s: MissionScene) {}
-
-  /**
-   * Map AI face angle + throttle (−1..1) onto the same stick/aim Craft.update expects.
-   * Orbit/ground: A/D yaw + W/S thrust. Plane/aim: nose follows aim, W/S throttle.
-   */
-  remoteAiStickAim(
-    drone: RemoteCraft,
-    faceAng: number,
-    throttle: number
-  ): {
-    stick: { up: boolean; down: boolean; left: boolean; right: boolean };
-    aim: { x: number; y: number };
-  } {
-    const aim = {
-      x: drone.x + Math.cos(faceAng) * 220,
-      y: drone.y + Math.sin(faceAng) * 220,
-    };
-    const hull = craftOf(drone.spec.craftLook);
-    if (craftControlScheme(hull) === "orbit") {
-      const err = Phaser.Math.Angle.Wrap(faceAng - drone.angle);
-      return {
-        aim,
-        stick: {
-          left: err < -0.06,
-          right: err > 0.06,
-          up: throttle > 0.2,
-          down: throttle < -0.2,
-        },
-      };
-    }
-    return {
-      aim,
-      stick: {
-        up: throttle > 0.2,
-        down: throttle < -0.2,
-        left: false,
-        right: false,
-      },
-    };
-  }
 
   tickRemoteAi(drone: RemoteCraft, dt: number): void {
     // Ground + turret AI (HOUND) — mouse-park + orbit/shoot; same shadow Craft as piloted.
@@ -104,7 +65,7 @@ export class RemoteAi {
     const want = Math.atan2(ty - drone.y, tx - drone.x);
     const near = Math.hypot(tx - drone.x, ty - drone.y);
     const throttle = near < 40 ? 0.35 : 1;
-    const { stick, aim } = this.remoteAiStickAim(drone, want, throttle);
+    const { stick, aim } = remoteAiStickAim(drone, want, throttle);
     this.s.remoteFleet.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false });
     drone.gunAngle = want;
     if (spec.dockable && drone.life < 8) {
@@ -258,7 +219,7 @@ export class RemoteAi {
       const face = pathWant + Phaser.Math.Clamp(blend, -0.85, 0.85);
       const near = Math.hypot(tx - drone.x, ty - drone.y);
       const throttle = near < 40 ? 0.35 : 1;
-      const { stick, aim } = this.remoteAiStickAim(drone, face, throttle);
+      const { stick, aim } = remoteAiStickAim(drone, face, throttle);
       this.s.remoteFleet.driveRemoteCraft(drone, dt, stick, aim, {
         gunAim: { x: target.x, y: target.y },
       });
@@ -276,7 +237,7 @@ export class RemoteAi {
       const near = Math.hypot(tx - drone.x, ty - drone.y);
       const catchUp = near > escortR * 0.85;
       const throttle = near < 50 ? 0 : catchUp ? 1 : 0.35;
-      const { stick, aim } = this.remoteAiStickAim(drone, want, throttle);
+      const { stick, aim } = remoteAiStickAim(drone, want, throttle);
       this.s.remoteFleet.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false });
       drone.gunAngle = drone.angle;
     }
@@ -317,7 +278,7 @@ export class RemoteAi {
     if (!drone.aiPass) drone.aiPass = "run";
 
     if (drone.aiPass === "run") {
-      const { stick, aim } = this.remoteAiStickAim(drone, aimWant, 1);
+      const { stick, aim } = remoteAiStickAim(drone, aimWant, 1);
       this.s.remoteFleet.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false });
       drone.gunAngle = drone.angle;
       // Fire window: nose on target, not too close to clip through the burst.
@@ -337,12 +298,12 @@ export class RemoteAi {
       const away = Math.atan2(drone.y - target.y, drone.x - target.x);
       const blend = Phaser.Math.Angle.Wrap(away - drone.angle);
       const outbound = drone.angle + Phaser.Math.Clamp(blend, -0.55, 0.55);
-      const { stick, aim } = this.remoteAiStickAim(drone, outbound, 1);
+      const { stick, aim } = remoteAiStickAim(drone, outbound, 1);
       this.s.remoteFleet.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false });
       drone.gunAngle = drone.angle;
     } else {
       // Far enough out — reverse and re-commit when the nose is back on target.
-      const { stick, aim } = this.remoteAiStickAim(drone, aimWant, 0.95);
+      const { stick, aim } = remoteAiStickAim(drone, aimWant, 0.95);
       this.s.remoteFleet.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false });
       drone.gunAngle = drone.angle;
       if (ahead > Math.max(110, dist * 0.4) && aimErr < 0.5) {
@@ -462,8 +423,8 @@ export class RemoteAi {
         throttle = spd > 12 ? -0.6 : 0;
       }
     }
-    if (throttle > 0) want = this.waterSteerWant(drone, want);
-    const { stick, aim } = this.remoteAiStickAim(drone, want, throttle);
+    if (throttle > 0) want = waterSteerWant(this.s.world, drone, want);
+    const { stick, aim } = remoteAiStickAim(drone, want, throttle);
     this.s.remoteFleet.driveRemoteCraft(drone, dt, stick, aim, {
       syncGun: false,
       gunAim,
@@ -682,7 +643,7 @@ export class RemoteAi {
       }
       total += hit.depth;
     }
-    this.gateGroundRemoteWater(drone, x0, y0);
+    gateGroundRemoteWater(this.s.world, drone, x0, y0);
     return total;
   }
 
@@ -759,7 +720,7 @@ export class RemoteAi {
       nav.state = "REVERSE";
       nav.steerWant = drone.angle;
       nav.throttle = -1;
-      ({ stick, aim } = this.remoteAiStickAim(drone, drone.angle, -1));
+      ({ stick, aim } = remoteAiStickAim(drone, drone.angle, -1));
       stick.left = nav.reverseSteer < 0;
       stick.right = nav.reverseSteer > 0;
       if (nav.reverseT <= 0) {
@@ -767,7 +728,7 @@ export class RemoteAi {
         nav.avoidOs = nav.reverseSteer;
       }
     } else {
-      let steerWant = moving ? this.waterSteerWant(drone, want) : want;
+      let steerWant = moving ? waterSteerWant(this.s.world, drone, want) : want;
       let thr = throttle;
       nav.state = state;
       if (moving || spd > 20) {
@@ -802,7 +763,7 @@ export class RemoteAi {
       }
       nav.steerWant = steerWant;
       nav.throttle = thr;
-      ({ stick, aim } = this.remoteAiStickAim(drone, steerWant, thr));
+      ({ stick, aim } = remoteAiStickAim(drone, steerWant, thr));
     }
     nav.steer = stick.right ? 1 : stick.left ? -1 : 0;
 
@@ -811,40 +772,4 @@ export class RemoteAi {
     if (pen > 0.5 && moving) nav.stuckT += dt;
   }
 
-  /** Bend an autonomous ground remote's heading away from water ahead (shared enemy look-ahead). */
-  waterSteerWant(drone: RemoteCraft, want: number): number {
-    const tx = drone.x + Math.cos(want) * 120;
-    const ty = drone.y + Math.sin(want) * 120;
-    const p = this.s.unitSim.terrainSteer(drone.x, drone.y, tx, ty, false, drone.angle);
-    return Math.atan2(p.y - drone.y, p.x - drone.x);
-  }
-
-  /** Wet samples over the hull footprint (center + ring), heading-independent. */
-  groundRemoteWetness(drone: RemoteCraft, x: number, y: number): number {
-    const r = drone.spec.radius * 0.75;
-    let n = isWater(this.s.world, x, y) ? 1 : 0;
-    for (let k = 0; k < 8; k++) {
-      const a = (k / 8) * Math.PI * 2;
-      if (isWater(this.s.world, x + Math.cos(a) * r, y + Math.sin(a) * r)) n++;
-    }
-    return n;
-  }
-
-  /** True when a ground move leaves more of the hull over water (only drying moves allowed once wet). */
-  groundRemoteEntersWater(drone: RemoteCraft, x0: number, y0: number, x1: number, y1: number): boolean {
-    if (Math.abs(x1 - x0) < 1e-4 && Math.abs(y1 - y0) < 1e-4) return false;
-    const wet1 = this.groundRemoteWetness(drone, x1, y1);
-    if (wet1 === 0) return false;
-    return wet1 >= this.groundRemoteWetness(drone, x0, y0);
-  }
-
-  /** Revert a ground remote's move that would put it (further) over water. */
-  gateGroundRemoteWater(drone: RemoteCraft, x0: number, y0: number): void {
-    if (!drone.spec.ground || drone.airborne) return;
-    if (!this.groundRemoteEntersWater(drone, x0, y0, drone.x, drone.y)) return;
-    drone.x = x0;
-    drone.y = y0;
-    drone.vx = 0;
-    drone.vy = 0;
-  }
 }

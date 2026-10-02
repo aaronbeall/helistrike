@@ -1,9 +1,32 @@
+import { sampleBiome, SCALE, doodadTex, groundZ, worldToScreen, projectHeading, paintHeightMapRect, stampHeightBrush, rebuildWorldPatch, paintRoadsRect, type WorldData } from "../../../worldgen/world";
 import Phaser from "phaser";
 import { camoForBiome, resolveSkin } from "../../../render/camo";
 import { Layer } from "../../../render/depth";
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "../../../worldgen/brushes";
-import { groundZ, worldToScreen, projectHeading, paintHeightMapRect, stampHeightBrush, rebuildWorldPatch, paintRoadsRect, sampleBiome, SCALE, doodadTex } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
+
+export function stampDecorRect(world: WorldData, textures: Phaser.Textures.TextureManager, g: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number): void {
+  const wx0 = x0 * SCALE;
+  const wy0 = y0 * SCALE;
+  const wx1 = (x1 + 1) * SCALE;
+  const wy1 = (y1 + 1) * SCALE;
+  g.imageSmoothingEnabled = true;
+  for (const dec of world.decor) {
+    const pad = dec.size * SCALE * 0.5;
+    if (dec.x < wx0 - pad || dec.x > wx1 + pad || dec.y < wy0 - pad || dec.y > wy1 + pad) continue;
+    const skin = resolveSkin(textures, doodadTex(dec.kind), camoForBiome(sampleBiome(world, dec.x, dec.y)));
+    if (!textures.exists(skin)) continue;
+    const img = textures.get(skin).getSourceImage() as CanvasImageSource;
+    const s = dec.size;
+    g.save();
+    g.globalAlpha = 0.9;
+    g.translate(dec.x / SCALE, dec.y / SCALE);
+    g.rotate(dec.rot * 0.15);
+    g.drawImage(img, -s / 2, -s / 2, s, s);
+    g.restore();
+  }
+  g.globalAlpha = 1;
+}
 
 /** Debug terrain relief editor (B): brush painting onto the height map + decor. */
 export class ReliefEditor {
@@ -284,35 +307,12 @@ export class ReliefEditor {
     this.dirty = null;
     rebuildWorldPatch(this.s.world, d.x0, d.y0, d.x1, d.y1, this.s.biomeTiles, (g, x0, y0, x1, y1) => {
       paintRoadsRect(this.s.world, g, x0, y0, x1, y1);
-      this.stampDecorRect(g, x0, y0, x1, y1);
+      stampDecorRect(this.s.world, this.s.textures, g, x0, y0, x1, y1);
     });
     paintHeightMapRect(this.s.heightMapCanvas, this.s.world.height, d.x0, d.y0, d.x1, d.y1, this.s.world.roads);
     (this.s.textures.get("map_terrain") as Phaser.Textures.CanvasTexture).refresh();
     (this.s.textures.get("map_height") as Phaser.Textures.CanvasTexture).refresh();
     this.s.terrain25d?.updateHeightRegion(d.x0, d.y0, d.x1, d.y1);
-  }
-
-  stampDecorRect(g: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number): void {
-    const wx0 = x0 * SCALE;
-    const wy0 = y0 * SCALE;
-    const wx1 = (x1 + 1) * SCALE;
-    const wy1 = (y1 + 1) * SCALE;
-    g.imageSmoothingEnabled = true;
-    for (const dec of this.s.world.decor) {
-      const pad = dec.size * SCALE * 0.5;
-      if (dec.x < wx0 - pad || dec.x > wx1 + pad || dec.y < wy0 - pad || dec.y > wy1 + pad) continue;
-      const skin = resolveSkin(this.s.textures, doodadTex(dec.kind), camoForBiome(sampleBiome(this.s.world, dec.x, dec.y)));
-      if (!this.s.textures.exists(skin)) continue;
-      const img = this.s.textures.get(skin).getSourceImage() as CanvasImageSource;
-      const s = dec.size;
-      g.save();
-      g.globalAlpha = 0.9;
-      g.translate(dec.x / SCALE, dec.y / SCALE);
-      g.rotate(dec.rot * 0.15);
-      g.drawImage(img, -s / 2, -s / 2, s, s);
-      g.restore();
-    }
-    g.globalAlpha = 1;
   }
 
   drawCursor(x: number, y: number, invert: boolean): void {

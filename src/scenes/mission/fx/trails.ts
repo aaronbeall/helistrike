@@ -1,8 +1,9 @@
 import Phaser from "phaser";
+import { ageEnergyTrail } from "../../../render/ribbons";
+import { smoothPolyline, biasedDir } from "../../../util/vec";
+import { shotTailWorldPos, shotIsGunOrBeam } from "../../../render/spritePose";
 import { shotTrailScale, troopMissileTrail } from "../../../render/fxScale";
-import { shotIsGunOrBeam } from "../../../render/spritePose";
-import { coneDir, biasedDir } from "../../../util/vec";
-import { SHOT_TAIL, guidanceIsLockOn, exhaustIsEnergy, exhaustIsGunSpark, exhaustHue, exhaustIsSignalFlare, ENERGY_TRAIL_NODE_LIFE, HELIX_TRAIL_NODE_LIFE, type Shot, type EnergyTrailNode } from "../../../sim/combat";
+import { SHOT_TAIL, guidanceIsLockOn, exhaustIsEnergy, exhaustIsGunSpark, exhaustHue, exhaustIsSignalFlare, ENERGY_TRAIL_NODE_LIFE, type Shot, type EnergyTrailNode } from "../../../sim/combat";
 import { ZOff, worldDepth } from "../../../render/depth";
 import { range } from "../../../util/rng";
 import { randomInFootprint, type Footprint } from "../../../render/footprint";
@@ -332,29 +333,6 @@ export class Trails {
     g.setDepth(wireDepth);
   }
 
-  simulateHelixRibbon(s: Shot, dt: number, x: number, y: number, z: number): void {
-    if (!s.energyTrail) s.energyTrail = [];
-    const spd = Math.hypot(s.vx, s.vy, s.vz);
-    const back =
-      spd > 8
-        ? { x: -s.vx / spd, y: -s.vy / spd, z: -s.vz / spd }
-        : { x: -Math.cos(s.angle), y: -Math.sin(s.angle), z: 0 };
-    // Tiny lateral shimmer so the braid isn't a perfect sine.
-    const jit = (Math.random() - 0.5) * 1.4;
-    const px = -Math.sin(s.angle);
-    const py = Math.cos(s.angle);
-    this.ageEnergyTrail(
-      s.energyTrail,
-      dt,
-      { x: x + px * jit, y: y + py * jit, z: z + (Math.random() - 0.5) * 0.6 },
-      0.1,
-      back,
-      HELIX_TRAIL_NODE_LIFE,
-      "green",
-      4.5
-    );
-  }
-
   simulateEnergyTrail(s: Shot, dt: number): void {
     const trails =
       s.energyTrails ??
@@ -385,7 +363,7 @@ export class Trails {
     }
     const px = -Math.sin(aimAng);
     const py = Math.cos(aimAng);
-    const tail = this.s.projectiles.shotTailWorldPos(s);
+    const tail = shotTailWorldPos(this.s.textures, s);
     const hue = exhaustHue(s.beh?.exhaust);
     for (let i = 0; i < n; i++) {
       const trail = list[i]!;
@@ -401,7 +379,7 @@ export class Trails {
         z: tail.z + rel * 2.2 + back.z * backOffset,
       };
       const strength = n <= 1 ? 1 : Phaser.Math.Linear(1.15, 0.42, i / Math.max(1, n - 1));
-      this.ageEnergyTrail(trail, dt, grow, strength, back, ENERGY_TRAIL_NODE_LIFE, hue);
+      ageEnergyTrail(trail, dt, grow, strength, back, ENERGY_TRAIL_NODE_LIFE, hue);
     }
     s.energyTrail = list[0];
   }
@@ -422,57 +400,10 @@ export class Trails {
     while (this.energyLinger.length > 28) this.energyLinger.shift();
   }
 
-  energyTrailExhaust(back: { x: number; y: number; z: number }, mul = 1): { bx: number; by: number; bz: number } {
-    const kick = (72 + Math.random() * 28) * mul;
-    // Soft rear cone so the ribbon doesn't stack on a single reverse ray.
-    const d = coneDir(back.x, back.y, back.z, 0.12, 5.5);
-    return { bx: d.x * kick, by: d.y * kick, bz: d.z * kick };
-  }
-
-  ageEnergyTrail(
-    trail: EnergyTrailNode[],
-    dt: number,
-    grow?: { x: number; y: number; z: number },
-    strengthMul = 1,
-    back?: { x: number; y: number; z: number },
-    nodeLife = ENERGY_TRAIL_NODE_LIFE,
-    hue?: EnergyTrailNode["hue"],
-    minGrowDist = 8
-  ): void {
-    if (grow) {
-      const last = trail[trail.length - 1];
-      if (!last || Math.hypot(grow.x - last.x, grow.y - last.y, grow.z - last.z) > minGrowDist) {
-        trail.push({
-          ...grow,
-          ...(back ? this.energyTrailExhaust(back, strengthMul) : { bx: 0, by: 0, bz: 0 }),
-          life: nodeLife,
-          max: nodeLife,
-          hue,
-        });
-      }
-    }
-    const drag = Math.pow(0.22, dt);
-    for (const p of trail) {
-      p.x += p.bx * dt;
-      p.y += p.by * dt;
-      p.z += p.bz * dt;
-      p.bx *= drag;
-      p.by *= drag;
-      p.bz *= drag;
-      p.life -= dt;
-    }
-    let w = 0;
-    for (const p of trail) {
-      if (p.life > 0) trail[w++] = p;
-    }
-    trail.length = w;
-    while (trail.length > 140) trail.shift();
-  }
-
   ageEnergyLinger(dt: number): void {
     let w = 0;
     for (const trail of this.energyLinger) {
-      this.ageEnergyTrail(trail, dt);
+      ageEnergyTrail(trail, dt);
       if (trail.length >= 2) this.energyLinger[w++] = trail;
     }
     this.energyLinger.length = w;
@@ -495,7 +426,7 @@ export class Trails {
       raw.push({ x: at.x, y: at.y });
       ages.push(Phaser.Math.Clamp(1 - p.life / ref, 0, 1));
     }
-    const screen = this.smoothPolyline(raw);
+    const screen = smoothPolyline(raw);
     const linger = Phaser.Math.Clamp(maxLife, 0, 1);
     const sn = screen.length;
     const nn = Math.max(1, n - 1);
@@ -531,32 +462,6 @@ export class Trails {
       strokeLayer(0.85, 0xffffff, 0.92);
     }
     return depth;
-  }
-
-  /** Catmull-Rom samples so energy ribbons read as a TOW-like curve, not a dotted polyline. */
-  smoothPolyline(pts: { x: number; y: number }[], steps = 4): { x: number; y: number }[] {
-    const n = pts.length;
-    if (n < 3) return pts;
-    const out: { x: number; y: number }[] = [{ x: pts[0]!.x, y: pts[0]!.y }];
-    const catmull = (p0: number, p1: number, p2: number, p3: number, t: number) => {
-      const t2 = t * t;
-      const t3 = t2 * t;
-      return 0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
-    };
-    for (let i = 0; i < n - 1; i++) {
-      const a = pts[i - 1] ?? pts[i]!;
-      const b = pts[i]!;
-      const c = pts[i + 1]!;
-      const d = pts[i + 2] ?? c;
-      for (let s = 1; s <= steps; s++) {
-        const t = s / steps;
-        out.push({
-          x: catmull(a.x, b.x, c.x, d.x, t),
-          y: catmull(a.y, b.y, c.y, d.y, t),
-        });
-      }
-    }
-    return out;
   }
 
   drawEnergyTrails(): void {

@@ -1,11 +1,12 @@
+import { applyTerrainLight, sampleBiome, SCALE, doodadTex, groundZ, worldToScreen, cameraPointVisible, projectHeading, isWater, WORLD, WRECK_TEX, type WorldData } from "../../../worldgen/world";
+import { softCapBlastCraterScale } from "../../../render/fxCurves";
 import Phaser from "phaser";
 import { applyThermalHeat } from "../../../render/thermal";
 import { camoForBiome, resolveSkin } from "../../../render/camo";
 import { type SimParticle, type Unit } from "../../../sim/combat";
 import { ZOff, worldDepth } from "../../../render/depth";
 import { range } from "../../../util/rng";
-import { FX_VARIANTS, FX_BLAST_CELLS, spritePivot } from "../../../art/sprites";
-import { groundSlope, groundZ, worldToScreen, cameraPointVisible, projectHeading, isWater, applyTerrainLight, sampleBiome, SCALE, WORLD, WRECK_TEX, doodadTex } from "../../../worldgen/world";
+import { FX_VARIANTS, FX_BLAST_CELLS } from "../../../art/sprites";
 import type { MissionScene } from "../../missionScene";
 
 /** Additive ember patch over a crater / hulk — fades to nothing with flicker. */
@@ -79,6 +80,36 @@ function thermalWreckTiming(kind: ThermalWreckKind, scaleX: number, scaleY: numb
   return { hold: 0.35, fadeDur: 6 + Math.min(7, span * 2.4) };
 }
 
+export function stampDecor(world: WorldData, textures: Phaser.Textures.TextureManager): void {
+  const g = world.canvas.getContext("2d", { willReadFrequently: true })!;
+  g.imageSmoothingEnabled = true;
+  for (const d of world.decor) {
+    const tex = doodadTex(d.kind);
+    const skin = resolveSkin(textures, tex, camoForBiome(sampleBiome(world, d.x, d.y)));
+    if (!textures.exists(skin)) continue;
+    const img = textures.get(skin).getSourceImage() as CanvasImageSource;
+    const s = d.size;
+    g.save();
+    g.globalAlpha = 0.9;
+    g.translate(d.x / SCALE, d.y / SCALE);
+    g.rotate(d.rot * 0.15);
+    g.drawImage(img, -s / 2, -s / 2, s, s);
+    g.restore();
+  }
+  g.globalAlpha = 1;
+  applyTerrainLight(world.canvas, world.height);
+}
+
+function thermalWreckFade(mark: ThermalWreckMark): number {
+  if (mark.age <= mark.hold) return 1;
+  return Math.max(0, 1 - (mark.age - mark.hold) / mark.fadeDur);
+}
+
+function emberGlowFade(g: EmberGlow): number {
+  if (g.age <= g.hold) return 1;
+  return Math.max(0, 1 - (g.age - g.hold) / g.fadeDur);
+}
+
 /** Ground marks: wreck/decor stamps on the decal layer, craters, embers, thermal wreck marks, scorch / blood / tracks. */
 export class GroundMarks {
   wreckLayer!: Phaser.GameObjects.RenderTexture;
@@ -93,26 +124,6 @@ export class GroundMarks {
   reset(): void {
     this.thermalWreckMarks = [];
     this.emberGlows = [];
-  }
-
-  stampDecor(): void {
-    const g = this.s.world.canvas.getContext("2d", { willReadFrequently: true })!;
-    g.imageSmoothingEnabled = true;
-    for (const d of this.s.world.decor) {
-      const tex = doodadTex(d.kind);
-      const skin = resolveSkin(this.s.textures, tex, camoForBiome(sampleBiome(this.s.world, d.x, d.y)));
-      if (!this.s.textures.exists(skin)) continue;
-      const img = this.s.textures.get(skin).getSourceImage() as CanvasImageSource;
-      const s = d.size;
-      g.save();
-      g.globalAlpha = 0.9;
-      g.translate(d.x / SCALE, d.y / SCALE);
-      g.rotate(d.rot * 0.15);
-      g.drawImage(img, -s / 2, -s / 2, s, s);
-      g.restore();
-    }
-    g.globalAlpha = 1;
-    applyTerrainLight(this.s.world.canvas, this.s.world.height);
   }
 
   stampWreck(
@@ -216,11 +227,6 @@ export class GroundMarks {
     }
   }
 
-  thermalWreckFade(mark: ThermalWreckMark): number {
-    if (mark.age <= mark.hold) return 1;
-    return Math.max(0, 1 - (mark.age - mark.hold) / mark.fadeDur);
-  }
-
   syncThermalWreckMark(mark: ThermalWreckMark): void {
     const visible =
       this.s.thermal.on &&
@@ -229,7 +235,7 @@ export class GroundMarks {
     mark.image.setVisible(visible);
     if (!visible) return;
     const at = worldToScreen(mark.x, mark.y, mark.z);
-    const fade = this.thermalWreckFade(mark);
+    const fade = thermalWreckFade(mark);
     const heatTex = mark.image.texture.key.endsWith("_heat");
     // Heat textures: per-pixel heat in alpha. Fallback (no _heat): tint-fill like live sprites.
     if (heatTex) {
@@ -262,7 +268,7 @@ export class GroundMarks {
       // Cool off in real time even when not viewing thermal, so toggling T
       // doesn't dump a backlog of still-hot stamps.
       mark.age += dt;
-      const fade = this.thermalWreckFade(mark);
+      const fade = thermalWreckFade(mark);
       if (fade <= 0) {
         mark.image.destroy();
         continue;
@@ -273,36 +279,9 @@ export class GroundMarks {
     this.thermalWreckMarks.length = write;
   }
 
-  /** World-space decal scale with optional travel-grade squash. */
-  wreckDrawScale(
-    x: number,
-    y: number,
-    _z: number,
-    scale = 1,
-    slope = false,
-    angle = 0
-  ): { sx: number; sy: number } {
-    if (!slope) return { sx: scale, sy: scale };
-    const sl = groundSlope(this.s.world, x, y);
-    const grade = Phaser.Math.Clamp(sl.dx * Math.cos(angle) + sl.dy * Math.sin(angle), -0.4, 0.4);
-    return {
-      sx: scale * (1 + Math.abs(grade) * 0.05),
-      sy: scale * (1 - grade * 0.12),
-    };
-  }
-
-  /**
-   * Soft-cap crater stamp scale so 88px scorches don't go fuzzy on huge blasts.
-   * Approaches `hard` asymptotically past `soft`.
-   */
-  softCapBlastCraterScale(raw: number, soft = 1.28, hard = 2.05, k = 1.7): number {
-    if (!(raw > soft)) return Math.max(0.04, raw);
-    return soft + (hard - soft) * (1 - Math.exp(-(raw - soft) / k));
-  }
-
   /** Pick a standard blast crater tex + soft-capped stamp scale. */
   pickBlastCraterStamp(rawScale: number): { key: string; scale: number } {
-    const scale = this.softCapBlastCraterScale(rawScale);
+    const scale = softCapBlastCraterScale(rawScale);
     const i = (Math.random() * FX_BLAST_CELLS) | 0;
     const key = `fx_blast_${i}`;
     return { key: this.s.textures.exists(key) ? key : "fx_blast_0", scale };
@@ -409,18 +388,13 @@ export class GroundMarks {
     }
   }
 
-  emberGlowFade(g: EmberGlow): number {
-    if (g.age <= g.hold) return 1;
-    return Math.max(0, 1 - (g.age - g.hold) / g.fadeDur);
-  }
-
   syncEmberGlow(g: EmberGlow): void {
     if (!cameraPointVisible(g.z, g.y) || this.s.camera.mapBlend > 0.5) {
       g.image.setVisible(false);
       g.bloom.setVisible(false);
       return;
     }
-    const base = this.emberGlowFade(g);
+    const base = emberGlowFade(g);
     if (base <= 0) {
       g.image.setVisible(false);
       g.bloom.setVisible(false);
@@ -472,7 +446,7 @@ export class GroundMarks {
     for (const g of this.emberGlows) {
       if (!g.image.scene) continue;
       g.age += dt;
-      if (this.emberGlowFade(g) <= 0) {
+      if (emberGlowFade(g) <= 0) {
         g.image.destroy();
         g.bloom.destroy();
         continue;
@@ -644,17 +618,6 @@ export class GroundMarks {
       0.5,
       sc * range(0.95, 1.45)
     );
-  }
-
-  debrisStampOrigin(key: string): { x: number; y: number } {
-    return spritePivot(key);
-  }
-
-  /** Track print darkness: soft/hard ground patches by world position, plus per-print jitter. */
-  trackPrintAlpha(base: number, x: number, y: number): number {
-    const patch = 0.5 + 0.5 * Math.sin(x * 0.011 + y * 0.017) * Math.sin(x * 0.023 - y * 0.013 + 1.3);
-    // Only lightens: the darkest print matches the old uniform `base`.
-    return Phaser.Math.Clamp(base * Phaser.Math.Linear(0.25, 1, patch) * range(0.65, 1), 0.06, base);
   }
 
   stampSoldierBlood(u: Unit, ox: number, oy: number, ang: number): void {

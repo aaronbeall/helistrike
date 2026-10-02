@@ -1,6 +1,13 @@
 import { heightOf, COUNTERMEASURES, craftCountermeasure, nextId, shotBehaviorOf, exhaustIsEnergy, exhaustRibbons, PLAYER_WPNS, wpnIdOf, type Shot, type Unit, type PlayerWpnSpec, type WeaponPayload, type EnergyTrailNode } from "../../../sim/combat";
+import { tickWhipAntenna, whipAntennaRest } from "../../../sim/physics";
+import { remoteHostAmmoWeapon, remoteSocketPoints } from "../../../sim/remoteRules";
+import { poseRemoteGun, remoteBodyDrawPose, shellEjectSide } from "../../../render/spritePose";
+import { estimateBombFallTime, remoteBombReleaseVelocity } from "../../../sim/ballistics";
+import { trackPrintAlpha } from "../../../render/fxCurves";
+import { drawWhipAntennaStroke } from "../../../render/ribbons";
+import { remoteMuzzleZ } from "../../../sim/aim";
 import { ZOff, Layer, worldDepth } from "../../../render/depth";
-import { craftBombDrop, craftOf, socketHullPlacement, craftAimsWithTurret, craftGunId, craftGunScale, craftControlScheme, socketPointsOnKey, craftCompositePartScale, craftExhaustFlameHue, craftExhaustMounts, craftGunTex, craftRotorAlongScale, craftWingTipMounts } from "../../../sim/crafts";
+import { craftOf, socketHullPlacement, craftAimsWithTurret, craftGunId, craftGunScale, craftControlScheme, craftCompositePartScale, craftExhaustFlameHue, craftExhaustMounts, craftRotorAlongScale, craftWingTipMounts } from "../../../sim/crafts";
 import Phaser from "phaser";
 import { AI_AIM_NARROW_BASE, AI_AIM_WIDE_MUL, launchGravity, targetingMode, specIsShellGun, specIsRocketPod, hardpointAmmoIndex, collapseSightTips, advanceAimHold, aimPrecisionSpread } from "../../../sim/weaponRuntime";
 import { projectileFxScale, playerMuzzleFxMul, scaledProjectileFxCount } from "../../../render/fxScale";
@@ -11,7 +18,6 @@ import { lookupSpriteMuzzles, lookupSpritePoints, lookupSpriteOrigin } from "../
 import { spriteUvPos, FX_VARIANTS } from "../../../art/sprites";
 import { groundZ, worldToScreen, screenToWorldAtZ, cameraPointVisible, projectHeading, isWater, sampleBiome } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
-import type { HostCraft } from "../render/hostCraft";
 import { simParticleTexKey, simParticleLook } from "../../../render/simParticleLook";
 import { applyThermalHeat } from "../../../render/thermal";
 
@@ -104,7 +110,7 @@ export class RemoteBody {
         : (() => {
             const bodyMuzzles = lookupSpritePoints(drone.spec.body, "muzzle");
             if (bodyMuzzles.length > 1) {
-              const leaveZ = this.remoteMuzzleZ(drone);
+              const leaveZ = remoteMuzzleZ(drone);
               return bodyMuzzles.map((uv) => {
                 const p = this.remoteBodyMountWorldPos(drone, uv);
                 return { x: p.x, y: p.y, z: leaveZ };
@@ -218,7 +224,7 @@ export class RemoteBody {
     if (specIsShellGun(spec)) {
       const gunIm = this.remoteGunImage(drone);
       const gunTips = gunIm ? lookupSpriteMuzzles(gunIm.texture.key) : [];
-      const side = this.s.fx.shellEjectSide({ muzzleUv: gunTips[0] });
+      const side = shellEjectSide({ muzzleUv: gunTips[0] });
       const ejectAt = gunIm
         ? screenToWorldAtZ(gunIm.x, gunIm.y, mz)
         : { x: mx, y: my };
@@ -271,7 +277,7 @@ export class RemoteBody {
 
     if (!wantFire || (drone.fireCd ?? 0) > 0) return;
 
-    const hostWpn = this.s.remoteFleet.remoteHostAmmoWeapon(spec);
+    const hostWpn = remoteHostAmmoWeapon(spec);
     if (hostWpn) {
       // Barrage owns the howitzer — no spot fire or new strike until it finishes.
       if (this.s.fireControl.hostWeaponStrikeActive(hostWpn)) return;
@@ -483,11 +489,11 @@ export class RemoteBody {
       y: drone.y,
       z: drone.z,
     };
-    const release = this.remoteBombReleaseVelocity(drone, spec, tip.x, tip.y, ptr, slot);
+    const release = remoteBombReleaseVelocity(this.s.world, drone, spec, tip.x, tip.y, ptr, slot);
     const dropZ = tip.z;
     const grav = launchGravity(spec.launch);
     const beh = shotBehaviorOf(spec);
-    const fallT = this.s.fireControl.estimateBombFallTime(
+    const fallT = estimateBombFallTime(
       dropZ,
       release.vz,
       groundZ(this.s.world, ptr.x, ptr.y),
@@ -589,17 +595,6 @@ export class RemoteBody {
   }
 
   /**
-   * Socket emit UVs on the remote look sprite (not hull.body — Skiff overrides look).
-   * Same resolver as host craftSocketPoints soft path (`socketPointsOnKey`).
-   */
-  remoteSocketPoints(
-    drone: RemoteCraft,
-    socket: { class: string; points?: { id: string }[] }
-  ): { x: number; y: number; id?: string }[] {
-    return socketPointsOnKey(drone.spec.body, socket);
-  }
-
-  /**
    * Fire origins for a remote socket — simultaneous / alternate body muzzles,
    * hardpoint ammo-phase (same as host `hardpointPylon`), or turret tips.
    * Leave Z matches host `playerMuzzleZ` (hullPlacement); turret XY plane matches `gunTip` (base Z).
@@ -608,10 +603,10 @@ export class RemoteBody {
     drone: RemoteCraft,
     slot: number
   ): { x: number; y: number; z: number }[] {
-    const leaveZ = this.remoteMuzzleZ(drone, slot);
+    const leaveZ = remoteMuzzleZ(drone, slot);
     const socket = drone.spec.sockets?.[slot];
     if (socket && (socket.class === "fixed" || socket.class === "hardpoint")) {
-      const authored = this.remoteSocketPoints(drone, socket);
+      const authored = remoteSocketPoints(drone, socket);
       if (authored.length) {
         let uvs = authored;
         if (socket.class === "hardpoint") {
@@ -634,8 +629,8 @@ export class RemoteBody {
       const gunIm = this.remoteGunImage(drone);
       const bodyIm = this.remoteBodyImage(drone);
       if (gunIm && bodyIm?.visible) {
-        const pose = this.remoteBodyDrawPose(bodyIm);
-        this.poseRemoteGun(drone, pose, bodyIm.texture.key, gunIm);
+        const pose = remoteBodyDrawPose(bodyIm);
+        poseRemoteGun(this.s.textures, drone, pose, bodyIm.texture.key, gunIm);
         const tips = lookupSpriteMuzzles(gunIm.texture.key);
         // Match host gunTip: unproject at hull base Z, stamp leave Z separately.
         const planeZ = drone.z;
@@ -665,10 +660,10 @@ export class RemoteBody {
     drone: RemoteCraft,
     slot: number
   ): { x: number; y: number; z: number }[] {
-    const leaveZ = this.remoteMuzzleZ(drone, slot);
+    const leaveZ = remoteMuzzleZ(drone, slot);
     const socket = drone.spec.sockets?.[slot];
     if (socket && (socket.class === "fixed" || socket.class === "hardpoint")) {
-      const authored = this.remoteSocketPoints(drone, socket);
+      const authored = remoteSocketPoints(drone, socket);
       if (authored.length) {
         let uvs = authored;
         if (socket.class === "hardpoint") {
@@ -686,8 +681,8 @@ export class RemoteBody {
       const gunIm = this.remoteGunImage(drone);
       const bodyIm = this.remoteBodyImage(drone);
       if (gunIm && bodyIm?.visible) {
-        const pose = this.remoteBodyDrawPose(bodyIm);
-        this.poseRemoteGun(drone, pose, bodyIm.texture.key, gunIm);
+        const pose = remoteBodyDrawPose(bodyIm);
+        poseRemoteGun(this.s.textures, drone, pose, bodyIm.texture.key, gunIm);
         const muzzles = lookupSpriteMuzzles(gunIm.texture.key);
         if (muzzles.length) {
           const planeZ = drone.z;
@@ -705,13 +700,13 @@ export class RemoteBody {
 
   /** Barrel tip for a remote gun — matches the overlay muzzle UV (not a hull-radius offset). */
   remoteGunMuzzle(drone: RemoteCraft, slot?: number): { x: number; y: number; z: number } {
-    const leaveZ = this.remoteMuzzleZ(drone, slot);
+    const leaveZ = remoteMuzzleZ(drone, slot);
     const gunAng = drone.gunAngle ?? drone.angle;
     const gunIm = this.remoteGunImage(drone);
     const bodyIm = this.remoteBodyImage(drone);
     if (gunIm && bodyIm?.visible) {
-      const pose = this.remoteBodyDrawPose(bodyIm);
-      this.poseRemoteGun(drone, pose, bodyIm.texture.key, gunIm);
+      const pose = remoteBodyDrawPose(bodyIm);
+      poseRemoteGun(this.s.textures, drone, pose, bodyIm.texture.key, gunIm);
       const tips = lookupSpriteMuzzles(gunIm.texture.key);
       const tipUv = tips[0] ?? { x: 0.5, y: 0.05 };
       // Match host gunTip: unproject at hull base Z.
@@ -746,48 +741,8 @@ export class RemoteBody {
       y: drone.y,
       z: drone.z,
     };
-    const release = this.remoteBombReleaseVelocity(drone, spec, tip.x, tip.y, aim, slot);
+    const release = remoteBombReleaseVelocity(this.s.world, drone, spec, tip.x, tip.y, aim, slot);
     this.s.reticleHud.drawTrajectoryArc(tip, release, spec, aim, drone.y);
-  }
-
-  /** Bomb release from a remote hull — same loft search as player craft. */
-  remoteBombReleaseVelocity(
-    drone: RemoteCraft,
-    spec: PlayerWpnSpec,
-    ox: number,
-    oy: number,
-    aim: { x: number; y: number },
-    slot: number
-  ): { vx: number; vy: number; vz: number; angle: number } {
-    const hull = drone.spec.craftLook ? craftOf(drone.spec.craftLook) : undefined;
-    const socket = drone.spec.sockets?.[slot];
-    const tune = hull
-      ? craftBombDrop(hull, socket)
-      : { momentum: 0.4, maxBoost: 70, loft: 90, loftMax: 160 };
-    return this.s.fireControl.bombReleaseFrom(spec, ox, oy, aim, 0, {
-      vx: drone.vx,
-      vy: drone.vy,
-      vz: drone.vz ?? 0,
-      z0: drone.z + drone.spec.height * 0.4,
-      angle: drone.angle,
-      tune,
-    });
-  }
-
-  /** World Z for remote muzzle leave — same hullPlacement rules as the host craft. */
-  remoteMuzzleZ(drone: RemoteCraft, slot?: number, barrel = 0): number {
-    const sockets = drone.spec.sockets;
-    const sock =
-      slot != null
-        ? sockets?.[slot]
-        : sockets?.find((s) => s.class === "turret") ?? sockets?.[0];
-    let z = this.s.fireControl.craftMuzzleLeaveZ(drone.z, drone.spec.height, socketHullPlacement(sock, barrel));
-    // Dirt-locked AGVs skim the heightmap — lift leave so tracers clear micro-relief
-    // that a heli chin gun never meets (same aim-at-ground dive, much less clearance).
-    if (drone.spec.ground) {
-      z += Math.max(6, drone.spec.height * 0.45);
-    }
-    return z;
   }
 
   /**
@@ -994,7 +949,7 @@ export class RemoteBody {
         x: r.x,
         y: r.y,
         z: r.z,
-        pose: this.remoteBodyDrawPose(body),
+        pose: remoteBodyDrawPose(body),
         bodyDepth,
         state,
       });
@@ -1010,7 +965,7 @@ export class RemoteBody {
     const power = Phaser.Math.Clamp(spd / Math.max(1, hull.maxSpeed), 0.2, 1);
     if ((profile?.flame ?? 1) === 0) return;
     if (profile && mounts.length) {
-      const pose = this.remoteBodyDrawPose(body);
+      const pose = remoteBodyDrawPose(body);
       const bodyDepth =
         (body.getData("tiltWrap") as Phaser.GameObjects.Container | undefined)?.depth ??
         body.depth;
@@ -1056,7 +1011,7 @@ export class RemoteBody {
         }
       }
     } else if (mounts.length && spd > min * 0.7) {
-      const pose = this.remoteBodyDrawPose(body);
+      const pose = remoteBodyDrawPose(body);
       this.s.fx.withTrail(0.7, () => {
         for (const ex of mounts) {
           const at = spriteUvPos(pose, ex.x, ex.y);
@@ -1099,7 +1054,7 @@ export class RemoteBody {
         py,
         r.angle + Math.PI / 2,
         sc,
-        this.s.groundMarks.trackPrintAlpha(0.65, px, py)
+        trackPrintAlpha(0.65, px, py)
       );
     }
     r.track = ((r.track ?? 0) + step) % printGap;
@@ -1115,7 +1070,7 @@ export class RemoteBody {
   ): { x: number; y: number } {
     const bodyIm = this.remoteBodyImage(drone);
     if (bodyIm?.visible) {
-      const pose = this.remoteBodyDrawPose(bodyIm);
+      const pose = remoteBodyDrawPose(bodyIm);
       const scr = spriteUvPos(pose, mount.x, mount.y);
       // Same mid-hull plane as craftBodyMountWorldPos — leave Z is remoteMuzzleZ.
       const z = drone.z + drone.spec.height * 0.55;
@@ -1137,37 +1092,6 @@ export class RemoteBody {
       x: drone.x + mx * Math.cos(hullRot) - my * Math.sin(hullRot),
       y: drone.y + mx * Math.sin(hullRot) + my * Math.cos(hullRot),
     };
-  }
-
-  /** Place remote gun overlay on the body hub for the current aim (shared by draw + fire). */
-  poseRemoteGun(
-    drone: RemoteCraft,
-    bodyPose: {
-      x: number;
-      y: number;
-      rotation: number;
-      displayWidth: number;
-      displayHeight: number;
-      originX: number;
-      originY: number;
-    },
-    bodyKey: string,
-    gunIm: Phaser.GameObjects.Image
-  ): void {
-    const gunTex = craftGunTex(drone.spec);
-    const gunKey = (gunTex && this.s.textures.exists(gunTex) && gunTex) || "gun_minigun";
-    if (gunIm.texture.key !== gunKey) gunIm.setTexture(gunKey);
-    const gOrig = lookupSpriteOrigin(gunKey) ?? { x: 0.5, y: 0.7 };
-    const gunAng = drone.gunAngle ?? drone.angle;
-    const mount = lookupSpritePoints(bodyKey, "gun")[0] ?? { x: 0.5, y: 0.5 };
-    const hub = spriteUvPos(bodyPose, mount.x, mount.y);
-    const at = worldToScreen(drone.x, drone.y, drone.z);
-    gunIm
-      .setVisible(true)
-      .setOrigin(gOrig.x, gOrig.y)
-      .setPosition(hub.x, hub.y)
-      .setRotation(projectHeading(gunAng + Math.PI / 2, drone.x, drone.y, drone.z))
-      .setScale(craftGunScale(drone.spec) * at.scale);
   }
 
   /** Live body Image for a remote in `remoteG`. */
@@ -1255,7 +1179,7 @@ export class RemoteBody {
           .setDepth(bodyDepth);
       }
       applyThermalHeat(im, this.s.thermal.on, 0.72);
-      const bodyPose = this.remoteBodyDrawPose(im);
+      const bodyPose = remoteBodyDrawPose(im);
       const rotorParts = remoteRotorParts(r.spec);
       for (let ri = 0; ri < rotorParts.length; ri++) {
         const rotor = kids[i * stride + 2 + ri];
@@ -1290,16 +1214,11 @@ export class RemoteBody {
         applyThermalHeat(rotor, this.s.thermal.on, 0.48);
       }
       if (craftGunId(r.spec) && gunIm) {
-        this.poseRemoteGun(r, bodyPose, key, gunIm);
+        poseRemoteGun(this.s.textures, r, bodyPose, key, gunIm);
         gunIm.setDepth(worldDepth(r.z, ZOff.body + 0.4, r.y));
         applyThermalHeat(gunIm, this.s.thermal.on, 0.55);
       }
     });
-  }
-
-  /** Screen pose for UV mounts on a remote hull (accounts for bank tilt wrap). */
-  remoteBodyDrawPose(im: Phaser.GameObjects.Image): ReturnType<HostCraft["imageDrawPose"]> {
-    return this.s.hostCraft.imageDrawPose(im);
   }
 
   emitRemoteDamageFx(): void {
@@ -1389,131 +1308,12 @@ export class RemoteBody {
     };
   }
 
-  whipAntennaRest(
-    base: { x: number; y: number; z: number },
-    faceAng: number,
-    cfg: { length?: number; aft?: number }
-  ): { x: number; y: number; z: number } {
-    const len = cfg.length ?? 12;
-    const aft = cfg.aft ?? 2;
-    return {
-      x: base.x - Math.cos(faceAng) * aft,
-      y: base.y - Math.sin(faceAng) * aft,
-      z: base.z + len,
-    };
-  }
-
-  /**
-   * Spring whip — lags base accel / yaw, overshoots rest on stop, then settles.
-   * `faceAng` is the heading the rest tip leans aft of (turret aim or hull yaw).
-   */
-  tickWhipAntenna(
-    tip:
-      | {
-          x: number;
-          y: number;
-          z: number;
-          vx: number;
-          vy: number;
-          vz: number;
-          bx: number;
-          by: number;
-          bz: number;
-          bvx: number;
-          bvy: number;
-          angle: number;
-        }
-      | undefined,
-    base: { x: number; y: number; z: number },
-    faceAng: number,
-    cfg: {
-      length?: number;
-      aft?: number;
-      stiffness?: number;
-      damping?: number;
-      yawWhip?: number;
-      lag?: number;
-    },
-    dt: number
-  ): NonNullable<typeof tip> {
-    const rest = this.whipAntennaRest(base, faceAng, cfg);
-    if (!tip) {
-      return {
-        x: rest.x,
-        y: rest.y,
-        z: rest.z,
-        vx: 0,
-        vy: 0,
-        vz: 0,
-        bx: base.x,
-        by: base.y,
-        bz: base.z,
-        bvx: 0,
-        bvy: 0,
-        angle: faceAng,
-      };
-    }
-    const invDt = 1 / Math.max(1e-4, dt);
-    const bvx = (base.x - tip.bx) * invDt;
-    const bvy = (base.y - tip.by) * invDt;
-    const ax = (bvx - tip.bvx) * invDt;
-    const ay = (bvy - tip.bvy) * invDt;
-    const omega = Phaser.Math.Angle.Wrap(faceAng - tip.angle) * invDt;
-
-    const k = cfg.stiffness ?? 26;
-    const c = cfg.damping ?? 2.4;
-    const lag = cfg.lag ?? 1.6;
-    const whip = cfg.yawWhip ?? 12;
-    const len = cfg.length ?? 12;
-
-    tip.vx += ((rest.x - tip.x) * k - tip.vx * c) * dt;
-    tip.vy += ((rest.y - tip.y) * k - tip.vy * c) * dt;
-    tip.vz += ((rest.z - tip.z) * k - tip.vz * c) * dt;
-    tip.vx -= ax * lag * dt;
-    tip.vy -= ay * lag * dt;
-    tip.vx += -Math.sin(faceAng) * omega * whip * len * dt;
-    tip.vy += Math.cos(faceAng) * omega * whip * len * dt;
-
-    tip.x += tip.vx * dt;
-    tip.y += tip.vy * dt;
-    tip.z += tip.vz * dt;
-
-    {
-      const dx = tip.x - base.x;
-      const dy = tip.y - base.y;
-      const dz = tip.z - base.z;
-      const span = Math.hypot(dx, dy, dz);
-      const maxLen = len * 1.28;
-      if (span > maxLen && span > 1e-4) {
-        const s = maxLen / span;
-        tip.x = base.x + dx * s;
-        tip.y = base.y + dy * s;
-        tip.z = base.z + dz * s;
-        const rv = tip.vx * dx + tip.vy * dy + tip.vz * dz;
-        if (rv > 0) {
-          const inv = 1 / (span * span);
-          tip.vx -= dx * rv * inv;
-          tip.vy -= dy * rv * inv;
-          tip.vz -= dz * rv * inv;
-        }
-      }
-    }
-
-    tip.bx = base.x;
-    tip.by = base.y;
-    tip.bz = base.z;
-    tip.bvx = bvx;
-    tip.bvy = bvy;
-    tip.angle = faceAng;
-    return tip;
-  }
-
   tickRemoteAntenna(drone: RemoteCraft, dt: number): void {
     const cfg = drone.spec.antenna;
     if (!cfg || dt <= 1e-6) return;
     const base = this.remoteAntennaBase(drone);
     if (!base) return;
-    drone.antenna = this.tickWhipAntenna(drone.antenna, base, drone.angle, cfg, dt);
+    drone.antenna = tickWhipAntenna(drone.antenna, base, drone.angle, cfg, dt);
   }
 
   tickHeliAntenna(dt: number): void {
@@ -1525,54 +1325,7 @@ export class RemoteBody {
     }
     const base = this.heliAntennaBase();
     if (!base) return;
-    this.heliAntenna = this.tickWhipAntenna(this.heliAntenna, base, base.face, cfg, dt);
-  }
-
-  drawWhipAntennaStroke(
-    g: Phaser.GameObjects.Graphics,
-    base: { x: number; y: number; z: number },
-    tip: { x: number; y: number; z: number },
-    rest: { x: number; y: number; z: number }
-  ): void {
-    const leanX = tip.x - rest.x;
-    const leanY = tip.y - rest.y;
-    const leanZ = tip.z - rest.z;
-    const bend = 1.55;
-    const c1 = {
-      x: base.x + (rest.x - base.x) * 0.35 + leanX * bend * 0.55,
-      y: base.y + (rest.y - base.y) * 0.35 + leanY * bend * 0.55,
-      z: base.z + (rest.z - base.z) * 0.35 + leanZ * bend * 0.25,
-    };
-    const c2 = {
-      x: base.x + (rest.x - base.x) * 0.72 + leanX * bend * 1.05,
-      y: base.y + (rest.y - base.y) * 0.72 + leanY * bend * 1.05,
-      z: base.z + (rest.z - base.z) * 0.72 + leanZ * bend * 0.55,
-    };
-    const segs = 10;
-    const pts: { x: number; y: number }[] = [];
-    for (let i = 0; i <= segs; i++) {
-      const t = i / segs;
-      const u = 1 - t;
-      const wx =
-        u * u * u * base.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * tip.x;
-      const wy =
-        u * u * u * base.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * tip.y;
-      const wz =
-        u * u * u * base.z + 3 * u * u * t * c1.z + 3 * u * t * t * c2.z + t * t * t * tip.z;
-      const at = worldToScreen(wx, wy, wz);
-      pts.push({ x: at.x, y: at.y });
-    }
-    if (pts.length < 2) return;
-    const stroke = (color: number, alpha: number, width: number, dy: number) => {
-      g.lineStyle(width, color, alpha);
-      g.beginPath();
-      g.moveTo(pts[0]!.x, pts[0]!.y + dy);
-      for (let i = 1; i < pts.length; i++) g.lineTo(pts[i]!.x, pts[i]!.y + dy);
-      g.strokePath();
-    };
-    stroke(0x0c0c0e, 0.55, 1.85, 0.45);
-    stroke(0x2a2c28, 0.78, 1.05, 0);
-    stroke(0x3e4238, 0.35, 0.45, -0.3);
+    this.heliAntenna = tickWhipAntenna(this.heliAntenna, base, base.face, cfg, dt);
   }
 
   drawRemoteAntennas(): void {
@@ -1592,8 +1345,8 @@ export class RemoteBody {
       const base = this.remoteAntennaBase(r);
       const tip = r.antenna;
       if (!base || !tip) continue;
-      const rest = this.whipAntennaRest(base, r.angle, r.spec.antenna);
-      this.drawWhipAntennaStroke(g, base, tip, rest);
+      const rest = whipAntennaRest(base, r.angle, r.spec.antenna);
+      drawWhipAntennaStroke(g, base, tip, rest);
       depth = Math.min(depth, worldDepth(r.z, antOff, r.y));
       drew = true;
     }
@@ -1601,8 +1354,8 @@ export class RemoteBody {
     if (heliCfg && this.s.player.phase !== "dead" && this.heliAntenna) {
       const base = this.heliAntennaBase();
       if (base && cameraPointVisible(base.z, base.y)) {
-        const rest = this.whipAntennaRest(base, base.face, heliCfg);
-        this.drawWhipAntennaStroke(g, base, this.heliAntenna, rest);
+        const rest = whipAntennaRest(base, base.face, heliCfg);
+        drawWhipAntennaStroke(g, base, this.heliAntenna, rest);
         const h = this.s.player;
         depth = Math.min(depth, worldDepth(h.z, antOff, h.y));
         drew = true;

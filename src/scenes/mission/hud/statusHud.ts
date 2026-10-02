@@ -1,6 +1,30 @@
+
 import Phaser from "phaser";
 import { heliHudWireUv, type HeliHudWireBake } from "../../../art/sprites";
 import type { MissionScene } from "../../missionScene";
+
+export function healthHudColor(hp: number): number {
+  const t = Phaser.Math.Clamp(hp, 0, 1);
+  const stops: [number, number][] = [
+    [1, 0x5caa3a],
+    [0.66, 0xe8c44a],
+    [0.33, 0xe87828],
+    [0, 0xff2a18],
+  ];
+  for (let i = 0; i < stops.length - 1; i++) {
+    const [aT, aC] = stops[i]!;
+    const [bT, bC] = stops[i + 1]!;
+    if (t <= aT && t >= bT) {
+      const k = (aT - t) / Math.max(0.0001, aT - bT);
+      return Phaser.Display.Color.GetColor(
+        Math.round(Phaser.Math.Linear((aC >> 16) & 0xff, (bC >> 16) & 0xff, k)),
+        Math.round(Phaser.Math.Linear((aC >> 8) & 0xff, (bC >> 8) & 0xff, k)),
+        Math.round(Phaser.Math.Linear(aC & 0xff, bC & 0xff, k))
+      );
+    }
+  }
+  return stops[stops.length - 1]![1];
+}
 
 /** Lower-left status panel: HP bar, hull wireframe with damage pins, hurt vignette. */
 export class StatusHud {
@@ -15,29 +39,6 @@ export class StatusHud {
   hurtVignettePulse!: Phaser.GameObjects.Image;
 
   constructor(readonly s: MissionScene) {}
-
-  healthHudColor(hp: number): number {
-    const t = Phaser.Math.Clamp(hp, 0, 1);
-    const stops: [number, number][] = [
-      [1, 0x5caa3a],
-      [0.66, 0xe8c44a],
-      [0.33, 0xe87828],
-      [0, 0xff2a18],
-    ];
-    for (let i = 0; i < stops.length - 1; i++) {
-      const [aT, aC] = stops[i]!;
-      const [bT, bC] = stops[i + 1]!;
-      if (t <= aT && t >= bT) {
-        const k = (aT - t) / Math.max(0.0001, aT - bT);
-        return Phaser.Display.Color.GetColor(
-          Math.round(Phaser.Math.Linear((aC >> 16) & 0xff, (bC >> 16) & 0xff, k)),
-          Math.round(Phaser.Math.Linear((aC >> 8) & 0xff, (bC >> 8) & 0xff, k)),
-          Math.round(Phaser.Math.Linear(aC & 0xff, bC & 0xff, k))
-        );
-      }
-    }
-    return stops[stops.length - 1]![1];
-  }
 
   draw(): void {
     const g = this.playerHud;
@@ -80,7 +81,7 @@ export class StatusHud {
     const gap = 2;
     const segH = (barH - gap * (segs - 1)) / segs;
     const fill = hp * segs;
-    const hpCol = this.healthHudColor(hp);
+    const hpCol = healthHudColor(hp);
     for (let i = 0; i < segs; i++) {
       const sy = barY + (segs - 1 - i) * (segH + gap);
       g.fillStyle(0x141410, 0.55);

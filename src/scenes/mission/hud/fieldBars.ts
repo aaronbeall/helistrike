@@ -1,3 +1,4 @@
+
 import Phaser from "phaser";
 
 import { heightOf } from "../../../sim/combat";
@@ -5,6 +6,41 @@ import { Layer, ZOff, worldDepth } from "../../../render/depth";
 import { isOrganic } from "../../../sim/roster";
 import { worldToScreen, cameraPointVisible } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
+
+/** Segmented battery icon (remote overhead + HUD pool); x/y = top-left, width BATTERY_ICON_W × zs. */
+export function drawBatteryIcon(time: Phaser.Time.Clock, g: Phaser.GameObjects.Graphics, x: number, y: number, frac: number, zs: number): void {
+  const segs = 4;
+  const bodyW = 24 * zs;
+  const bodyH = 8 * zs;
+  const nubW = 2.4 * zs;
+  const nubH = 4.2 * zs;
+  const pad = 1.5 * zs;
+  const gap = 1.15 * zs;
+  const rBody = 1.5 * zs;
+  const innerW = bodyW - pad * 2;
+  const innerH = bodyH - pad * 2;
+  const segW = (innerW - gap * (segs - 1)) / segs;
+  const ratio = Phaser.Math.Clamp(frac, 0, 1);
+  const filled = ratio > 0.001 ? Math.min(segs, Math.max(1, Math.ceil(ratio * segs - 1e-6))) : 0;
+  const low = filled <= 1;
+  const col = low ? 0xff2a18 : filled >= 3 ? 0x5caa3a : 0xe8c44a;
+  const pulse = low ? 0.38 + 0.62 * (0.5 + 0.5 * Math.sin(time.now * 0.022)) : 1;
+  g.fillStyle(0x10100c, 0.72 * pulse);
+  g.fillRoundedRect(x, y, bodyW, bodyH, rBody);
+  g.lineStyle(Math.max(1, 1.15 * zs), low ? col : 0xd8d8cc, 0.92 * pulse);
+  g.strokeRoundedRect(x, y, bodyW, bodyH, rBody);
+  g.fillStyle(low ? col : 0xd8d8cc, 0.92 * pulse);
+  g.fillRoundedRect(x + bodyW - 0.4 * zs, y + (bodyH - nubH) / 2, nubW, nubH, 0.7 * zs);
+  for (let i = 0; i < segs; i++) {
+    const sx = x + pad + i * (segW + gap);
+    const sy = y + pad;
+    g.fillStyle(0x080806, 0.85);
+    g.fillRect(sx, sy, segW, innerH);
+    if (i >= filled) continue;
+    g.fillStyle(col, pulse);
+    g.fillRect(sx, sy, segW, innerH);
+  }
+}
 
 /** World-space bars: unit HP bars, remote battery icons. */
 export class FieldBars {
@@ -48,7 +84,7 @@ export class FieldBars {
         g.fillRect(hx, hy, hw * hr, 4 * zs);
       }
       if (r.spec.unlimitedLife) continue;
-      this.drawBatteryIcon(g, at.x - BATTERY_ICON_W * zs * 0.5, batY, r.life / Math.max(0.05, r.lifeMax), zs);
+      drawBatteryIcon(this.s.time, g, at.x - BATTERY_ICON_W * zs * 0.5, batY, r.life / Math.max(0.05, r.lifeMax), zs);
     }
     const armed = this.s.remoteFleet.remoteDetonateArmed();
     const drone = armed ? this.s.remoteFleet.activeRemote() : undefined;
@@ -71,40 +107,6 @@ export class FieldBars {
     }
   }
 
-  /** Segmented battery icon (remote overhead + HUD pool); x/y = top-left, width BATTERY_ICON_W × zs. */
-  drawBatteryIcon(g: Phaser.GameObjects.Graphics, x: number, y: number, frac: number, zs: number): void {
-    const segs = 4;
-    const bodyW = 24 * zs;
-    const bodyH = 8 * zs;
-    const nubW = 2.4 * zs;
-    const nubH = 4.2 * zs;
-    const pad = 1.5 * zs;
-    const gap = 1.15 * zs;
-    const rBody = 1.5 * zs;
-    const innerW = bodyW - pad * 2;
-    const innerH = bodyH - pad * 2;
-    const segW = (innerW - gap * (segs - 1)) / segs;
-    const ratio = Phaser.Math.Clamp(frac, 0, 1);
-    const filled = ratio > 0.001 ? Math.min(segs, Math.max(1, Math.ceil(ratio * segs - 1e-6))) : 0;
-    const low = filled <= 1;
-    const col = low ? 0xff2a18 : filled >= 3 ? 0x5caa3a : 0xe8c44a;
-    const pulse = low ? 0.38 + 0.62 * (0.5 + 0.5 * Math.sin(this.s.time.now * 0.022)) : 1;
-    g.fillStyle(0x10100c, 0.72 * pulse);
-    g.fillRoundedRect(x, y, bodyW, bodyH, rBody);
-    g.lineStyle(Math.max(1, 1.15 * zs), low ? col : 0xd8d8cc, 0.92 * pulse);
-    g.strokeRoundedRect(x, y, bodyW, bodyH, rBody);
-    g.fillStyle(low ? col : 0xd8d8cc, 0.92 * pulse);
-    g.fillRoundedRect(x + bodyW - 0.4 * zs, y + (bodyH - nubH) / 2, nubW, nubH, 0.7 * zs);
-    for (let i = 0; i < segs; i++) {
-      const sx = x + pad + i * (segW + gap);
-      const sy = y + pad;
-      g.fillStyle(0x080806, 0.85);
-      g.fillRect(sx, sy, segW, innerH);
-      if (i >= filled) continue;
-      g.fillStyle(col, pulse);
-      g.fillRect(sx, sy, segW, innerH);
-    }
-  }
 }
 
 /** Mission-scene tuning constants shared by subsystems. */

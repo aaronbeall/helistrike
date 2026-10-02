@@ -1,3 +1,4 @@
+
 import Phaser from "phaser";
 import { Craft } from "../../../sim/craft";
 import { worldToScreen } from "../../../worldgen/world";
@@ -8,6 +9,29 @@ const THREAT_ARC_PAINT_HALF = 22.5;
 
 /** Threat arc half-width (deg) at full paint charge = red lock arc at missile launch. */
 const THREAT_ARC_LOCK_HALF = 6;
+
+/** Plain arc; once shorter than its line width it becomes a single dot (no stacked caps). */
+export function strokeArc(
+  g: Phaser.GameObjects.Graphics,
+  cx: number,
+  cy: number,
+  r: number,
+  dir: number,
+  half: number,
+  width: number,
+  color: number,
+  alpha: number
+): void {
+  if (half * 2 * r <= width) {
+    g.fillStyle(color, alpha);
+    g.fillCircle(cx + Math.cos(dir) * r, cy + Math.sin(dir) * r, width / 2);
+    return;
+  }
+  g.lineStyle(width, color, alpha);
+  g.beginPath();
+  g.arc(cx, cy, r, dir - half, dir + half, false);
+  g.strokePath();
+}
 
 /** Threat warnings: PAINTED / MISSILE LOCK text + per-threat arcs around the targeted craft. */
 export class ThreatHud {
@@ -67,7 +91,7 @@ export class ThreatHud {
       const ut = worldToScreen(u.x, u.y, u.z);
       const half = Phaser.Math.DegToRad(Phaser.Math.Linear(THREAT_ARC_PAINT_HALF, THREAT_ARC_LOCK_HALF, u.paintT));
       const alpha = u.paintT * 0.8 * paintBlink;
-      this.strokeArc(g, at.x, at.y, r, Math.atan2(ut.y - at.y, ut.x - at.x), half, 2, 0xfff0c8, alpha);
+      strokeArc(g, at.x, at.y, r, Math.atan2(ut.y - at.y, ut.x - at.x), half, 2, 0xfff0c8, alpha);
     }
     const lockA = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(now * 0.016));
     for (const s of this.s.shots) {
@@ -81,30 +105,8 @@ export class ThreatHud {
       s.lockD0 ??= Math.max(1, dist);
       const closure = Phaser.Math.Clamp(dist / s.lockD0, 0, 1);
       const half = Phaser.Math.DegToRad(Phaser.Math.Linear(0.5, THREAT_ARC_LOCK_HALF, closure));
-      this.strokeArc(g, at.x, at.y, r, Math.atan2(st.y - at.y, st.x - at.x), half, 4, 0xff3a22, lockA);
+      strokeArc(g, at.x, at.y, r, Math.atan2(st.y - at.y, st.x - at.x), half, 4, 0xff3a22, lockA);
     }
   }
 
-  /** Plain arc; once shorter than its line width it becomes a single dot (no stacked caps). */
-  strokeArc(
-    g: Phaser.GameObjects.Graphics,
-    cx: number,
-    cy: number,
-    r: number,
-    dir: number,
-    half: number,
-    width: number,
-    color: number,
-    alpha: number
-  ): void {
-    if (half * 2 * r <= width) {
-      g.fillStyle(color, alpha);
-      g.fillCircle(cx + Math.cos(dir) * r, cy + Math.sin(dir) * r, width / 2);
-      return;
-    }
-    g.lineStyle(width, color, alpha);
-    g.beginPath();
-    g.arc(cx, cy, r, dir - half, dir + half, false);
-    g.strokePath();
-  }
 }

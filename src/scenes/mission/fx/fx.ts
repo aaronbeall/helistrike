@@ -1,12 +1,12 @@
 import Phaser from "phaser";
+import { mountAt, shellGirth } from "../../../render/spritePose";
 import { coneDir, biasedDir, expBiasDir } from "../../../util/vec";
-import { jitterDisk } from "../../../util/rng";
+import { jitterDisk, range } from "../../../util/rng";
 import { simParticleTexKey, simParticleLook } from "../../../render/simParticleLook";
 import { applyThermalHeat } from "../../../render/thermal";
 import { resolveSkin } from "../../../render/camo";
 import { radius, textureOf, type Debris, type SimParticle } from "../../../sim/combat";
 import { Layer, ZOff, Z_GRAVITY, worldDepth } from "../../../render/depth";
-import { range } from "../../../util/rng";
 import { TOON_BLAST_VARIANTS, toonBlastAnimKey, toonBlastKey } from "../../../render/toonBlast";
 import { ensureAllArtGenAnims } from "../../../art/artGen";
 import { isOrganic, specOf } from "../../../sim/roster";
@@ -36,14 +36,6 @@ type FxPolicy = {
   emitters: Set<Phaser.GameObjects.Particles.ParticleEmitter>;
 };
 
-/** Parse `30MM` / `.50 CAL` from a catalog designation. */
-function caliberMmFromDesignation(designation: string): number | undefined {
-  const mm = designation.match(/(\d+(?:\.\d+)?)\s*MM\b/i);
-  if (mm) return Number(mm[1]);
-  const cal = designation.match(/\.(\d+)\s*CAL/i);
-  if (cal) return Number(cal[1]) * 0.254;
-  return undefined;
-}
 
 /** FX: particle emitters + emit context, pools/bands/budgets, impacts, toon blasts, big-boom FX, muzzle flashes, shell ejects, damage FX, sim particles. */
 export class Fx {
@@ -622,38 +614,6 @@ export class Fx {
     this.spawnImpactFlash(x, y, z, 0xfff2c8, Math.max(36, size * 1.35), 0.75, 120);
   }
 
-  /** Spent casing size from caliber (designation mm), else projectile scale, else dmg. */
-  shellGirth(opts: { designation?: string; scale?: number; dmg?: number }): number {
-    const mm = opts.designation ? caliberMmFromDesignation(opts.designation) : undefined;
-    if (mm != null) {
-      return Phaser.Math.Clamp(0.2 + Math.pow(mm / 7.62, 0.55) * 0.26, 0.28, 1.2);
-    }
-    if (opts.scale != null) {
-      return Phaser.Math.Clamp(0.26 + opts.scale * 0.5, 0.28, 1.15);
-    }
-    return Phaser.Math.Clamp(0.3 + Math.sqrt(Math.max(0.25, opts.dmg ?? 4)) * 0.125, 0.3, 0.85);
-  }
-
-  /**
-   * +1 = eject barrel-right, −1 = barrel-left.
-   * Local UV only (muzzle on gun tex, else mount on hull) — never world space
-   * so bob / lift / aim sway can't flip the side.
-   */
-  shellEjectSide(opts: {
-    muzzleUv?: { x: number; y: number };
-    mountUv?: { x: number; y: number };
-  }): number {
-    const mid = 0.5;
-    const eps = 0.02;
-    if (opts.muzzleUv && Math.abs(opts.muzzleUv.x - mid) > eps) {
-      return opts.muzzleUv.x > mid ? 1 : -1;
-    }
-    if (opts.mountUv && Math.abs(opts.mountUv.x - mid) > eps) {
-      return opts.mountUv.x > mid ? 1 : -1;
-    }
-    return 1;
-  }
-
   /**
    * Eject a spent casing sideways from a cannon mount (90° ± jitter).
    * Falls with gravity, bounces with heavy friction, stamps onto the wreck layer.
@@ -673,7 +633,7 @@ export class Fx {
     /** Weapon fire interval (s). Lower = faster = slightly harder eject. */
     fireCd?: number;
   }): void {
-    const girth = this.shellGirth(opts);
+    const girth = shellGirth(opts);
     if (girth <= 0) return;
     const side = opts.side >= 0 ? 1 : -1;
     const ejectAng = opts.barrelAng + side * (Math.PI / 2) + range(-0.28, 0.28);
@@ -1625,7 +1585,7 @@ export class Fx {
       const sp = specOf(u.kind);
       const sizeMul = sp.aerial ? 1.65 : sp.building ? 1.15 : 1;
       for (const s of u.dmgSites) {
-        const mount = this.s.hostCraft.mountAt(u, tex, { x: s.u, y: s.v });
+        const mount = mountAt(this.s.textures, u, tex, { x: s.u, y: s.v });
         const base = worldToScreen(mount.x, mount.y, u.z);
         const p = jitterDisk(base.x, base.y, 0.5 + s.scale * 0.4);
         this.withDmgFlameScale(s.scale * sizeMul, () => {

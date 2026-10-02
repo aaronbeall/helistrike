@@ -1,3 +1,5 @@
+import { remoteHostAmmoWeapon } from "../../../sim/remoteRules";
+import { sightTerrainHitWorld } from "../../../sim/aim";
 import { thermalSignalTint } from "../../../render/thermal";
 import { launchGravity, targetingMode, collapseSightTips } from "../../../sim/weaponRuntime";
 import { lookupSpriteMuzzles } from "../../../art/spriteOrigin";
@@ -13,6 +15,18 @@ import type { MissionScene } from "../../missionScene";
 /** Weapons with an authored cooldown at least this long (s) show the reticle cooldown radial. */
 const RETICLE_CD_MIN = 1.0;
 
+/** Cursor texture: remote deploy, bomb drop, else the cam's round/square. */
+export function reticleTexFor(textures: Phaser.Textures.TextureManager, spec: PlayerWpnSpec, square: boolean): string {
+  const want = payloadIsRemote(spec.payload)
+    ? "mark_reticle_remote"
+    : spec.launch.mode === "drop"
+      ? "mark_reticle_bomb"
+      : square
+        ? "mark_reticle_sq"
+        : "mark_reticle";
+  return textures.exists(want) ? want : "mark_reticle";
+}
+
 /** Aim reticle: per-weapon reticle art, lock/salvo tally, ammo + cooldown arcs. */
 export class ReticleHud {
   private reticle!: Phaser.GameObjects.Image;
@@ -20,18 +34,6 @@ export class ReticleHud {
   private sight!: Phaser.GameObjects.Graphics;
 
   constructor(readonly s: MissionScene) {}
-
-  /** Cursor texture: remote deploy, bomb drop, else the cam's round/square. */
-  reticleTexFor(spec: PlayerWpnSpec, square: boolean): string {
-    const want = payloadIsRemote(spec.payload)
-      ? "mark_reticle_remote"
-      : spec.launch.mode === "drop"
-        ? "mark_reticle_bomb"
-        : square
-          ? "mark_reticle_sq"
-          : "mark_reticle";
-    return this.s.textures.exists(want) ? want : "mark_reticle";
-  }
 
   sync(): void {
     const p = this.s.input.activePointer;
@@ -47,7 +49,7 @@ export class ReticleHud {
       spec.launch.mode !== "drop" &&
       !spec.guidance &&
       (!!spec.art.tracer || (spec.launch.mode === "muzzle" && !spec.exhaust));
-    this.reticle.setTexture(this.reticleTexFor(spec, square));
+    this.reticle.setTexture(reticleTexFor(this.s.textures, spec, square));
     const ammoLeft = this.s.fireControl.ammo[h.weapon] ?? 0;
     const ammoShown = this.s.remoteFleet.remotePoolDisplayAmmo(h.weapon, ammoLeft);
     const ammoCap = Math.max(
@@ -110,8 +112,8 @@ export class ReticleHud {
         remSpec.launch.mode !== "drop" &&
         !remSpec.guidance &&
         (!!remSpec.art.tracer || (remSpec.launch.mode === "muzzle" && !remSpec.exhaust));
-      this.reticle.setTexture(this.reticleTexFor(remSpec, remSpec.cam.reticle === "square"));
-      const hostAmmoId = this.s.remoteFleet.remoteHostAmmoWeapon(remSpec);
+      this.reticle.setTexture(reticleTexFor(this.s.textures, remSpec, remSpec.cam.reticle === "square"));
+      const hostAmmoId = remoteHostAmmoWeapon(remSpec);
       const hostSlot = hostAmmoId ? this.s.fireControl.hostWeaponSlot(hostAmmoId) : -1;
       const hostSpec = hostAmmoId ? PLAYER_WPNS[hostAmmoId as WpnId] : undefined;
       const remAmmoCap = Math.max(
@@ -380,7 +382,7 @@ export class ReticleHud {
     this.sight.clear();
     let drew = false;
     for (const tip of tips) {
-      const clip = this.s.fireControl.sightTerrainHitWorld(tip.x, tip.y, z, tgt.x, tgt.y, tgt.z);
+      const clip = sightTerrainHitWorld(this.s.world, tip.x, tip.y, z, tgt.x, tgt.y, tgt.z);
       if (!this.sightPastMuzzle(tip, clip, slot)) continue;
       const from = worldToScreen(tip.x, tip.y, z);
       const to = worldToScreen(clip.x, clip.y, clip.z);

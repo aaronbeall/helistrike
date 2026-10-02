@@ -1,12 +1,14 @@
 import Phaser from "phaser";
-import { gunWorldRot } from "../../../art/spriteOrigin";
+import { steerUnitAngle } from "../../../sim/navigation";
+import { enemyMuzzle, troopDrawAng } from "../../../render/spritePose";
+import { troopSoftTurret } from "../../../sim/roster";
+import { gunWorldRot, lookupSpriteOrigin } from "../../../art/spriteOrigin";
 import { thermalSignalTint, applyThermalHeat } from "../../../render/thermal";
 import { resolveSkin } from "../../../render/camo";
 import { radius, textureOf, type Unit } from "../../../sim/combat";
 import { ZOff, worldDepth } from "../../../render/depth";
 import { range } from "../../../util/rng";
 import { isGroundVehicle, specOf, gunsOf, crewOf } from "../../../sim/roster";
-import { lookupSpriteOrigin } from "../../../art/spriteOrigin";
 import { rotorMountsOf, rotorSpinSign } from "../../../sim/crafts";
 import { applyEdgeLight, clearEdgeLight } from "../../../render/edgeLight";
 import { spritePivot } from "../../../art/sprites";
@@ -38,16 +40,6 @@ export class UnitSprites {
     return spritePivot(key);
   }
 
-  /** Fixed-sprite troops: `angle` = move base, `turret` = aim / draw facing. */
-  troopSoftTurret(u: Unit): boolean {
-    const sp = specOf(u.kind);
-    return !gunsOf(u).length && (sp.behavior === "attack_infantry" || sp.behavior === "flee_infantry");
-  }
-
-  troopDrawAng(u: Unit): number {
-    return this.troopSoftTurret(u) ? u.turret : u.angle;
-  }
-
   /**
    * Projected hull facing with rate-limited draw rotation.
    * Near 2.5D poles, hold or prefer π continuity; otherwise always chase true
@@ -77,19 +69,8 @@ export class UnitSprites {
       }
     }
     const visDt = Math.min(0.05, (this.s.game.loop.delta || 16) / 1000);
-    u.drawRot = this.steerUnitAngle(prev, raw, 2.8, visDt);
+    u.drawRot = steerUnitAngle(prev, raw, 2.8, visDt);
     return u.drawRot;
-  }
-
-  /**
-   * Sim yaw toward `want`. Caps hitch dt and per-tick step so units never
-   * flip 180° in one frame even with high turn rates or large dt spikes.
-   */
-  steerUnitAngle(angle: number, want: number, rate: number, dt: number): number {
-    const stepDt = Math.min(Math.max(0, dt), 1 / 20);
-    // ~10°/tick hard cap — turns always take multiple frames, never axis snaps.
-    const maxStep = Math.min(Math.abs(rate) * stepDt, 0.18);
-    return Phaser.Math.Angle.RotateTo(angle, want, maxStep);
   }
 
   /** Smoothed projected aim for overlay guns / soft troop facing. */
@@ -116,7 +97,7 @@ export class UnitSprites {
       }
     }
     const visDt = Math.min(0.05, (this.s.game.loop.delta || 16) / 1000);
-    u.aimDrawRots[key] = this.steerUnitAngle(prev, raw, 3.2, visDt);
+    u.aimDrawRots[key] = steerUnitAngle(prev, raw, 3.2, visDt);
     return u.aimDrawRots[key]!;
   }
 
@@ -256,12 +237,6 @@ export class UnitSprites {
     });
   }
 
-  spriteHalf(key: string): number {
-    if (!this.s.textures.exists(key)) return 18;
-    const src = this.s.textures.get(key).getSourceImage() as { width: number; height: number };
-    return Math.max(src.width, src.height) * 0.5;
-  }
-
   sync(): void {
     const SLOTS = 9;
     let liveN = 0;
@@ -293,7 +268,7 @@ export class UnitSprites {
       const partBase = i * SLOTS + 2;
       const flash = kids[i * SLOTS + 8]!;
       const tex = resolveSkin(this.s.textures, textureOf(u.kind), u.camo);
-      const rot = this.troopDrawAng(u) + sp.rotOff;
+      const rot = troopDrawAng(u) + sp.rotOff;
       const scr = worldToScreen(u.x, u.y, u.z);
       const scrX = scr.x;
       const scrY = scr.y;
@@ -463,8 +438,8 @@ export class UnitSprites {
         }
       }
       if (u.muzzleT > 0 && (sp.weapon || guns.length)) {
-        const tip = this.s.enemyFire.enemyMuzzle(u, u.muzzleGun);
-        const ang = this.troopSoftTurret(u)
+        const tip = enemyMuzzle(this.s.textures, u, u.muzzleGun);
+        const ang = troopSoftTurret(u)
           ? u.turret
           : !guns.length
             ? u.angle

@@ -1,8 +1,7 @@
 import Phaser from "phaser";
-import { jitterDisk } from "../../../util/rng";
+import { jitterDisk, range } from "../../../util/rng";
 import { PLAYER_WPNS, type WpnId, type WeaponPayload } from "../../../sim/combat";
 import { Layer, ZOff, worldDepth } from "../../../render/depth";
-import { range } from "../../../util/rng";
 import { groundZ, worldToScreen, cameraPointVisible, WORLD } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
 

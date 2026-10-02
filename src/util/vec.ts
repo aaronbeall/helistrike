@@ -129,3 +129,29 @@ export function projectAlong(x: number, y: number, ang: number, tx: number, ty: 
   const dy = ty - y;
   return Math.max(0, dx * Math.cos(ang) + dy * Math.sin(ang));
 }
+
+/** Catmull-Rom samples so energy ribbons read as a TOW-like curve, not a dotted polyline. */
+export function smoothPolyline(pts: { x: number; y: number }[], steps = 4): { x: number; y: number }[] {
+  const n = pts.length;
+  if (n < 3) return pts;
+  const out: { x: number; y: number }[] = [{ x: pts[0]!.x, y: pts[0]!.y }];
+  const catmull = (p0: number, p1: number, p2: number, p3: number, t: number) => {
+    const t2 = t * t;
+    const t3 = t2 * t;
+    return 0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
+  };
+  for (let i = 0; i < n - 1; i++) {
+    const a = pts[i - 1] ?? pts[i]!;
+    const b = pts[i]!;
+    const c = pts[i + 1]!;
+    const d = pts[i + 2] ?? c;
+    for (let s = 1; s <= steps; s++) {
+      const t = s / steps;
+      out.push({
+        x: catmull(a.x, b.x, c.x, d.x, t),
+        y: catmull(a.y, b.y, c.y, d.y, t),
+      });
+    }
+  }
+  return out;
+}

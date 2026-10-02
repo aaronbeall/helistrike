@@ -1,9 +1,9 @@
 import Phaser from "phaser";
+import { remoteTargetable, unitIsAaEnemy } from "../../../sim/targetRules";
 import { radius, type Shot, type Unit } from "../../../sim/combat";
 import { remoteHasPovHud, type RemoteCraft } from "../../../sim/remote";
 import { smokeCoverAt, smokeVisionMul } from "../../../sim/weaponRuntime";
 import { Craft, LOW_AGL } from "../../../sim/craft";
-import { specOf, gunsOf, weaponIsAa } from "../../../sim/roster";
 import type { MissionScene } from "../../missionScene";
 
 /** Bullet time (E): world rate while on, real seconds a full meter lasts, seconds empty → full. */
@@ -70,11 +70,6 @@ export class EnemyTargeting {
     return undefined;
   }
 
-  /** Remote can be engaged by enemies (out in the world, alive, has a hull). */
-  remoteTargetable(r: RemoteCraft): boolean {
-    return !r.detonate && !r.dock && !r.dockPending && !r.airborne && r.health > 0 && !!r.spec.craftLook;
-  }
-
   /** Shadow Craft for an enemy-targeted remote, pose/health synced. */
   remoteTargetCraft(r: RemoteCraft): Craft | undefined {
     const craft = this.s.remoteFleet.ensureRemotePilotCraft(r);
@@ -113,7 +108,7 @@ export class EnemyTargeting {
       bestScore = focusRem ? d * HOST_WHILE_PILOTING_SCORE_MUL : d;
     }
     for (const r of this.s.remotes) {
-      if (!this.remoteTargetable(r)) continue;
+      if (!remoteTargetable(r)) continue;
       if (aaUnit && r.spec.ground) continue;
       const d = Math.hypot(r.x - u.x, r.y - u.y);
       let score: number;
@@ -133,11 +128,6 @@ export class EnemyTargeting {
     return best;
   }
 
-  /** AA burst / seeker / AAM — blind to ground HOUND. */
-  enemyWeaponIsAa(wpn: { kind?: string; look?: string } | undefined): boolean {
-    return weaponIsAa(wpn);
-  }
-
   /**
    * Craft an enemy weapon engages: AA / seekers are blind to a dirt-locked combat focus
    * (HOUND) and take the host bird; everything else takes the combat focus.
@@ -150,17 +140,10 @@ export class EnemyTargeting {
   enemySeekerTarget(s: Shot): Craft {
     if (s.homeRemoteId == null) return this.s.player;
     const r = this.s.remotes.find((r) => r.id === s.homeRemoteId);
-    const c = r && !r.spec.ground && this.remoteTargetable(r) ? this.remoteTargetCraft(r) : undefined;
+    const c = r && !r.spec.ground && remoteTargetable(r) ? this.remoteTargetCraft(r) : undefined;
     if (c) return c;
     s.homeRemoteId = undefined;
     return this.s.player;
-  }
-
-  /** Dedicated AA platform (primary mount is AA / seeker). */
-  unitIsAaEnemy(u: Unit): boolean {
-    const sp = specOf(u.kind);
-    const guns = gunsOf(u);
-    return this.enemyWeaponIsAa(guns[0]?.weapon ?? sp.weapon);
   }
 
   /**
@@ -171,11 +154,11 @@ export class EnemyTargeting {
     if (u.tgtNextT == null || now >= u.tgtNextT) {
       // Staggered re-pick — acquisition lags a little so many-to-many stays cheap.
       u.tgtNextT = now + ENEMY_RETARGET_MS + (u.id % 7) * 40;
-      u.tgtRemoteId = this.pickEnemyTarget(u, this.unitIsAaEnemy(u))?.id;
+      u.tgtRemoteId = this.pickEnemyTarget(u, unitIsAaEnemy(u))?.id;
     }
     if (u.tgtRemoteId == null) return this.s.player;
     const rem = this.s.remotes.find((r) => r.id === u.tgtRemoteId);
-    const craft = rem && this.remoteTargetable(rem) ? this.remoteTargetCraft(rem) : undefined;
+    const craft = rem && remoteTargetable(rem) ? this.remoteTargetCraft(rem) : undefined;
     if (craft) return craft;
     u.tgtRemoteId = undefined;
     u.tgtNextT = undefined;

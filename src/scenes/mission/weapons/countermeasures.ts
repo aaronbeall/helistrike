@@ -1,4 +1,6 @@
+
 import Phaser from "phaser";
+import { deadfallShot } from "../../../sim/ballistics";
 import { coneDir } from "../../../util/vec";
 
 import { COUNTERMEASURES, craftCountermeasure, stunUnit, type SmokePuff, type Flare } from "../../../sim/combat";
@@ -18,6 +20,11 @@ export const TIMEWARP_WORLD_SCALE = 0.035;
 export const TIMEWARP_PLAYER_SCALE = 0.4;
 
 export const REACTIVE_ARMOR_RADIUS_MUL = 1.25;
+
+/** Whitened sheet for vision-blocking chemical clouds (vs graded fx_smoke for dust/trails). */
+export function visionSmokeTex(textures: Phaser.Textures.TextureManager): string {
+  return textures.exists("fx_smoke_tint") ? "fx_smoke_tint" : "fx_smoke";
+}
 
 /** Countermeasures: dispatcher + cooldown; flares, smoke screen + puffs, EMP, phase cloak, reactive armor, Time Warp, bullet time. */
 export class Countermeasures {
@@ -172,13 +179,8 @@ export class Countermeasures {
     );
   }
 
-  /** Whitened sheet for vision-blocking chemical clouds (vs graded fx_smoke for dust/trails). */
-  visionSmokeTex(): string {
-    return this.s.textures.exists("fx_smoke_tint") ? "fx_smoke_tint" : "fx_smoke";
-  }
-
   acquireSmokePuffSprite(frame: number): Phaser.GameObjects.Image {
-    const key = this.visionSmokeTex();
+    const key = visionSmokeTex(this.s.textures);
     const idle = (this.smokePuffG.getChildren() as Phaser.GameObjects.Image[]).find(
       (im) => !im.visible && !this.smokePuffs.some((p) => p.spr === im)
     );
@@ -291,7 +293,7 @@ export class Countermeasures {
       const at = worldToScreen(s.x, s.y, s.z);
       const zs = at.scale;
       const visualR = s.radius * bloom;
-      const key = this.visionSmokeTex();
+      const key = visionSmokeTex(this.s.textures);
       if (im.texture.key !== key || im.frame.name !== String(s.frame)) {
         im.setTexture(key, s.frame);
       }
@@ -608,7 +610,7 @@ export class Countermeasures {
     }
     for (const s of this.s.shots) {
       if (Math.hypot(s.x - h.x, s.y - h.y) > r) continue;
-      this.s.projectiles.deadfallShot(s);
+      deadfallShot(s);
     }
     this.playEmpBurst(h.x, h.y, h.z, r);
   }

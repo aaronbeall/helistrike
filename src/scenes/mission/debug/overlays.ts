@@ -1,13 +1,21 @@
+
 import Phaser from "phaser";
-import { AI_AIM_NARROW_BASE, AI_AIM_WIDE_MUL } from "../../../sim/weaponRuntime";
+import { AI_AIM_NARROW_BASE, AI_AIM_WIDE_MUL, aimPrecisionSpread, type StationTraverse } from "../../../sim/weaponRuntime";
 import { heightOf, PLAYER_WPNS, type Unit } from "../../../sim/combat";
 import { type RemoteCraft } from "../../../sim/remote";
-import { aimPrecisionSpread, type StationTraverse } from "../../../sim/weaponRuntime";
 import { Layer } from "../../../render/depth";
 import { footprintOf } from "../../../render/footprint";
 import { craftGunId } from "../../../sim/crafts";
 import { groundZ, worldToScreen, WORLD } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
+
+export function escortNavLabel(r: RemoteCraft, fallback: string): string {
+  const nav = r.nav;
+  if (!nav) return fallback;
+  const thr = nav.throttle > 0.2 ? "F" : nav.throttle < -0.2 ? "R" : "-";
+  const st = nav.steer < 0 ? "L" : nav.steer > 0 ? "R" : "";
+  return `${nav.state} ${thr}${st}`;
+}
 
 /** Debug world overlays: AI state, escort nav, gun arcs/aim cones, hit + collider shapes, blast radii, height map. */
 export class DebugOverlays {
@@ -339,7 +347,7 @@ export class DebugOverlays {
       this.aiGfx.strokeCircle(scr.x, scr.y, r.spec.radius * scr.scale);
 
       if (target && !target.dead) {
-        label.setText(this.escortNavLabel(r, "ATTACK"));
+        label.setText(escortNavLabel(r, "ATTACK"));
         const hostTargetDist = Math.hypot(target.x - host.x, target.y - host.y) || 1;
         const bias = Phaser.Math.Clamp(r.spec.attackBias ?? 0.75, 0, 1);
         const centerX = host.x + (target.x - host.x) * bias;
@@ -357,7 +365,7 @@ export class DebugOverlays {
         this.aiGfx.fillStyle(color, 0.9);
         this.aiGfx.fillCircle(centerScr.x, centerScr.y, 3);
       } else {
-        label.setText(this.escortNavLabel(r, "FOLLOW"));
+        label.setText(escortNavLabel(r, "FOLLOW"));
         const innerR = r.spec.followInnerRadius ?? 90;
         const outerR = r.spec.followOuterRadius ?? 220;
         const hostScr = worldToScreen(host.x, host.y, host.z);
@@ -368,14 +376,6 @@ export class DebugOverlays {
       }
       this.drawEscortNavDebug(r);
     });
-  }
-
-  escortNavLabel(r: RemoteCraft, fallback: string): string {
-    const nav = r.nav;
-    if (!nav) return fallback;
-    const thr = nav.throttle > 0.2 ? "F" : nav.throttle < -0.2 ? "R" : "-";
-    const st = nav.steer < 0 ? "L" : nav.steer > 0 ? "R" : "";
-    return `${nav.state} ${thr}${st}`;
   }
 
   /** Movement wants: goal marker, raw vs avoidance heading, lookahead probe. */

@@ -1,11 +1,13 @@
 import Phaser from "phaser";
+import { debrisStampOrigin, debrisTrailLifeMul, softCapBlastCraterScale, wreckDrawScale } from "../../../render/fxCurves";
+import { debrisMountAt, gunMountPos, mountAt, troopDrawAng } from "../../../render/spritePose";
+import { bounceDebrisSlope, deathBurstImpulse } from "../../../sim/physics";
 import { biasedDir } from "../../../util/vec";
-import { jitterDisk } from "../../../util/rng";
+import { jitterDisk, range } from "../../../util/rng";
 import { applyThermalHeat } from "../../../render/thermal";
 import { resolveSkin } from "../../../render/camo";
 import { debrisKeys, heightOf, hulkOf, radius, textureOf, wheelDebrisKeys, type Debris, type Unit } from "../../../sim/combat";
 import { Layer, ZOff, worldDepth } from "../../../render/depth";
-import { range } from "../../../util/rng";
 import { isGroundVehicle, hasSoftBlood, specOf, gunsOf } from "../../../sim/roster";
 import { circumRadiusOf, footprintOf, randomInFootprint, type Footprint } from "../../../render/footprint";
 import { craftOrigin, craftRotorIsProp, craftRotorMounts, rotorDrawSpan, rotorMountsOf, rotorSpinSign } from "../../../sim/crafts";
@@ -63,21 +65,6 @@ export class Destruction {
     return true;
   }
 
-  /** Mech death FX bias: shot vel × (killDmg/maxHp) boost + unit velocity. */
-  deathBurstImpulse(u: Unit): { dx: number; dy: number; dz: number; power: number } {
-    // Finishing blow relative to toughness — chain-gun chip on a bunker ≈ 0; same shot on a jeep ≈ 1+.
-    const dmgScale = Phaser.Math.Clamp((u.killDmg ?? 0) / Math.max(1, u.max), 0, 1.5);
-    // Stronger kill-impact pull than unit coasting.
-    const shotPush = dmgScale * 2.4;
-    const dx = (u.killDx ?? 0) * shotPush + u.vx;
-    const dy = (u.killDy ?? 0) * shotPush + u.vy;
-    const dz = (u.killDz ?? 0) * shotPush + 48;
-    const impact = Math.hypot(dx, dy, dz);
-    if (impact < 24) return { dx: 0, dy: 0, dz: 1, power: 0.55 };
-    const power = Phaser.Math.Clamp(impact / 340, 0.55, 2.4);
-    return { dx, dy, dz, power };
-  }
-
   destroyUnit(u: Unit, quiet = false, skipSplash = false, skipAirCrash = false, freefall = false): void {
     if (u.dead) return;
     u.dead = true;
@@ -107,7 +94,7 @@ export class Destruction {
       if (sp.organic) {
         this.s.fx.heFireBurst(u.x, u.y, hz, 0, 0, 1, blast, true, building ? 2.25 : 1, boom, 1, 0, body);
       } else {
-        burst = this.deathBurstImpulse(u);
+        burst = deathBurstImpulse(u);
         this.s.fx.heFireBurst(
           u.x,
           u.y,
@@ -243,7 +230,7 @@ export class Destruction {
         this.s.groundMarks.stampBlastCrater(u.x, u.y, sc);
         // Embers only on mech / building death craters — not troops or soft organics.
         if (mech && !sp.organic) {
-          this.s.groundMarks.spawnCraterEmbers(u.x, u.y, this.s.groundMarks.softCapBlastCraterScale(sc));
+          this.s.groundMarks.spawnCraterEmbers(u.x, u.y, softCapBlastCraterScale(sc));
         }
       }
     }
@@ -275,12 +262,12 @@ export class Destruction {
       if (throwGuns || throwRotors || throwDish) {
         const hullKey = resolveSkin(this.s.textures, sp.hulk, u.camo);
         const hp = spritePivot(hullKey);
-        const hs = this.s.groundMarks.wreckDrawScale(u.x, u.y, u.z, 1, isGroundVehicle(u.kind), u.angle);
+        const hs = wreckDrawScale(this.s.world, u.x, u.y, u.z, 1, isGroundVehicle(u.kind), u.angle);
         this.s.groundMarks.stampWreck(
           hullKey,
           u.x,
           u.y,
-          this.s.unitSprites.troopDrawAng(u) + Math.PI / 2,
+          troopDrawAng(u) + Math.PI / 2,
           hs.sx,
           0.95,
           hp.x,
@@ -319,7 +306,7 @@ export class Destruction {
             const hulkSpan = this.s.unitSprites.texSpan(turretKey);
             // Slightly under live gun size so pop hulks read as wreckage, not spare parts.
             const scale = (g.scale ?? 1) * (liveSpan / Math.max(hulkSpan, 1)) * 0.86;
-            const at = this.s.hostCraft.gunMountPos(u, gi);
+            const at = gunMountPos(this.s.textures, u, gi);
             // Turret hulks are large textures; don't inherit full debris trailR bump.
             throwOff(turretKey, (u.turrets[gi] ?? u.turret) + Math.PI / 2, at.x, at.y, scale, {
               trailR: this.s.trails.texTrailR(turretKey) * scale * 0.38,
@@ -330,7 +317,7 @@ export class Destruction {
           const rotorMounts = rotorMountsOf(textureOf(u.kind));
           sp.rotors.forEach((r, ri) => {
             const rk = this.s.textures.exists(r.hulk ?? "") ? r.hulk! : r.tex;
-            const at = this.s.hostCraft.mountAt(u, resolveSkin(this.s.textures, textureOf(u.kind), u.camo), r.mount);
+            const at = mountAt(this.s.textures, u, resolveSkin(this.s.textures, textureOf(u.kind), u.camo), r.mount);
             const scale = this.rotorHulkScale(r.tex, rk, r.scale ?? 1);
             // Full heli discs get pin flames; angled props / drone pads do not.
             const heliRotor = r.tex.includes("rotor") && r.tex !== "enemy_drone_rotor";
@@ -367,7 +354,7 @@ export class Destruction {
           const liveSpan = this.s.unitSprites.texSpan(d.tex);
           const hulkSpan = this.s.unitSprites.texSpan(dishKey);
           const scale = (d.scale ?? 1) * (liveSpan / Math.max(hulkSpan, 1)) * 0.82;
-          const at = this.s.hostCraft.mountAt(u, resolveSkin(this.s.textures, textureOf(u.kind), u.camo), d.mount);
+          const at = mountAt(this.s.textures, u, resolveSkin(this.s.textures, textureOf(u.kind), u.camo), d.mount);
           const span = this.s.unitSprites.texSpan(dishKey) * scale * 0.42;
           const n = 3 + ((Math.random() * 3) | 0);
           const flamePts: { lx: number; ly: number; sc: number }[] = [{ lx: 0, ly: 0, sc: 0.72 }];
@@ -422,7 +409,7 @@ export class Destruction {
       } else {
         const hulkKey = resolveSkin(this.s.textures, hulkOf(u.kind), u.camo);
         const hp = spritePivot(hulkKey);
-        const hs = this.s.groundMarks.wreckDrawScale(u.x, u.y, u.z, 1, isGroundVehicle(u.kind), u.angle);
+        const hs = wreckDrawScale(this.s.world, u.x, u.y, u.z, 1, isGroundVehicle(u.kind), u.angle);
         this.s.groundMarks.stampWreck(
           this.s.textures.exists(hulkKey) ? hulkKey : "fx_hulk_crater",
           u.x,
@@ -476,7 +463,7 @@ export class Destruction {
     const sp = specOf(u.kind);
     const hulkKey = resolveSkin(this.s.textures, hulkOf(u.kind), u.camo);
     const key = this.s.textures.exists(hulkKey) ? hulkKey : "fx_hulk_crater";
-    const burst = this.deathBurstImpulse(u);
+    const burst = deathBurstImpulse(u);
     const reverse = Math.random() < 0.05;
     const d = biasedDir(burst.dx, burst.dy, burst.dz, 0.9, reverse);
     const spdMul = Phaser.Math.Linear(0.92, 1.1, Math.min(1, (burst.power - 0.5) / 1.9));
@@ -568,7 +555,7 @@ export class Destruction {
         const liveSpan = this.s.unitSprites.texSpan(liveKey);
         const hulkSpan = this.s.unitSprites.texSpan(turretKey);
         const scale = (g.scale ?? 1) * (liveSpan / Math.max(hulkSpan, 1)) * 0.86;
-        const at = this.s.hostCraft.gunMountPos(u, gi);
+        const at = gunMountPos(this.s.textures, u, gi);
         const a = Math.random() * Math.PI * 2;
         const throwSp = range(70, 160);
         this.admitDebris({
@@ -710,7 +697,7 @@ export class Destruction {
         x += mx * Math.cos(hullRot) - my * Math.sin(hullRot);
         y += mx * Math.sin(hullRot) + my * Math.cos(hullRot);
       } else if (opts.kind) {
-        const at = this.s.hostCraft.mountAt(
+        const at = mountAt(this.s.textures, 
           {
             id: 0,
             kind: opts.kind,
@@ -997,7 +984,7 @@ export class Destruction {
               const spd = Math.hypot(f.vx, f.vy, f.vz);
               if (f.bounces > 0 && spd > 35) {
                 f.bounces--;
-                this.bounceDebrisSlope(f, 0.45);
+                bounceDebrisSlope(this.s.world, f, 0.45);
                 f.vx *= 0.42;
                 f.vy *= 0.42;
                 f.vz = Math.abs(f.vz) * 0.45;
@@ -1032,7 +1019,7 @@ export class Destruction {
               } else if (f.wheelRoll) {
                 if (f.bounces > 0 && f.vz < -40) {
                   f.bounces--;
-                  this.bounceDebrisSlope(f, 1);
+                  bounceDebrisSlope(this.s.world, f, 1);
                   f.spin *= 0.65;
                   this.s.groundMarks.stampDirtSmears(f.x, f.y, f.vx, f.vy);
                   const bang = Math.hypot(f.vx, f.vy) > 8 ? Math.atan2(f.vy, f.vx) : f.angle;
@@ -1053,7 +1040,7 @@ export class Destruction {
                 const ivy = f.vy;
                 f.bounces--;
                 // Same elevation bounce as wheels, weaker so flight path barely turns.
-                this.bounceDebrisSlope(f, 0.32);
+                bounceDebrisSlope(this.s.world, f, 0.32);
                 if (!f.key.includes("organic")) this.s.groundMarks.stampDebrisBounceScorch(f.x, f.y, ivx, ivy);
                 f.spin *= range(0.78, 1.22);
                 f.spin += range(-2.4, 2.4);
@@ -1087,7 +1074,7 @@ export class Destruction {
   tickPinnedRotor(f: Debris, dt: number): void {
     const host = f.pinHost!;
     const mount = f.pinMount ?? { x: 0.5, y: 0.5 };
-    const at = this.debrisMountAt(host, mount);
+    const at = debrisMountAt(this.s.textures, host, mount);
     f.x = at.x;
     f.y = at.y;
     f.z = host.z + 4;
@@ -1103,67 +1090,6 @@ export class Destruction {
     }
     if (host.settled && spinMag < 0.1) {
       this.settleDebris(f);
-    }
-  }
-
-  debrisMountAt(host: Debris, mount: { x: number; y: number }): { x: number; y: number } {
-    const pivot = spritePivot(host.key);
-    const src = this.s.textures.exists(host.key)
-      ? (this.s.textures.get(host.key).getSourceImage() as { width: number; height: number })
-      : { width: 64, height: 64 };
-    const sc = host.scale ?? 1;
-    const dw = src.width * sc;
-    const dh = src.height * sc;
-    const mx = (mount.x - pivot.x) * dw;
-    const my = (mount.y - pivot.y) * dh;
-    const ca = Math.cos(host.angle);
-    const sa = Math.sin(host.angle);
-    return {
-      x: host.x + mx * ca - my * sa,
-      y: host.y + mx * sa + my * ca,
-    };
-  }
-
-  /**
-   * Reflect debris off the height-map slope (same field as wheel roll / rivers).
-   * strength 1 = full wheel bounce; ~0.3 nudges trajectory without redirecting it.
-   */
-  bounceDebrisSlope(f: Debris, strength: number): void {
-    const s = Phaser.Math.Clamp(strength, 0, 1);
-    const sl = groundSlope(this.s.world, f.x, f.y);
-    let nx = -sl.dx;
-    let ny = -sl.dy;
-    let nz = 1;
-    const nlen = Math.hypot(nx, ny, nz) || 1;
-    nx /= nlen;
-    ny /= nlen;
-    nz /= nlen;
-    const vin = f.vx * nx + f.vy * ny + f.vz * nz;
-    const e = Phaser.Math.Linear(0.14, 0.42, s);
-    if (vin < 0) {
-      // Scale the horizontal part of the kick down at low strength so path barely turns.
-      const kick = (1 + e) * vin;
-      const hMul = Phaser.Math.Linear(0.28, 1, s);
-      f.vx -= kick * nx * hMul;
-      f.vy -= kick * ny * hMul;
-      f.vz -= kick * nz;
-    } else {
-      f.vz = -f.vz * e;
-    }
-    const fric = Phaser.Math.Linear(0.68, 0.78, s);
-    f.vx *= fric;
-    f.vy *= fric;
-    f.vz *= Phaser.Math.Linear(0.88, 0.92, s);
-    const steep = Math.hypot(sl.dx, sl.dy);
-    if (steep > 1e-4) {
-      const dx = -sl.dx / steep;
-      const dy = -sl.dy / steep;
-      const shove =
-        Math.min(140, 38 + steep * 900) *
-        Phaser.Math.Clamp(-f.vz / 220, 0.35, 1.2) *
-        Phaser.Math.Linear(0.18, 1, s);
-      f.vx += dx * shove;
-      f.vy += dy * shove;
     }
   }
 
@@ -1242,8 +1168,8 @@ export class Destruction {
     f.vy = 0;
     f.vz = 0;
     if (!f.trailOnly) {
-      const o = this.s.groundMarks.debrisStampOrigin(f.key);
-      const hs = this.s.groundMarks.wreckDrawScale(f.x, f.y, f.z || 0, f.scale ?? 0.55);
+      const o = debrisStampOrigin(f.key);
+      const hs = wreckDrawScale(this.s.world, f.x, f.y, f.z || 0, f.scale ?? 0.55);
       // Pre-baked blue sink art — no runtime tintFill.
       this.s.groundMarks.stampWreck(f.key, f.x, f.y, f.angle, hs.sx, 0.8, o.x, o.y, hs.sy);
       f.trailOnly = true;
@@ -1260,7 +1186,7 @@ export class Destruction {
     let sc = Phaser.Math.Linear(0.85, 1.45, f.impactDust ?? 0.5) * range(0.9, 1.2);
     if (f.playerCrash) sc *= 1.12;
     this.s.groundMarks.stampBlastCrater(f.x, f.y, sc);
-    this.s.groundMarks.spawnCraterEmbers(f.x, f.y, this.s.groundMarks.softCapBlastCraterScale(sc));
+    this.s.groundMarks.spawnCraterEmbers(f.x, f.y, softCapBlastCraterScale(sc));
     f.simmer = range(2.6, 4.4);
     f.spin = 0;
     f.spinAccel = 0;
@@ -1280,7 +1206,7 @@ export class Destruction {
     if (f.crashPop && !isWater(this.s.world, f.x, f.y)) {
       const sc = f.crashCraterScale ?? 0.9;
       this.s.groundMarks.stampBlastCrater(f.x, f.y, sc);
-      this.s.groundMarks.spawnCraterEmbers(f.x, f.y, this.s.groundMarks.softCapBlastCraterScale(sc));
+      this.s.groundMarks.spawnCraterEmbers(f.x, f.y, softCapBlastCraterScale(sc));
       this.s.hostCraft.emitDustShock(f.x, f.y, 0.55);
     }
     f.settled = true;
@@ -1288,8 +1214,8 @@ export class Destruction {
     f.vy = 0;
     f.vz = 0;
     if (!f.trailOnly) {
-      const o = this.s.groundMarks.debrisStampOrigin(f.key);
-      const hs = this.s.groundMarks.wreckDrawScale(f.x, f.y, f.z || 0, f.scale ?? 1);
+      const o = debrisStampOrigin(f.key);
+      const hs = wreckDrawScale(this.s.world, f.x, f.y, f.z || 0, f.scale ?? 1);
       let sx = hs.sx;
       let sy = hs.sy;
       if (f.dishFlat) {
@@ -1348,9 +1274,9 @@ export class Destruction {
           this.s.fx.splashBurst
         );
       } else {
-        const o = this.s.groundMarks.debrisStampOrigin(f.key);
+        const o = debrisStampOrigin(f.key);
         const sc = Math.max(0.05, f.scale ?? 0.08);
-        const hs = this.s.groundMarks.wreckDrawScale(f.x, f.y, f.z || 0, sc);
+        const hs = wreckDrawScale(this.s.world, f.x, f.y, f.z || 0, sc);
         this.s.groundMarks.stampWreck(f.key, f.x, f.y, f.angle, hs.sx, 0.78, o.x, o.y, hs.sy);
       }
       f.trailOnly = true;
@@ -1381,13 +1307,6 @@ export class Destruction {
       size = Math.max(size, (this.s.unitSprites.texSpan(f.key) * (f.scale ?? 1)) / 48);
     }
     return size;
-  }
-
-  /** Particle life multiplier — mid (~1) unchanged; large debris leave a long tail. */
-  debrisTrailLifeMul(size: number): number {
-    const over = Math.max(0, size - 1.05);
-    // Linear near mid stays mild; quadratic stretches big radar-scale trails further.
-    return 1 + over * 0.4 + over * over * 1.65;
   }
 
   tickDebrisTrailFade(f: Debris, dt: number): void {
@@ -1426,7 +1345,7 @@ export class Destruction {
     // Trails sit under the debris sprite (body ≈ 0); keep fire above smoke within the pair.
     const trailFire = -0.35;
     const trailSmoke = -1.15;
-    const lifeMul = this.debrisTrailLifeMul(this.debrisTrailSize(f));
+    const lifeMul = debrisTrailLifeMul(this.debrisTrailSize(f));
     if (f.flamePts?.length) {
       const ca = Math.cos(f.angle);
       const sa = Math.sin(f.angle);

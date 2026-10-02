@@ -1,5 +1,4 @@
-import type { CraftKind } from "./crafts";
-import { craftOf } from "./crafts";
+import { craftOf, type CraftKind } from "./crafts";
 import {
   COUNTERMEASURES,
   craftCountermeasure,

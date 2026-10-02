@@ -1,9 +1,7 @@
-import { type ShotKind, type ShotLook } from "./roster";
-import { type ShotBehavior } from "./combat";
-import { type PlayerWpnSpec, type WeaponLaunch, type WeaponGravity, type WeaponGuidance, heatClassCategory, heatClassScore, type HeatClass, type SmokePuff, type Unit } from "./combat";
+import { isAerial, isGroundVehicle, isOrganic, specOf, type ShotKind, type ShotLook } from "./roster";
+import { heatClassCategory, heatClassScore, type ShotBehavior, type PlayerWpnSpec, type WeaponLaunch, type WeaponGravity, type WeaponGuidance, type HeatClass, type SmokePuff, type Unit } from "./combat";
 import { payloadIsHelix, payloadIsKinetic } from "./payload";
 import Phaser from "phaser";
-import { isAerial, isGroundVehicle, isOrganic, specOf } from "./roster";
 
 /** Classify a unit for heat-seeker preference ordering. */
 export function heatClassOf(u: Unit): HeatClass {

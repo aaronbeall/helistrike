@@ -1,6 +1,8 @@
+import { groundZ, castZ, type WorldData, type HvSpec } from "../../../worldgen/world";
+import { labelOf } from "../../../sim/roster";
+import { type Unit } from "../../../sim/combat";
 import Phaser from "phaser";
-import { groundZ, castZ, type HvSpec } from "../../../worldgen/world";
-import type { MissionScene } from "../../missionScene";
+import { type MissionScene } from "../../missionScene";
 
 function bearing(deg: number): string {
   const d = ((deg % 360) + 360) % 360;
@@ -52,7 +54,7 @@ export class CornerHud {
     const ptr = this.s.worldPointer();
     const elv = groundZ(this.s.world, ptr.x, ptr.y) | 0;
     const over = this.s.fireControl.reticleUnit();
-    const overLine = over ? `\n${this.s.unitHudName(over)}` : "";
+    const overLine = over ? `\n${unitHudName(this.s.world, over)}` : "";
     this.hud.setText(
       `ALT ${castZ(this.s.world, h.x, h.y, h.z) | 0}   ELV ${elv}   SPD ${Math.hypot(h.vx, h.vy) | 0}   TIME ${this.s.liveSimScale.toFixed(2)}×\n${phase}\nWPN ${w.name}  ${ammoS}${overLine}`
     );
@@ -132,4 +134,12 @@ export class CornerHud {
     const fpsLp = this.s.hudLocal(right, y);
     this.fpsHud.setOrigin(1, 0).setPosition(fpsLp.x, fpsLp.y);
   }
+}
+
+export function unitHudName(world: WorldData, u: Unit): string {
+  if (u.hv) {
+    const site = world.hv.find((h) => h.id === u.hv);
+    if (site) return site.name.toUpperCase();
+  }
+  return labelOf(u.kind);
 }

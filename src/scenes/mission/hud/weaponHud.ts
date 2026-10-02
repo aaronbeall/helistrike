@@ -1,11 +1,26 @@
+
 import Phaser from "phaser";
-import { BATTERY_ICON_W } from "./fieldBars";
+import { remoteHostAmmoWeapon } from "../../../sim/remoteRules";
+import { drawBatteryIcon, BATTERY_ICON_W } from "./fieldBars";
 import { BULLET_TIME_DURATION } from "../weapons/countermeasures";
 import { payloadIsRemote } from "../../../sim/payload";
 import { PLAYER_WPNS, COUNTERMEASURES, type WpnId } from "../../../sim/combat";
 import { Layer } from "../../../render/depth";
 import { craftCrewHudTag, craftSocketMultiplicity, craftSocketStartingAmmo } from "../../../sim/crafts";
 import type { MissionScene } from "../../missionScene";
+
+/** Truncate a HUD label so `text` width stays within `maxW` (ellipsis). */
+export function fitHudLabel(text: Phaser.GameObjects.Text, label: string, maxW: number): string {
+  text.setText(label);
+  if (text.width <= maxW) return label;
+  let t = label;
+  while (t.length > 1) {
+    t = t.slice(0, -1);
+    text.setText(`${t}…`);
+    if (text.width <= maxW) return `${t}…`;
+  }
+  return "…";
+}
 
 /** Bottom weapon bar: loadout slots, escort/exit chips, countermeasure + bullet-time strips. */
 export class WeaponHud {
@@ -104,7 +119,7 @@ export class WeaponHud {
         !pov && payloadIsRemote(wp.payload)
           ? this.s.remoteFleet.remotePoolDisplayAmmo(i, reserve)
           : reserve;
-      const hostAmmoId = pov ? this.s.remoteFleet.remoteHostAmmoWeapon(wp) : undefined;
+      const hostAmmoId = pov ? remoteHostAmmoWeapon(wp) : undefined;
       const hostSlot = hostAmmoId ? this.s.fireControl.hostWeaponSlot(hostAmmoId) : -1;
       const hostSpec = hostAmmoId ? PLAYER_WPNS[hostAmmoId as WpnId] : undefined;
       const cap =
@@ -187,7 +202,7 @@ export class WeaponHud {
         // Pool battery badge on the top-right edge, only while not full.
         const batt = pooled ? this.s.remoteFleet.remotePoolBattery(i) : undefined;
         if (batt != null && batt < 0.999) {
-          this.s.fieldBars.drawBatteryIcon(g, x + slotW - BATTERY_ICON_W - 6, y - 4, batt, 1);
+          drawBatteryIcon(this.s.time, g, x + slotW - BATTERY_ICON_W - 6, y - 4, batt, 1);
         }
       }
 
@@ -277,7 +292,7 @@ export class WeaponHud {
         24,
         slotW - padX * 2 - row.key.width - 10 - row.ammo.width - 8
       );
-      const nameStr = this.fitHudLabel(row.name, rawName, nameMaxW);
+      const nameStr = fitHudLabel(row.name, rawName, nameMaxW);
       const nameLp = this.s.hudLocal(x + padX + row.key.width + 6, midY);
       const liveBlink = liveMark
         ? 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(this.s.time.now * 0.014))
@@ -531,16 +546,4 @@ export class WeaponHud {
     this.btHudTime.setPosition(timeLp.x, timeLp.y).setColor(on ? "#e8dcff" : "#8a80a8");
   }
 
-  /** Truncate a HUD label so `text` width stays within `maxW` (ellipsis). */
-  fitHudLabel(text: Phaser.GameObjects.Text, label: string, maxW: number): string {
-    text.setText(label);
-    if (text.width <= maxW) return label;
-    let t = label;
-    while (t.length > 1) {
-      t = t.slice(0, -1);
-      text.setText(`${t}…`);
-      if (text.width <= maxW) return `${t}…`;
-    }
-    return "…";
-  }
 }

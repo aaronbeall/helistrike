@@ -25,6 +25,21 @@ const TESLA_ZAP_REF = 28;
 
 const teslaZapScale = (mul: number) => mul * (TESLA_ZAP_REF / FX_SHEET_SIZE.zap);
 
+/** Keep a Tesla seek/head point inside the coil envelope. */
+export function clampReach(
+  from: { x: number; y: number; z: number },
+  to: { x: number; y: number; z: number },
+  range: number
+): { x: number; y: number; z: number } {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const dz = to.z - from.z;
+  const d = Math.hypot(dx, dy, dz);
+  if (d <= range || d < 1e-4) return { x: to.x, y: to.y, z: to.z };
+  const k = range / d;
+  return { x: from.x + dx * k, y: from.y + dy * k, z: from.z + dz * k };
+}
+
 /** Tesla coil: live arc + head, reach clamp, target pick, arc drawing, zaps and sparks, stun exposure. */
 export class Tesla {
   gfx!: Phaser.GameObjects.Graphics;
@@ -94,21 +109,6 @@ export class Tesla {
     return spec.launch.mode === "beam" ? spec.launch.range : 155;
   }
 
-  /** Keep a Tesla seek/head point inside the coil envelope. */
-  clampReach(
-    from: { x: number; y: number; z: number },
-    to: { x: number; y: number; z: number },
-    range: number
-  ): { x: number; y: number; z: number } {
-    const dx = to.x - from.x;
-    const dy = to.y - from.y;
-    const dz = to.z - from.z;
-    const d = Math.hypot(dx, dy, dz);
-    if (d <= range || d < 1e-4) return { x: to.x, y: to.y, z: to.z };
-    const k = range / d;
-    return { x: from.x + dx * k, y: from.y + dy * k, z: from.z + dz * k };
-  }
-
   /** Closest living unit to the pointer. Pass `range` to ignore anything beyond the coil envelope. */
   pickTarget(
     tip: { x: number; y: number; z?: number },
@@ -157,7 +157,7 @@ export class Tesla {
     let seek = best
       ? { x: best.x, y: best.y, z: best.z + heightOf(best.kind) * 0.45 }
       : { x: ptr.x, y: ptr.y, z: groundZ(this.s.world, ptr.x, ptr.y) + 8 };
-    seek = this.clampReach(tip, seek, range);
+    seek = clampReach(tip, seek, range);
     if (!this.head) this.head = { x: tip.x, y: tip.y, z: tip.z };
     const head = this.head;
     const hdx = seek.x - head.x;
@@ -175,7 +175,7 @@ export class Tesla {
       head.y += hdy * inv;
       head.z += hdz * inv;
     }
-    const capped = this.clampReach(tip, head, range);
+    const capped = clampReach(tip, head, range);
     head.x = capped.x;
     head.y = capped.y;
     head.z = capped.z;

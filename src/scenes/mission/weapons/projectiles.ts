@@ -1,23 +1,26 @@
+import { shotLookOf } from "../../../render/spritePose";
 import Phaser from "phaser";
+import { shotDrawRotation, shotTipNudge, shotIsGunOrBeam } from "../../../render/spritePose";
+import { simulateHelixRibbon } from "../../../render/ribbons";
+import { rollSoldierMood } from "../../../sim/units";
+import { softCapBlastCraterScale } from "../../../render/fxCurves";
+import { remoteTargetable } from "../../../sim/targetRules";
+import { starstreakBombletArc, steerDir, motorizedSpeed, flyMissile } from "../../../sim/ballistics";
 import { BLAST_RING_FRAMES } from "../../../render/blastRing";
-import { shotTrailScale, troopMissileTrail } from "../../../render/fxScale";
-import { steerDir, motorizedSpeed, flyMissile } from "../../../sim/ballistics";
+import { shotTrailScale, troopMissileTrail, projectileFxScale, scaledProjectileFxCount } from "../../../render/fxScale";
 import { REACTIVE_ARMOR_RADIUS_MUL } from "./countermeasures";
-import { shotIsGunOrBeam, shotFacesHeading } from "../../../render/spritePose";
 import { norm3 } from "../../../util/vec";
 import { applyThermalHeat } from "../../../render/thermal";
-import { projectileFxScale, scaledProjectileFxCount } from "../../../render/fxScale";
-import { launchGravity, targetingMode } from "../../../sim/weaponRuntime";
+import { launchGravity, targetingMode, heatClassOf } from "../../../sim/weaponRuntime";
 import { payloadIsCluster, payloadIsSmoke, payloadIsCallStrike, payloadIsHe, payloadIsKinetic } from "../../../sim/payload";
 import { heightOf, SHOT_ORIGIN, SHOT_TAIL, payloadDustMul, payloadHeBlend, guidanceIsLockOn, exhaustWarpMotes, exhaustIsSignalFlare, stunUnit, unitStunned, type Shot, type ShotState, type Unit, type WpnId } from "../../../sim/combat";
-import { heatClassOf } from "../../../sim/weaponRuntime";
 import { ZOff, worldDepth } from "../../../render/depth";
 import { range } from "../../../util/rng";
 import { Craft } from "../../../sim/craft";
 import { isAerial, isOrganic, hasSoftBlood, specOf, type ShotKind, type ShotLook } from "../../../sim/roster";
 import { circumRadiusOf, distToFootprint, footprintInto, pointInFootprint } from "../../../render/footprint";
 import { craftHardpointMounts } from "../../../sim/crafts";
-import { groundZ, worldToScreen, cameraPointVisible, screenVelX, screenVelY, projectHeading, castZ, isWater } from "../../../worldgen/world";
+import { groundZ, worldToScreen, cameraPointVisible, castZ, isWater } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
 
 function hitSimParticleFx(dmg: number): { n: number; spd: number; size: number } {
@@ -38,10 +41,6 @@ function shotKindForExplode(s: Shot): ShotKind {
   return "rocket";
 }
 
-function shotLookOf(s: Shot): ShotLook {
-  if (!s.look) throw new Error(`shot ${s.id ?? "?"} missing look`);
-  return s.look;
-}
 
 /** Bomb / missile / rocket ground scars get embers; guns and beams do not. */
 function shotWantsEmberCrater(shot: Shot | undefined, kind: ShotKind): boolean {
@@ -73,7 +72,7 @@ export class Projectiles {
 
   spawnShot(s: Shot): void {
     const look = shotLookOf(s);
-    const nudge = this.shotTipNudge(look, s.angle, s.x, s.y, s.z, s.scale ?? 1);
+    const nudge = shotTipNudge(this.s.textures, look, s.angle, s.x, s.y, s.z, s.scale ?? 1);
     s.x += nudge.x;
     s.y += nudge.y;
     if (!s.look) s.look = look;
@@ -89,63 +88,8 @@ export class Projectiles {
     look: ShotLook,
     scale = 1
   ): { x: number; y: number } {
-    const n = this.shotTipNudge(look, angle, x, y, z, scale);
+    const n = shotTipNudge(this.s.textures, look, angle, x, y, z, scale);
     return { x: x + n.x, y: y + n.y };
-  }
-
-  /** Forward shift so tip-origin art’s nose clears the muzzle (not the whole streak). */
-  shotTipNudge(
-    look: ShotLook,
-    angle: number,
-    x: number,
-    y: number,
-    z: number,
-    scale = 1
-  ): { x: number; y: number } {
-    const at = worldToScreen(x, y, z);
-    const img = this.s.textures.exists(look)
-      ? (this.s.textures.get(look).getSourceImage() as { width: number; height: number })
-      : { width: 48, height: 10 };
-    const ca = Math.cos(angle);
-    const sa = Math.sin(angle);
-    const projectedX = screenVelX(ca, sa, 0, x, y, z);
-    const projectedY = screenVelY(sa, 0, z, y);
-    const projectedUnit = Math.max(1e-6, Math.hypot(projectedX, projectedY));
-    // Spawn is the tip-biased SHOT_ORIGIN; only push the remaining nose past the barrel.
-    // (Using ox×length parked the whole tracer ahead of long guns like Spooky.)
-    const screenDistance = (1 - SHOT_ORIGIN.x) * img.width * scale * at.scale;
-    const d = screenDistance / projectedUnit;
-    return { x: ca * d, y: sa * d };
-  }
-
-  /** World position of the shot exhaust / tail UV (matches trail emit + TOW wire tip). */
-  shotTailWorldPos(s: Shot): { x: number; y: number; z: number } {
-    const look = shotLookOf(s);
-    const at = worldToScreen(s.x, s.y, s.z);
-    const img = this.s.textures.exists(look)
-      ? (this.s.textures.get(look).getSourceImage() as { width: number; height: number })
-      : { width: 48, height: 10 };
-    const sc = s.scale ?? 1;
-    const horiz = Math.hypot(s.vx, s.vy);
-    const pitchN = Phaser.Math.Clamp(Math.abs(s.vz) / Math.max(90, Math.hypot(horiz, s.vz)), 0, 1);
-    const along = 1 - pitchN * 0.52;
-    const spd = Math.hypot(s.vx, s.vy, s.vz);
-    const fx = spd > 1e-3 ? s.vx / spd : Math.cos(s.angle);
-    const fy = spd > 1e-3 ? s.vy / spd : Math.sin(s.angle);
-    const fz = spd > 1e-3 ? s.vz / spd : 0;
-    const projectedX = screenVelX(fx, fy, fz, s.x, s.y, s.z);
-    const projectedY = screenVelY(fy, fz, s.z, s.y);
-    const projectedUnit = Math.hypot(projectedX, projectedY);
-    // Edge-on / tiny projection → stay at center (avoids huge world offsets that kill the wire).
-    if (projectedUnit < 1e-3) return { x: s.x, y: s.y, z: s.z };
-    const screenDistance =
-      (SHOT_ORIGIN.x - SHOT_TAIL.x) * img.width * sc * at.scale * along;
-    const d = Math.min(screenDistance / projectedUnit, 64);
-    return {
-      x: s.x - fx * d,
-      y: s.y - fy * d,
-      z: s.z - fz * d,
-    };
   }
 
   /** Screen XY of a UV on the shot sprite (matches syncShotSprites scale/origin). */
@@ -172,32 +116,13 @@ export class Projectiles {
     const dh = img.height * sc * zs * across;
     const lx = (uvx - SHOT_ORIGIN.x) * dw;
     const ly = (uvy - SHOT_ORIGIN.y) * dh;
-    const drawRot = this.shotDrawRotation(s, x, y, z);
+    const drawRot = shotDrawRotation(s, x, y, z);
     const ca = Math.cos(drawRot);
     const sa = Math.sin(drawRot);
     return {
       x: base.x + lx * ca - ly * sa,
       y: base.y + lx * sa + ly * ca,
     };
-  }
-
-  /**
-   * Screen rotation for a projectile sprite.
-   * Self-propelled missiles face thrust/guidance (`s.angle`); ballistic shots face travel.
-   */
-  shotDrawRotation(s: Shot, x = s.x, y = s.y, z = s.z): number {
-    if (shotFacesHeading(s)) {
-      // Yaw from heading (thrust / steer), pitch from actual climb or dive.
-      if (Math.abs(s.vz) < 1e-3) return projectHeading(s.angle, x, y, z);
-      const h = Math.hypot(s.vx, s.vy);
-      const hx = Math.cos(s.angle) * h;
-      const hy = Math.sin(s.angle) * h;
-      return Math.atan2(screenVelY(hy, s.vz, z, y), screenVelX(hx, hy, s.vz, x, y, z));
-    }
-    return Math.atan2(
-      screenVelY(s.vy, s.vz, z, y),
-      screenVelX(s.vx, s.vy, s.vz, x, y, z)
-    );
   }
 
   /**
@@ -405,7 +330,7 @@ export class Projectiles {
         helixDx = px * lat;
         helixDy = py * lat;
         helixDz = hz;
-        this.s.trails.simulateHelixRibbon(s, dt, s.x + helixDx, s.y + helixDy, s.z + helixDz);
+        simulateHelixRibbon(s, dt, s.x + helixDx, s.y + helixDy, s.z + helixDz);
       } else if (s.energyTrail || s.energyTrails) {
         this.s.trails.simulateEnergyTrail(s, dt);
       }
@@ -482,7 +407,7 @@ export class Projectiles {
         };
         // Any live remote can be struck; AA seekers ignore dirt-locked ones.
         for (const r of this.s.remotes) {
-          if (!this.s.targeting.remoteTargetable(r) || (s.homePlayer && r.spec.ground)) continue;
+          if (!remoteTargetable(r) || (s.homePlayer && r.spec.ground)) continue;
           const c = this.s.targeting.remoteTargetCraft(r);
           if (c && tryHit(c, false)) {
             hit = true;
@@ -1085,7 +1010,7 @@ export class Projectiles {
         const ax = tgt.x + Math.cos(jang) * jit;
         const ay = tgt.y + Math.sin(jang) * jit;
         const gnd = groundZ(this.s.world, ax, ay);
-        const arc = this.starstreakBombletArc(ox, oy, oz, ax, ay, gnd, grav, term, spread);
+        const arc = starstreakBombletArc(ox, oy, oz, ax, ay, gnd, grav, term, spread);
         if (arc) {
           const a = arc.angle;
           this.spawnShot({
@@ -1162,47 +1087,6 @@ export class Projectiles {
         energyTrail: [],
       });
     }
-  }
-
-  /** Lofted hop that lands near `ax,ay` within spray speed budget; null if unreachable. */
-  starstreakBombletArc(
-    ox: number,
-    oy: number,
-    oz: number,
-    ax: number,
-    ay: number,
-    gnd: number,
-    grav: number,
-    term: number,
-    spread: number
-  ): { vx: number; vy: number; vz: number; angle: number; life: number } | null {
-    const dx = ax - ox;
-    const dy = ay - oy;
-    const dist = Math.hypot(dx, dy);
-    if (dist < 8) return null;
-    const loftLo = 115;
-    const loftHi = 215;
-    const maxSpd = spread * 1.9;
-    let best: { vx: number; vy: number; vz: number; angle: number; life: number; loft: number } | null =
-      null;
-    for (let i = 0; i < 10; i++) {
-      const loft = loftLo + ((loftHi - loftLo) * i) / 9;
-      const fallT = this.s.fireControl.estimateBombFallTime(oz, loft, gnd, grav, term);
-      const vh = dist / Math.max(0.2, fallT);
-      if (vh > maxSpd) continue;
-      const angle = Math.atan2(dy, dx);
-      const cand = {
-        vx: Math.cos(angle) * vh,
-        vy: Math.sin(angle) * vh,
-        vz: loft,
-        angle,
-        life: fallT + 0.28,
-        loft,
-      };
-      // Prefer a visible arc when several lofts reach.
-      if (!best || loft > best.loft) best = cand;
-    }
-    return best;
   }
 
   spawnClusterBomblets(parent: Shot, count: number, spread: number): void {
@@ -1346,30 +1230,6 @@ export class Projectiles {
     const index = mounts.length > 1 ? (side < 0 ? 0 : 1) : 0;
     const mount = mounts[index] ?? mounts[0]!;
     return { ...this.s.fireControl.hardpointWorldPos(mount), z: this.s.player.z + ZOff.shot };
-  }
-
-  deadfallShot(s: Shot): void {
-    if (s.deadfall) return;
-    if (shotIsGunOrBeam(s)) return;
-    s.deadfall = true;
-    s.homePlayer = false;
-    s.targetId = undefined;
-    s.seekDisabled = true;
-    s.povCam = false;
-    // exhaust silenced via energy/deadfall flags
-    s.energyTrail = undefined;
-    s.energyTrails = undefined;
-    s.wire = undefined;
-    s.motor = undefined;
-    s.loft = 0;
-    // Pitch up for air time — dump dive, loft into a short arc before freefall.
-    s.vz = Math.max(0, s.vz * 0.25) + range(140, 260);
-    s.yaw = s.yaw ?? (Math.random() - 0.5) * 5.5;
-    if (s.st) {
-      s.st.seeking = false;
-      s.st.terminal = true;
-      s.st.helixOff = undefined;
-    }
   }
 
   explode(
@@ -1641,7 +1501,7 @@ export class Projectiles {
         const raw = (blast / 72) * range(0.55, 1.05);
         this.s.groundMarks.stampBlastCrater(x, y, raw);
         if (shotWantsEmberCrater(shot, kind)) {
-          this.s.groundMarks.spawnCraterEmbers(x, y, this.s.groundMarks.softCapBlastCraterScale(raw));
+          this.s.groundMarks.spawnCraterEmbers(x, y, softCapBlastCraterScale(raw));
         }
       } else {
         this.s.fx.stampCannonScar(x, y, dx, dy, dz);
@@ -1717,7 +1577,7 @@ export class Projectiles {
     if (shot?.from === "enemy") {
       const focusRem = this.s.targeting.combatFocusRemote();
       for (const r of this.s.remotes) {
-        if (r === focusRem || !this.s.targeting.remoteTargetable(r)) continue;
+        if (r === focusRem || !remoteTargetable(r)) continue;
         if (Math.hypot(r.x - x, r.y - y) < blast * 0.55) this.s.targeting.damageRemote(r, dmg * 0.25, dx, dy);
       }
     }
@@ -1807,7 +1667,7 @@ export class Projectiles {
     }
     if (isOrganic(u.kind) && specOf(u.kind).weapon && u.health > 1) {
       u.aware = true;
-      this.s.unitSim.rollSoldierMood(u, true);
+      rollSoldierMood(u, true);
     }
   }
 
@@ -1839,7 +1699,7 @@ export class Projectiles {
       const drawX = at.x;
       const drawY = at.y;
       if (!this.s.camera.projectedInView(drawX, drawY, 120)) return;
-      const drawRot = this.shotDrawRotation(s, wx, wy, wz);
+      const drawRot = shotDrawRotation(s, wx, wy, wz);
       const photon = key === "shot_photon";
       const ox = SHOT_ORIGIN.x;
       const sc = (s.scale ?? 1) * (st?.helixOff ? 1.06 : 1);

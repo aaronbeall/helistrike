@@ -1,4 +1,6 @@
+
 import Phaser from "phaser";
+import { makeUnit, spawnCrewFor } from "../../../sim/units";
 import { Layer } from "../../../render/depth";
 import { labelOf, allKinds } from "../../../sim/roster";
 import { CamTune } from "../../../worldgen/world";
@@ -29,6 +31,15 @@ const CAMERA_PRESETS = [
   { name: "CURRENT", pitch: 0.05, cam: 900, zoom0: 1.45 },
   { name: "DRAMATIC", pitch: 0.09, cam: 600, zoom0: 1.45 },
 ] as const;
+
+export function activeCameraPreset(): (typeof CAMERA_PRESETS)[number] | undefined {
+  return CAMERA_PRESETS.find(
+    (preset) =>
+      CamTune.pitch === preset.pitch &&
+      CamTune.cam === preset.cam &&
+      CamTune.zoom0 === preset.zoom0
+  );
+}
 
 /** In-mission debug menu (`): toggles, camera tuning and unit spawn sub-menus. */
 export class DebugMenu {
@@ -179,7 +190,7 @@ export class DebugMenu {
         CamTune.pitch.toFixed(3),
         String(CamTune.cam | 0),
         CamTune.zoom0.toFixed(2),
-        this.activeCameraPreset()?.name ?? "CUSTOM",
+        activeCameraPreset()?.name ?? "CUSTOM",
       ];
       const names = ["PITCH", "EYE", "ZOOM0", "PRESET"];
       for (let i = 0; i < this.camRows.length; i++) {
@@ -375,17 +386,8 @@ export class DebugMenu {
     this.cycleCameraPreset(1);
   }
 
-  activeCameraPreset(): (typeof CAMERA_PRESETS)[number] | undefined {
-    return CAMERA_PRESETS.find(
-      (preset) =>
-        CamTune.pitch === preset.pitch &&
-        CamTune.cam === preset.cam &&
-        CamTune.zoom0 === preset.zoom0
-    );
-  }
-
   cycleCameraPreset(dir: number): void {
-    const active = this.activeCameraPreset();
+    const active = activeCameraPreset();
     const current = active ? CAMERA_PRESETS.indexOf(active) : 1;
     const index = (current + (dir < 0 ? -1 : 1) + CAMERA_PRESETS.length) % CAMERA_PRESETS.length;
     const preset = CAMERA_PRESETS[index]!;
@@ -423,9 +425,9 @@ export class DebugMenu {
     const d = 80 + Math.random() * 140;
     const x = h.x + Math.cos(a) * d;
     const y = h.y + Math.sin(a) * d;
-    const u = this.s.unitSim.makeUnit(kind, x, y);
+    const u = makeUnit(this.s.world, kind, x, y);
     this.s.units.push(u);
-    this.s.units.push(...this.s.unitSim.spawnCrewFor(u));
+    this.s.units.push(...spawnCrewFor(this.s.world, this.s.textures, u));
   }
 
   setNoDamage(on: boolean): void {

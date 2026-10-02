@@ -1,11 +1,14 @@
+import { radius, heightOf, guidanceUsesLock, guidanceIsLockOn, launchIsArcBeam, heatClassScore, heatClassCategory, type Unit, type Shot, type PlayerWpnSpec, type LockAcquire } from "../../../sim/combat";
+import { zScale, groundZ, worldToScreen } from "../../../worldgen/world";
 import Phaser from "phaser";
 import { shotFacesHeading } from "../../../render/spritePose";
-import { targetingMode } from "../../../sim/weaponRuntime";
-import { heightOf, radius, guidanceUsesLock, guidanceIsLockOn, launchIsArcBeam, type Shot, type Unit, type PlayerWpnSpec, type LockAcquire, heatClassScore, heatClassCategory } from "../../../sim/combat";
-import { heatCategoryOk, heatClassOf, heatSeekScore } from "../../../sim/weaponRuntime";
+import { targetingMode, heatCategoryOk, heatClassOf, heatSeekScore } from "../../../sim/weaponRuntime";
 import { Layer, worldDepth } from "../../../render/depth";
-import { groundZ, worldToScreen, zScale } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
+
+export function boxHalf(u: Unit, scale: number): number {
+  return (radius(u.kind) + 10) * scale * zScale(u.z, u.y);
+}
 
 /** Player weapon locks: reticle / signature / NLOS / GPS / Tesla lock state, plus all lock drawing. */
 export class LockOn {
@@ -166,10 +169,6 @@ export class LockOn {
     }
   }
 
-  boxHalf(u: Unit, scale: number): number {
-    return (radius(u.kind) + 10) * scale * zScale(u.z, u.y);
-  }
-
   drawBox(
     u: Unit,
     scale: number,
@@ -181,7 +180,7 @@ export class LockOn {
     const at = worldToScreen(u.x, u.y, u.z);
     const x = at.x;
     const y = at.y;
-    const half = this.boxHalf(u, scale);
+    const half = boxHalf(u, scale);
     const depth = worldDepth(u.z, 8, u.y);
     g.lineStyle(width, color, alpha);
     g.strokeRect(x - half, y - half, half * 2, half * 2);
@@ -195,7 +194,7 @@ export class LockOn {
     alpha: number,
     color: number
   ): { x: number; y: number; half: number; depth: number } {
-    return this.drawDiamondAt(u.x, u.y, u.z, this.boxHalf(u, scale), width, alpha, color);
+    return this.drawDiamondAt(u.x, u.y, u.z, boxHalf(u, scale), width, alpha, color);
   }
 
   drawDiamondAt(
@@ -486,7 +485,7 @@ export class LockOn {
         tgt.x,
         tgt.y,
         tgt.z,
-        this.boxHalf(tgt, 1.12),
+        boxHalf(tgt, 1.12),
         inRange ? 2.05 : 1.7,
         inRange ? 0.95 : 0.82,
         color,

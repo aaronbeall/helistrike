@@ -1,14 +1,38 @@
-import { type PlayerWpnSpec } from "../../../sim/combat";
+import { craftCameraScale, craftControlScheme, craftOf, craftCloudParallax } from "../../../sim/crafts";
+import { camZoomAt, worldToScreen, setCamera25DFocus, screenToWorldAtZ, waterSurfaceZ, WORLD, CamTune } from "../../../worldgen/world";
+import { PLAYER_WPNS, type PlayerWpnSpec, type Shot } from "../../../sim/combat";
 import Phaser from "phaser";
 
-import { PLAYER_WPNS, type Shot } from "../../../sim/combat";
 import { Layer, worldDepth } from "../../../render/depth";
 import { range } from "../../../util/rng";
 import { MAP_AIR_SOFT, craftCameraEdgeLocked } from "../../../sim/craft";
-import { craftCameraScale, craftCloudParallax, craftControlScheme, craftOf } from "../../../sim/crafts";
 import { type ThermalPalette } from "../../../render/thermal";
-import { worldToScreen, setCamera25DFocus, screenToWorldAtZ, camZoomAt, waterSurfaceZ, WORLD, CamTune } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
+
+/** Framing zoom for a craft at altitude / speed (host or remote hull). */
+export function craftPlayZoom(
+  spec: ReturnType<typeof craftOf>,
+  z: number,
+  vx: number,
+  vy: number
+): number {
+  // Perspective keeps chase-focus scale stable; Phaser zoom is framing only.
+  const base = camZoomAt(z) * craftCameraScale(spec);
+  const spdN = Phaser.Math.Clamp(Math.hypot(vx, vy) / Math.max(1, spec.maxSpeed), 0, 1);
+  const planeScheme = craftControlScheme(spec) === "plane";
+  const planeish = spec.flightModel === "plane" || spec.flightModel === "vtol";
+  const speedClass = Math.sqrt(spec.maxSpeed / 340);
+  if (planeScheme) {
+    // Jets: slightly wider baseline + modest speed pullback (not theater-map zoom).
+    const baseMul = 0.9;
+    const maxPullback = Phaser.Math.Clamp(0.26 * speedClass, 0.22, 0.34);
+    return base * baseMul * (1 - spdN * maxPullback);
+  }
+  const maxPullback = planeish
+    ? Phaser.Math.Clamp(0.22 * speedClass, 0.2, 0.42)
+    : Phaser.Math.Clamp(0.1 * speedClass, 0.08, 0.16);
+  return base * (1 - spdN * maxPullback);
+}
 
 /** Camera: play zoom + projection pose, look cam, impact linger, screen shake, theater/map view + overlay + labels, theater sky + peaks, plane cloud parallax. */
 export class MissionCamera {
@@ -562,38 +586,13 @@ export class MissionCamera {
     }
   }
 
-  /** Framing zoom for a craft at altitude / speed (host or remote hull). */
-  craftPlayZoom(
-    spec: ReturnType<typeof craftOf>,
-    z: number,
-    vx: number,
-    vy: number
-  ): number {
-    // Perspective keeps chase-focus scale stable; Phaser zoom is framing only.
-    const base = camZoomAt(z) * craftCameraScale(spec);
-    const spdN = Phaser.Math.Clamp(Math.hypot(vx, vy) / Math.max(1, spec.maxSpeed), 0, 1);
-    const planeScheme = craftControlScheme(spec) === "plane";
-    const planeish = spec.flightModel === "plane" || spec.flightModel === "vtol";
-    const speedClass = Math.sqrt(spec.maxSpeed / 340);
-    if (planeScheme) {
-      // Jets: slightly wider baseline + modest speed pullback (not theater-map zoom).
-      const baseMul = 0.9;
-      const maxPullback = Phaser.Math.Clamp(0.26 * speedClass, 0.22, 0.34);
-      return base * baseMul * (1 - spdN * maxPullback);
-    }
-    const maxPullback = planeish
-      ? Phaser.Math.Clamp(0.22 * speedClass, 0.2, 0.42)
-      : Phaser.Math.Clamp(0.1 * speedClass, 0.08, 0.16);
-    return base * (1 - spdN * maxPullback);
-  }
-
   playZoom(): number {
     const h = this.s.player;
-    const hostZoom = this.craftPlayZoom(h.spec, h.z, h.vx, h.vy);
+    const hostZoom = craftPlayZoom(h.spec, h.z, h.vx, h.vy);
     const remote = this.s.remoteFleet.activeRemote();
     if (!remote || this.s.remoteFleet.remoteCamT < 0.001 || !remote.spec.craftLook) return hostZoom;
     const hull = craftOf(remote.spec.craftLook);
-    const remZoom = this.craftPlayZoom(hull, remote.z, remote.vx, remote.vy);
+    const remZoom = craftPlayZoom(hull, remote.z, remote.vx, remote.vy);
     return Phaser.Math.Linear(hostZoom, remZoom, this.s.remoteFleet.remoteCamT);
   }
 

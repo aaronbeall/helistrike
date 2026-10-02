@@ -1,20 +1,22 @@
 import Phaser from "phaser";
+import { remoteHostAmmoWeapon } from "../../../sim/remoteRules";
+import { bombReleaseFrom, estimateBombFallTime, sampleBallisticAltitude } from "../../../sim/ballistics";
+import { shellEjectSide } from "../../../render/spritePose";
+import { craftMuzzleLeaveZ, sightTerrainHitWorld } from "../../../sim/aim";
 import { projectAlong } from "../../../util/vec";
 
-import { AI_AIM_NARROW_BASE } from "../../../sim/weaponRuntime";
+import { AI_AIM_NARROW_BASE, launchGravity, targetingMode, specIsShellGun, specIsRocketPod, hardpointAmmoIndex, advanceAimHold, aimInStationArc, aimPrecisionSpread, clampAimToStationArc, heatCategoryOk, heatClassOf, type StationTraverse } from "../../../sim/weaponRuntime";
 import { projectileFxScale, playerMuzzleFxMul, scaledProjectileFxCount } from "../../../render/fxScale";
-import { launchGravity, targetingMode, specIsShellGun, specIsRocketPod, hardpointAmmoIndex } from "../../../sim/weaponRuntime";
 import { payloadIsRemote, payloadIsHelix, payloadIsKinetic } from "../../../sim/payload";
 import { heightOf, nextId, shotBehaviorOf, applyKineticCombatMix, guidanceIsLockOn, exhaustIsEnergy, exhaustIsGunSpark, exhaustRibbons, launchIsArcBeam, launchIsRayBeam, PLAYER_WPNS, wpnIdOf, type ShotState, type Unit, type PlayerWpnSpec, type WpnId, type EnergyTrailNode, type WeaponGravity, heatClassScore } from "../../../sim/combat";
 import { remoteHasPovHud, remoteSpecOf } from "../../../sim/remote";
-import { advanceAimHold, aimInStationArc, aimPrecisionSpread, clampAimToStationArc, heatCategoryOk, heatClassOf, type StationTraverse } from "../../../sim/weaponRuntime";
 import { ZOff, worldDepth } from "../../../render/depth";
 import { range } from "../../../util/rng";
 import { Craft, JET_GUN_MAX_DEPRESS, JET_GUN_MAX_ELEV } from "../../../sim/craft";
 import { isAerial } from "../../../sim/roster";
 import { closestOnFootprint, footprintOf, pointInFootprint } from "../../../render/footprint";
 import { lookupSpriteMuzzles } from "../../../art/spriteOrigin";
-import { craftBombDrop, craftCrewHudTag, craftGunId, craftGunMount, craftGunMounts, craftGunPreferDegrees, craftGunPreferOffset, craftHardpointMounts, craftControlScheme, craftOf, craftOrigin, craftSocketBarrelCount, craftSocketFireCd, craftSocketIsPrimary, craftSocketPoints, socketHullPlacement, type CraftBombDrop, craftSocketStartingAmmo, type CraftSpec } from "../../../sim/crafts";
+import { craftBombDrop, craftCrewHudTag, craftGunId, craftGunMount, craftGunMounts, craftGunPreferDegrees, craftGunPreferOffset, craftHardpointMounts, craftControlScheme, craftOf, craftOrigin, craftSocketBarrelCount, craftSocketFireCd, craftSocketIsPrimary, craftSocketPoints, socketHullPlacement, craftSocketStartingAmmo, type CraftSpec } from "../../../sim/crafts";
 import { groundZ, worldToScreen, cameraPointVisible, screenToWorldAtZ, screenToWorldOnGround, castZ } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
 
@@ -108,7 +110,7 @@ export class FireControl {
       socket?.class === "turret" || socket?.class === "fixed"
         ? (h.stationAim[slot ?? h.weapon]?.[0] ?? h.gunAngle) + yawOff
         : undefined;
-    return this.bombReleaseFrom(spec, ox, oy, aim, yawOff, {
+    return bombReleaseFrom(this.s.world, spec, ox, oy, aim, yawOff, {
       vx: h.vx,
       vy: h.vy,
       vz: h.vz,
@@ -117,156 +119,6 @@ export class FireControl {
       tune: craftBombDrop(h.spec, socket),
       barrelHeading,
     });
-  }
-
-  /** Shared bomb release solver for host and remote hulls. */
-  bombReleaseFrom(
-    spec: PlayerWpnSpec,
-    ox: number,
-    oy: number,
-    aim: { x: number; y: number },
-    yawOff: number,
-    kin: {
-      vx: number;
-      vy: number;
-      vz: number;
-      z0: number;
-      angle: number;
-      tune: CraftBombDrop;
-      /** When set (gun-mounted lob), boost only along this world heading. */
-      barrelHeading?: number;
-    }
-  ): { vx: number; vy: number; vz: number; angle: number } {
-    const grav = launchGravity(spec.launch)?.acceleration ?? 210;
-    const term = launchGravity(spec.launch)?.terminalVelocity ?? 520;
-    const { tune } = kin;
-    const baseVx = kin.vx * tune.momentum;
-    const baseVy = kin.vy * tune.momentum;
-    const barrel = kin.barrelHeading;
-    const bc = barrel != null ? Math.cos(barrel) : 0;
-    const bs = barrel != null ? Math.sin(barrel) : 0;
-    // Gun lob: aim is projected onto the barrel ray (range only); free drop keeps full XY.
-    let wantDx = aim.x - ox;
-    let wantDy = aim.y - oy;
-    if (barrel != null) {
-      const along = Math.max(12, wantDx * bc + wantDy * bs);
-      wantDx = bc * along;
-      wantDy = bs * along;
-    }
-    const landAimX = ox + wantDx;
-    const landAimY = oy + wantDy;
-    const gnd = groundZ(this.s.world, landAimX, landAimY);
-    const aimAng =
-      Math.hypot(wantDx, wantDy) > 1e-3
-        ? Math.atan2(wantDy, wantDx)
-        : kin.angle + yawOff;
-
-    const loftLo = tune.loft;
-    const loftHi = Math.max(loftLo, tune.loftMax ?? loftLo);
-    let best: {
-      vx: number;
-      vy: number;
-      vz: number;
-      miss: number;
-      loft: number;
-    } | null = null;
-
-    for (let i = 0; i < 9; i++) {
-      const loft = loftLo + ((loftHi - loftLo) * i) / 8;
-      const vz = Math.max(0, kin.vz) + loft;
-      const fallT = this.estimateBombFallTime(kin.z0, vz, gnd, grav, term);
-      const wantVx = wantDx / fallT;
-      const wantVy = wantDy / fallT;
-      let bx = wantVx - baseVx;
-      let by = wantVy - baseVy;
-      if (barrel != null) {
-        // Impulse only along the barrel — never invent a sideways throw.
-        let boost = bx * bc + by * bs;
-        // Same as free drop: never brake along-track.
-        if (boost < 0) boost = 0;
-        if (boost > tune.maxBoost) boost = tune.maxBoost;
-        bx = bc * boost;
-        by = bs * boost;
-      } else {
-        const bMag = Math.hypot(bx, by);
-        if (bMag > tune.maxBoost && bMag > 1e-6) {
-          const s = tune.maxBoost / bMag;
-          bx *= s;
-          by *= s;
-        }
-      }
-      const vx = baseVx + bx;
-      const vy = baseVy + by;
-      const landX = ox + vx * fallT;
-      const landY = oy + vy * fallT;
-      const miss = Math.hypot(landX - landAimX, landY - landAimY);
-      if (
-        !best ||
-        miss < best.miss - 5 ||
-        (miss <= best.miss + 16 && loft > best.loft)
-      ) {
-        best = { vx, vy, vz, miss, loft };
-      }
-      if (miss < 10) break;
-    }
-
-    const pick = best!;
-    return {
-      vx: pick.vx,
-      vy: pick.vy,
-      vz: pick.vz,
-      angle:
-        barrel != null
-          ? barrel
-          : Math.hypot(pick.vx, pick.vy) > 1e-3
-            ? Math.atan2(pick.vy, pick.vx)
-            : aimAng,
-    };
-  }
-
-  /** Approximate time for a gravity bomb to reach ground from release. */
-  estimateBombFallTime(
-    z0: number,
-    vz0: number,
-    gnd: number,
-    grav: number,
-    term: number
-  ): number {
-    let z = z0;
-    let vz = vz0;
-    let t = 0;
-    const step = 1 / 30;
-    for (let i = 0; i < 120; i++) {
-      vz = Math.max(-term, vz - grav * step);
-      z += vz * step;
-      t += step;
-      if (z <= gnd + 4) return Math.max(0.2, t);
-    }
-    return Math.max(0.2, t);
-  }
-
-  /**
-   * Sample altitude after `t` seconds under the same gravity model as flight
-   * (`vz -= g*dt`, clamp to `-terminalVelocity`).
-   */
-  sampleBallisticAltitude(
-    z0: number,
-    vz0: number,
-    t: number,
-    grav: number,
-    term: number
-  ): number {
-    let z = z0;
-    let vz = vz0;
-    let left = Math.max(0, t);
-    const step = 1 / 60;
-    while (left > 1e-4) {
-      const dt = Math.min(step, left);
-      vz = Math.max(-term, vz - grav * dt);
-      z += vz * dt;
-      left -= dt;
-    }
-    return z;
   }
 
   /**
@@ -284,22 +136,22 @@ export class FireControl {
     const flightT = Math.max(0.05, t);
     // Free-fall: z = z0 + vz0*t - 0.5*g*t^2  →  vz0 = (tz-z0)/t + 0.5*g*t
     let vz0 = (tz - z0) / flightT + 0.5 * grav * flightT;
-    const end = this.sampleBallisticAltitude(z0, vz0, flightT, grav, term);
+    const end = sampleBallisticAltitude(z0, vz0, flightT, grav, term);
     if (Math.abs(end - tz) < 2) return vz0;
 
     // Terminal clamp bent the arc — bracket and refine.
     let lo = vz0 - grav * flightT - Math.abs(tz - z0);
     let hi = vz0 + grav * flightT + Math.abs(tz - z0);
     for (let i = 0; i < 8; i++) {
-      const zLo = this.sampleBallisticAltitude(z0, lo, flightT, grav, term);
-      const zHi = this.sampleBallisticAltitude(z0, hi, flightT, grav, term);
+      const zLo = sampleBallisticAltitude(z0, lo, flightT, grav, term);
+      const zHi = sampleBallisticAltitude(z0, hi, flightT, grav, term);
       if (zLo <= tz && tz <= zHi) break;
       lo -= grav * flightT;
       hi += grav * flightT;
     }
     for (let i = 0; i < 18; i++) {
       const mid = (lo + hi) * 0.5;
-      const zMid = this.sampleBallisticAltitude(z0, mid, flightT, grav, term);
+      const zMid = sampleBallisticAltitude(z0, mid, flightT, grav, term);
       if (zMid < tz) lo = mid;
       else hi = mid;
       vz0 = mid;
@@ -368,7 +220,7 @@ export class FireControl {
     const along = Math.max(8, projectAlong(ox, oy, aimAng, ptr.x, ptr.y));
     const bx = ox + Math.cos(aimAng) * along;
     const by = oy + Math.sin(aimAng) * along;
-    const hit = this.sightTerrainHitWorld(ox, oy, oz, bx, by, ptr.z);
+    const hit = sightTerrainHitWorld(this.s.world, ox, oy, oz, bx, by, ptr.z);
     if (this.aimCraftIsPlane()) return this.clampJetGunAim(ox, oy, oz, aimAng, hit);
     return hit;
   }
@@ -405,7 +257,7 @@ export class FireControl {
       // Too steep: follow the clamped ray to the ground, not a mid-air point above the cursor.
       const agl = Math.max(0, oz - hit.z);
       const far = Math.max(along, (agl / Math.tan(-clamped)) * 1.5 + 60);
-      return this.sightTerrainHitWorld(
+      return sightTerrainHitWorld(this.s.world, 
         ox,
         oy,
         oz,
@@ -434,23 +286,10 @@ export class FireControl {
     return { x: xy.x, y: xy.y, z };
   }
 
-  /**
-   * World Z for a muzzle leave (host + remotes share this).
-   * `hullPlacement: "above"` leaves from the roof (baseZ + height).
-   * Default sits just under the hull (`ZOff.shot`).
-   */
-  craftMuzzleLeaveZ(
-    baseZ: number,
-    height: number,
-    hullPlacement?: "below" | "above"
-  ): number {
-    return hullPlacement === "above" ? baseZ + height : baseZ + ZOff.shot;
-  }
-
   /** World Z for player muzzle leave. */
   playerMuzzleZ(slot = this.s.player.weapon, barrel = 0): number {
     const h = this.s.player;
-    return this.craftMuzzleLeaveZ(
+    return craftMuzzleLeaveZ(
       h.z,
       h.spec.height,
       socketHullPlacement(h.spec.sockets[slot], barrel)
@@ -488,33 +327,6 @@ export class FireControl {
     if (pointInFootprint(at.x, at.y, fp)) return { x: at.x, y: at.y, z };
     const snapped = closestOnFootprint(at.x, at.y, fp);
     return { x: snapped.x, y: snapped.y, z };
-  }
-
-  /** First point along a world beam where altitude meets terrain. */
-  sightTerrainHitWorld(
-    ox: number,
-    oy: number,
-    oz: number,
-    bx: number,
-    by: number,
-    bz: number
-  ): { x: number; y: number; z: number } {
-    const steps = 48;
-    for (let i = 1; i <= steps; i++) {
-      const t = i / steps;
-      const x = ox + (bx - ox) * t;
-      const y = oy + (by - oy) * t;
-      const z = oz + (bz - oz) * t;
-      if (z <= groundZ(this.s.world, x, y) + 1.5) {
-        const u = Math.max(0, t - 0.5 / steps);
-        return {
-          x: ox + (bx - ox) * u,
-          y: oy + (by - oy) * u,
-          z: oz + (bz - oz) * u,
-        };
-      }
-    }
-    return { x: bx, y: by, z: bz };
   }
 
   /** World position of a craft hardpoint UV. */
@@ -1330,7 +1142,7 @@ specIsShellGun(spec)
         const gunTips = lookupSpriteMuzzles(gunTex);
         const side = muzzleUv
           ? (muzzleUv.x < craftOrigin(craft).x ? -1 : 1)
-          : this.s.fx.shellEjectSide({
+          : shellEjectSide({
               muzzleUv: gunTips[gunMuzzleI ?? 0] ?? gunTips[0],
               mountUv: mountedGunUv,
             });
@@ -1461,7 +1273,7 @@ specIsShellGun(spec)
     const release = this.bombReleaseVelocity(spec, pylon.x, pylon.y, aim, yawOff, slot);
     const dropZ = h.z + ZOff.shot;
     const grav = launchGravity(spec.launch);
-    const fallT = this.estimateBombFallTime(
+    const fallT = estimateBombFallTime(
       dropZ,
       release.vz,
       groundZ(this.s.world, aim.x, aim.y),
@@ -1789,7 +1601,7 @@ specIsShellGun(spec)
     if (!rem?.ammo || !rem.loadout) return this.ammo;
     // Host-linked slots (howitzer spot / call-strike) show the dropship bank.
     return rem.loadout.map((wp, i) => {
-      const hostId = this.s.remoteFleet.remoteHostAmmoWeapon(wp);
+      const hostId = remoteHostAmmoWeapon(wp);
       if (hostId) {
         const n = this.hostWeaponAmmoLeft(hostId);
         return n ?? rem.ammo![i]!;
@@ -1813,7 +1625,7 @@ specIsShellGun(spec)
     const rem = this.s.remoteFleet.povHudRemote();
     if (rem && !rem.airborne) {
       const wp = rem.loadout?.[rem.weapon ?? 0];
-      const hostId = wp ? this.s.remoteFleet.remoteHostAmmoWeapon(wp) : undefined;
+      const hostId = wp ? remoteHostAmmoWeapon(wp) : undefined;
       if (hostId) {
         const slot = this.hostWeaponSlot(hostId);
         if (slot >= 0) return slot;

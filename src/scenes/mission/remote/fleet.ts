@@ -1,6 +1,8 @@
 import Phaser from "phaser";
+import { gateGroundRemoteWater, groundRemoteEntersWater } from "../../../sim/navigation";
+import { remoteAiStickAim, tickRemoteIdle } from "../../../sim/remoteRules";
 import { planeLookCam } from "../camera/camera";
-import { payloadIsRemote, payloadIsCallStrike, payloadIsHostFire } from "../../../sim/payload";
+import { payloadIsRemote } from "../../../sim/payload";
 import { nextId, PLAYER_WPNS, type PlayerWpnSpec, type WpnId } from "../../../sim/combat";
 import { initRemoteLoadout, remoteHasPovHud, remoteRotorParts, remoteSpecOf, type RemoteCraft, type BayRemote, type RemoteSpec } from "../../../sim/remote";
 import { Craft } from "../../../sim/craft";
@@ -68,7 +70,7 @@ export class RemoteFleet {
       if (!pilot.dockPending) this.tickRemotePilot(pilot, dt, aim);
     } else {
       const parked = this.activeRemote();
-      if (parked && !parked.spec.ai && !parked.airborne) this.tickRemoteIdle(parked, dt);
+      if (parked && !parked.spec.ai && !parked.airborne) tickRemoteIdle(this.s.world, parked, dt);
     }
     return pilot;
   }
@@ -91,13 +93,6 @@ export class RemoteFleet {
     if (!this.remoteView) return undefined;
     const p = this.pilotingRemote();
     return p && remoteHasPovHud(p.spec) && p.loadout?.length ? p : undefined;
-  }
-
-  /** Catalog weapon id whose host ammo a POV remote slot spends, if any. */
-  remoteHostAmmoWeapon(wp: PlayerWpnSpec): WpnId | undefined {
-    if (payloadIsHostFire(wp.payload)) return wp.payload!.hostFire!.weapon;
-    if (payloadIsCallStrike(wp.payload)) return wp.payload!.callStrike!.hostWeapon;
-    return undefined;
   }
 
   /**
@@ -500,7 +495,7 @@ export class RemoteFleet {
       drone.spec.ground ? false : !!opts?.shift
     );
     // Ground remotes can't drive into water: refuse the move (AI stuck→reverse kicks in; pilot must turn/back up).
-    if (drone.spec.ground && !drone.airborne && this.s.remoteAi.groundRemoteEntersWater(drone, trackX0, trackY0, craft.x, craft.y)) {
+    if (drone.spec.ground && !drone.airborne && groundRemoteEntersWater(this.s.world, drone, trackX0, trackY0, craft.x, craft.y)) {
       craft.x = trackX0;
       craft.y = trackY0;
       craft.vx = 0;
@@ -611,7 +606,7 @@ export class RemoteFleet {
 
     const want = Math.atan2(dy, dx);
     const approach = Phaser.Math.Clamp(dist / 220, 0.22, 1);
-    const { stick, aim } = this.s.remoteAi.remoteAiStickAim(drone, want, 0.35 + approach * 0.75);
+    const { stick, aim } = remoteAiStickAim(drone, want, 0.35 + approach * 0.75);
     this.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false });
     drone.gunAngle = drone.angle;
     drone.vz += dz * 2.6 * dt;
@@ -651,15 +646,6 @@ export class RemoteFleet {
     // Instant clamp — same language as enemy tanks on dirt.
     drone.z = pad;
     drone.vz = 0;
-  }
-
-  tickRemoteIdle(drone: RemoteCraft, dt: number): void {
-    drone.vx *= Math.pow(0.08, dt);
-    drone.vy *= Math.pow(0.08, dt);
-    const gnd = groundZ(this.s.world, drone.x, drone.y);
-    const rest = gnd + drone.spec.cruiseAgl;
-    drone.vz += (rest - drone.z) * 2.4 * dt;
-    drone.vz *= Math.pow(0.2, dt);
   }
 
   updateRemotes(dt: number): void {
@@ -712,7 +698,7 @@ export class RemoteFleet {
         r.x += r.vx * dt;
         r.y += r.vy * dt;
         r.z += r.vz * dt;
-        this.s.remoteAi.gateGroundRemoteWater(r, trackX0, trackY0);
+        gateGroundRemoteWater(this.s.world, r, trackX0, trackY0);
       }
       const docking = r.dock || !!r.dockPending;
       if (!docking) this.snapRemoteGround(r, dt);

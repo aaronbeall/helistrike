@@ -1,3 +1,4 @@
+import { type Unit } from "./combat";
 import type { CamoKind } from "../render/camo";
 import { ENEMY_WPNS } from "../catalog/enemyWeapons";
 import { gun, TROOP_WEIGHTS, UNIT_SPECS } from "../catalog/units";
@@ -584,3 +585,9 @@ export const ROSTER_TEX: string[] = [
   "enemy_drone_rotor_hulk",
   "enemy_heli_rotor_hulk",
 ].filter(Boolean);
+
+/** Fixed-sprite troops: `angle` = move base, `turret` = aim / draw facing. */
+export function troopSoftTurret(u: Unit): boolean {
+  const sp = specOf(u.kind);
+  return !gunsOf(u).length && (sp.behavior === "attack_infantry" || sp.behavior === "flee_infantry");
+}

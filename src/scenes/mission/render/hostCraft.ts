@@ -1,16 +1,15 @@
 import Phaser from "phaser";
+import { imageDrawPose, remoteBodyDrawPose, type DrawPose } from "../../../render/spritePose";
 import { simParticleTexKey, simParticleLook } from "../../../render/simParticleLook";
 import { applyThermalHeat } from "../../../render/thermal";
-import { resolveSkin } from "../../../render/camo";
-import { textureOf, launchIsArcBeam, type Unit } from "../../../sim/combat";
+import { launchIsArcBeam } from "../../../sim/combat";
 import { type RemoteCraft } from "../../../sim/remote";
 import { ZOff, worldDepth } from "../../../render/depth";
 import { range } from "../../../util/rng";
-import { specOf, gunsOf } from "../../../sim/roster";
 import { lookupSpriteMuzzles } from "../../../art/spriteOrigin";
 import { craftAimsWithTurret, craftCompositePartScale, craftExhaustFlameHue, craftExhaustFlameSheet, craftExhaustMounts, craftGunSocketSlots, craftControlScheme, craftOrigin, craftPreviewExhaustScale, craftRotorAlongScale, craftRotorFlightSpeed, craftRotorTiltMul, craftSocketGunScale, craftWingTipMounts, type CraftComposite } from "../../../sim/crafts";
 import { applyEdgeLight, clearEdgeLight } from "../../../render/edgeLight";
-import { shadowAlpha, shadowKey, spriteUvPos, FX_VARIANTS, spritePivot, muzzleGlowKey } from "../../../art/sprites";
+import { shadowAlpha, shadowKey, spriteUvPos, FX_VARIANTS, muzzleGlowKey } from "../../../art/sprites";
 import { groundZ, worldToScreen, cameraPointVisible, screenToWorldAtZ, projectHeading, castZ, castShadowToGround, isWater, sampleBiome } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
 
@@ -51,29 +50,6 @@ export class HostCraft {
     this.wingTrailPrevScreen = [];
     this.wingTrailEmitCarry = 0;
     this.wingTrailMountCursor = 0;
-  }
-
-  mountAt(host: Unit, tex: string, mount: { x: number; y: number }): { x: number; y: number } {
-    const pivot = spritePivot(tex);
-    const rot = host.angle + specOf(host.kind).rotOff;
-    const img = this.s.textures.exists(tex)
-      ? (this.s.textures.get(tex).getSourceImage() as { width: number; height: number })
-      : { width: 52, height: 52 };
-    const mx = (mount.x - pivot.x) * img.width;
-    const my = (mount.y - pivot.y) * img.height;
-    return {
-      x: host.x + mx * Math.cos(rot) - my * Math.sin(rot),
-      y: host.y + mx * Math.sin(rot) + my * Math.cos(rot),
-    };
-  }
-
-  /** World position of a gun's mount on the hull (aim pivot), independent of barrel angle. */
-  gunMountPos(u: Unit, gunI = 0): { x: number; y: number } {
-    const guns = gunsOf(u);
-    const gun = guns[gunI];
-    if (!gun) return { x: u.x, y: u.y };
-    const mount = gun.mount;
-    return this.mountAt(u, resolveSkin(this.s.textures, textureOf(u.kind), u.camo), mount);
   }
 
   applyCastShadow(
@@ -439,45 +415,9 @@ export class HostCraft {
     return wrap;
   }
 
-  /**
-   * Screen pose for UV mounts on a hull image — accounts for jet tilt wrap
-   * foreshortening so guns/exhaust stay glued to the billboard.
-   */
-  imageDrawPose(im: Phaser.GameObjects.Image): {
-    x: number;
-    y: number;
-    rotation: number;
-    displayWidth: number;
-    displayHeight: number;
-    originX: number;
-    originY: number;
-  } {
-    const wrap = im.getData("tiltWrap") as Phaser.GameObjects.Container | undefined;
-    if (!wrap?.scene) {
-      return {
-        x: im.x,
-        y: im.y,
-        rotation: im.rotation,
-        displayWidth: im.displayWidth,
-        displayHeight: im.displayHeight,
-        originX: im.originX,
-        originY: im.originY,
-      };
-    }
-    return {
-      x: wrap.x,
-      y: wrap.y,
-      rotation: wrap.rotation + im.rotation,
-      displayWidth: im.width * Math.abs(wrap.scaleX),
-      displayHeight: im.height * Math.abs(wrap.scaleY),
-      originX: im.originX,
-      originY: im.originY,
-    };
-  }
-
   /** Player hull draw pose (tilt wrap aware). */
-  bodyDrawPose(): ReturnType<HostCraft["imageDrawPose"]> {
-    return this.imageDrawPose(this.body);
+  bodyDrawPose(): DrawPose {
+    return imageDrawPose(this.body);
   }
 
   /**
@@ -488,7 +428,7 @@ export class HostCraft {
     i: number,
     mount: { x: number; y: number },
     opts: {
-      pose: ReturnType<HostCraft["imageDrawPose"]>;
+      pose: DrawPose;
       jetAng: number;
       glowAng: number;
       zs: number;
@@ -1078,7 +1018,7 @@ export class HostCraft {
     if (n <= 0) return;
     r.exhaustCarry -= n;
 
-    const pose = this.s.remoteBody.remoteBodyDrawPose(body);
+    const pose = remoteBodyDrawPose(body);
     const wrap = body.getData("tiltWrap") as Phaser.GameObjects.Container | undefined;
     const bodyDepth = wrap?.depth ?? body.depth;
     const jetAng = projectHeading(r.angle + Math.PI, r.x, r.y, r.z);

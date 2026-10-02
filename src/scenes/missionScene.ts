@@ -1,3 +1,6 @@
+import { heightOf, radius, playerLoadoutFromSockets, type Unit, type Debris, type Shot, type PlayerWpnSpec } from "../sim/combat";
+import { makeUnit, spawnCrewFor } from "../sim/units";
+import { stampDecor, GroundMarks } from "./mission/fx/groundMarks";
 import Phaser from "phaser";
 import { FieldBars } from "./mission/hud/fieldBars";
 import { MissionFlow } from "./mission/flow/missionFlow";
@@ -6,13 +9,12 @@ import { ThermalMode } from "./mission/render/thermalMode";
 import { UnitSprites } from "./mission/render/unitSprites";
 import { HostCraft } from "./mission/render/hostCraft";
 import { Destruction } from "./mission/destruction/destruction";
-import { GroundMarks } from "./mission/fx/groundMarks";
 import { Trails } from "./mission/fx/trails";
 import { Fx } from "./mission/fx/fx";
 import { FireControl } from "./mission/weapons/fireControl";
 import { Projectiles } from "./mission/weapons/projectiles";
 import { ensureBlastRingGradient } from "../render/blastRing";
-import { Countermeasures, TIMEWARP_PLAYER_SCALE, TIMEWARP_WORLD_SCALE } from "./mission/weapons/countermeasures";
+import { Countermeasures, TIMEWARP_PLAYER_SCALE, TIMEWARP_WORLD_SCALE, BULLET_TIME_SCALE } from "./mission/weapons/countermeasures";
 import { LockOn } from "./mission/weapons/lockOn";
 import { CallStrike } from "./mission/weapons/callStrike";
 import { Refractor } from "./mission/weapons/refractor";
@@ -32,20 +34,17 @@ import { ReticleHud } from "./mission/hud/reticleHud";
 import { Minimap } from "./mission/hud/minimap";
 import { StatusHud } from "./mission/hud/statusHud";
 import { WeaponHud } from "./mission/hud/weaponHud";
-import { BULLET_TIME_SCALE } from "./mission/weapons/countermeasures";
 import { ThreatHud } from "./mission/hud/threatHud";
 import { DebugMenu } from "./mission/debug/menu";
 import { ReliefEditor } from "./mission/debug/relief";
 import { SideView } from "./mission/debug/sideView";
 import { PerfMonitor } from "./mission/debug/perf";
 import { createFxEmitters } from "./mission/fx/emitters";
-import { heightOf, radius, playerLoadoutFromSockets, type Debris, type Shot, type Unit, type PlayerWpnSpec } from "../sim/combat";
 
 import { type RemoteCraft } from "../sim/remote";
 import { Layer } from "../render/depth";
 import { Craft, craftCameraEdgeLocked } from "../sim/craft";
 import { ensureAllArtGenAnims } from "../art/artGen";
-import { labelOf } from "../sim/roster";
 import { craftComposite, craftExhaustFlameHue, craftExhaustMounts, craftGunOrigin, craftOf, craftPreviewExhaustTint } from "../sim/crafts";
 import { missionOf } from "../sim/mission";
 import { rigsAnyOpen, installRigHotkeys } from "../rigs/rigs";
@@ -244,7 +243,7 @@ export class MissionScene extends Phaser.Scene {
   /** Textures, pipelines and art bakes the rest of create() draws from. */
   createAssets(): void {
     ensureEdgeLightPipeline(this.game);
-    this.groundMarks.stampDecor();
+    stampDecor(this.world, this.textures);
     if (this.textures.exists("map_terrain")) this.textures.remove("map_terrain");
     this.textures.addCanvas("map_terrain", this.world.canvas);
     registerArt("map_terrain", "generated");
@@ -521,13 +520,13 @@ export class MissionScene extends Phaser.Scene {
   spawnUnits(): void {
     this.units = [];
     for (const s of this.world.spawns) {
-      const u = this.unitSim.makeUnit(s.kind, s.x, s.y);
+      const u = makeUnit(this.world, s.kind, s.x, s.y);
       u.hv = s.hv;
       this.units.push(u);
     }
     const posted: Unit[] = [];
     for (const host of this.units) {
-      posted.push(...this.unitSim.spawnCrewFor(host));
+      posted.push(...spawnCrewFor(this.world, this.textures, host));
     }
     this.units.push(...posted);
   }
@@ -1372,14 +1371,6 @@ export class MissionScene extends Phaser.Scene {
       sx: ((at.x - view.x) / view.width) * this.scale.width,
       sy: ((at.y - view.y) / view.height) * this.scale.height,
     };
-  }
-
-  unitHudName(u: Unit): string {
-    if (u.hv) {
-      const site = this.world.hv.find((h) => h.id === u.hv);
-      if (site) return site.name.toUpperCase();
-    }
-    return labelOf(u.kind);
   }
 
   drawHud(): void {

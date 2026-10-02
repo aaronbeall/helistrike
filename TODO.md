@@ -139,7 +139,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
   * [ ] Docks -> boats
 * [ ] Rotors push smoke
 * [x] Roadkill organic units with rotors (rotor blades + crushing hulls)
-* [ ] Unit speed impact by slope, slope limit
+* [ ] Units affected by cliffs/slope -- slow travel uphill, slope limit, path around cliffs instead of driving into them
 * [ ] Tail rotor (with tilt)
 * [ ] Pseudo 3d tilt graphic (jets/gunship props partial)
 * [x] Clouds
@@ -160,6 +160,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [ ] Enemies should not leave map
 * [ ] Enemy collision/avoidance sucks/doesn't work -- should avoid unit-to-unit collisions and buildings
 * [ ] Building placement should avoid overlaps
+* [ ] Unit/building spawns should not overlap water or cliffs (check the footprint, not just the center point)
 * [ ] Ground units should avoid water -- partially implemented but it sucks
 * [ ] Z-ordering is not ideal -- debris/missiles flicker above and below their flame trail (trail smoke-over-flame across depth bands fixed; debris still open)
 * [ ] Mech debris should not include vehicle type specific parts (rotors, treads, wheels)
