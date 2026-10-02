@@ -150,7 +150,7 @@ export class DebugOverlays {
       altSticks(f.x, f.y, 0, f.z);
     }
     this.debugGfx.lineStyle(1.15, 0xd8c060, 0.72);
-    for (const p of this.s.smokePuffs) {
+    for (const p of this.s.countermeasures.smokePuffs) {
       if (p.t <= 0) continue;
       strokeCircle(p.x, p.y, p.z, p.radius);
     }

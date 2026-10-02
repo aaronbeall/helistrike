@@ -1,5 +1,6 @@
 import Phaser from "phaser";
-import { BATTERY_ICON_W, BULLET_TIME_DURATION } from "../tuning";
+import { BATTERY_ICON_W } from "../tuning";
+import { BULLET_TIME_DURATION } from "../weapons/countermeasures";
 import { payloadIsRemote } from "../../../sim/payload";
 import { PLAYER_WPNS, COUNTERMEASURES, type WpnId } from "../../../sim/combat";
 import { Layer } from "../../../render/depth";
@@ -412,40 +413,40 @@ export class WeaponHud {
   drawCountermeasureHud(y: number): void {
     const g = this.wpnBar;
     const pov = this.s.remoteFleet.povHudRemote();
-    const id = this.s.craftCmId();
+    const id = this.s.countermeasures.craftCmId();
     if (!this.cmHudLabel) {
       this.cmHudTime?.setVisible(false);
       return;
     }
     const spec = COUNTERMEASURES[id];
-    const cd = pov ? (pov.cmCd ?? 0) : this.s.cmCd;
+    const cd = pov ? (pov.cmCd ?? 0) : this.s.countermeasures.cd;
     const cx = this.s.scale.width / 2;
     let activeT = 0;
     let activeMax = 0;
     let barCol = 0xc4a24a;
     // Time Warp is a charge meter (pausable): bar = charge, recharge shows as a percentage.
     const warpMeter = !pov && id === "timewarp";
-    if (warpMeter && this.s.timewarpT > 0) {
-      activeT = this.s.timewarpT;
+    if (warpMeter && this.s.countermeasures.timewarpT > 0) {
+      activeT = this.s.countermeasures.timewarpT;
       activeMax = spec.duration;
       barCol = 0x5ce8ff;
-    } else if (!pov && id === "phase_cloak" && this.s.cloakT > 0) {
-      activeT = this.s.cloakT;
+    } else if (!pov && id === "phase_cloak" && this.s.countermeasures.cloakT > 0) {
+      activeT = this.s.countermeasures.cloakT;
       activeMax = spec.duration;
       barCol = 0xc8d4e8;
-    } else if (!pov && id === "reactive_armor" && this.s.reactiveArmorT > 0) {
-      activeT = this.s.reactiveArmorT;
+    } else if (!pov && id === "reactive_armor" && this.s.countermeasures.reactiveArmorT > 0) {
+      activeT = this.s.countermeasures.reactiveArmorT;
       activeMax = spec.duration;
       barCol = 0xffb040;
-    } else if (id === "smoke_screen" && (pov ? (pov.smokeT ?? 0) : this.s.smokeScreenT) > 0) {
-      activeT = pov ? (pov.smokeT ?? 0) : this.s.smokeScreenT;
+    } else if (id === "smoke_screen" && (pov ? (pov.smokeT ?? 0) : this.s.countermeasures.smokeScreenT) > 0) {
+      activeT = pov ? (pov.smokeT ?? 0) : this.s.countermeasures.smokeScreenT;
       activeMax = spec.duration;
       barCol = 0xa8a090;
     }
-    const warpCharging = warpMeter && activeT <= 0 && this.s.timewarpCharge < 0.999;
+    const warpCharging = warpMeter && activeT <= 0 && this.s.countermeasures.timewarpCharge < 0.999;
     const cooling = warpMeter ? warpCharging : cd > 0;
     const frac = warpMeter
-      ? this.s.timewarpCharge
+      ? this.s.countermeasures.timewarpCharge
       : cooling
         ? Phaser.Math.Clamp(1 - cd / spec.cooldown, 0, 1)
         : activeT > 0
@@ -455,7 +456,7 @@ export class WeaponHud {
     const timeS = activeT > 0
       ? `${activeT.toFixed(1)}s`
       : warpCharging
-        ? `${Math.round(this.s.timewarpCharge * 100)}%`
+        ? `${Math.round(this.s.countermeasures.timewarpCharge * 100)}%`
         : cooling
           ? `${cd.toFixed(1)}s`
           : "READY";
@@ -496,18 +497,18 @@ export class WeaponHud {
 
   /** Bullet-time meter row (E), same layout as the CM row — only while below full. */
   drawBulletTimeHud(y: number): void {
-    const show = this.s.bulletMeter < 0.999 && !!this.btHudLabel;
+    const show = this.s.countermeasures.bulletMeter < 0.999 && !!this.btHudLabel;
     this.btHudLabel?.setVisible(show);
     this.btHudTime?.setVisible(show);
     if (!show) return;
     const g = this.wpnBar;
-    const on = this.s.bulletOn;
+    const on = this.s.countermeasures.bulletOn;
     const barW = 168;
     const barH = 5;
     const timeGap = 8;
     const labelGap = 10;
     this.btHudTime
-      .setText(on ? `${(this.s.bulletMeter * BULLET_TIME_DURATION).toFixed(1)}s` : `${Math.round(this.s.bulletMeter * 100)}%`)
+      .setText(on ? `${(this.s.countermeasures.bulletMeter * BULLET_TIME_DURATION).toFixed(1)}s` : `${Math.round(this.s.countermeasures.bulletMeter * 100)}%`)
       .setFontSize("11px");
     const rowW = barW + timeGap + this.btHudTime.width;
     const barX = this.s.scale.width / 2 - rowW / 2;
@@ -516,9 +517,9 @@ export class WeaponHud {
     g.fillRoundedRect(barX - 2, barY - 2, barW + 4, barH + 4, 2);
     g.fillStyle(on ? 0x221638 : 0x1c1812, 0.88);
     g.fillRoundedRect(barX, barY, barW, barH, 2);
-    if (this.s.bulletMeter > 0) {
+    if (this.s.countermeasures.bulletMeter > 0) {
       g.fillStyle(on ? 0xb48cff : 0x7a6cc8, 0.95);
-      g.fillRoundedRect(barX, barY, Math.max(2, barW * this.s.bulletMeter), barH, 2);
+      g.fillRoundedRect(barX, barY, Math.max(2, barW * this.s.countermeasures.bulletMeter), barH, 2);
     }
     const midY = barY + barH / 2;
     const labelLp = this.s.hudLocal(barX - labelGap, midY);

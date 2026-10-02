@@ -909,7 +909,7 @@ export class UnitSim {
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
       const d = Math.sqrt(Math.random()) * r * 0.78;
-      this.s.spawnTeslaZap(
+      this.s.tesla.spawnZap(
         u.x + Math.cos(a) * d,
         u.y + Math.sin(a) * d,
         u.z + hgt * (0.12 + Math.random() * 0.8),
@@ -918,7 +918,7 @@ export class UnitSim {
       );
     }
     if (Math.random() < 0.3) {
-      this.s.emitTeslaSparks(u.x, u.y, u.z + hgt * 0.45, 3, 0.26 * sc);
+      this.s.tesla.emitSparks(u.x, u.y, u.z + hgt * 0.45, 3, 0.26 * sc);
     }
   }
 
@@ -1024,8 +1024,8 @@ export class UnitSim {
       const dy = h.y - u.y;
       const dist = Math.hypot(dx, dy);
       // Cloak: complete sensor blackout. Smoke: blinds all enemies when the player is covered.
-      const vision = this.s.cloakT > 0 && h === this.s.player ? 0 : this.s.targeting.enemySmokeVision(u, h);
-      if (this.s.cloakT > 0 && h === this.s.player && (u.aware || u.aiMood || u.aiTx != null)) {
+      const vision = this.s.countermeasures.cloakT > 0 && h === this.s.player ? 0 : this.s.targeting.enemySmokeVision(u, h);
+      if (this.s.countermeasures.cloakT > 0 && h === this.s.player && (u.aware || u.aiMood || u.aiTx != null)) {
         u.aware = false;
         u.aiMood = undefined;
         u.moodT = 0;

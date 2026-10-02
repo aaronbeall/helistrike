@@ -72,7 +72,7 @@ export class ThreatHud {
     const lockA = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(now * 0.016));
     for (const s of this.s.shots) {
       if (s.deadfall || s.from !== "enemy" || !s.homePlayer || s.seekDisabled) continue;
-      if (this.s.closestFlare(s.x, s.y, s.z)) continue; // decoyed — not homing on us
+      if (this.s.countermeasures.closestFlare(s.x, s.y, s.z)) continue; // decoyed — not homing on us
       const seekTgt = this.s.targeting.enemySeekerTarget(s);
       if (seekTgt !== this.s.player && seekTgt !== focus) continue;
       const { at, r } = ring(seekTgt);

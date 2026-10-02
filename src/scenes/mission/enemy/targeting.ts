@@ -28,7 +28,7 @@ export class EnemyTargeting {
   constructor(readonly s: MissionScene) {}
 
   smokeVisionAt(x: number, y: number, pad = 0): number {
-    return smokeVisionMul(smokeCoverAt(this.s.smokePuffs, x, y, pad));
+    return smokeVisionMul(smokeCoverAt(this.s.countermeasures.smokePuffs, x, y, pad));
   }
 
   /**
@@ -107,7 +107,7 @@ export class EnemyTargeting {
     const focusRem = this.combatFocusRemote();
     let best: RemoteCraft | undefined;
     let bestScore = Infinity;
-    const hostOk = this.s.cloakT <= 0;
+    const hostOk = this.s.countermeasures.cloakT <= 0;
     if (hostOk) {
       const d = Math.hypot(this.s.player.x - u.x, this.s.player.y - u.y);
       bestScore = focusRem ? d * HOST_WHILE_PILOTING_SCORE_MUL : d;
@@ -230,7 +230,7 @@ export class EnemyTargeting {
    * Helis (not VTOL / plane) get a slight further cut when flying low AGL.
    */
   enemyAwareReach(base: number, vision = 1, focus: Craft = this.combatFocus()): number {
-    if (this.s.cloakT > 0 && focus === this.s.player) return 0;
+    if (this.s.countermeasures.cloakT > 0 && focus === this.s.player) return 0;
     const craft = focus.spec;
     let mul = this.targetAwareMul(focus);
     if (craft.flightModel === "heli" && focus.phase === "flight") {

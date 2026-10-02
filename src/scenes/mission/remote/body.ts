@@ -886,7 +886,7 @@ export class RemoteBody {
     const spec = COUNTERMEASURES.smoke_screen;
     r.cmCd = spec.cooldown;
     r.smokeT = spec.duration;
-    this.s.fireSmokeScreen(3, r);
+    this.s.countermeasures.fireSmokeScreen(3, r);
   }
 
   /** Dirt puff + smear when a dropped HOUND hits the ground. */
