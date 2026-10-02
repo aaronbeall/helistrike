@@ -64,9 +64,9 @@ export class WeaponHud {
     const g = this.wpnBar;
     g.clear();
     const pov = this.s.remoteFleet.povHudRemote();
-    const loadout = this.s.hudLoadout();
-    const ammoArr = this.s.hudAmmo();
-    const selected = this.s.hudWeapon();
+    const loadout = this.s.fireControl.hudLoadout();
+    const ammoArr = this.s.fireControl.hudAmmo();
+    const selected = this.s.fireControl.hudWeapon();
     const slotW = 168;
     const slotH = 38;
     const gap = 8;
@@ -105,7 +105,7 @@ export class WeaponHud {
           ? this.s.remoteFleet.remotePoolDisplayAmmo(i, reserve)
           : reserve;
       const hostAmmoId = pov ? this.s.remoteFleet.remoteHostAmmoWeapon(wp) : undefined;
-      const hostSlot = hostAmmoId ? this.s.hostWeaponSlot(hostAmmoId) : -1;
+      const hostSlot = hostAmmoId ? this.s.fireControl.hostWeaponSlot(hostAmmoId) : -1;
       const hostSpec = hostAmmoId ? PLAYER_WPNS[hostAmmoId as WpnId] : undefined;
       const cap =
         pov && hostSpec && hostSlot >= 0
@@ -126,7 +126,7 @@ export class WeaponHud {
       const socket = pov ? pov.spec.sockets?.[i] : h.spec.sockets[i];
       const auto = !pov && socket?.controller === "automatic";
       const gunner = auto && !sel;
-      const disabled = pov ? false : this.s.weaponSlotDisabled(i);
+      const disabled = pov ? false : this.s.fireControl.weaponSlotDisabled(i);
       const x = x0 + i * (slotW + gap);
 
       // Slot chrome — disabled is a shared visual (cloak today; other gates later).

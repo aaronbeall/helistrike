@@ -1,6 +1,6 @@
 /** Projectile / muzzle FX density scaling. */
 import Phaser from "phaser";
-import { type Shot, type PlayerWpnSpec } from "../sim/combat";
+import { exhaustIsEnergy, type Shot, type PlayerWpnSpec } from "../sim/combat";
 
 /** Apache M230 cadence is the full-density reference for per-shot muzzle/impact particles. */
 export const PROJECTILE_FX_BASE_INTERVAL = 0.07;
@@ -26,4 +26,16 @@ export function playerMuzzleFxMul(spec: PlayerWpnSpec): number {
 
 export function scaledProjectileFxCount(base: number, scale: number): number {
   return base <= 0 ? 0 : Math.max(1, Math.round(base * scale));
+}
+
+export function troopMissileTrail(s: Shot): boolean {
+  return s.from === "enemy";
+}
+
+export function shotTrailScale(s: Shot): number {
+  const vis = s.scale ?? 1;
+  const ex = s.beh?.exhaust;
+  if (!ex || exhaustIsEnergy(ex)) return 0;
+  if (ex.kind === "particles" || ex.kind === "signalFlare") return vis * (ex.size ?? 1);
+  return vis;
 }

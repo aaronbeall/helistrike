@@ -119,14 +119,14 @@ export class RemoteBody {
       const mz = muzzle.z;
       const aimAng = baseAng + (Math.random() - 0.5) * jitterAmp;
       const spd = spec.speed;
-      const clip = this.s.playerSightAimWorld(mx, my, mz, aimAng, undefined, aim);
+      const clip = this.s.fireControl.playerSightAimWorld(mx, my, mz, aimAng, undefined, aim);
       const dx = clip.x - mx;
       const dy = clip.y - my;
       const dz = clip.z - mz;
       const dist3 = Math.max(8, Math.hypot(dx, dy, dz));
       const hFrac = Math.hypot(dx, dy) / dist3;
       const beh = shotBehaviorOf(spec);
-      const aimVel = this.s.muzzleAimVelocity({
+      const aimVel = this.s.fireControl.muzzleAimVelocity({
         dx,
         dy,
         dz,
@@ -136,7 +136,7 @@ export class RemoteBody {
         vx: Math.cos(aimAng) * spd * hFrac,
         vy: Math.sin(aimAng) * spd * hFrac,
       });
-      this.s.spawnShot({
+      this.s.projectiles.spawnShot({
         from: "player",
         id: nextId(),
         wpnId: gunId,
@@ -262,10 +262,10 @@ export class RemoteBody {
     } else if (spec.control.mode === "lock_then_click") {
       wantFire = (pressed || down) && !!this.s.player.lockTarget;
     } else if (spec.control.mode === "click_to_set_target") {
-      if (pressed) this.s.designateLatch = { x: ptr.x, y: ptr.y };
-      if (down && this.s.designateLatch) this.s.designateLatch = { x: ptr.x, y: ptr.y };
-      wantFire = released && !!this.s.designateLatch;
-      if (wantFire) this.s.designateLatch = null;
+      if (pressed) this.s.fireControl.designateLatch = { x: ptr.x, y: ptr.y };
+      if (down && this.s.fireControl.designateLatch) this.s.fireControl.designateLatch = { x: ptr.x, y: ptr.y };
+      wantFire = released && !!this.s.fireControl.designateLatch;
+      if (wantFire) this.s.fireControl.designateLatch = null;
     }
 
     if (!wantFire || (drone.fireCd ?? 0) > 0) return;
@@ -273,15 +273,15 @@ export class RemoteBody {
     const hostWpn = this.s.remoteFleet.remoteHostAmmoWeapon(spec);
     if (hostWpn) {
       // Barrage owns the howitzer — no spot fire or new strike until it finishes.
-      if (this.s.hostWeaponStrikeActive(hostWpn)) return;
-      const hostLeft = this.s.hostWeaponAmmoLeft(hostWpn);
+      if (this.s.fireControl.hostWeaponStrikeActive(hostWpn)) return;
+      const hostLeft = this.s.fireControl.hostWeaponAmmoLeft(hostWpn);
       if (hostLeft == null) return;
       if (!this.s.debugMenu.infAmmo && Number.isFinite(hostLeft) && hostLeft <= 0) return;
 
       // Spot howitzer: real station fire + shared CD (not the flare / call-strike path).
       if (payloadIsHostFire(spec.payload)) {
-        if (!this.s.hostStationFireReady(hostWpn)) return;
-        const ok = this.s.fireHostWeaponAt(hostWpn, ptr);
+        if (!this.s.fireControl.hostStationFireReady(hostWpn)) return;
+        const ok = this.s.fireControl.fireHostWeaponAt(hostWpn, ptr);
         if (ok) {
           const hostSpec = PLAYER_WPNS[hostWpn];
           drone.fireCd = hostSpec?.fireCd ?? spec.fireCd;
@@ -328,7 +328,7 @@ export class RemoteBody {
         : wantAng;
 
     if (payloadIsHostFire(spec.payload)) {
-      const ok = this.s.fireHostWeaponAt(spec.payload.hostFire!.weapon, ptr);
+      const ok = this.s.fireControl.fireHostWeaponAt(spec.payload.hostFire!.weapon, ptr);
       if (!ok) {
         // Mount missing / dry — clear remote CD so the player can retry.
         drone.fireCd = 0;
@@ -368,7 +368,7 @@ export class RemoteBody {
       for (const muzzle of tips) {
         const jitter = spec.fire?.jitter ?? 0;
         const ang = fireAng + (jitter ? (Math.random() - 0.5) * jitter : 0);
-        this.s.spawnCraftMuzzleShot({
+        this.s.fireControl.spawnCraftMuzzleShot({
           spec,
           beh,
           st: {
@@ -410,11 +410,11 @@ export class RemoteBody {
       const jitter = (Math.random() - 0.5) * (spec.fire?.jitter ?? 0.04);
       const ang = fireAng + jitter;
       const spd = spec.speed;
-      const origin = this.s.playerShotOrigin(muzzle, ang, spec);
+      const origin = this.s.fireControl.playerShotOrigin(muzzle, ang, spec);
       const mx = origin.x;
       const my = origin.y;
       const mz = origin.z;
-      const clip = this.s.playerSightAimWorld(mx, my, mz, ang, undefined, ptr);
+      const clip = this.s.fireControl.playerSightAimWorld(mx, my, mz, ang, undefined, ptr);
       const dx = clip.x - mx;
       const dy = clip.y - my;
       const dz = clip.z - mz;
@@ -422,7 +422,7 @@ export class RemoteBody {
       const hFrac = Math.hypot(dx, dy) / dist3;
       const beh = shotBehaviorOf(spec);
       const grav = launchGravity(spec.launch);
-      const aimVel = this.s.muzzleAimVelocity({
+      const aimVel = this.s.fireControl.muzzleAimVelocity({
         dx,
         dy,
         dz,
@@ -434,7 +434,7 @@ export class RemoteBody {
         grav,
       });
       const fromHost = !!spec.payload.callStrike;
-      this.s.spawnShot({
+      this.s.projectiles.spawnShot({
         from: "player",
         id: nextId(),
         wpnId: wpnIdOf(spec),
@@ -486,14 +486,14 @@ export class RemoteBody {
     const dropZ = tip.z;
     const grav = launchGravity(spec.launch);
     const beh = shotBehaviorOf(spec);
-    const fallT = this.s.estimateBombFallTime(
+    const fallT = this.s.fireControl.estimateBombFallTime(
       dropZ,
       release.vz,
       groundZ(this.s.world, ptr.x, ptr.y),
       grav?.acceleration ?? 210,
       grav?.terminalVelocity ?? 520
     );
-    this.s.spawnShot({
+    this.s.projectiles.spawnShot({
       from: "player",
       id: nextId(),
       wpnId: wpnIdOf(spec),
@@ -541,7 +541,7 @@ export class RemoteBody {
     const side = Math.random() < 0.5 ? -1 : 1;
     const tips = this.remoteFireTips(drone, slot);
     for (const muzzle of tips) {
-      this.s.spawnShot({
+      this.s.projectiles.spawnShot({
         from: "player",
         id: nextId(),
         wpnId: wpnIdOf(spec),
@@ -577,7 +577,7 @@ export class RemoteBody {
             ? Array.from({ length: exhaustRibbons(spec.exhaust) }, () => [] as EnergyTrailNode[])
             : undefined,
       });
-      this.s.missileMuzzle(
+      this.s.fireControl.missileMuzzle(
         muzzle.x,
         muzzle.y,
         muzzle.z,
@@ -619,7 +619,7 @@ export class RemoteBody {
         } else if (socket.muzzleFire === "simultaneous") {
           uvs = authored;
         } else if (socket.muzzleFire === "alternate") {
-          uvs = [authored[this.s.playerGunSide++ % authored.length]!];
+          uvs = [authored[this.s.fireControl.playerGunSide++ % authored.length]!];
         } else {
           uvs = [authored[0]!];
         }
@@ -646,7 +646,7 @@ export class RemoteBody {
           });
         }
         if (tips.length > 1 && socket.muzzleFire === "alternate") {
-          const tipUv = tips[this.s.playerGunSide++ % tips.length]!;
+          const tipUv = tips[this.s.fireControl.playerGunSide++ % tips.length]!;
           const scr = spriteUvPos(gunIm, tipUv.x, tipUv.y);
           const at = screenToWorldAtZ(scr.x, scr.y, planeZ);
           return [{ x: at.x, y: at.y, z: leaveZ }];
@@ -763,7 +763,7 @@ export class RemoteBody {
     const tune = hull
       ? craftBombDrop(hull, socket)
       : { momentum: 0.4, maxBoost: 70, loft: 90, loftMax: 160 };
-    return this.s.bombReleaseFrom(spec, ox, oy, aim, 0, {
+    return this.s.fireControl.bombReleaseFrom(spec, ox, oy, aim, 0, {
       vx: drone.vx,
       vy: drone.vy,
       vz: drone.vz ?? 0,
@@ -780,7 +780,7 @@ export class RemoteBody {
       slot != null
         ? sockets?.[slot]
         : sockets?.find((s) => s.class === "turret") ?? sockets?.[0];
-    let z = this.s.craftMuzzleLeaveZ(drone.z, drone.spec.height, socketHullPlacement(sock, barrel));
+    let z = this.s.fireControl.craftMuzzleLeaveZ(drone.z, drone.spec.height, socketHullPlacement(sock, barrel));
     // Dirt-locked AGVs skim the heightmap — lift leave so tracers clear micro-relief
     // that a heli chin gun never meets (same aim-at-ground dive, much less clearance).
     if (drone.spec.ground) {

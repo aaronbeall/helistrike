@@ -281,18 +281,18 @@ export class RemoteFleet {
     const h = this.s.player;
     const zero = { up: false, down: false, left: false, right: false };
     // Spot howitzer, artillery strike, or an active host barrage — all direct the howitzer.
-    const faceAim = this.s.hostSpotSlewSlot() >= 0;
+    const faceAim = this.s.fireControl.hostSpotSlewSlot() >= 0;
 
     // Face-only (Raptor): keep cruising, yaw the hull toward the pilot.
     if (pilot.spec.hostFace) {
-      return this.s.hostFacePointStick(pilot.x, pilot.y, zero, false);
+      return this.s.fireControl.hostFacePointStick(pilot.x, pilot.y, zero, false);
     }
 
     if (!pilot.spec.hostEscort) {
       // No escort profile — Hold-equivalent: face reticle while directing howitzer.
       if (faceAim) {
         const ptr = this.s.worldPointer();
-        return this.s.hostFacePointStick(ptr.x, ptr.y, zero, true);
+        return this.s.fireControl.hostFacePointStick(ptr.x, ptr.y, zero, true);
       }
       return undefined;
     }
@@ -305,7 +305,7 @@ export class RemoteFleet {
       // Directing howitzer in Hold: yaw toward mouse (Follow wins when toggled).
       if (faceAim) {
         const ptr = this.s.worldPointer();
-        return this.s.hostFacePointStick(ptr.x, ptr.y, zero, true);
+        return this.s.fireControl.hostFacePointStick(ptr.x, ptr.y, zero, true);
       }
       return { stick: zero, aimX: parkAimX, aimY: parkAimY, brake: true };
     }
@@ -324,7 +324,7 @@ export class RemoteFleet {
 
     if (!chase) {
       // Idle inside the leash: only yaw toward the remote while directing the howitzer.
-      if (faceAim) return this.s.hostFacePointStick(pilot.x, pilot.y, zero, true);
+      if (faceAim) return this.s.fireControl.hostFacePointStick(pilot.x, pilot.y, zero, true);
       return { stick: zero, aimX: parkAimX, aimY: parkAimY, brake: !moving };
     }
 
@@ -381,7 +381,7 @@ export class RemoteFleet {
     if (!payloadIsRemote(spec.payload)) return;
     const remoteSpec = remoteSpecOf(spec.payload.remote!.kind);
     const h = this.s.player;
-    const pylon = at ?? this.s.hardpointPylon(slot, true);
+    const pylon = at ?? this.s.fireControl.hardpointPylon(slot, true);
     // Leave along the socket heading (0 forward, 180 aft). A ground remote
     // launched above its pad falls; one launched on the ground sits on it.
     const ang = h.angle + craftGunPreferOffset(h.spec, slot) + yawOff;
@@ -398,7 +398,7 @@ export class RemoteFleet {
       spec: remoteSpec,
       x: pylon.x,
       y: pylon.y,
-      z: remoteSpec.ground ? (drop ? h.z : pad) : (at?.z ?? this.s.playerMuzzleZ(slot)),
+      z: remoteSpec.ground ? (drop ? h.z : pad) : (at?.z ?? this.s.fireControl.playerMuzzleZ(slot)),
       vx: h.vx * (drop ? 0.55 : 0.85) + Math.cos(ang) * kick * cp,
       vy: h.vy * (drop ? 0.55 : 0.85) + Math.sin(ang) * kick * cp,
       vz: drop ? h.vz * 0.35 - 30 : remoteSpec.ground ? 0 : h.vz * 0.4 + kick * sp,
@@ -528,7 +528,7 @@ export class RemoteFleet {
       const gunAim = opts?.gunAim ?? aim;
       if (craftAimsWithTurret(craft.spec)) {
         const want = Math.atan2(gunAim.y - drone.y, gunAim.x - drone.x);
-        this.s.slewCraftTurretStations(craft, want, dt, selected);
+        this.s.fireControl.slewCraftTurretStations(craft, want, dt, selected);
         drone.gunAngle = craft.gunAngle;
       } else {
         drone.gunAngle = craft.angle;
@@ -748,7 +748,7 @@ export class RemoteFleet {
           thermal: r.spec.thermal ? this.s.craftSensorPalette() : undefined,
           hold: 1.65,
         });
-        this.s.explode(r.x, r.y, r.z, r.spec.detonateBlast, r.spec.detonateDmg, undefined, r.vx, r.vy, r.vz, false, "guided-missile", 1);
+        this.s.projectiles.explode(r.x, r.y, r.z, r.spec.detonateBlast, r.spec.detonateDmg, undefined, r.vx, r.vy, r.vz, false, "guided-missile", 1);
         continue;
       }
       // Shadow-Craft remotes spin rotors inside Craft.update.
@@ -803,7 +803,7 @@ export class RemoteFleet {
     const aLen = Math.hypot(toAx, toAy);
     const remSlot = drone.weapon ?? 0;
     const remSpec =
-      drone.loadout?.[remSlot] ?? this.s.hudLoadout()[this.s.hudWeapon()];
+      drone.loadout?.[remSlot] ?? this.s.fireControl.hudLoadout()[this.s.fireControl.hudWeapon()];
     const hull = drone.spec.craftLook ? craftOf(drone.spec.craftLook) : undefined;
     const isPlane = !!hull && craftControlScheme(hull) === "plane";
     let pull: number;
@@ -873,8 +873,8 @@ export class RemoteFleet {
       // Match hangar capacity (craft ammoScale / socket mul), not bare catalog ammo.
       const cap = craftSocketStartingAmmo(w.ammo, this.s.player.spec, i);
       if (!Number.isFinite(cap)) return;
-      if ((this.s.ammo[i] ?? 0) < cap) {
-        this.s.ammo[i] = (this.s.ammo[i] ?? 0) + 1;
+      if ((this.s.fireControl.ammo[i] ?? 0) < cap) {
+        this.s.fireControl.ammo[i] = (this.s.fireControl.ammo[i] ?? 0) + 1;
         const roster = this.bayRemotes[i] ?? (this.bayRemotes[i] = []);
         roster.push({ life: Math.max(0, r.life), health: Math.max(0, r.health), ammo: r.ammo?.slice() });
         return;
@@ -894,7 +894,7 @@ export class RemoteFleet {
   bayRoster(slot: number): BayRemote[] {
     const roster = this.bayRemotes[slot] ?? (this.bayRemotes[slot] = []);
     const spec = this.dockableSlotRemote(slot);
-    const n = this.s.ammo[slot] ?? 0;
+    const n = this.s.fireControl.ammo[slot] ?? 0;
     if (!spec || !Number.isFinite(n)) return roster;
     const lifeMax = this.s.loadout[slot]!.payload!.remote!.duration;
     while (roster.length < n) roster.push({ life: lifeMax, health: spec.health });

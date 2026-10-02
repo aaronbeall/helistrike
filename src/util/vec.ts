@@ -123,3 +123,9 @@ export function norm3(x: number, y: number, z: number): { x: number; y: number; 
   if (n < 1e-6) return { x: 1, y: 0, z: 0 };
   return { x: x / n, y: y / n, z: z / n };
 }
+
+export function projectAlong(x: number, y: number, ang: number, tx: number, ty: number): number {
+  const dx = tx - x;
+  const dy = ty - y;
+  return Math.max(0, dx * Math.cos(ang) + dy * Math.sin(ang));
+}

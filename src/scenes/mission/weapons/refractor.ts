@@ -49,21 +49,21 @@ export class Refractor {
     let tip: { x: number; y: number };
     let ang = h.angle + yawOff;
     if (socket.class === "hardpoint") {
-      tip = this.s.hardpointPylon(slot, true);
+      tip = this.s.fireControl.hardpointPylon(slot, true);
     } else if (socket.class === "fixed") {
       const authored = craftSocketPoints(h.spec, socket);
       const uv =
         socket.muzzleFire === "alternate" && authored.length > 1
-          ? authored[this.s.playerGunSide++ % authored.length]
+          ? authored[this.s.fireControl.playerGunSide++ % authored.length]
           : authored[0];
-      tip = uv ? this.s.craftBodyMountWorldPos(uv) : this.s.hardpointPylon(slot, true);
+      tip = uv ? this.s.craftBodyMountWorldPos(uv) : this.s.fireControl.hardpointPylon(slot, true);
     } else {
       const gunI = this.s.gunVisualIndexForSlot(slot, barrelIndex);
       tip = this.s.gunTip(gunI);
       ang = h.stationAim[slot]?.[barrelIndex] ?? h.gunAngle;
     }
     const tipZ = h.z + ZOff.shot;
-    const aim = this.s.playerSightAimWorld(tip.x, tip.y, tipZ, ang, this.s.reticleUnit());
+    const aim = this.s.fireControl.playerSightAimWorld(tip.x, tip.y, tipZ, ang, this.s.fireControl.reticleUnit());
     let dx = aim.x - tip.x;
     let dy = aim.y - tip.y;
     let dz = aim.z - tipZ;
@@ -278,7 +278,7 @@ export class Refractor {
         this.pushBeam(seg0.x, seg0.y, seg0.z, hit.x, hit.y, hit.z, spec, dmgMul);
         this.impact(hit.x, hit.y, hit.z, dx, dy, dz, spec, false);
         // Damage without HE fireball — beam explode path stays kinetic when kind is beam.
-        this.s.explode(
+        this.s.projectiles.explode(
           hit.x,
           hit.y,
           hit.z,

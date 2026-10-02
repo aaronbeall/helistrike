@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { GUN_STATION_TURN_RATE } from "../tuning";
+import { GUN_STATION_TURN_RATE } from "../weapons/fireControl";
 import { PLAYER_WPNS, type Unit } from "../../../sim/combat";
 import { remoteSpecOf, type EscortNav, type EscortNavState, type RemoteCraft } from "../../../sim/remote";
 import { isGroundVehicle, specOf } from "../../../sim/roster";
@@ -161,7 +161,7 @@ export class RemoteAi {
    */
   tickAutoSkiffLaunch(): void {
     const h = this.s.player;
-    if (h.phase !== "flight" || !this.s.canFire) return;
+    if (h.phase !== "flight" || !this.s.fireControl.canFire) return;
     let slot = -1;
     for (let i = 0; i < this.s.loadout.length; i++) {
       const remote = this.s.loadout[i]?.payload?.remote;
@@ -170,14 +170,14 @@ export class RemoteAi {
         break;
       }
     }
-    if (slot < 0 || this.s.weaponSlotDisabled(slot) || !this.s.hasAmmo(slot)) return;
+    if (slot < 0 || this.s.fireControl.weaponSlotDisabled(slot) || !this.s.fireControl.hasAmmo(slot)) return;
     const spec = this.s.loadout[slot]!;
     const remoteKind = spec.payload!.remote!.kind;
     const remoteFlags = remoteSpecOf(remoteKind);
     const n = craftSocketBarrelCount(h.spec, slot);
     const cds =
-      this.s.stationFireCd[slot] ??
-      (this.s.stationFireCd[slot] = Array.from({ length: n }, () => 0));
+      this.s.fireControl.stationFireCd[slot] ??
+      (this.s.fireControl.stationFireCd[slot] = Array.from({ length: n }, () => 0));
     if ((cds[0] ?? 0) > 0) return;
     // Launch picks the fullest bay remote — hold the scramble while even that one is low.
     if (remoteFlags.dockable && !remoteFlags.unlimitedLife) {
@@ -200,7 +200,7 @@ export class RemoteAi {
     const cd = craftSocketFireCd(spec.fireCd, h.spec, slot);
     cds[0] = cd;
     if (h.weapon === slot) h.fireCd = Math.max(h.fireCd, cd);
-    this.s.firePlayerWeapon(slot, spec, this.s.worldPointer());
+    this.s.fireControl.firePlayerWeapon(slot, spec, this.s.worldPointer());
   }
 
   /**

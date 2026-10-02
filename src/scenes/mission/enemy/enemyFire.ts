@@ -194,7 +194,7 @@ export class EnemyFire {
     }
     const fireAng = barrelAng + jitter;
     // Flight time from post-nudge tip (spawnShot advances by SHOT_ORIGIN).
-    const spawn = this.s.shotSpawnXY(muzzle.x, muzzle.y, fireAng, muzzleZ, wpn.look, wpn.scale);
+    const spawn = this.s.projectiles.shotSpawnXY(muzzle.x, muzzle.y, fireAng, muzzleZ, wpn.look, wpn.scale);
     const shotDist = Math.max(40, Math.hypot(aimTgt.x - spawn.x, aimTgt.y - spawn.y));
     const muzzleAt = worldToScreen(muzzle.x, muzzle.y, u.z);
     this.s.spawnMuzzleLight(
@@ -204,7 +204,7 @@ export class EnemyFire {
       (sp.organic ? 18 : 28) * muzzleAt.scale * (u.muzzleJitS ?? 1)
     );
     const flightT = Math.max(0.12, shotDist / (home ? wpn.speed * 0.72 : wpn.speed));
-    this.s.spawnShot({
+    this.s.projectiles.spawnShot({
       from: "enemy",
       x: muzzle.x,
       y: muzzle.y,

@@ -29,7 +29,7 @@ export class CornerHud {
   syncReadoutHud(): void {
     const h = this.s.player;
     const w = this.s.loadout[h.weapon]!;
-    const ammo = this.s.ammo[h.weapon]!;
+    const ammo = this.s.fireControl.ammo[h.weapon]!;
     const ammoShown = this.s.remoteFleet.remotePoolDisplayAmmo(h.weapon, ammo);
     const ammoS =
       this.s.debugMenu.infAmmo && Number.isFinite(ammoShown)
@@ -51,7 +51,7 @@ export class CornerHud {
               : "AIRBORNE";
     const ptr = this.s.worldPointer();
     const elv = groundZ(this.s.world, ptr.x, ptr.y) | 0;
-    const over = this.s.reticleUnit();
+    const over = this.s.fireControl.reticleUnit();
     const overLine = over ? `\n${this.s.unitHudName(over)}` : "";
     this.hud.setText(
       `ALT ${castZ(this.s.world, h.x, h.y, h.z) | 0}   ELV ${elv}   SPD ${Math.hypot(h.vx, h.vy) | 0}   TIME ${this.s.liveSimScale.toFixed(2)}×\n${phase}\nWPN ${w.name}  ${ammoS}${overLine}`

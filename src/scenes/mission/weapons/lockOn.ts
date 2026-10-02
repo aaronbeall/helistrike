@@ -30,7 +30,7 @@ export class LockOn {
     if (h.lockTarget && !this.s.unitSim.unitById(h.lockTarget.id)) h.lockTarget = null;
     if (h.lockAcquire && !this.s.unitSim.unitById(h.lockAcquire.id)) h.lockAcquire = null;
 
-    const spec = this.s.hudLoadout()[this.s.hudWeapon()]!;
+    const spec = this.s.fireControl.hudLoadout()[this.s.fireControl.hudWeapon()]!;
     const g = spec.guidance;
     // Pre-fire lock_on only (steer_commit soft-locks in flight).
     if (!g || !guidanceIsLockOn(g)) {
@@ -57,7 +57,7 @@ export class LockOn {
     const tgt =
       targeting.acquire.policy === "signature"
         ? this.signaturePickTarget(ptr.x, ptr.y, lockRadius, targeting.acquire)
-        : this.s.reticlePickTarget(ptr.x, ptr.y, lockRadius, cats);
+        : this.s.fireControl.reticlePickTarget(ptr.x, ptr.y, lockRadius, cats);
     if (!tgt || (h.lockTarget && tgt.id === h.lockTarget.id)) {
       h.lockAcquire = null;
       return;
@@ -290,7 +290,7 @@ export class LockOn {
     this.txt.setVisible(false).setText("LOCK").setColor("#ff3a22");
     this.inbdTxt.setVisible(false);
 
-    const spec = this.s.hudLoadout()[this.s.hudWeapon()]!;
+    const spec = this.s.fireControl.hudLoadout()[this.s.fireControl.hudWeapon()]!;
     if (launchIsArcBeam(spec.launch)) {
       this.updateTesla(spec);
       this.drawGpsWaypointMarks();
@@ -330,7 +330,7 @@ export class LockOn {
     let inbdLabeled = false;
 
     for (const u of inbound) {
-      const vis = this.s.unitOnHud(u);
+      const vis = this.s.fireControl.unitOnHud(u);
       if (vis.on) {
         const box = this.drawDiamond(u, 1.18, 2.1, 0.92, 0xffb020);
         lockDepth = Math.max(lockDepth, box.depth);
@@ -349,7 +349,7 @@ export class LockOn {
     }
 
     if (seeking) {
-      const vis = this.s.unitOnHud(seeking);
+      const vis = this.s.fireControl.unitOnHud(seeking);
       if (vis.on) {
         const t = Math.min(1, h.lockAcquire!.t / lockTime);
         const scale = 2 - t;
@@ -369,7 +369,7 @@ export class LockOn {
       }
     }
     if (locked && !inboundIds.has(locked.id)) {
-      const vis = this.s.unitOnHud(locked);
+      const vis = this.s.fireControl.unitOnHud(locked);
       const blink = Math.floor(this.s.time.now / 70) % 2 === 0;
       const alpha = blink ? 1 : 0.12;
       if (vis.on) {
@@ -479,7 +479,7 @@ export class LockOn {
     const inRange = Math.hypot(tgt.x - tip.x, tgt.y - tip.y, uz - tip.z) <= range;
     const color = inRange ? 0x4de8ff : 0xffb020;
     const label = inRange ? "ARC" : "RANGE";
-    const vis = this.s.unitOnHud(tgt);
+    const vis = this.s.fireControl.unitOnHud(tgt);
     g.setVisible(true);
     if (vis.on) {
       const box = this.drawDiamondAt(
@@ -526,7 +526,7 @@ export class LockOn {
       gfx.setVisible(true);
       let lockDepth: number = Layer.FIELD;
       if (locked && !locked.dead) {
-        const vis = this.s.unitOnHud(locked);
+        const vis = this.s.fireControl.unitOnHud(locked);
         if (vis.on) {
           const box = this.drawDiamond(locked, 1.18, 2.1, 0.92, 0xffb020);
           lockDepth = Math.max(lockDepth, box.depth);
@@ -573,7 +573,7 @@ export class LockOn {
     gfx.setVisible(true);
     const blink = Math.floor(this.s.time.now / 70) % 2 === 0;
     const alpha = blink ? 1 : 0.12;
-    const vis = this.s.unitOnHud(locked);
+    const vis = this.s.fireControl.unitOnHud(locked);
     if (vis.on) {
       const box = this.drawDiamond(locked, 1, 2.15, alpha, 0xff3a22);
       this.txt

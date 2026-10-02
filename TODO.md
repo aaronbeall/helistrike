@@ -173,6 +173,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [ ] Spash down debris/hulks/shells in water should either disappear or become blue and sink to bottom, and not draw craters
 * [ ] Switching from thermal to normal reveals pink graphics
 * [ ] Power lines -- poles and wires that break/fall, lots of sparks
+* [ ] Dropship artillery strike should not follow the player reticle while active -- it messes it up
 
 ## Achievements
 

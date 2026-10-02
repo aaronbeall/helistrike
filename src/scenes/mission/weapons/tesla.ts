@@ -71,9 +71,9 @@ export class Tesla {
   muzzleOrigin(slot: number): { x: number; y: number; z: number } {
     const h = this.s.player;
     const socket = h.spec.sockets[slot];
-    const z = this.s.playerMuzzleZ(slot);
+    const z = this.s.fireControl.playerMuzzleZ(slot);
     if (socket?.class === "hardpoint") {
-      const p = this.s.hardpointPylon(slot);
+      const p = this.s.fireControl.hardpointPylon(slot);
       return { x: p.x, y: p.y, z };
     }
     if (socket?.class === "fixed") {
@@ -199,7 +199,7 @@ export class Tesla {
         this.exposeT = 0;
       }
       this.exposeT += dt;
-      if (spend) this.s.hurt(best, spec.dmg, false);
+      if (spend) this.s.projectiles.hurt(best, spec.dmg, false);
       if (launchIsArcBeam(spec.launch) && spec.payload.stun) {
         const linger = Math.min(
           TESLA_STUN_MAX,

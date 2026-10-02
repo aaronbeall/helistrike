@@ -83,7 +83,7 @@ export class CallStrike {
       : Math.max(0.12, spec.interval);
     let roundsLeft = Math.max(1, spec.rounds | 0);
     if (hostWeapon && !this.s.debugMenu.infAmmo) {
-      const left = this.s.hostWeaponAmmoLeft(hostWeapon);
+      const left = this.s.fireControl.hostWeaponAmmoLeft(hostWeapon);
       if (left != null && Number.isFinite(left)) {
         roundsLeft = Math.min(roundsLeft, Math.max(0, left | 0));
       }
@@ -216,8 +216,8 @@ export class CallStrike {
         // Real howitzer walk: shared station CD, wobble aim, one shell per ready cycle.
         this.tickHostAim(m, dt);
         const aim = { x: m.aimX ?? m.x, y: m.aimY ?? m.y };
-        if (this.s.hostStationFireReady(m.hostWeapon) && this.s.hostStationAlignedTo(m.hostWeapon, aim)) {
-          const ok = this.s.fireHostWeaponAt(m.hostWeapon, aim, { fromStrike: true });
+        if (this.s.fireControl.hostStationFireReady(m.hostWeapon) && this.s.fireControl.hostStationAlignedTo(m.hostWeapon, aim)) {
+          const ok = this.s.fireControl.fireHostWeaponAt(m.hostWeapon, aim, { fromStrike: true });
           if (!ok) {
             // Dry / missing mount — end the walk. CD-not-ready is handled above.
             m.roundsLeft = 0;
@@ -320,7 +320,7 @@ export class CallStrike {
     // Mild gravity on a high spawn: mostly aimed at the mark, with a gentle
     // descending curve (not a sky-high loft) that steepens a bit on the way in.
     const grav = { acceleration: 22, terminalVelocity: 720 };
-    const vz = this.s.solveBallisticMuzzleVz(
+    const vz = this.s.fireControl.solveBallisticMuzzleVz(
       sz,
       tz,
       flightT,
@@ -328,7 +328,7 @@ export class CallStrike {
       grav.terminalVelocity
     );
     const ang = Math.atan2(dy, dx);
-    this.s.spawnShot({
+    this.s.projectiles.spawnShot({
       from: "player",
       beh: {
         art: { look: m.shellLook, scale: 0.58, face: "velocity" },

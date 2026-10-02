@@ -1000,7 +1000,7 @@ export class UnitSim {
     u.killDy = vy;
     u.killDz = 80;
     u.killDmg = u.max;
-    this.s.hurt(u, u.health + 1);
+    this.s.projectiles.hurt(u, u.health + 1);
   }
 
   updateUnits(dt: number): void {
@@ -1421,7 +1421,7 @@ export class UnitSim {
               const jit = pw.jitter ?? 0.04;
               const fireAng = u.angle + (Math.random() - 0.5) * jit;
               const tgtZ = secTgt.z + secTgt.height * 0.5;
-              const spawn = this.s.shotSpawnXY(
+              const spawn = this.s.projectiles.shotSpawnXY(
                 px,
                 py,
                 fireAng,
@@ -1432,7 +1432,7 @@ export class UnitSim {
               const leaveSpd = Math.max(70, pw.speed * 0.3);
               const missileT = Math.max(0.45, Math.hypot(secTgt.x - spawn.x, secTgt.y - spawn.y) / (pw.speed * 0.72));
               const home = sec.homePlayer !== false;
-              this.s.spawnShot({
+              this.s.projectiles.spawnShot({
                 from: "enemy",
                 x: px,
                 y: py,
@@ -1453,7 +1453,7 @@ export class UnitSim {
                 beh: enemyShotBeh(pw),
                 fxInterval,
               });
-              this.s.missileMuzzle(px, py, u.z, fireAng, projectileFxScale("enemy", fxInterval));
+              this.s.fireControl.missileMuzzle(px, py, u.z, fireAng, projectileFxScale("enemy", fxInterval));
             }
           }
         } else {

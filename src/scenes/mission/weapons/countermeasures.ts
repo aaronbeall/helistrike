@@ -315,7 +315,7 @@ export class Countermeasures {
   }
 
   trigger(): void {
-    if (this.s.player.phase !== "flight" || !this.s.canFire || this.s.debugMenu.open || this.s.help.open || this.s.exitOpen) return;
+    if (this.s.player.phase !== "flight" || !this.s.fireControl.canFire || this.s.debugMenu.open || this.s.help.open || this.s.exitOpen) return;
     const pov = this.s.remoteFleet.povHudRemote();
     if (pov) {
       this.s.remoteBody.tryRemoteCountermeasure(pov);
@@ -608,7 +608,7 @@ export class Countermeasures {
     }
     for (const s of this.s.shots) {
       if (Math.hypot(s.x - h.x, s.y - h.y) > r) continue;
-      this.s.deadfallShot(s);
+      this.s.projectiles.deadfallShot(s);
     }
     this.playEmpBurst(h.x, h.y, h.z, r);
   }
@@ -624,7 +624,7 @@ export class Countermeasures {
     this.empBurstT = 0.42;
     this.empGlitchMax = 0.55;
     this.empGlitchT = this.empGlitchMax;
-    this.s.spawnBlastRing(x, y, z, radius, {
+    this.s.projectiles.spawnBlastRing(x, y, z, radius, {
       tint: 0x48d8ff,
       alpha: 0.78,
       duration: 320,

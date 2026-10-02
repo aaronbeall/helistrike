@@ -48,7 +48,7 @@ export class ReticleHud {
       !spec.guidance &&
       (!!spec.art.tracer || (spec.launch.mode === "muzzle" && !spec.exhaust));
     this.reticle.setTexture(this.reticleTexFor(spec, square));
-    const ammoLeft = this.s.ammo[h.weapon] ?? 0;
+    const ammoLeft = this.s.fireControl.ammo[h.weapon] ?? 0;
     const ammoShown = this.s.remoteFleet.remotePoolDisplayAmmo(h.weapon, ammoLeft);
     const ammoCap = Math.max(
       craftSocketStartingAmmo(spec.ammo, h.spec, h.weapon),
@@ -83,8 +83,8 @@ export class ReticleHud {
         const aimAng = live.gunAngle ?? live.angle;
         const muzzle = this.s.remoteBody.remoteGunMuzzle(live);
         const gunSpec = this.s.loadout[h.weapon]!;
-        const origin = this.s.playerShotOrigin(muzzle, aimAng, gunSpec, h.weapon);
-        const clip = this.s.playerSightAimWorld(origin.x, origin.y, origin.z, aimAng);
+        const origin = this.s.fireControl.playerShotOrigin(muzzle, aimAng, gunSpec, h.weapon);
+        const clip = this.s.fireControl.playerSightAimWorld(origin.x, origin.y, origin.z, aimAng);
         if (this.sightPastMuzzle(origin, clip, h.weapon, { x: live.x, y: live.y })) {
           const from = worldToScreen(origin.x, origin.y, origin.z);
           const to = worldToScreen(clip.x, clip.y, clip.z);
@@ -100,8 +100,8 @@ export class ReticleHud {
     }
     const povRem = this.s.remoteFleet.povHudRemote();
     if (povRem) {
-      const remSpec = this.s.hudLoadout()[this.s.hudWeapon()]!;
-      const ammoLeft = this.s.hudAmmo()[this.s.hudWeapon()] ?? 0;
+      const remSpec = this.s.fireControl.hudLoadout()[this.s.fireControl.hudWeapon()]!;
+      const ammoLeft = this.s.fireControl.hudAmmo()[this.s.fireControl.hudWeapon()] ?? 0;
       const remSlot = Phaser.Math.Clamp(povRem.weapon ?? 0, 0, (povRem.loadout?.length ?? 1) - 1);
       const remSocket = povRem.spec.sockets?.[remSlot];
       const bombDrop = remSpec.launch.mode === "drop";
@@ -112,7 +112,7 @@ export class ReticleHud {
         (!!remSpec.art.tracer || (remSpec.launch.mode === "muzzle" && !remSpec.exhaust));
       this.reticle.setTexture(this.reticleTexFor(remSpec, remSpec.cam.reticle === "square"));
       const hostAmmoId = this.s.remoteFleet.remoteHostAmmoWeapon(remSpec);
-      const hostSlot = hostAmmoId ? this.s.hostWeaponSlot(hostAmmoId) : -1;
+      const hostSlot = hostAmmoId ? this.s.fireControl.hostWeaponSlot(hostAmmoId) : -1;
       const hostSpec = hostAmmoId ? PLAYER_WPNS[hostAmmoId as WpnId] : undefined;
       const remAmmoCap = Math.max(
         hostSpec && hostSlot >= 0
@@ -151,8 +151,8 @@ export class ReticleHud {
       let tipZ = tips[0]?.z ?? povRem.z;
       const pivot = { x: povRem.x, y: povRem.y };
       for (const tip of tips) {
-        const origin = this.s.playerShotOrigin(tip, aimAng, remSpec, remSlot);
-        const clip = this.s.playerSightAimWorld(origin.x, origin.y, origin.z, aimAng);
+        const origin = this.s.fireControl.playerShotOrigin(tip, aimAng, remSpec, remSlot);
+        const clip = this.s.fireControl.playerSightAimWorld(origin.x, origin.y, origin.z, aimAng);
         if (!this.sightPastMuzzle(origin, clip, remSlot, pivot)) continue;
         const from = worldToScreen(origin.x, origin.y, origin.z);
         const to = worldToScreen(clip.x, clip.y, clip.z);
@@ -198,8 +198,8 @@ export class ReticleHud {
       this.sight.clear();
       let drew = false;
       for (const tip of tips) {
-        const origin = this.s.playerShotOrigin(tip, aimAng, spec, h.weapon);
-        const clip = this.s.playerSightAimWorld(origin.x, origin.y, origin.z, aimAng);
+        const origin = this.s.fireControl.playerShotOrigin(tip, aimAng, spec, h.weapon);
+        const clip = this.s.fireControl.playerSightAimWorld(origin.x, origin.y, origin.z, aimAng);
         if (!this.sightPastMuzzle(origin, clip, h.weapon)) continue;
         const from = worldToScreen(origin.x, origin.y, origin.z);
         const to = worldToScreen(clip.x, clip.y, clip.z);
@@ -209,9 +209,9 @@ export class ReticleHud {
       if (!drew) this.sight.clear();
       return;
     }
-    const pylon = this.s.hardpointPylon();
-    const origin = this.s.playerShotOrigin(pylon, h.angle, spec, h.weapon);
-    const clip = this.s.playerSightAimWorld(origin.x, origin.y, origin.z, h.angle);
+    const pylon = this.s.fireControl.hardpointPylon();
+    const origin = this.s.fireControl.playerShotOrigin(pylon, h.angle, spec, h.weapon);
+    const clip = this.s.fireControl.playerSightAimWorld(origin.x, origin.y, origin.z, h.angle);
     if (!this.sightPastMuzzle(pylon, clip, h.weapon)) {
       this.sight.clear();
       return;
@@ -375,12 +375,12 @@ export class ReticleHud {
    */
   drawMouseDesignatorSight(slot = this.s.player.weapon): void {
     const tips = this.designatorSightOrigins(slot);
-    const z = this.s.playerMuzzleZ(slot);
-    const tgt = this.s.reticleAimWorld(this.s.reticleUnit());
+    const z = this.s.fireControl.playerMuzzleZ(slot);
+    const tgt = this.s.fireControl.reticleAimWorld(this.s.fireControl.reticleUnit());
     this.sight.clear();
     let drew = false;
     for (const tip of tips) {
-      const clip = this.s.sightTerrainHitWorld(tip.x, tip.y, z, tgt.x, tgt.y, tgt.z);
+      const clip = this.s.fireControl.sightTerrainHitWorld(tip.x, tip.y, z, tgt.x, tgt.y, tgt.z);
       if (!this.sightPastMuzzle(tip, clip, slot)) continue;
       const from = worldToScreen(tip.x, tip.y, z);
       const to = worldToScreen(clip.x, clip.y, clip.z);
@@ -426,10 +426,10 @@ export class ReticleHud {
   /** Laser sorts under the hull for chin guns; above for roof mounts. */
   syncSightDepth(slot = this.s.player.weapon): void {
     const h = this.s.player;
-    const z = this.s.playerMuzzleZ(slot);
+    const z = this.s.fireControl.playerMuzzleZ(slot);
     const off =
       socketHullPlacement(h.spec.sockets[slot]) === "above"
-        ? this.s.playerMuzzleDepthOff(slot)
+        ? this.s.fireControl.playerMuzzleDepthOff(slot)
         : ZOff.body - 0.2;
     this.sight.setDepth(worldDepth(z, off, h.y));
   }
@@ -465,8 +465,8 @@ export class ReticleHud {
     const spec = this.s.loadout[h.weapon]!;
     const g = this.sight;
     g.clear();
-    const pylon = this.s.dropShotOrigin(h.weapon);
-    const release = this.s.bombReleaseVelocity(spec, pylon.x, pylon.y, aim, 0, h.weapon);
+    const pylon = this.s.fireControl.dropShotOrigin(h.weapon);
+    const release = this.s.fireControl.bombReleaseVelocity(spec, pylon.x, pylon.y, aim, 0, h.weapon);
     this.strokeBombTrajectoryPath(
       pylon.x,
       pylon.y,
