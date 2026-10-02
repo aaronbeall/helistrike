@@ -74,7 +74,7 @@ export class EnemyFire {
       st.cd -= dt;
       const aa = this.s.targeting.enemyWeaponIsAa(wpn);
       const tgt = this.s.targeting.enemyTargetFor(aa, focus);
-      const gp = this.s.gunMountPos(u, gi);
+      const gp = this.s.hostCraft.gunMountPos(u, gi);
       const dist = Math.hypot(tgt.x - gp.x, tgt.y - gp.y);
       const trav = guns[gi]!.traverse;
       // Keep a limited turret inside its arc as the hull turns under it.
@@ -84,7 +84,7 @@ export class EnemyFire {
       if (vision > 0 && dist < wpn.range * vision * 1.15) {
         // Out-of-arc targets park the barrel at the arc edge; the facing check then blocks fire.
         const slewTo = trav ? clampAimToStationArc(want, u.angle, trav) : want;
-        u.turrets[gi] = this.s.steerUnitAngle(u.turrets[gi] ?? 0, slewTo, trackRate, dt);
+        u.turrets[gi] = this.s.unitSprites.steerUnitAngle(u.turrets[gi] ?? 0, slewTo, trackRate, dt);
         if (trav) u.turrets[gi] = clampAimToStationArc(u.turrets[gi]!, u.angle, trav);
       }
       const inRange =
@@ -226,7 +226,7 @@ export class EnemyFire {
       fxInterval,
     });
     if (wpn.kind === "cannon") {
-      const ejectAt = guns.length ? this.s.gunMountPos(u, gunI) : { x: u.x, y: u.y };
+      const ejectAt = guns.length ? this.s.hostCraft.gunMountPos(u, gunI) : { x: u.x, y: u.y };
       const shellZ = sp.aerial ? u.z - 10 : u.z + heightOf(u.kind) + 6;
       // Casing side reads the firing tip; keep the pooled flash's tip intact.
       const flashTip = u.muzzleFireTip;
@@ -267,7 +267,7 @@ export class EnemyFire {
     const guns = gunsOf(u);
     const wpn = guns[gunI]?.weapon ?? sp.weapon;
     const gun = guns[gunI];
-    const hullRot = this.s.troopDrawAng(u) + sp.rotOff;
+    const hullRot = this.s.unitSprites.troopDrawAng(u) + sp.rotOff;
     const hullPivot = spritePivot(textureOf(u.kind));
     const hullImg = this.s.textures.get(resolveSkin(this.s.textures, textureOf(u.kind), u.camo)).getSourceImage() as {
       width: number;

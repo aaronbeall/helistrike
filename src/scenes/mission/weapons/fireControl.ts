@@ -519,7 +519,7 @@ export class FireControl {
 
   /** World position of a craft hardpoint UV. */
   hardpointWorldPos(mount: { x: number; y: number }): { x: number; y: number } {
-    return this.s.craftBodyMountWorldPos(mount);
+    return this.s.hostCraft.craftBodyMountWorldPos(mount);
   }
 
   /** World position of the next hardpoint emit tip (cycles by remaining ammo). */
@@ -551,7 +551,7 @@ export class FireControl {
   ): { x: number; y: number; side: number } {
     const socket = this.s.player.spec.sockets[slot];
     if (socket?.class === "turret" || socket?.class === "fixed") {
-      const tip = this.s.gunTip(this.s.gunVisualIndexForSlot(slot));
+      const tip = this.s.hostCraft.gunTip(this.s.hostCraft.gunVisualIndexForSlot(slot));
       return { x: tip.x, y: tip.y, side: 0 };
     }
     return this.hardpointPylon(slot, afterSpend);
@@ -579,14 +579,14 @@ export class FireControl {
       this.s.tesla.lockId = undefined;
     }
 
-    if (h.phase === "flight" && this.canFire && !this.s.debugMenu.open && !this.s.relief.open && !this.s.help.open && !this.s.exitOpen) {
+    if (h.phase === "flight" && this.canFire && !this.s.debugMenu.open && !this.s.relief.open && !this.s.help.open && !this.s.flow.exitOpen) {
       this.tickAutomaticStations(dt, ptr);
       this.s.remoteAi.tickAutoSkiffLaunch();
     }
 
     this.s.lockOn.tick(dt, ptr);
 
-    if (h.phase !== "flight" || !this.canFire || this.s.debugMenu.open || this.s.relief.open || this.s.help.open || this.s.exitOpen) {
+    if (h.phase !== "flight" || !this.canFire || this.s.debugMenu.open || this.s.relief.open || this.s.help.open || this.s.flow.exitOpen) {
       this.pointerWasDown = down;
       return;
     }
@@ -717,7 +717,7 @@ export class FireControl {
           this.spendAmmo(slot);
           // Turret coils heat the overlay barrel; fixed belly coils skip.
           if (socket.class !== "fixed") {
-            this.s.pulseTurretGunHeat(this.s.gunVisualIndexForSlot(slot));
+            this.s.hostCraft.pulseTurretGunHeat(this.s.hostCraft.gunVisualIndexForSlot(slot));
           }
         }
         this.s.tesla.updateArc(slot, spec, ptr, spend, dt);
@@ -867,7 +867,7 @@ export class FireControl {
         if (tips.length) {
           if (socket.muzzleFire === "simultaneous") {
             for (const uv of tips) {
-              this.s.remoteFleet.launchRemote(spec, slot, yawOff, pitchOff, this.s.craftBodyMountWorldPos(uv));
+              this.s.remoteFleet.launchRemote(spec, slot, yawOff, pitchOff, this.s.hostCraft.craftBodyMountWorldPos(uv));
             }
             return;
           }
@@ -875,7 +875,7 @@ export class FireControl {
             socket.muzzleFire === "alternate"
               ? tips[this.playerGunSide++ % tips.length]!
               : tips[0]!;
-          this.s.remoteFleet.launchRemote(spec, slot, yawOff, pitchOff, this.s.craftBodyMountWorldPos(uv));
+          this.s.remoteFleet.launchRemote(spec, slot, yawOff, pitchOff, this.s.hostCraft.craftBodyMountWorldPos(uv));
           return;
         }
       }
@@ -1123,7 +1123,7 @@ specIsShellGun(spec)
     const muzzleFire = socket.muzzleFire;
     const authored = fixed ? craftSocketPoints(h.spec, socket) : [];
     const mountedGunI =
-      authored.length === 0 ? this.s.gunVisualIndexForSlot(slot, barrelIndex) : 0;
+      authored.length === 0 ? this.s.hostCraft.gunVisualIndexForSlot(slot, barrelIndex) : 0;
     // Fixed sockets use body muzzle UVs; turrets use gun-texture muzzles (dual rails).
     type TipRef =
       | { kind: "body"; uv: { x: number; y: number } }
@@ -1138,7 +1138,7 @@ specIsShellGun(spec)
             : [authored[0]!];
       tipRefs = uvs.map((uv) => ({ kind: "body" as const, uv }));
     } else {
-      const gun = this.s.guns[mountedGunI] ?? this.s.gun;
+      const gun = this.s.hostCraft.guns[mountedGunI] ?? this.s.hostCraft.gun;
       const gunMuzzles = lookupSpriteMuzzles(gun.texture.key);
       if (gunMuzzles.length > 1 && muzzleFire === "simultaneous") {
         tipRefs = gunMuzzles.map((_, i) => ({ kind: "gun" as const, muzzleI: i }));
@@ -1181,8 +1181,8 @@ specIsShellGun(spec)
       const ang = stationAng + spread + yawOff + ((st.helixSide ?? 0) * 0.012);
       const tip =
         tipRef.kind === "body"
-          ? this.s.craftBodyMountWorldPos(tipRef.uv)
-          : this.s.gunTip(mountedGunI, tipRef.muzzleI);
+          ? this.s.hostCraft.craftBodyMountWorldPos(tipRef.uv)
+          : this.s.hostCraft.gunTip(mountedGunI, tipRef.muzzleI);
       const muzzleUv = tipRef.kind === "body" ? tipRef.uv : undefined;
       const gunMuzzleI = tipRef.kind === "gun" ? tipRef.muzzleI : undefined;
       const placeBarrel = gunMuzzleI ?? barrelIndex;
@@ -1286,9 +1286,9 @@ specIsShellGun(spec)
       });
       if (exhaustIsGunSpark(spec.exhaust)) {
         // Slow rail shots never stack the tiny per-round heat Tesla builds by firing constantly.
-        if (!fixed) this.s.pulseTurretGunHeat(mountedGunI, 0.9);
+        if (!fixed) this.s.hostCraft.pulseTurretGunHeat(mountedGunI, 0.9);
         this.s.fx.emitRailMuzzle(tip.x, tip.y, z0, Math.cos(ang), Math.sin(ang), dirz);
-      } else if (!fixed) this.s.pulseTurretGunHeat(mountedGunI);
+      } else if (!fixed) this.s.hostCraft.pulseTurretGunHeat(mountedGunI);
       if (spec.launch.mode === "beam") {
         const beamEnd = worldToScreen(tx, ty, tz);
         const beam = this.s.add
@@ -1324,7 +1324,7 @@ specIsShellGun(spec)
           depthOff: this.playerMuzzleDepthOff(slot, placeBarrel),
         });
         const craft = h.spec;
-        const mountedGun = this.s.guns[mountedGunI] ?? this.s.gun;
+        const mountedGun = this.s.hostCraft.guns[mountedGunI] ?? this.s.hostCraft.gun;
         const mountedGunUv = craftGunMounts(craft)[mountedGunI] ?? craftGunMount(craft);
         const gunTex = mountedGun.texture.key;
         const gunTips = lookupSpriteMuzzles(gunTex);
@@ -1503,8 +1503,8 @@ specIsShellGun(spec)
     });
     const socket = h.spec.sockets[slot];
     if (socket?.class === "turret" && (spec.fire?.muzzleFlash ?? true)) {
-      const gunI = this.s.gunVisualIndexForSlot(slot);
-      this.s.pulseTurretGunHeat(gunI);
+      const gunI = this.s.hostCraft.gunVisualIndexForSlot(slot);
+      this.s.hostCraft.pulseTurretGunHeat(gunI);
       this.missileMuzzle(pylon.x, pylon.y, h.z, release.angle, projectileFxScale("player", spec.fireCd));
     }
   }
@@ -1713,7 +1713,7 @@ specIsShellGun(spec)
     let mount: { x: number; y: number } | undefined;
     if (socket && socket.class === "turret") {
       const mounts = craftGunMounts(craft);
-      const gi = this.s.gunVisualIndexForSlot(slot, barrel);
+      const gi = this.s.hostCraft.gunVisualIndexForSlot(slot, barrel);
       mount = mounts[gi] ?? mounts[0];
     }
     if (!mount && socket) {
@@ -1721,7 +1721,7 @@ specIsShellGun(spec)
       mount = pts[barrel] ?? pts[0];
     }
     if (!mount) return { x: h.x, y: h.y };
-    return this.s.craftBodyMountWorldPos(mount);
+    return this.s.hostCraft.craftBodyMountWorldPos(mount);
   }
 
   /**
@@ -1851,10 +1851,10 @@ specIsShellGun(spec)
   hostStationAlignedTo(wpnId: WpnId, aim: { x: number; y: number }): boolean {
     const slot = this.hostWeaponSlot(wpnId);
     if (slot < 0) return false;
-    const gunI = this.s.gunVisualIndexForSlot(slot);
+    const gunI = this.s.hostCraft.gunVisualIndexForSlot(slot);
     const tip =
-      gunI >= 0 && this.s.guns[gunI]?.visible
-        ? this.s.gunTip(gunI)
+      gunI >= 0 && this.s.hostCraft.guns[gunI]?.visible
+        ? this.s.hostCraft.gunTip(gunI)
         : { x: this.s.player.x, y: this.s.player.y };
     const want = Math.atan2(aim.y - tip.y, aim.x - tip.x);
     const ang = this.s.player.stationAim[slot]?.[0] ?? this.s.player.gunAngle;
@@ -1895,7 +1895,7 @@ specIsShellGun(spec)
     } else if (wasHound) {
       // HOUND POV is HUD-tied; Spectre POV stays sticky when switching to guns.
       this.s.remoteFleet.remoteView = false;
-      this.s.applyThermalMode();
+      this.s.thermal.apply();
     }
   }
 

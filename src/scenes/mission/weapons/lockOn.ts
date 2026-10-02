@@ -600,7 +600,7 @@ export class LockOn {
     const w = this.s.scale.width;
     const hgt = this.s.scale.height;
     const pad = 36;
-    const look = this.s.camLookWorld();
+    const look = this.s.camera.camLookWorld();
     const camHud = this.s.worldToHudScreen(look.x, look.y, look.z);
     const ang = Math.atan2(sy - camHud.sy, sx - camHud.sx);
     const ax = Phaser.Math.Clamp(sx, pad, w - pad);

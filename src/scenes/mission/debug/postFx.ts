@@ -47,7 +47,7 @@ export class PostFxTest {
         cam.postFX.remove(this.bloom);
         this.bloom = undefined;
       }
-      if (this.s.thermalOn) {
+      if (this.s.thermal.on) {
         // Cheap neutral bloom on the thermal image — white, low strength, single blur pass.
         this.bloom = cam.postFX.addBloom(0xffffff, 1.1, 1.1, 0.55, 0.32, 1);
       } else {

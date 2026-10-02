@@ -13,7 +13,7 @@ export class PromptsHud {
   constructor(readonly s: MissionScene) {}
 
   syncLiftPrompt(): void {
-    const show = this.s.player.phase === "ready" && !this.s.mapView && !this.s.over;
+    const show = this.s.player.phase === "ready" && !this.s.camera.mapView && !this.s.over;
     this.liftPrompt.setVisible(show);
     if (!show) return;
     const blink = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(this.s.time.now * 0.0075));
@@ -22,7 +22,7 @@ export class PromptsHud {
 
   syncRemotePrompt(slotTop?: number): void {
     const show =
-      !this.s.mapView &&
+      !this.s.camera.mapView &&
       !this.s.over &&
       !!this.s.remoteFleet.pilotingRemote() &&
       !this.s.remoteFleet.povHudRemote();
@@ -53,7 +53,7 @@ export class PromptsHud {
 
   /** Persistent "TOO HIGH TO DOCK" while the player-flown host blocks a ground dock. */
   syncDockAglAlert(): void {
-    const show = !this.s.mapView && !this.s.over && this.dockAglBlocked();
+    const show = !this.s.camera.mapView && !this.s.over && this.dockAglBlocked();
     this.dockAglAlertTxt.setVisible(show);
     if (!show) return;
     const lp = this.s.hudLocal(this.s.scale.width / 2, this.s.scale.height - 130);

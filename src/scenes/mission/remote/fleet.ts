@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { planeLookCam } from "../shared";
+import { planeLookCam } from "../camera/camera";
 import { payloadIsRemote, payloadIsCallStrike, payloadIsHostFire } from "../../../sim/payload";
 import { nextId, PLAYER_WPNS, type PlayerWpnSpec, type WpnId } from "../../../sim/combat";
 import { initRemoteLoadout, remoteHasPovHud, remoteRotorParts, remoteSpecOf, type RemoteCraft, type BayRemote, type RemoteSpec } from "../../../sim/remote";
@@ -134,7 +134,7 @@ export class RemoteFleet {
       this.s.remotes.some((r) => !r.detonate && !r.dock && !r.spec.ai && !r.spec.pilotable);
     if (!canView) return;
     this.remoteView = true;
-    this.s.applyThermalMode();
+    this.s.thermal.apply();
   }
 
   exitRemoteView(): void {
@@ -150,7 +150,7 @@ export class RemoteFleet {
       }
       hound.dock = true;
       this.remoteView = false;
-      this.s.applyThermalMode();
+      this.s.thermal.apply();
       return;
     }
     // POV-HUD remotes (HOUND / Raptor): Q drops the view and leaves the slot so the
@@ -168,7 +168,7 @@ export class RemoteFleet {
           break;
         }
       }
-      this.s.applyThermalMode();
+      this.s.thermal.apply();
       return;
     }
     // Legacy HOUND / non-socket pilotable: Q releases by switching off its slot.
@@ -186,11 +186,11 @@ export class RemoteFleet {
       }
     }
     if (!this.remoteView) {
-      this.s.applyThermalMode();
+      this.s.thermal.apply();
       return;
     }
     this.remoteView = false;
-    this.s.applyThermalMode();
+    this.s.thermal.apply();
   }
 
   /** Peaceful dock radius for remotes returning to the host craft. */
@@ -243,7 +243,7 @@ export class RemoteFleet {
       r.dock = true;
       any = true;
     }
-    if (any) this.s.applyThermalMode();
+    if (any) this.s.thermal.apply();
   }
 
   /** Toggle dropship FOLLOW / HOLD while piloting a POV remote with `hostEscort`. */
@@ -422,7 +422,7 @@ export class RemoteFleet {
         : undefined;
       if (!remoteSpec.ai || selectedKind === remoteSpec.kind) {
         this.remoteView = true;
-        this.s.applyThermalMode();
+        this.s.thermal.apply();
       }
     }
   }
@@ -577,7 +577,7 @@ export class RemoteFleet {
     if (socket) {
       const pts = craftSocketPoints(h.spec, socket);
       if (pts[0]) {
-        const p = this.s.craftBodyMountWorldPos(pts[0]);
+        const p = this.s.hostCraft.craftBodyMountWorldPos(pts[0]);
         return { x: p.x, y: p.y, z: h.z };
       }
     }
@@ -686,7 +686,7 @@ export class RemoteFleet {
     ) {
       // HOUND slot selected but the vehicle is gone — drop view so a fresh drop can launch.
       this.remoteView = false;
-      this.s.applyThermalMode();
+      this.s.thermal.apply();
     }
 
     const pilotedId = this.pilotingRemote()?.id;
@@ -744,8 +744,8 @@ export class RemoteFleet {
       }
       if (r.detonate) {
         this.releaseRemotePilotCraft(r.id);
-        this.s.beginImpactCamLinger(r.x, r.y, {
-          thermal: r.spec.thermal ? this.s.craftSensorPalette() : undefined,
+        this.s.camera.beginImpactCamLinger(r.x, r.y, {
+          thermal: r.spec.thermal ? this.s.thermal.craftSensorPalette() : undefined,
           hold: 1.65,
         });
         this.s.projectiles.explode(r.x, r.y, r.z, r.spec.detonateBlast, r.spec.detonateDmg, undefined, r.vx, r.vy, r.vz, false, "guided-missile", 1);
@@ -772,7 +772,7 @@ export class RemoteFleet {
         !r.dock
       ) {
         const body = this.s.remoteBody.remoteBodyImage(r);
-        if (body?.visible) this.s.emitExhaustPlume(r, dt, body);
+        if (body?.visible) this.s.hostCraft.emitExhaustPlume(r, dt, body);
       }
       if (
         r.spec.craftLook &&
@@ -783,7 +783,7 @@ export class RemoteFleet {
         this.s.remoteBody.emitRemotePlaneFx(r, dt);
       }
     }
-    this.s.applyThermalMode();
+    this.s.thermal.apply();
   }
 
   tickRemoteCamBlend(dt: number): void {

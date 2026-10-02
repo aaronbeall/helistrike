@@ -174,6 +174,8 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [ ] Switching from thermal to normal reveals pink graphics
 * [ ] Power lines -- poles and wires that break/fall, lots of sparks
 * [ ] Dropship artillery strike should not follow the player reticle while active -- it messes it up
+* [ ] Map/theater view draws the current-view frame in the wrong location -- likely the captured play-camera view vs the map's zoom/projection pose (pre-existing)
+* [ ] Sustained Starscream fire causes big framerate drops and short freezes (GC?) -- energy ribbons allocate per frame across dozens of live shots + bomblets; reuse buffers, profile explosion cost (pre-existing)
 
 ## Achievements
 

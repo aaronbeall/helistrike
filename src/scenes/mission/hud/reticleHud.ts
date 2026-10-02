@@ -402,21 +402,21 @@ export class ReticleHud {
     if (socket?.class === "turret") {
       const barrelN = Math.max(1, craftSocketBarrelCount(h.spec, slot));
       for (let b = 0; b < barrelN; b++) {
-        const gunI = this.s.gunVisualIndexForSlot(slot, b);
-        const gun = this.s.guns[gunI] ?? this.s.gun;
+        const gunI = this.s.hostCraft.gunVisualIndexForSlot(slot, b);
+        const gun = this.s.hostCraft.guns[gunI] ?? this.s.hostCraft.gun;
         if (!gun?.visible) continue;
         const muzzles = lookupSpriteMuzzles(gun.texture.key);
         if (!muzzles.length) continue;
-        for (let i = 0; i < muzzles.length; i++) tips.push(this.s.gunTip(gunI, i));
+        for (let i = 0; i < muzzles.length; i++) tips.push(this.s.hostCraft.gunTip(gunI, i));
       }
     } else if (socket) {
       // fixed → muzzle UVs; hardpoint → this socket's stores only (not every rack).
       const mounts = craftSocketPoints(h.spec, socket);
-      if (mounts.length) tips = mounts.map((m) => this.s.craftBodyMountWorldPos(m));
+      if (mounts.length) tips = mounts.map((m) => this.s.hostCraft.craftBodyMountWorldPos(m));
     }
     if (!tips.length) {
       const bodyMuzzles = craftFixedMuzzles(h.spec);
-      if (bodyMuzzles.length) tips = bodyMuzzles.map((m) => this.s.craftBodyMountWorldPos(m));
+      if (bodyMuzzles.length) tips = bodyMuzzles.map((m) => this.s.hostCraft.craftBodyMountWorldPos(m));
       else tips = [{ x: h.x, y: h.y }];
     }
     // One beam at the average multi-muzzle / multi-gun tip.
@@ -447,7 +447,7 @@ export class ReticleHud {
       const h = this.s.player;
       const socket = h.spec.sockets[slot];
       if (socket?.class === "turret") {
-        const gun = this.s.guns[this.s.gunVisualIndexForSlot(slot)] ?? this.s.gun;
+        const gun = this.s.hostCraft.guns[this.s.hostCraft.gunVisualIndexForSlot(slot)] ?? this.s.hostCraft.gun;
         if (gun?.visible) {
           const at = screenToWorldAtZ(gun.x, gun.y, h.z);
           px = at.x;
@@ -544,7 +544,7 @@ export class ReticleHud {
     const g = this.sight;
     if (clear) g.clear();
     const missile = kind === "missile";
-    const thermal = this.s.thermalOn;
+    const thermal = this.s.thermal.on;
     // Thermal: encode as semantic heat (magenta) so the post shader reads the beam as hot.
     const line = thermal ? thermalSignalTint(1) : missile ? 0xff2a18 : 0x4dff62;
     const glow = thermal ? thermalSignalTint(0.92) : missile ? 0xff6a3a : line;
@@ -656,22 +656,22 @@ export class ReticleHud {
     let tips: { x: number; y: number }[] = [];
     if (socket?.class === "fixed") {
       const muzzles = craftSocketPoints(h.spec, socket);
-      if (muzzles.length) tips = muzzles.map((m) => this.s.craftBodyMountWorldPos(m));
+      if (muzzles.length) tips = muzzles.map((m) => this.s.hostCraft.craftBodyMountWorldPos(m));
     } else if (socket?.class === "turret") {
       const barrelN = Math.max(1, craftSocketBarrelCount(h.spec, slot));
       for (let b = 0; b < barrelN; b++) {
-        const gunI = this.s.gunVisualIndexForSlot(slot, b);
-        const gun = this.s.guns[gunI] ?? this.s.gun;
+        const gunI = this.s.hostCraft.gunVisualIndexForSlot(slot, b);
+        const gun = this.s.hostCraft.guns[gunI] ?? this.s.hostCraft.gun;
         if (!gun?.visible) continue;
         const muzzles = lookupSpriteMuzzles(gun.texture.key);
         if (!muzzles.length) continue;
-        for (let i = 0; i < muzzles.length; i++) tips.push(this.s.gunTip(gunI, i));
+        for (let i = 0; i < muzzles.length; i++) tips.push(this.s.hostCraft.gunTip(gunI, i));
       }
     }
     if (!tips.length) {
       const bodyMuzzles = craftFixedMuzzles(h.spec);
-      if (bodyMuzzles.length) tips = bodyMuzzles.map((m) => this.s.craftBodyMountWorldPos(m));
-      else tips = [this.s.gunTip(this.s.gunVisualIndexForSlot(slot))];
+      if (bodyMuzzles.length) tips = bodyMuzzles.map((m) => this.s.hostCraft.craftBodyMountWorldPos(m));
+      else tips = [this.s.hostCraft.gunTip(this.s.hostCraft.gunVisualIndexForSlot(slot))];
     }
     return collapseSightTips(tips);
   }

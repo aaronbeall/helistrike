@@ -56,10 +56,10 @@ export class Refractor {
         socket.muzzleFire === "alternate" && authored.length > 1
           ? authored[this.s.fireControl.playerGunSide++ % authored.length]
           : authored[0];
-      tip = uv ? this.s.craftBodyMountWorldPos(uv) : this.s.fireControl.hardpointPylon(slot, true);
+      tip = uv ? this.s.hostCraft.craftBodyMountWorldPos(uv) : this.s.fireControl.hardpointPylon(slot, true);
     } else {
-      const gunI = this.s.gunVisualIndexForSlot(slot, barrelIndex);
-      tip = this.s.gunTip(gunI);
+      const gunI = this.s.hostCraft.gunVisualIndexForSlot(slot, barrelIndex);
+      tip = this.s.hostCraft.gunTip(gunI);
       ang = h.stationAim[slot]?.[barrelIndex] ?? h.gunAngle;
     }
     const tipZ = h.z + ZOff.shot;
@@ -392,7 +392,7 @@ export class Refractor {
     );
     const at = worldToScreen(x, y, z);
     this.s.fx.spawnImpactFlash(at.x, at.y, z, 0xd090ff, 22 * at.scale, 0.7, 120);
-    this.s.shake = Math.min(5.5, this.s.shake + (ground ? 0.55 : 0.85));
+    this.s.camera.shake = Math.min(5.5, this.s.camera.shake + (ground ? 0.55 : 0.85));
   }
 
   tick(dt: number): void {

@@ -41,7 +41,7 @@ export class HelpPanel {
 
   toggle(force?: boolean): void {
     const want = force ?? !this.open;
-    if (want && (this.s.mapWant || this.s.mapBlend > 0.02 || this.s.over)) return;
+    if (want && (this.s.camera.mapWant || this.s.camera.mapBlend > 0.02 || this.s.over)) return;
     if (want && this.s.debugMenu.open) this.s.debugMenu.toggle(false);
     if (want && this.s.relief.open) this.s.relief.toggle(false);
     this.fieldManual.toggle(want);

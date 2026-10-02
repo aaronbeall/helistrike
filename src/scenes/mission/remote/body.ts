@@ -11,6 +11,7 @@ import { lookupSpriteMuzzles, lookupSpritePoints, lookupSpriteOrigin } from "../
 import { spriteUvPos, FX_VARIANTS } from "../../../art/sprites";
 import { groundZ, worldToScreen, screenToWorldAtZ, cameraPointVisible, projectHeading, isWater, sampleBiome } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
+import type { HostCraft } from "../render/hostCraft";
 import { simParticleTexKey, simParticleLook } from "../../../render/simParticleLook";
 import { applyThermalHeat } from "../../../render/thermal";
 
@@ -985,7 +986,7 @@ export class RemoteBody {
       const bodyDepth =
         (body.getData("tiltWrap") as Phaser.GameObjects.Container | undefined)?.depth ??
         body.depth;
-      this.s.emitWingTipContrails({
+      this.s.hostCraft.emitWingTipContrails({
         dt,
         tips,
         bank: Math.abs(r.roll ?? 0),
@@ -1020,7 +1021,7 @@ export class RemoteBody {
       for (let mi = 0; mi < mounts.length; mi++) {
         const mount = mounts[mi]!;
         const { flame, glow } = this.ensureRemoteExhaustVisual(this.remoteExhaustVisCursor++);
-        this.s.paintExhaustNozzle(mi, mount, {
+        this.s.hostCraft.paintExhaustNozzle(mi, mount, {
           pose,
           jetAng,
           glowAng,
@@ -1202,7 +1203,7 @@ export class RemoteBody {
     }
     const kids = this.remoteG.getChildren() as Phaser.GameObjects.Image[];
     for (const k of kids) {
-      this.s.unwrapTilt(k);
+      this.s.hostCraft.unwrapTilt(k);
       k.setVisible(false);
     }
     this.s.remotes.forEach((r, i) => {
@@ -1228,14 +1229,14 @@ export class RemoteBody {
       const bodyDepth = worldDepth(r.z, ZOff.body, r.y);
       const bodyScale = sc * at.scale;
       sh.setVisible(true).setOrigin(orig.x, orig.y);
-      this.s.applyCastShadow(sh, r.x, r.y, r.z, key, r.angle + rotOff, sc);
+      this.s.hostCraft.applyCastShadow(sh, r.x, r.y, r.z, key, r.angle + rotOff, sc);
       if (im.texture.key !== key) im.setTexture(key);
       im.setOrigin(orig.x, orig.y);
       // Craft-backed plane remotes: same billboard bank as player craft.
       const hull = r.spec.craftLook ? craftOf(r.spec.craftLook) : undefined;
       const planeBank = !!hull && craftControlScheme(hull) === "plane" && r.roll != null;
       if (planeBank) {
-        const wrap = this.s.ensureTiltWrap(im);
+        const wrap = this.s.hostCraft.ensureTiltWrap(im);
         const bankAng = (r.roll ?? 0) * 1.05;
         const wingScale = Math.max(0.24, Math.abs(Math.cos(bankAng)));
         const alongScale = 1 - Math.abs(r.pitch ?? 0) * 0.08;
@@ -1253,7 +1254,7 @@ export class RemoteBody {
           .setScale(bodyScale)
           .setDepth(bodyDepth);
       }
-      applyThermalHeat(im, this.s.thermalOn, 0.72);
+      applyThermalHeat(im, this.s.thermal.on, 0.72);
       const bodyPose = this.remoteBodyDrawPose(im);
       const rotorParts = remoteRotorParts(r.spec);
       for (let ri = 0; ri < rotorParts.length; ri++) {
@@ -1268,7 +1269,7 @@ export class RemoteBody {
         const along = r.spec.craftLook ? craftRotorAlongScale(craftOf(r.spec.craftLook)) : 1;
         const rotorSc = craftCompositePartScale(part, rotor.width, bodyScale);
         if (along < 0.999) {
-          const wrap = this.s.ensureTiltWrap(rotor);
+          const wrap = this.s.hostCraft.ensureTiltWrap(rotor);
           wrap
             .setVisible(true)
             .setPosition(hub.x, hub.y)
@@ -1277,7 +1278,7 @@ export class RemoteBody {
             .setDepth(worldDepth(r.z, ZOff.rotor + ri * 0.001, r.y));
           rotor.setVisible(true).setPosition(0, 0).setRotation((part.spinSign ?? -1) * r.rotor).setScale(1);
         } else {
-          this.s.unwrapTilt(rotor);
+          this.s.hostCraft.unwrapTilt(rotor);
           rotor
             .setVisible(true)
             .setOrigin(part.origin.x, part.origin.y)
@@ -1286,19 +1287,19 @@ export class RemoteBody {
             .setScale(rotorSc)
             .setDepth(worldDepth(r.z, ZOff.rotor + ri * 0.001, r.y));
         }
-        applyThermalHeat(rotor, this.s.thermalOn, 0.48);
+        applyThermalHeat(rotor, this.s.thermal.on, 0.48);
       }
       if (craftGunId(r.spec) && gunIm) {
         this.poseRemoteGun(r, bodyPose, key, gunIm);
         gunIm.setDepth(worldDepth(r.z, ZOff.body + 0.4, r.y));
-        applyThermalHeat(gunIm, this.s.thermalOn, 0.55);
+        applyThermalHeat(gunIm, this.s.thermal.on, 0.55);
       }
     });
   }
 
   /** Screen pose for UV mounts on a remote hull (accounts for bank tilt wrap). */
-  remoteBodyDrawPose(im: Phaser.GameObjects.Image): ReturnType<MissionScene["imageDrawPose"]> {
-    return this.s.imageDrawPose(im);
+  remoteBodyDrawPose(im: Phaser.GameObjects.Image): ReturnType<HostCraft["imageDrawPose"]> {
+    return this.s.hostCraft.imageDrawPose(im);
   }
 
   emitRemoteDamageFx(): void {
@@ -1315,7 +1316,7 @@ export class RemoteBody {
       if (!body?.visible || !cameraPointVisible(r.z, r.y)) continue;
       while (r.dmgSites.length > want) r.dmgSites.pop();
       while (r.dmgSites.length < want) {
-        const uv = this.s.sampleSolidUv(body.texture.key, r.spec.radius);
+        const uv = this.s.unitSprites.sampleSolidUv(body.texture.key, r.spec.radius);
         r.dmgSites.push({ ...uv, scale: range(0.38, 0.75) });
       }
       const { fire, smoke } = this.s.fx.pairHurt(r.z, r.y, this.s.fx.flame, this.s.fx.hurtSmoke);
@@ -1363,7 +1364,7 @@ export class RemoteBody {
     const h = this.s.player;
     const z = h.z + h.spec.height * 0.55;
     const face = h.gunAngle;
-    for (const gun of this.s.guns) {
+    for (const gun of this.s.hostCraft.guns) {
       if (!gun.visible) continue;
       const uv = lookupSpritePoints(gun.texture.key, "antenna")[0];
       if (!uv) continue;
@@ -1371,7 +1372,7 @@ export class RemoteBody {
       const at = screenToWorldAtZ(scr.x, scr.y, z);
       return { x: at.x, y: at.y, z, face };
     }
-    const body = this.s.body;
+    const body = this.s.hostCraft.body;
     if (body?.visible) {
       const uv = lookupSpritePoints(body.texture.key, "antenna")[0];
       if (uv) {

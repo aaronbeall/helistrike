@@ -207,7 +207,7 @@ export class DebugOverlays {
 
   drawAi(): void {
     this.aiGfx.clear();
-    if (!this.aiOn || this.s.mapWorldHidden) {
+    if (!this.aiOn || this.s.camera.mapWorldHidden) {
       for (const t of this.aiLabels) t.setVisible(false);
       for (const t of this.escortAiLabels) t.setVisible(false);
       return;

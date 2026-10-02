@@ -223,8 +223,8 @@ export class GroundMarks {
 
   syncThermalWreckMark(mark: ThermalWreckMark): void {
     const visible =
-      this.s.thermalOn &&
-      this.s.mapBlend < 0.12 &&
+      this.s.thermal.on &&
+      this.s.camera.mapBlend < 0.12 &&
       cameraPointVisible(mark.z, mark.y);
     mark.image.setVisible(visible);
     if (!visible) return;
@@ -415,7 +415,7 @@ export class GroundMarks {
   }
 
   syncEmberGlow(g: EmberGlow): void {
-    if (!cameraPointVisible(g.z, g.y) || this.s.mapBlend > 0.5) {
+    if (!cameraPointVisible(g.z, g.y) || this.s.camera.mapBlend > 0.5) {
       g.image.setVisible(false);
       g.bloom.setVisible(false);
       return;
@@ -434,7 +434,7 @@ export class GroundMarks {
     const crackle = 0.5 + 0.5 * w3;
     const flicker = 0.38 + 0.62 * pulse * (0.65 + 0.35 * crackle);
     const sputter = Phaser.Math.Linear(flicker, 0.2 + 0.8 * flicker * flicker, 1 - base);
-    const thermal = this.s.thermalOn;
+    const thermal = this.s.thermal.on;
     const crispA = base * sputter * (thermal ? 0.5 : 0.98);
     const bloomA = base * sputter * (thermal ? 0.28 : 0.58);
     const at = worldToScreen(g.x, g.y, g.z);

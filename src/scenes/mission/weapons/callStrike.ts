@@ -258,7 +258,7 @@ export class CallStrike {
     i: number
   ): void {
     const at = worldToScreen(m.x, m.y, m.z + 10);
-    if (!this.s.projectedInView(at.x, at.y, 80) || m.firstImpactEta <= 0) {
+    if (!this.s.camera.projectedInView(at.x, at.y, 80) || m.firstImpactEta <= 0) {
       const existing = this.etaTxt[i];
       if (existing?.active) existing.setVisible(false);
       return;

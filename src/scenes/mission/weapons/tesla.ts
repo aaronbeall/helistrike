@@ -79,12 +79,12 @@ export class Tesla {
     if (socket?.class === "fixed") {
       const authored = craftSocketPoints(h.spec, socket);
       if (authored[0]) {
-        const at = this.s.craftBodyMountWorldPos(authored[0]);
+        const at = this.s.hostCraft.craftBodyMountWorldPos(authored[0]);
         return { x: at.x, y: at.y, z };
       }
     }
-    const gunI = this.s.gunVisualIndexForSlot(slot);
-    const tip = this.s.gunTip(gunI);
+    const gunI = this.s.hostCraft.gunVisualIndexForSlot(slot);
+    const tip = this.s.hostCraft.gunTip(gunI);
     return { x: tip.x, y: tip.y, z };
   }
 

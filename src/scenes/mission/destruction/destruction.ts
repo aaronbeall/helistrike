@@ -138,7 +138,7 @@ export class Destruction {
           this.s.fx.emitBigBoomDebris(u.x, u.y, hz + 8, boomSize, kdx, kdy, kdz);
         }
       }
-      if (building) this.s.emitDustShock(u.x, u.y, 1);
+      if (building) this.s.hostCraft.emitDustShock(u.x, u.y, 1);
       // Smoke puffs from a few footprint points, not only the center.
       const smokeN = 16;
       const smokeClusters = Math.min(5, smokeN);
@@ -154,7 +154,7 @@ export class Destruction {
           Math.ceil(smokeN / smokeClusters)
         );
       }
-      this.s.shake = Math.min(10, this.s.shake + 3);
+      this.s.camera.shake = Math.min(10, this.s.camera.shake + 3);
       // Buildings/vehicles: weak splash at ~3× body radius (FX blast can be larger).
       if (!skipSplash && !sp.organic) {
         if (mech) {
@@ -280,7 +280,7 @@ export class Destruction {
           hullKey,
           u.x,
           u.y,
-          this.s.troopDrawAng(u) + Math.PI / 2,
+          this.s.unitSprites.troopDrawAng(u) + Math.PI / 2,
           hs.sx,
           0.95,
           hp.x,
@@ -315,11 +315,11 @@ export class Destruction {
             const raw = this.s.textures.exists(g.hulk ?? "") ? g.hulk! : g.tex;
             const turretKey = resolveSkin(this.s.textures, raw, u.camo);
             const liveKey = resolveSkin(this.s.textures, g.tex, u.camo);
-            const liveSpan = this.s.texSpan(liveKey);
-            const hulkSpan = this.s.texSpan(turretKey);
+            const liveSpan = this.s.unitSprites.texSpan(liveKey);
+            const hulkSpan = this.s.unitSprites.texSpan(turretKey);
             // Slightly under live gun size so pop hulks read as wreckage, not spare parts.
             const scale = (g.scale ?? 1) * (liveSpan / Math.max(hulkSpan, 1)) * 0.86;
-            const at = this.s.gunMountPos(u, gi);
+            const at = this.s.hostCraft.gunMountPos(u, gi);
             // Turret hulks are large textures; don't inherit full debris trailR bump.
             throwOff(turretKey, (u.turrets[gi] ?? u.turret) + Math.PI / 2, at.x, at.y, scale, {
               trailR: this.s.trails.texTrailR(turretKey) * scale * 0.38,
@@ -330,12 +330,12 @@ export class Destruction {
           const rotorMounts = rotorMountsOf(textureOf(u.kind));
           sp.rotors.forEach((r, ri) => {
             const rk = this.s.textures.exists(r.hulk ?? "") ? r.hulk! : r.tex;
-            const at = this.s.mountAt(u, resolveSkin(this.s.textures, textureOf(u.kind), u.camo), r.mount);
+            const at = this.s.hostCraft.mountAt(u, resolveSkin(this.s.textures, textureOf(u.kind), u.camo), r.mount);
             const scale = this.rotorHulkScale(r.tex, rk, r.scale ?? 1);
             // Full heli discs get pin flames; angled props / drone pads do not.
             const heliRotor = r.tex.includes("rotor") && r.tex !== "enemy_drone_rotor";
             const flamePts = heliRotor
-              ? this.s.sampleSolidLocalPoints(
+              ? this.s.unitSprites.sampleSolidLocalPoints(
                   rk,
                   radius(u.kind) / Math.max(scale, 0.01),
                   2 + ((Math.random() * 3) | 0),
@@ -364,11 +364,11 @@ export class Destruction {
           const d = sp.dish;
           const raw = this.s.textures.exists(d.hulk ?? "") ? d.hulk! : `${d.tex}_hulk`;
           const dishKey = this.s.textures.exists(raw) ? raw : d.tex;
-          const liveSpan = this.s.texSpan(d.tex);
-          const hulkSpan = this.s.texSpan(dishKey);
+          const liveSpan = this.s.unitSprites.texSpan(d.tex);
+          const hulkSpan = this.s.unitSprites.texSpan(dishKey);
           const scale = (d.scale ?? 1) * (liveSpan / Math.max(hulkSpan, 1)) * 0.82;
-          const at = this.s.mountAt(u, resolveSkin(this.s.textures, textureOf(u.kind), u.camo), d.mount);
-          const span = this.s.texSpan(dishKey) * scale * 0.42;
+          const at = this.s.hostCraft.mountAt(u, resolveSkin(this.s.textures, textureOf(u.kind), u.camo), d.mount);
+          const span = this.s.unitSprites.texSpan(dishKey) * scale * 0.42;
           const n = 3 + ((Math.random() * 3) | 0);
           const flamePts: { lx: number; ly: number; sc: number }[] = [{ lx: 0, ly: 0, sc: 0.72 }];
           for (let i = 0; i < n; i++) {
@@ -547,12 +547,12 @@ export class Destruction {
   /** On-screen rotor span (pre-zScale), matching syncHeli / syncUnitSprites. */
   liveRotorDrawPx(tex: string, partScale = 1): number {
     if (tex.includes("rotor") && tex !== "enemy_drone_rotor") return rotorDrawSpan(tex, partScale);
-    return this.s.texSpan(tex) * partScale;
+    return this.s.unitSprites.texSpan(tex) * partScale;
   }
 
   /** Debris scale so a rotor hulk draws ~60% of the live rotor size. */
   rotorHulkScale(liveTex: string, hulkKey: string, partScale = 1): number {
-    return (this.liveRotorDrawPx(liveTex, partScale) * 0.6) / Math.max(this.s.texSpan(hulkKey), 1);
+    return (this.liveRotorDrawPx(liveTex, partScale) * 0.6) / Math.max(this.s.unitSprites.texSpan(hulkKey), 1);
   }
 
   /** Hull sinks below the waterline; guns still pop off as normal debris. */
@@ -565,10 +565,10 @@ export class Destruction {
         const raw = this.s.textures.exists(g.hulk ?? "") ? g.hulk! : g.tex;
         const turretKey = resolveSkin(this.s.textures, raw, u.camo);
         const liveKey = resolveSkin(this.s.textures, g.tex, u.camo);
-        const liveSpan = this.s.texSpan(liveKey);
-        const hulkSpan = this.s.texSpan(turretKey);
+        const liveSpan = this.s.unitSprites.texSpan(liveKey);
+        const hulkSpan = this.s.unitSprites.texSpan(turretKey);
         const scale = (g.scale ?? 1) * (liveSpan / Math.max(hulkSpan, 1)) * 0.86;
-        const at = this.s.gunMountPos(u, gi);
+        const at = this.s.hostCraft.gunMountPos(u, gi);
         const a = Math.random() * Math.PI * 2;
         const throwSp = range(70, 160);
         this.admitDebris({
@@ -710,7 +710,7 @@ export class Destruction {
         x += mx * Math.cos(hullRot) - my * Math.sin(hullRot);
         y += mx * Math.sin(hullRot) + my * Math.cos(hullRot);
       } else if (opts.kind) {
-        const at = this.s.mountAt(
+        const at = this.s.hostCraft.mountAt(
           {
             id: 0,
             kind: opts.kind,
@@ -745,7 +745,7 @@ export class Destruction {
       const fullRotor =
         !propDisc && r.tex.includes("rotor") && r.tex !== "enemy_drone_rotor";
       const flamePts = fullRotor
-        ? this.s.sampleSolidLocalPoints(
+        ? this.s.unitSprites.sampleSolidLocalPoints(
             rk,
             opts.radius / Math.max(scale, 0.01),
             2 + ((Math.random() * 3) | 0),
@@ -846,13 +846,13 @@ export class Destruction {
     this.playerDeathLiveY = h.y;
     this.playerDeathLiveZ = h.z;
     // Death stinger waits until crash + simmer + delay (see end(false)).
-    this.s.unwrapTilt(this.s.body);
-    this.s.body.setVisible(false);
-    for (const rotor of this.s.rotors) rotor.setVisible(false);
-    for (const gun of this.s.guns) gun.setVisible(false);
-    this.s.gun.setVisible(false);
-    for (const glow of this.s.gunHeatGlows) glow.setVisible(false);
-    this.s.shadow.setVisible(false);
+    this.s.hostCraft.unwrapTilt(this.s.hostCraft.body);
+    this.s.hostCraft.body.setVisible(false);
+    for (const rotor of this.s.hostCraft.rotors) rotor.setVisible(false);
+    for (const gun of this.s.hostCraft.guns) gun.setVisible(false);
+    this.s.hostCraft.gun.setVisible(false);
+    for (const glow of this.s.hostCraft.gunHeatGlows) glow.setVisible(false);
+    this.s.hostCraft.shadow.setVisible(false);
     const hz = h.z + h.height * 0.5;
     const blast = 56;
     const body: Footprint = { shape: "circle", x: h.x, y: h.y, r: h.spec.radius };
@@ -863,7 +863,7 @@ export class Destruction {
       this.s.fx.smoke.setDepth(worldDepth(h.z, 0.2, o.y));
       this.s.fx.emitBudgeted("smoke", this.s.fx.smoke, smokeAt.x, smokeAt.y + 12, 4);
     }
-    this.s.shake = Math.min(10, this.s.shake + 4);
+    this.s.camera.shake = Math.min(10, this.s.camera.shake + 4);
     const n = 8;
     const keys = debrisKeys("heli");
     for (let i = 0; i < n; i++) {
@@ -1255,8 +1255,8 @@ export class Destruction {
   impactHeliCrash(f: Debris): void {
     const blast = 38 + (f.impactDust ?? 0.5) * 36;
     this.s.fx.heFireBurst(f.x, f.y, f.z + 6, 0, 0, 1, blast, false, 1.15, 0.42);
-    this.s.emitDustShock(f.x, f.y, f.impactDust ?? 0.5);
-    this.s.shake = Math.min(10, this.s.shake + 2.4);
+    this.s.hostCraft.emitDustShock(f.x, f.y, f.impactDust ?? 0.5);
+    this.s.camera.shake = Math.min(10, this.s.camera.shake + 2.4);
     let sc = Phaser.Math.Linear(0.85, 1.45, f.impactDust ?? 0.5) * range(0.9, 1.2);
     if (f.playerCrash) sc *= 1.12;
     this.s.groundMarks.stampBlastCrater(f.x, f.y, sc);
@@ -1274,14 +1274,14 @@ export class Destruction {
   settleDebris(f: Debris): void {
     if (f.linger) this.s.groundMarks.stampLightBlast(f.x, f.y, f.vx, f.vy);
     if (f.dishFlat) {
-      this.s.emitDustShock(f.x, f.y, 0.95);
+      this.s.hostCraft.emitDustShock(f.x, f.y, 0.95);
       this.s.groundMarks.stampDirtSmears(f.x, f.y, f.vx || range(-40, 40), f.vy || range(-40, 40));
     }
     if (f.crashPop && !isWater(this.s.world, f.x, f.y)) {
       const sc = f.crashCraterScale ?? 0.9;
       this.s.groundMarks.stampBlastCrater(f.x, f.y, sc);
       this.s.groundMarks.spawnCraterEmbers(f.x, f.y, this.s.groundMarks.softCapBlastCraterScale(sc));
-      this.s.emitDustShock(f.x, f.y, 0.55);
+      this.s.hostCraft.emitDustShock(f.x, f.y, 0.55);
     }
     f.settled = true;
     f.vx = 0;
@@ -1378,7 +1378,7 @@ export class Destruction {
     let size = (r * Math.min(f.scale ?? 1, 1)) / (f.linger ? 6 : 6.5);
     // Dish trails keep trailR small for emit rate; lifespan should follow the big sprite.
     if (f.dishFlat || f.flamePts?.length) {
-      size = Math.max(size, (this.s.texSpan(f.key) * (f.scale ?? 1)) / 48);
+      size = Math.max(size, (this.s.unitSprites.texSpan(f.key) * (f.scale ?? 1)) / 48);
     }
     return size;
   }
@@ -1458,7 +1458,7 @@ export class Destruction {
     if (f.heliCrash) return;
     if (f.shellEject) return;
     if (f.trailLx == null || f.trailLy == null) {
-      const rad = Math.max(3, Math.min((this.s.texSpan(f.key) * (f.scale ?? 1)) * 0.42, f.trailR * 0.9));
+      const rad = Math.max(3, Math.min((this.s.unitSprites.texSpan(f.key) * (f.scale ?? 1)) * 0.42, f.trailR * 0.9));
       const a = Math.random() * Math.PI * 2;
       const d = range(0.28, 0.92) * rad;
       f.trailLx = Math.cos(a) * d;
@@ -1520,7 +1520,7 @@ export class Destruction {
       const at = worldToScreen(f.x, f.y, z);
       const drawX = at.x;
       const drawY = at.y;
-      if (!this.s.projectedInView(drawX, drawY, 180)) continue;
+      if (!this.s.camera.projectedInView(drawX, drawY, 180)) continue;
       const { x: ox, y: oy } = spritePivot(f.key);
       const sc = (f.scale ?? 1) * at.scale;
       let sx = sc;
@@ -1573,10 +1573,10 @@ export class Destruction {
           .setRotation(f.angle - travel)
           .setScale(1)
           .setAlpha(1);
-        applyThermalHeat(im, this.s.thermalOn, f.settled ? 0.27 : 0.62);
+        applyThermalHeat(im, this.s.thermal.on, f.settled ? 0.27 : 0.62);
         if (canShadow) {
           sh.setVisible(true).setOrigin(ox, oy);
-          this.s.applyCastShadow(sh, f.x, f.y, z, f.key, travel, f.scale ?? 1, 2, f);
+          this.s.hostCraft.applyCastShadow(sh, f.x, f.y, z, f.key, travel, f.scale ?? 1, 2, f);
           sh.setScale(sh.scaleX * along, sh.scaleY * across);
           if (cast < 1) sh.setAlpha(0.22);
         }
@@ -1607,19 +1607,19 @@ export class Destruction {
           .setRotation(f.angle - skew)
           .setScale(1)
           .setAlpha(1);
-        applyThermalHeat(im, this.s.thermalOn, f.settled ? 0.27 : 0.62);
+        applyThermalHeat(im, this.s.thermal.on, f.settled ? 0.27 : 0.62);
         if (canShadow) {
           sh.setVisible(true).setOrigin(ox, oy);
-          this.s.applyCastShadow(sh, f.x, f.y, z, f.key, skew, f.scale ?? 1, 2, f);
+          this.s.hostCraft.applyCastShadow(sh, f.x, f.y, z, f.key, skew, f.scale ?? 1, 2, f);
           sh.setScale(sh.scaleX * along, sh.scaleY * across);
           if (cast < 1) sh.setAlpha(0.22);
         }
         continue;
       }
-      this.s.unwrapTilt(im);
+      this.s.hostCraft.unwrapTilt(im);
       if (canShadow) {
         sh.setVisible(true).setOrigin(ox, oy);
-        this.s.applyCastShadow(sh, f.x, f.y, z, f.key, f.angle, f.scale ?? 1, 2, f);
+        this.s.hostCraft.applyCastShadow(sh, f.x, f.y, z, f.key, f.angle, f.scale ?? 1, 2, f);
         if (f.dishFlat) sh.setScale(sh.scaleX * 1.04, sh.scaleY * 0.76);
         if (f.rotorSkew) sh.setScale(sh.scaleX * 1.08, sh.scaleY * 0.78);
         if (cast < 1) sh.setAlpha(0.22);
@@ -1641,9 +1641,9 @@ export class Destruction {
       // Casings: timed cool-down (not speed); ground stamp keeps a longer thermal mark.
       if (f.shellEject) {
         const shellHeat = (f.shellHeat ?? 0) * 0.72;
-        if (shellHeat > 0.02) applyThermalHeat(im, this.s.thermalOn, shellHeat);
+        if (shellHeat > 0.02) applyThermalHeat(im, this.s.thermal.on, shellHeat);
       } else {
-        applyThermalHeat(im, this.s.thermalOn, f.settled ? 0.27 : 0.64);
+        applyThermalHeat(im, this.s.thermal.on, f.settled ? 0.27 : 0.64);
       }
       if (im.depth !== depth) im.setDepth(depth);
     }

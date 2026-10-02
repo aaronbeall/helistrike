@@ -87,8 +87,8 @@ export class Countermeasures {
     const h = this.s.player;
     const at = worldToScreen(h.x, h.y, h.z);
     const r = h.spec.radius * at.scale;
-    const pose = this.s.heliBodyDrawPose();
-    const depth = this.s.body.depth + 0.05;
+    const pose = this.s.hostCraft.bodyDrawPose();
+    const depth = this.s.hostCraft.body.depth + 0.05;
     const gSize = 30 * at.scale;
     for (let i = 0; i < glows.length; i++) {
       const ang = pose.rotation + (i / glows.length) * Math.PI * 2;
@@ -302,9 +302,9 @@ export class Countermeasures {
       im.setDepth(worldDepth(s.z, ZOff.smoke, s.y));
       // No heat-fill: that stamps solid cold. 2% alpha keeps a ghost of the puff.
       im.clearTint();
-      if (!this.s.thermalOn) im.setTint(s.tint);
+      if (!this.s.thermal.on) im.setTint(s.tint);
       // Dense white/gray chemical screen — higher than dust/exhaust smoke.
-      im.setAlpha((this.s.thermalOn ? 0.02 : 0.84) * fade);
+      im.setAlpha((this.s.thermal.on ? 0.02 : 0.84) * fade);
     }
   }
 
@@ -315,7 +315,7 @@ export class Countermeasures {
   }
 
   trigger(): void {
-    if (this.s.player.phase !== "flight" || !this.s.fireControl.canFire || this.s.debugMenu.open || this.s.help.open || this.s.exitOpen) return;
+    if (this.s.player.phase !== "flight" || !this.s.fireControl.canFire || this.s.debugMenu.open || this.s.help.open || this.s.flow.exitOpen) return;
     const pov = this.s.remoteFleet.povHudRemote();
     if (pov) {
       this.s.remoteBody.tryRemoteCountermeasure(pov);
@@ -393,7 +393,7 @@ export class Countermeasures {
   /** Warp bomb / linger: edge refraction PostFX — detached when idle (no pass cost). */
   tickWarpDistortFx(): void {
     const cam = this.s.cameras.main;
-    let on = this.s.warpLingerScale != null && this.s.povCamLookHold > 0;
+    let on = this.s.warpLingerScale != null && this.s.camera.povCamLookHold > 0;
     if (!on) {
       for (const s of this.s.shots) {
         if (s.from === "player" && s.warpTimeScale != null) {
@@ -432,7 +432,7 @@ export class Countermeasures {
       this.trigger();
       return;
     }
-    if (this.s.relief.open || this.s.debugMenu.open || this.s.help.open || this.s.exitOpen || this.s.over) return;
+    if (this.s.relief.open || this.s.debugMenu.open || this.s.help.open || this.s.flow.exitOpen || this.s.over) return;
     if (this.bulletOn) {
       this.bulletOn = false;
       return;
@@ -644,7 +644,7 @@ export class Countermeasures {
         range(1.4, 2.4)
       );
     }
-    this.s.shake = Math.min(8, this.s.shake + 2.1);
+    this.s.camera.shake = Math.min(8, this.s.camera.shake + 2.1);
     setGlitchPipeline(this.s.cameras.main, true, 1);
   }
 

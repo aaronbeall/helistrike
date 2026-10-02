@@ -49,7 +49,7 @@ export class UnitSim {
     if (crew.mode === "snap") {
       const m = crew.mounts[u.pinMount ?? 0] ?? crew.mounts[0]!;
       const tex = resolveSkin(this.s.textures, textureOf(post.kind), post.camo);
-      const at = this.s.mountAt(post, tex, m);
+      const at = this.s.hostCraft.mountAt(post, tex, m);
       u.x = at.x;
       u.y = at.y;
       return;
@@ -91,7 +91,7 @@ export class UnitSim {
       const want = Math.atan2(ldy, ldx);
       const err = Math.abs(Phaser.Math.Angle.Wrap(want - u.angle));
       const turn = err > 1.0 ? 5.2 : err > 0.4 ? 3.8 : 2.8;
-      u.angle = this.s.steerUnitAngle(u.angle, want, turn, dt);
+      u.angle = this.s.unitSprites.steerUnitAngle(u.angle, want, turn, dt);
 
       const facing = err < 0.16;
       if (facing && inAltReach) {
@@ -164,19 +164,19 @@ export class UnitSim {
 
       if (flee) {
         const awayAng = Math.atan2(-dy, -dx);
-        u.angle = this.s.steerUnitAngle(u.angle, awayAng, 2.8, dt);
+        u.angle = this.s.unitSprites.steerUnitAngle(u.angle, awayAng, 2.8, dt);
         const face = Math.max(0, Math.cos(Phaser.Math.Angle.Wrap(awayAng - u.angle)));
         u.vx += fx * 170 * face * dt;
         u.vy += fy * 170 * face * dt;
       } else if (kite && dist < 900) {
-        u.angle = this.s.steerUnitAngle(u.angle, toAng, 3.4, dt);
+        u.angle = this.s.unitSprites.steerUnitAngle(u.angle, toAng, 3.4, dt);
         const face = Math.max(0, Math.cos(Phaser.Math.Angle.Wrap(toAng - u.angle)));
         const radial = Phaser.Math.Clamp((dist - prefDist) * 0.4, -100, 100);
         // Main thrust along nose; light strafe only once roughly facing.
         u.vx += (fx * radial + latX * 130 * face) * face * dt;
         u.vy += (fy * radial + latY * 130 * face) * face * dt;
       } else {
-        u.angle = this.s.steerUnitAngle(u.angle, toAng, 2.8, dt);
+        u.angle = this.s.unitSprites.steerUnitAngle(u.angle, toAng, 2.8, dt);
         const face = Math.max(0, Math.cos(Phaser.Math.Angle.Wrap(toAng - u.angle)));
         const thrust = dist > prefDist ? 155 : 60;
         u.vx += fx * thrust * face * dt;
@@ -205,7 +205,7 @@ export class UnitSim {
         const ox = h.x + Math.cos(u.orbit) * ring;
         const oy = h.y + Math.sin(u.orbit) * ring;
         const to = Math.atan2(oy - u.y, ox - u.x);
-        u.angle = this.s.steerUnitAngle(u.angle, to, 1.15, dt);
+        u.angle = this.s.unitSprites.steerUnitAngle(u.angle, to, 1.15, dt);
         u.vx += Math.cos(u.angle) * 58 * dt;
         u.vy += Math.sin(u.angle) * 58 * dt;
         u.aiState = "ORBIT";
@@ -242,17 +242,17 @@ export class UnitSim {
           const ox = h.x + Math.cos(u.orbit) * orbitRing;
           const oy = h.y + Math.sin(u.orbit) * orbitRing;
           const to = Math.atan2(oy - u.y, ox - u.x);
-          u.angle = this.s.steerUnitAngle(u.angle, to, 1.6, dt);
+          u.angle = this.s.unitSprites.steerUnitAngle(u.angle, to, 1.6, dt);
           u.vx += fx * 78 * dt;
           u.vy += fy * 78 * dt;
         } else if (kite && dist < 700) {
-          u.angle = this.s.steerUnitAngle(u.angle, toAng, 1.85, dt);
+          u.angle = this.s.unitSprites.steerUnitAngle(u.angle, toAng, 1.85, dt);
           const face = Math.max(0, Math.cos(Phaser.Math.Angle.Wrap(toAng - u.angle)));
           const radial = Phaser.Math.Clamp((dist - closeDist) * 0.3, -65, 65);
           u.vx += (fx * radial + latX * 72 * face) * face * dt;
           u.vy += (fy * radial + latY * 72 * face) * face * dt;
         } else {
-          u.angle = this.s.steerUnitAngle(u.angle, toAng, 1.6, dt);
+          u.angle = this.s.unitSprites.steerUnitAngle(u.angle, toAng, 1.6, dt);
           const face = Math.max(0, Math.cos(Phaser.Math.Angle.Wrap(toAng - u.angle)));
           const thrust = dist > closeDist ? 85 : 30;
           u.vx += fx * thrust * face * dt;
@@ -581,7 +581,7 @@ export class UnitSim {
           u.vy += ny * out * Math.min(1, t * 1.4);
         }
         if (t > 0.25 || outsidePlayable) {
-          u.angle = this.s.steerUnitAngle(
+          u.angle = this.s.unitSprites.steerUnitAngle(
             u.angle,
             Math.atan2(ny, nx),
             (outsidePlayable ? 3.6 : 2.8) * Math.max(t, outsidePlayable ? 1 : 0),
@@ -595,7 +595,7 @@ export class UnitSim {
         const minTurnSpd = sp.minTurnSpd ?? 14;
         // Wheeled: only yaw at the rim while moving, or when deeply stuck (hard rim).
         if (t > 0.28 && (!wheeled || spd > minTurnSpd || t > 0.55)) {
-          u.angle = this.s.steerUnitAngle(u.angle, Math.atan2(ny, nx), 2.4 * t, dt);
+          u.angle = this.s.unitSprites.steerUnitAngle(u.angle, Math.atan2(ny, nx), 2.4 * t, dt);
         }
         if (t > 0.4 && spd < 18) {
           u.vx += nx * 55 * t * dt;
@@ -659,7 +659,7 @@ export class UnitSim {
     if (!isWater(this.s.world, u.x, u.y)) {
       const seek = this.terrainSteer(u.x, u.y, u.x + Math.cos(u.angle) * 80, u.y + Math.sin(u.angle) * 80, true, u.angle);
       const want = Math.atan2(seek.y - u.y, seek.x - u.x);
-      u.angle = this.s.steerUnitAngle(u.angle, want, yaw * 1.4, dt);
+      u.angle = this.s.unitSprites.steerUnitAngle(u.angle, want, yaw * 1.4, dt);
       const step = spd * 0.35 * dt;
       // Stranded: crawl over land toward water (don't require wet cells yet).
       u.x += Math.cos(u.angle) * step;
@@ -683,7 +683,7 @@ export class UnitSim {
     }
     const steered = this.terrainSteer(u.x, u.y, u.aiTx ?? u.x, u.aiTy ?? u.y, true, u.angle);
     const want = Math.atan2(steered.y - u.y, steered.x - u.x);
-    u.angle = this.s.steerUnitAngle(u.angle, want, yaw, dt);
+    u.angle = this.s.unitSprites.steerUnitAngle(u.angle, want, yaw, dt);
     const step = spd * dt;
     this.stepOnTerrain(u, Math.cos(u.angle) * step, Math.sin(u.angle) * step, true);
     u.vx = Math.cos(u.angle) * spd;
@@ -770,7 +770,7 @@ export class UnitSim {
     if (drive) {
       if (!wheeled) {
         // Treads: pivot OK; slightly snappier when slow.
-        u.angle = this.s.steerUnitAngle(
+        u.angle = this.s.unitSprites.steerUnitAngle(
           u.angle,
           want,
           d.turn * (0.45 + 0.55 * slow),
@@ -778,11 +778,11 @@ export class UnitSim {
         );
       } else if (stuck) {
         // Unwedge: allow in-place yaw so they can face out of a jam / hard rim.
-        u.angle = this.s.steerUnitAngle(u.angle, want, d.turn, turnDt);
+        u.angle = this.s.unitSprites.steerUnitAngle(u.angle, want, d.turn, turnDt);
       } else if (spd > minTurnSpd) {
         // Turning radius feel: yaw rate scales with speed (ω ∝ v), never while stopped.
         const turnGate = Phaser.Math.Clamp(spd / Math.max(d.maxSpd * 0.55, minTurnSpd + 10), 0, 1);
-        u.angle = this.s.steerUnitAngle(u.angle, want, d.turn * turnGate, turnDt);
+        u.angle = this.s.unitSprites.steerUnitAngle(u.angle, want, d.turn * turnGate, turnDt);
       }
     }
     if (stuck && spd < 18) {
@@ -856,7 +856,7 @@ export class UnitSim {
     }
     if (u.health > 0) return false;
     const at = worldToScreen(u.x, u.y, u.z);
-    if (cameraPointVisible(u.z, u.y) && this.s.projectedInView(at.x, at.y, 24)) {
+    if (cameraPointVisible(u.z, u.y) && this.s.camera.projectedInView(at.x, at.y, 24)) {
       u.health = 0.01;
       return false;
     }
@@ -945,7 +945,7 @@ export class UnitSim {
     const blades =
       spec.flightModel === "heli" && !!spec.rotor && !craftRotorIsProp(spec);
     if (crush) {
-      const hullR = Math.max(spec.radius, this.s.spriteHalf(spec.body) * drawScale * 0.72);
+      const hullR = Math.max(spec.radius, this.s.unitSprites.spriteHalf(spec.body) * drawScale * 0.72);
       const spd = Math.hypot(vx, vy);
       if (spd > 32) this.roadkillSweep(x, y, z, vx, vy, hullR, spec.cruiseAgl + 8);
     }
@@ -1112,7 +1112,7 @@ export class UnitSim {
         if (isGroundVehicle(u.kind)) {
           this.driveGroundVehicle(u, dt, h, dist, vision);
         }
-        if ((sp.behavior === "attack_infantry" || sp.behavior === "flee_infantry") && !this.s.snapHost(u)) {
+        if ((sp.behavior === "attack_infantry" || sp.behavior === "flee_infantry") && !this.s.unitSprites.snapHost(u)) {
           const canShoot = !!sp.weapon;
           if (sp.organic && u.health < u.max && this.tickBleedOut(u, dt)) continue;
           const seeR = this.s.targeting.enemyAwareReach(400, vision, h);
@@ -1152,7 +1152,7 @@ export class UnitSim {
             u.vx = 0;
             u.vy = 0;
             if (vision > 0) {
-              u.turret = this.s.steerUnitAngle(u.turret, Math.atan2(dy, dx), 1.8 * aimMul, dt);
+              u.turret = this.s.unitSprites.steerUnitAngle(u.turret, Math.atan2(dy, dx), 1.8 * aimMul, dt);
               u.aiTx = h.x;
               u.aiTy = h.y;
             } else {
@@ -1179,7 +1179,7 @@ export class UnitSim {
             const twd = Math.hypot(twx, twy);
             const want = twd < 12 ? u.angle : Math.atan2(twy, twx);
             // Invisible base faces / walks the path.
-            u.angle = this.s.steerUnitAngle(
+            u.angle = this.s.unitSprites.steerUnitAngle(
               u.angle,
               want,
               fleeing ? 2.4 : 2.1,
@@ -1276,28 +1276,28 @@ export class UnitSim {
         elev < elevCeilFor(aaWpn)
       );
       const hullFlee =
-        (sp.behavior === "attack_infantry" && u.aiMood === "flee" && !(sp.organic && u.health <= 1) && !this.s.snapHost(u)) ||
+        (sp.behavior === "attack_infantry" && u.aiMood === "flee" && !(sp.organic && u.health <= 1) && !this.s.unitSprites.snapHost(u)) ||
         (sp.behavior === "kite_attack_heli" && u.aiMood === "flee");
       const strafeHeli =
         (sp.behavior === "orbit_attack_heli" || sp.behavior === "kite_attack_heli") &&
         sp.strafeAim !== false;
-      const softTurret = this.s.troopSoftTurret(u);
+      const softTurret = this.s.unitSprites.troopSoftTurret(u);
       if (softTurret) {
         // Aim like a turret: track player when engaging, otherwise point where the base is going.
         const aimTo =
           !hullFlee && (inRange || (u.burstLeft ?? 0) > 0 || (sp.organic && u.health <= 1 && u.health < u.max))
             ? aim
             : u.angle;
-        u.turret = this.s.steerUnitAngle(u.turret, aimTo, 2.4 * aimMul * Math.max(0.12, vision), dt);
+        u.turret = this.s.unitSprites.steerUnitAngle(u.turret, aimTo, 2.4 * aimMul * Math.max(0.12, vision), dt);
       } else if (sp.fixedAim && !guns.length && wpn && inRange && !hullFlee && !strafeHeli) {
         const turn = (sp.behavior === "orbit_attack_heli" || sp.behavior === "kite_attack_heli") ? 1.7 : 2.2;
-        u.angle = this.s.steerUnitAngle(u.angle, aim, turn * aimMul * Math.max(0.12, vision), dt);
+        u.angle = this.s.unitSprites.steerUnitAngle(u.angle, aim, turn * aimMul * Math.max(0.12, vision), dt);
       }
       const inf = sp.behavior === "attack_infantry";
       const soldierDown = inf && u.health <= 1 && u.health < u.max;
       const continueBurst =
         inf && (u.burstLeft ?? 0) > 0 && aimTgt.phase === "flight" && (soldierDown || u.aiMood !== "flee");
-      const soldierFlee = inf && u.aiMood === "flee" && !soldierDown && !this.s.snapHost(u);
+      const soldierFlee = inf && u.aiMood === "flee" && !soldierDown && !this.s.unitSprites.snapHost(u);
       const scoutFlee = sp.behavior === "kite_attack_heli" && u.aiMood === "flee";
       if (vision <= 0 && u.aware) {
         u.aware = false;
@@ -1466,10 +1466,10 @@ export class UnitSim {
     }
     if (this.s.perf.enabled) {
       const t = performance.now();
-      this.s.syncUnitSprites();
+      this.s.unitSprites.sync();
       this.s.perf.current![4] = performance.now() - t;
     } else {
-      this.s.syncUnitSprites();
+      this.s.unitSprites.sync();
     }
   }
 
@@ -1518,7 +1518,7 @@ export class UnitSim {
     for (let i = 0; i < crew.mounts.length; i++) {
       if (Math.random() >= chance) continue;
       const m = crew.mounts[i]!;
-      const at = this.s.mountAt(host, tex, m);
+      const at = this.s.hostCraft.mountAt(host, tex, m);
       out.push(this.makeUnit(pickTroop(), at.x, at.y, host.id, i));
     }
     return out;

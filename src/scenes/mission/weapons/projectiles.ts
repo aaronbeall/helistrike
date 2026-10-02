@@ -590,16 +590,16 @@ export class Projectiles {
           if (s.warpTimeScale != null) {
             hold = Math.min(8, hold / Math.max(0.08, s.warpTimeScale));
           }
-          this.s.beginImpactCamLinger(s.x, s.y, {
-            thermal: lingerThermal ? this.s.craftSensorPalette() : undefined,
+          this.s.camera.beginImpactCamLinger(s.x, s.y, {
+            thermal: lingerThermal ? this.s.thermal.craftSensorPalette() : undefined,
             hold,
           });
         }
         if (s.from === "player" && s.warpTimeScale != null) {
           this.s.warpLingerScale = s.warpTimeScale;
           // Ensure linger runs even if steer_commit / thermal / wire didn't arm the cam hold.
-          if (this.s.povCamLookHold <= 0) {
-            this.s.beginImpactCamLinger(s.x, s.y, {
+          if (this.s.camera.povCamLookHold <= 0) {
+            this.s.camera.beginImpactCamLinger(s.x, s.y, {
               hold: Math.min(8, 1.65 / Math.max(0.08, s.warpTimeScale)),
             });
           }
@@ -1412,7 +1412,7 @@ export class Projectiles {
         },
         this.s.fx.shortBurst
       );
-      this.s.shake = Math.min(3.2, this.s.shake + 0.45);
+      this.s.camera.shake = Math.min(3.2, this.s.camera.shake + 0.45);
       if (!fxOnly) this.applyBlastDamage(x, y, z, blast, dmg, direct, dx, dy, dz, true, shot);
       return;
     }
@@ -1437,7 +1437,7 @@ export class Projectiles {
         },
         this.s.fx.signalFlareSpark
       );
-      this.s.shake = Math.min(2.8, this.s.shake + 0.35);
+      this.s.camera.shake = Math.min(2.8, this.s.camera.shake + 0.35);
       return;
     }
     const water = isWater(this.s.world, x, y);
@@ -1661,7 +1661,7 @@ export class Projectiles {
         he ? (shot?.st?.bomblet ? 4 : 16) : objectHit ? 6 : Math.round(8 * Math.max(1, dustMul * 0.85 + heBlend))
       );
     }
-    this.s.shake = Math.min(8, this.s.shake + blast * (he ? 0.055 : 0.028 + heBlend * 0.02));
+    this.s.camera.shake = Math.min(8, this.s.camera.shake + blast * (he ? 0.055 : 0.028 + heBlend * 0.02));
     if (!he) this.s.fx.spawnImpactFlash(impactX, impactY, z, 0xffc878, 34 * impactScale, 0.85, 160);
     // HE already splashed — skip a second death splash. Chain gun should still run vehicle death splash.
     if (!fxOnly) this.applyBlastDamage(x, y, z, blast, dmg, direct, dx, dy, dz, he, shot);
@@ -1838,14 +1838,14 @@ export class Projectiles {
       const at = worldToScreen(wx, wy, wz);
       const drawX = at.x;
       const drawY = at.y;
-      if (!this.s.projectedInView(drawX, drawY, 120)) return;
+      if (!this.s.camera.projectedInView(drawX, drawY, 120)) return;
       const drawRot = this.shotDrawRotation(s, wx, wy, wz);
       const photon = key === "shot_photon";
       const ox = SHOT_ORIGIN.x;
       const sc = (s.scale ?? 1) * (st?.helixOff ? 1.06 : 1);
       const energy = !!(s.energyTrail || s.energyTrails);
       sh.setVisible(true).setOrigin(ox, 0.5);
-      this.s.applyCastShadow(sh, wx, wy, wz, key, rot, sc);
+      this.s.hostCraft.applyCastShadow(sh, wx, wy, wz, key, rot, sc);
       if (photon) {
         // Composite lens-flare drawn in syncPhotonFlares — body sprite stays hidden.
         return;
@@ -1870,7 +1870,7 @@ export class Projectiles {
       else if (st?.helixOff) im.setTint(0x66ff44);
       else im.clearTint();
       im.setBlendMode(tracer ? Phaser.BlendModes.ADD : Phaser.BlendModes.NORMAL);
-      applyThermalHeat(im, this.s.thermalOn, shotIsGunOrBeam(s) ? 0.9 : 1, s.tint);
+      applyThermalHeat(im, this.s.thermal.on, shotIsGunOrBeam(s) ? 0.9 : 1, s.tint);
       if (im.depth !== shotDepth) im.setDepth(shotDepth);
     });
   }
@@ -1922,7 +1922,7 @@ export class Projectiles {
 
     photons.forEach((s, i) => {
       const at = worldToScreen(s.x, s.y, s.z);
-      if (!this.s.projectedInView(at.x, at.y, 140)) return;
+      if (!this.s.camera.projectedInView(at.x, at.y, 140)) return;
       const sc = (s.scale ?? 1) * at.scale;
       const depth = worldDepth(s.z, ZOff.shot + 0.4, s.y);
       // Lens flare spokes: angle from camera center → light (not missile heading / mouse).
@@ -1970,7 +1970,7 @@ export class Projectiles {
           .setDepth(depth + zOff);
         if (s.tint != null) im.setTint(s.tint);
         else im.clearTint();
-        applyThermalHeat(im, this.s.thermalOn, 1, s.tint);
+        applyThermalHeat(im, this.s.thermal.on, 1, s.tint);
       };
 
       // Soft bloom stays screen-aligned (never tracks missile heading).

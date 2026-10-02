@@ -326,13 +326,13 @@ export class DebugMenu {
 
   nudgeCamPitch(dir: number): void {
     CamTune.pitch = Phaser.Math.Clamp(Math.round((CamTune.pitch + dir * 0.005) * 1000) / 1000, 0.01, 0.2);
-    this.s.syncProjectionPose();
+    this.s.camera.syncProjectionPose();
     this.sync();
   }
 
   nudgeCamProj(dir: number): void {
     CamTune.cam = Phaser.Math.Clamp(CamTune.cam + dir * 40, 320, 1800);
-    this.s.syncProjectionPose();
+    this.s.camera.syncProjectionPose();
     this.sync();
   }
 
@@ -392,8 +392,8 @@ export class DebugMenu {
     CamTune.pitch = preset.pitch;
     CamTune.cam = preset.cam;
     CamTune.zoom0 = preset.zoom0;
-    this.s.camZoom = preset.zoom0;
-    this.s.syncProjectionPose();
+    this.s.camera.zoom = preset.zoom0;
+    this.s.camera.syncProjectionPose();
     this.sync();
   }
 

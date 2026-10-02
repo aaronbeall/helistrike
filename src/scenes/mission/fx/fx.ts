@@ -415,7 +415,7 @@ export class Fx {
       duration: 320,
       expand: 2.4,
     });
-    this.s.shake = Math.min(9, this.s.shake + 2.8);
+    this.s.camera.shake = Math.min(9, this.s.camera.shake + 2.8);
   }
 
   /** Big additive light overlay for photonic detonations (Photon + Warp). */
@@ -546,11 +546,11 @@ export class Fx {
     const slot = this.muzzleFlashSlot(flash);
     const z = this.s.fireControl.playerMuzzleZ(slot, flash.gunMuzzleI ?? 0);
     if (flash.muzzleUv) {
-      const at = this.s.craftBodyMountWorldPos(flash.muzzleUv);
+      const at = this.s.hostCraft.craftBodyMountWorldPos(flash.muzzleUv);
       return { x: at.x, y: at.y, z };
     }
     if (flash.gunI != null) {
-      const at = this.s.gunTip(flash.gunI, flash.gunMuzzleI ?? 0);
+      const at = this.s.hostCraft.gunTip(flash.gunI, flash.gunMuzzleI ?? 0);
       return { x: at.x, y: at.y, z };
     }
     return { x: h.x, y: h.y, z };
@@ -578,7 +578,7 @@ export class Fx {
       .setScale(flash.scaleMul * at.scale)
       .setAlpha(fade)
       .setDepth(depth);
-    if (this.s.thermalOn) {
+    if (this.s.thermal.on) {
       muzzle.setBlendMode(Phaser.BlendModes.NORMAL);
       applyThermalHeat(muzzle, true, 0.96 * fade);
     } else {
@@ -593,7 +593,7 @@ export class Fx {
         .setDisplaySize(gSize, gSize)
         .setAlpha(0.75 * fade)
         .setDepth(depth + 0.05);
-      if (this.s.thermalOn) {
+      if (this.s.thermal.on) {
         glow.setBlendMode(Phaser.BlendModes.NORMAL);
         applyThermalHeat(glow, true, 0.92 * fade);
       } else {
@@ -1109,7 +1109,7 @@ export class Fx {
         )
         .setAlpha(alpha);
       if (im.depth !== depth) im.setDepth(depth);
-      if (this.s.thermalOn) {
+      if (this.s.thermal.on) {
         // Dirt/dust: medium heat so scars aren't masked black. Blood: hotter live spray.
         applyThermalHeat(im, true, s.blood ? 0.72 : 0.42);
       } else if (s.blood) {
@@ -1320,14 +1320,14 @@ export class Fx {
     if (!sites?.length) {
       const n = 1 + ((Math.random() * 2) | 0);
       return Array.from({ length: n }, () => {
-        const uv = this.s.sampleSolidUv(hulkKey, fallbackRadius);
+        const uv = this.s.unitSprites.sampleSolidUv(hulkKey, fallbackRadius);
         return { u: uv.u, v: uv.v, scale: range(0.42, 0.8) };
       });
     }
     return sites.map((s) => {
-      const uv = this.s.solidAtUv(hulkKey, s.u, s.v)
+      const uv = this.s.unitSprites.solidAtUv(hulkKey, s.u, s.v)
         ? s
-        : this.s.sampleSolidUv(hulkKey, fallbackRadius);
+        : this.s.unitSprites.sampleSolidUv(hulkKey, fallbackRadius);
       return { u: uv.u, v: uv.v, scale: s.scale };
     });
   }
@@ -1571,13 +1571,13 @@ export class Fx {
       const want = hp < 0.25 ? 3 : hp < 0.45 ? 2 : hp < 0.75 ? 1 : 0;
       while (h.dmgSites.length > want) h.dmgSites.pop();
       while (h.dmgSites.length < want) {
-        const uv = this.s.sampleSolidUv(h.spec.body, h.spec.radius);
+        const uv = this.s.unitSprites.sampleSolidUv(h.spec.body, h.spec.radius);
         h.dmgSites.push({ ...uv, scale: range(0.42, 0.8) });
       }
       if (want) {
         const { fire, smoke } = this.pairHurt(h.z, h.y, this.hotFlame, this.playerHurtSmoke);
         for (const s of h.dmgSites) {
-          const base = spriteUvPos(this.s.heliBodyDrawPose(), s.u, s.v);
+          const base = spriteUvPos(this.s.hostCraft.bodyDrawPose(), s.u, s.v);
           // Keep sparks on the damage pin — wide jitter reads as loose trail spray.
           const p = jitterDisk(base.x, base.y, 0.55 + s.scale * 0.4);
           this.withDmgFlameScale(s.scale * 1.65, () => {
@@ -1617,7 +1617,7 @@ export class Fx {
       const tex = resolveSkin(this.s.textures, textureOf(u.kind), u.camo);
       while (u.dmgSites.length > want) u.dmgSites.pop();
       while (u.dmgSites.length < want) {
-        const uv = this.s.sampleSolidUv(tex, radius(u.kind));
+        const uv = this.s.unitSprites.sampleSolidUv(tex, radius(u.kind));
         u.dmgSites.push({ ...uv, scale: range(0.38, 0.75) });
       }
       const zBias = u.pinId != null ? ZOff.posted : 0;
@@ -1625,7 +1625,7 @@ export class Fx {
       const sp = specOf(u.kind);
       const sizeMul = sp.aerial ? 1.65 : sp.building ? 1.15 : 1;
       for (const s of u.dmgSites) {
-        const mount = this.s.mountAt(u, tex, { x: s.u, y: s.v });
+        const mount = this.s.hostCraft.mountAt(u, tex, { x: s.u, y: s.v });
         const base = worldToScreen(mount.x, mount.y, u.z);
         const p = jitterDisk(base.x, base.y, 0.5 + s.scale * 0.4);
         this.withDmgFlameScale(s.scale * sizeMul, () => {

@@ -50,9 +50,9 @@ export class SideView {
         .setStroke("#101418", 3);
       this.s.bindHud(this.txt);
     }
-    const g = this.gfx.clear().setVisible(!this.s.mapView);
-    this.txt!.setVisible(!this.s.mapView);
-    if (this.s.mapView) return;
+    const g = this.gfx.clear().setVisible(!this.s.camera.mapView);
+    this.txt!.setVisible(!this.s.camera.mapView);
+    if (this.s.camera.mapView) return;
     const cam = this.s.cameras.main;
     const view = cam.worldView;
     const W = this.s.scale.width;

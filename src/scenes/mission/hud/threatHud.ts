@@ -26,7 +26,7 @@ export class ThreatHud {
    * actual enemy seeker is in flight toward us.
    */
   sync(): void {
-    const show = this.s.player.phase === "flight" && !this.s.mapView && !this.s.over;
+    const show = this.s.player.phase === "flight" && !this.s.camera.mapView && !this.s.over;
     const painted = show && this.s.units.some((u) => !u.dead && u.paintT != null);
     const missileInbound =
       show &&
@@ -53,7 +53,7 @@ export class ThreatHud {
   drawArcs(): void {
     const g = this.arcGfx;
     g.clear();
-    if (this.s.player.phase !== "flight" || this.s.mapView || this.s.over) return;
+    if (this.s.player.phase !== "flight" || this.s.camera.mapView || this.s.over) return;
     const now = this.s.time.now;
     const focus = this.s.targeting.combatFocus();
     const ring = (c: Craft) => {

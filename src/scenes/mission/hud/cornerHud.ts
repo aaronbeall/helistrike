@@ -91,7 +91,7 @@ export class CornerHud {
     const u = this.s.units.find((q) => q.hv === spec.id);
     const done = !u || u.dead;
     if (done) return { text: `× ${spec.name}  KILL`, done: true };
-    const look = this.s.camLookWorld();
+    const look = this.s.camera.camLookWorld();
     const dx = u.x - look.x;
     const dy = u.y - look.y;
     const dist = Math.hypot(dx, dy);
@@ -113,8 +113,8 @@ export class CornerHud {
     this.s.help.button.setOrigin(1, 0).setPosition(helpLp.x, helpLp.y);
     const exitX = right - this.s.help.button.width - gap;
     const exitLp = this.s.hudLocal(exitX, y);
-    this.s.exitButton.setOrigin(1, 0).setPosition(exitLp.x, exitLp.y);
-    y += Math.max(this.s.help.button.height, this.s.exitButton.height) + 12;
+    this.s.flow.exitButton.setOrigin(1, 0).setPosition(exitLp.x, exitLp.y);
+    y += Math.max(this.s.help.button.height, this.s.flow.exitButton.height) + 12;
 
     const hvLp = this.s.hudLocal(right, y);
     this.hvHud.setOrigin(1, 0).setPosition(hvLp.x, hvLp.y);

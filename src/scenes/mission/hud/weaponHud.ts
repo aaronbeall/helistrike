@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { BATTERY_ICON_W } from "../tuning";
+import { BATTERY_ICON_W } from "./fieldBars";
 import { BULLET_TIME_DURATION } from "../weapons/countermeasures";
 import { payloadIsRemote } from "../../../sim/payload";
 import { PLAYER_WPNS, COUNTERMEASURES, type WpnId } from "../../../sim/combat";
@@ -187,7 +187,7 @@ export class WeaponHud {
         // Pool battery badge on the top-right edge, only while not full.
         const batt = pooled ? this.s.remoteFleet.remotePoolBattery(i) : undefined;
         if (batt != null && batt < 0.999) {
-          this.s.drawBatteryIcon(g, x + slotW - BATTERY_ICON_W - 6, y - 4, batt, 1);
+          this.s.fieldBars.drawBatteryIcon(g, x + slotW - BATTERY_ICON_W - 6, y - 4, batt, 1);
         }
       }
 
