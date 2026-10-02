@@ -41,23 +41,6 @@ import { PerfMonitor } from "./mission/debug/perf";
 import { createFxEmitters } from "./mission/fx/emitters";
 import { heightOf, radius, playerLoadoutFromSockets, type Debris, type Shot, type Unit, type PlayerWpnSpec } from "../sim/combat";
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 import { type RemoteCraft } from "../sim/remote";
 import { Layer } from "../render/depth";
 import { Craft, craftCameraEdgeLocked } from "../sim/craft";
@@ -74,29 +57,7 @@ import { createTerrain25D, type Terrain25D } from "../render/terrain25d";
 import { extractBiomeTiles, bakeHeliHudWireTexture, registerArt, nameGameTexture, muzzleGlowKey, ensureExhaustGlow, ensureImpactGlow } from "../art/sprites";
 import { generateWorld, worldFromGen, groundZ, worldToScreen, setCamera25DFocus, screenToWorldOnGround, castZ, paintHeightMap, WORLD, WRECK_TEX, type WorldData } from "../worldgen/world";
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 /** How far aircraft may overshoot before a soft cap (jets / enemy air) — see craft.MAP_AIR_SOFT. */
-
-
 
 export class MissionScene extends Phaser.Scene {
   // Subsystems — each owns its state + methods, holds the scene as `s`.
@@ -1056,29 +1017,6 @@ export class MissionScene extends Phaser.Scene {
     this.setupHudCam();
   }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
   /** ` cycles closed → sprite → roster → combat → toon → balance → closed — owned by RigsScene. */
 
   update(_t: number, dms: number): void {
@@ -1335,71 +1273,11 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
   /**
    * Reactive armor's active hit radius — bigger than the hull itself, since the field
    * intercepts shots before they reach the plating. Drives both the hit-detection check in
    * `tryHit` (missionScene shot-update loop) and the spark burst origins below.
    */
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
   worldToHud(wx: number, wy: number): { x: number; y: number } {
     const cam = this.cameras.main;
@@ -1409,380 +1287,6 @@ export class MissionScene extends Phaser.Scene {
       y: cam.y + (wy - view.y) * cam.zoom,
     };
   }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
   /** Phaser world point under the cursor (projected draw space). */
   private ptrScrOut = { x: 0, y: 0 };
@@ -1817,11 +1321,6 @@ export class MissionScene extends Phaser.Scene {
     return this.ptrWorldOut;
   }
 
-
-
-
-
-
   worldToHudScreen(x: number, y: number, z: number): { sx: number; sy: number } {
     const cam = this.cameras.main;
     const view = cam.worldView;
@@ -1831,7 +1330,6 @@ export class MissionScene extends Phaser.Scene {
       sy: ((at.y - view.y) / view.height) * this.scale.height,
     };
   }
-
 
   unitHudName(u: Unit): string {
     if (u.hv) {
@@ -1852,30 +1350,6 @@ export class MissionScene extends Phaser.Scene {
     this.cornerHud.layoutUpperRightHud();
     this.weaponHud.draw();
   }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
   /** Radar: yellow diamond for player remotes. */
   drawMiniDiamond(x: number, y: number, r: number, color: number): void {
@@ -2035,31 +1509,6 @@ export class MissionScene extends Phaser.Scene {
       .setAlpha(0.95);
   }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
   toggleTerrainMesh(): void {
     if (!this.terrain25d) return;
     this.terrainMesh = !this.terrainMesh;
@@ -2069,53 +1518,6 @@ export class MissionScene extends Phaser.Scene {
     if (this.perf.enabled) this.perf.resetMeasurements();
     this.debugMenu.sync();
   }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
   nudgeTimeScale(dir: number): void {
     const next = Math.round((this.timeScale + dir * 0.25) * 100) / 100;
@@ -2264,8 +1666,6 @@ export class MissionScene extends Phaser.Scene {
     if (this.help.fieldManual?.isOpen) this.markHudTree(this.help.fieldManual.root);
   }
 
-
-
   /** Screen-fixed chrome HUD (minimap, bars, reticle) — hudCam only. */
   bindHud(go: Phaser.GameObjects.GameObject): void {
     this.hudSet.add(go);
@@ -2344,19 +1744,6 @@ export class MissionScene extends Phaser.Scene {
     this.minimap.mask.fillCircle(this.hudRoot.x + clip.x * hs, this.hudRoot.y + clip.y * hs, 88 * hs);
   }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
   /** Any cursor-owning overlay open (help, exit, editor, debug menus) — rig cursor sync reads this. */
   uiOverlayOpen(): boolean {
     const d = this.debugMenu;
@@ -2418,30 +1805,7 @@ export class MissionScene extends Phaser.Scene {
       this.minimap.gfx.clear();
     }
   }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 }
-
-
-
-
 
 /** Muted average of the terrain canvas — minimap fill past the playable map edge. */
 function minimapTerrainBgColor(canvas: HTMLCanvasElement): number {
@@ -2478,23 +1842,4 @@ function minimapTerrainBgColor(canvas: HTMLCanvasElement): number {
   const nb = Math.round(Math.min(255, Math.max(0, (b * (1 - mute) + lum * mute) * dark)));
   return (nr << 16) | (ng << 8) | nb;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
