@@ -225,6 +225,24 @@ export class MissionScene extends Phaser.Scene {
   }
 
   create(): void {
+    this.createAssets();
+    this.bindPointerInput();
+    this.createWorld();
+    this.createPlayer();
+    this.createWeaponGraphics();
+    this.spawnUnits();
+    this.createFx();
+    this.bindInput();
+    this.createHud();
+    this.initCamera();
+    this.debugMenu.setup();
+    this.help.setup();
+    this.flow.setupExitMenu();
+    this.setupHudCam();
+  }
+
+  /** Textures, pipelines and art bakes the rest of create() draws from. */
+  createAssets(): void {
     ensureEdgeLightPipeline(this.game);
     this.groundMarks.stampDecor();
     if (this.textures.exists("map_terrain")) this.textures.remove("map_terrain");
@@ -241,6 +259,10 @@ export class MissionScene extends Phaser.Scene {
     ensureBlastRingGradient(this.textures);
     ensureAllArtGenAnims(this.anims, this.textures);
     this.input.setDefaultCursor("none");
+  }
+
+  /** Fire gating + pointer up/down handlers. */
+  bindPointerInput(): void {
     this.fireControl.canFire = !this.input.activePointer.isDown;
     this.input.on("pointerup", () => {
       this.fireControl.canFire = true;
@@ -249,7 +271,10 @@ export class MissionScene extends Phaser.Scene {
       if (this.debugMenu.open || this.help.open || this.flow.exitOpen || this.relief.open || this.camera.mapView) return;
       if (p.rightButtonDown()) this.remoteFleet.exitRemoteView();
     });
+  }
 
+  /** World bounds, post-FX, ground + decal layer, terrain mesh, object groups. */
+  createWorld(): void {
     this.physics.world.setBounds(0, 0, WORLD, WORLD);
     this.cameras.main.setBounds(0, 0, WORLD, WORLD);
     this.cameras.main.setBackgroundColor("#6a8496");
@@ -286,7 +311,10 @@ export class MissionScene extends Phaser.Scene {
     this.fx.simParticleG = this.add.group();
     this.countermeasures.smokePuffG = this.add.group();
     this.unitSprites.thermalHotspotG = this.add.group();
+  }
 
+  /** Player craft, theater sky + clouds, host craft parts, armor glows, muzzles. */
+  createPlayer(): void {
     this.player = new Craft(this.world.spawnX, this.world.spawnY, this.world);
     if (this.player.spec.flightModel === "plane") {
       const inward = Math.atan2(WORLD * 0.5 - this.player.y, WORLD * 0.5 - this.player.x);
@@ -394,6 +422,10 @@ export class MissionScene extends Phaser.Scene {
       { life: 0, life0: 0.1, ang: 0, scaleMul: 1, glowMul: 56, rotJitter: 0 },
     ];
     this.hostCraft.body.setPosition(this.player.x, this.player.y);
+  }
+
+  /** Reticle, weapon/FX graphics layers, Tesla pools, extra muzzles, lock text. */
+  createWeaponGraphics(): void {
     this.reticleHud.create();
     this.lockOn.gfx = this.add.graphics().setDepth(Layer.FIELD).setVisible(false);
     this.trails.towWireGfx = this.add.graphics().setDepth(Layer.WORLD);
@@ -483,7 +515,10 @@ export class MissionScene extends Phaser.Scene {
       .setDepth(Layer.HUD + 3)
       .setVisible(false)
       .setStroke("#1c100c", 3);
+  }
 
+  /** Initial units from world spawns, plus posted crew. */
+  spawnUnits(): void {
     this.units = [];
     for (const s of this.world.spawns) {
       const u = this.unitSim.makeUnit(s.kind, s.x, s.y);
@@ -495,14 +530,20 @@ export class MissionScene extends Phaser.Scene {
       posted.push(...this.unitSim.spawnCrewFor(host));
     }
     this.units.push(...posted);
+  }
 
+  /** Particle emitters, thermal particle tint hook, time scale. */
+  createFx(): void {
     createFxEmitters(this);
     // Scene events survive restart — drop on shutdown or handlers stack per mission.
     const onPostUpdate = () => this.thermal.tintParticles();
     this.events.on(Phaser.Scenes.Events.POST_UPDATE, onPostUpdate);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.events.off(Phaser.Scenes.Events.POST_UPDATE, onPostUpdate));
     this.applyTimeScale();
+  }
 
+  /** Keyboard bindings, shutdown cleanup, rig hotkeys, mouse wheel. */
+  bindInput(): void {
     this.keyW = this.input.keyboard!.addKey("W");
     this.keyA = this.input.keyboard!.addKey("A");
     this.keyS = this.input.keyboard!.addKey("S");
@@ -693,7 +734,10 @@ export class MissionScene extends Phaser.Scene {
           (this.fireControl.hudWeapon() + this.fireControl.hudLoadout().length - 1) % this.fireControl.hudLoadout().length
         );
     });
+  }
 
+  /** HUD objects: readouts, threat, prompts, weapon bar, status panel, minimap, map labels. */
+  createHud(): void {
     this.cornerHud.hud = this.add
       .text(16, 12, "", {
         fontFamily: "Share Tech Mono, monospace",
@@ -998,7 +1042,10 @@ export class MissionScene extends Phaser.Scene {
     if (this.terrain25d) this.minimap.wrecks.setFlipY(true);
     this.minimap.wrecks.setMask(this.minimap.mask.createGeometryMask());
     this.minimap.mask.setVisible(false);
+  }
 
+  /** Camera centre, zoom, bounds and the initial play-view frame. */
+  initCamera(): void {
     this.cameras.main.centerOn(this.player.x, this.player.y);
     this.cameras.main.setZoom(this.camera.playZoom());
     // Chase cam stays on-map only for craft without forced U-turn.
@@ -1011,10 +1058,6 @@ export class MissionScene extends Phaser.Scene {
     this.camera.playViewW = this.scale.width;
     this.camera.playViewH = this.scale.height;
     this.camera.playLastFrame = true;
-    this.debugMenu.setup();
-    this.help.setup();
-    this.flow.setupExitMenu();
-    this.setupHudCam();
   }
 
   /** ` cycles closed → sprite → roster → combat → toon → balance → closed — owned by RigsScene. */
