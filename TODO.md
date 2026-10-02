@@ -146,7 +146,8 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
   * [ ] Docks -> boats
 * [ ] Rotors push smoke
 * [x] Roadkill organic units with rotors (rotor blades + crushing hulls)
-* [ ] Units affected by cliffs/slope -- slow travel uphill, slope limit, path around cliffs instead of driving into them
+* [ ] Units affected by cliffs/slope -- slow travel uphill, slope limit; AI paths around cliffs or is blocked by them instead of driving through
+* [ ] Player craft blocked by cliffs while holding Shift
 * [ ] Tail rotor (with tilt)
 * [ ] Pseudo 3d tilt graphic (jets/gunship props partial)
 * [x] Clouds

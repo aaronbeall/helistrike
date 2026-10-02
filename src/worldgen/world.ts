@@ -176,6 +176,44 @@ const BIOME_ID: Record<Biome, number> = {
 const H_WATER = 0.34;
 /** Sea level on the height scale (biome water below it). */
 export const WATER_LEVEL = H_WATER;
+/** Lake depth → bed below the water line, and → shading depth (lakes are shallower than the sea). */
+const LAKE_BED_DEPTH = 1.5;
+const LAKE_SHADE_DEPTH = 2.5;
+/** River texels within this distance (texels, along the channel) of open water blend toward its color. */
+const RIVER_MOUTH_BLEND = 36;
+
+/** 0..1 river→water color blend per texel: 1 at the outlet, 0 by RIVER_MOUTH_BLEND up the channel. */
+function riverMouthBlend(biome: Uint8Array): Float32Array {
+  const out = new Float32Array(TEX * TEX);
+  const dist = new Int32Array(TEX * TEX).fill(-1);
+  const q: number[] = [];
+  for (let y = 1; y < TEX - 1; y++) {
+    for (let x = 1; x < TEX - 1; x++) {
+      const i = y * TEX + x;
+      if (biome[i] !== BIOME_ID.river) continue;
+      const W = BIOME_ID.water;
+      if (biome[i - 1] === W || biome[i + 1] === W || biome[i - TEX] === W || biome[i + TEX] === W) {
+        dist[i] = 0;
+        q.push(i);
+      }
+    }
+  }
+  for (let h = 0; h < q.length; h++) {
+    const i = q[h]!;
+    const d = dist[i]! + 1;
+    if (d > RIVER_MOUTH_BLEND) continue;
+    for (const j of [i - 1, i + 1, i - TEX, i + TEX]) {
+      if (j < 0 || j >= TEX * TEX || biome[j] !== BIOME_ID.river || dist[j]! >= 0) continue;
+      dist[j] = d;
+      q.push(j);
+    }
+  }
+  for (const i of q) {
+    const t = dist[i]! / RIVER_MOUTH_BLEND;
+    out[i] = 1 - t * t * (3 - 2 * t);
+  }
+  return out;
+}
 const H_SAND = 0.4;
 const H_ROCK = 0.62;
 const H_PEAK = 0.72;
@@ -231,6 +269,67 @@ const LIGHT = { lit: 1, spec: 0 };
 /** Bank width as a multiple of local river half-width (2 = full river width each side). */
 export const RIVER_BANK_MUL = 4.4;
 export const RIVER_BANK_MIN = 6.5;
+/** Lake shore width range (texels): low-frequency noise picks sharp vs gradual per stretch of shoreline. */
+const LAKE_SHORE_MIN = 3;
+const LAKE_SHORE_MAX = 29;
+/** Shore fraction (near the water) that becomes sand beach; the rest keeps its ground biome. */
+const LAKE_BEACH = 0.35;
+
+/**
+ * Lake shores: distance out from the water, normalized by a shore width that varies along the shoreline
+ * (some stretches drop sharply, some shelve gently). Returns t (0 at the water → 1 at the shore's outer
+ * edge, -1 = not shore); the nearest band becomes sand. Rock / peak shores stay as they are.
+ */
+function stampLakeShores(biome: Uint8Array, lake: Float32Array, seed: number): Float32Array {
+  const out = new Float32Array(TEX * TEX).fill(-1);
+  const dist = new Float32Array(TEX * TEX).fill(Infinity);
+  const q: number[] = [];
+  for (let i = 0; i < lake.length; i++) {
+    if (!lake[i]) continue;
+    dist[i] = 0;
+    q.push(i);
+  }
+  if (!q.length) return out;
+  // Chamfer-ish BFS outward over land (orthogonal 1, diagonal √2), capped at the widest shore.
+  const nb: [number, number, number][] = [
+    [1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1],
+    [1, 1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [-1, -1, Math.SQRT2],
+  ];
+  for (let h = 0; h < q.length; h++) {
+    const i = q[h]!;
+    const x = i % TEX;
+    const y = (i / TEX) | 0;
+    for (const [dx, dy, w] of nb) {
+      const xx = x + dx;
+      const yy = y + dy;
+      if (xx < 0 || yy < 0 || xx >= TEX || yy >= TEX) continue;
+      const j = yy * TEX + xx;
+      const b = biome[j]!;
+      if (b === BIOME_ID.water || b === BIOME_ID.river) continue;
+      const d = dist[i]! + w;
+      if (d >= dist[j]! || d > LAKE_SHORE_MAX) continue;
+      dist[j] = d;
+      q.push(j);
+    }
+  }
+  // Grid-step distance only slopes in 8 directions (lighting shows facets); blur it, water included.
+  const touched: number[] = [];
+  for (let i = 0; i < dist.length; i++) if (dist[i]! < Infinity) touched.push(i);
+  blurTouched(dist, touched, 2);
+  for (const i of touched) {
+    if (lake[i]) continue;
+    const d = dist[i]!;
+    const x = i % TEX;
+    const y = (i / TEX) | 0;
+    const width = LAKE_SHORE_MIN + (LAKE_SHORE_MAX - LAKE_SHORE_MIN) * clamp((fbm(x * 0.011, y * 0.011, seed + 601, 3) - 0.3) / 0.4, 0, 1);
+    if (d >= width) continue;
+    const t = d / width;
+    out[i] = t;
+    const b = biome[i]!;
+    if (t < LAKE_BEACH && (b === BIOME_ID.grass || b === BIOME_ID.forest)) biome[i] = BIOME_ID.sand;
+  }
+  return out;
+}
 /** Bank width cap (texels) so trunk rivers don't get huge sand belts. */
 const RIVER_BANK_MAX = 26;
 /** How much bank width wanders (0 = smooth, 1 = wild). */
@@ -316,14 +415,15 @@ export interface DrainagePreview {
   /** Trunk-river channels only (relief.biome also gets the drainage streams). */
   trunk: Uint8Array;
   trace: DrainageTrace | null;
-  lake: Uint8Array;
+  /** Lake depth below its spill level per texel (0 = not lake). */
+  lake: Float32Array;
 }
 
 /** Same relief + drainage code as world gen, stopping before biomes; returns every intermediate for preview. */
 export function previewDrainage(seed: number, profile: WorldGenProfile): DrainagePreview {
   const relief = buildRelief(seed, profile);
   const trunk = new Uint8Array(relief.biome);
-  const lake = new Uint8Array(TEX * TEX);
+  const lake = new Float32Array(TEX * TEX);
   let trace: DrainageTrace | null = null;
   carveDrainage(relief.height, relief.biome, relief.riverRad, seed, profile.riverTarget, lake, (t) => (trace = t));
   return { relief, trunk, trace, lake };
@@ -337,7 +437,7 @@ export function generateWorld(
 ): WorldGen {
   const rng = new Rng(seed);
   const { height, moisture, biome, riverRad, field, hint } = buildRelief(seed, profile, onProgress, true);
-  const lake = new Uint8Array(TEX * TEX);
+  const lake = new Float32Array(TEX * TEX);
   carveDrainage(height, biome, riverRad, seed, profile.riverTarget, lake);
   onProgress?.(0.52, "biomes");
 
@@ -353,13 +453,17 @@ export function generateWorld(
 
   onProgress?.(0.58, "river banks");
   const bankT = stampRiverBanks(biome, riverRad, seed);
+  const shore = stampLakeShores(biome, lake, seed);
   onProgress?.(0.74, "elevation");
 
   const raw = new Float32Array(height);
   const bed = H_WATER - 0.02;
   for (let i = 0; i < height.length; i++) {
     height[i] = remapBand(height[i]!);
-    if (biome[i] === BIOME_ID.river || lake[i]) {
+    if (lake[i]) {
+      // Basin below the water line (depth from the spill level), not a flat floor.
+      height[i] = Math.min(height[i]!, bed - lake[i]! * LAKE_BED_DEPTH);
+    } else if (biome[i] === BIOME_ID.river) {
       height[i] = Math.min(height[i]!, bed);
     } else if (bankT[i]! >= 0) {
       const t = bankT[i]!;
@@ -371,16 +475,21 @@ export function generateWorld(
       s = clamp(s + (n1 - 0.5) * 0.42, 0, 1);
       height[i] = lerp(bed, height[i]!, s);
       height[i] += (n2 - 0.5) * RIVER_BANK_ROUGH * (1 - Math.abs(t * 2 - 1));
+    } else if (shore[i]! >= 0) {
+      // Soft lake shore: ease down to just under the water line (sharp or gradual per shore width).
+      const t = shore[i]!;
+      height[i] = lerp(H_WATER - 0.004, height[i]!, t * t * (3 - 2 * t));
     }
   }
   applyDunes(height, TEX, profile.landforms.dunes, seed, hint, (i) => {
     const b = biome[i]!;
-    return (b === BIOME_ID.sand || b === BIOME_ID.grass) && bankT[i]! < 0;
+    return (b === BIOME_ID.sand || b === BIOME_ID.grass) && bankT[i]! < 0 && shore[i]! < 0;
   });
 
   onProgress?.(0.82, "terrain paint");
   const theme = themeOf(profile.theme);
-  const terrain = paintTerrain(raw, biome, seed, theme, themedTiles(theme, tiles), bankT, onProgress);
+  const mouth = riverMouthBlend(biome);
+  const terrain = paintTerrain(raw, biome, seed, theme, themedTiles(theme, tiles), bankT, onProgress, lake, mouth, shore);
   onProgress?.(0.96, "force laydown");
   const { spawnX, spawnY } = findSpawn(height, biome, rng, field.spawnX, field.spawnY);
   const { hv, spawns } = placeForces(height, biome, rng, spawnX, spawnY, profile, field.keep);
@@ -826,6 +935,8 @@ const DRAIN_AREA = 60000;
 const LAKE_DEPTH = 0.02;
 const LAKE_MIN = 40;
 const LAKE_MAX = 2600;
+/** How far (coarse cells) a lake's full-res flood may reach beyond its own cells. */
+const LAKE_REACH = 3;
 /** Routing-only height noise: breaks up parallel flow on flats so streams merge. */
 const DRAIN_JITTER = 0.006;
 /** Fill above ground that counts as flooded (a hollow). */
@@ -846,7 +957,7 @@ function carveDrainage(
   riverRad: Float32Array,
   seed: number,
   density: number,
-  lake: Uint8Array,
+  lake: Float32Array,
   trace?: (t: DrainageTrace) => void
 ): void {
   if (density <= 0) return;
@@ -944,33 +1055,49 @@ function carveDrainage(
     for (let k = 0; k < qt; k++) lakeOf[q[k]!] = id;
   }
   // Fill lakes at full res: flood out from each lake's cells over texels below its spill level, so the
-  // shoreline follows the real ground (not coarse cells). Bounded per lake so it can't leak at the spill.
+  // shoreline follows the real ground (not coarse cells). Each lake reaches at most LAKE_REACH coarse
+  // cells past its own, never past its spill, never into trunk channels or ground below sea level.
+  const near = new Int32Array(N).fill(-1);
   const lakeCells: number[][] = lakeLevel.map(() => []);
-  for (let c = 0; c < N; c++) if (lakeOf[c]! >= 0) lakeCells[lakeOf[c]!]!.push(c);
+  for (let c = 0; c < N; c++) {
+    const id = lakeOf[c]!;
+    if (id < 0) continue;
+    lakeCells[id]!.push(c);
+    const cx = c % n;
+    const cy = (c / n) | 0;
+    for (let oy = -LAKE_REACH; oy <= LAKE_REACH; oy++) {
+      for (let ox = -LAKE_REACH; ox <= LAKE_REACH; ox++) {
+        const xx = cx + ox;
+        const yy = cy + oy;
+        if (xx < 0 || yy < 0 || xx >= n || yy >= n) continue;
+        if (near[yy * n + xx]! < 0) near[yy * n + xx] = id;
+      }
+    }
+  }
   const surf = (tx: number, ty: number) => height[ty * TEX + tx]! + jitter((tx - half) / DRAIN_STEP, (ty - half) / DRAIN_STEP);
+  // Own cells, or rim cells that stand at/above the lake level (ground there drains back into it);
+  // cells filled lower drain elsewhere (past the spill), so the lake stops instead of spreading there.
+  const floodable = (tx: number, ty: number, id: number, level: number) => {
+    const i = ty * TEX + tx;
+    if (lake[i] || biome[i] === BIOME_ID.river || height[i]! < H_WATER) return false;
+    const cx = Math.min(n - 1, (tx / DRAIN_STEP) | 0);
+    const cy = Math.min(n - 1, (ty / DRAIN_STEP) | 0);
+    const c = cy * n + cx;
+    return near[c] === id && (lakeOf[c] === id || fill[c]! >= level);
+  };
   const tq: number[] = [];
   for (let id = 0; id < lakeLevel.length; id++) {
     const level = lakeLevel[id]!;
-    let x0 = TEX;
-    let y0 = TEX;
-    let x1 = 0;
-    let y1 = 0;
     tq.length = 0;
     for (const c of lakeCells[id]!) {
       const tx = (c % n) * DRAIN_STEP + half;
       const ty = ((c / n) | 0) * DRAIN_STEP + half;
-      x0 = Math.min(x0, tx);
-      y0 = Math.min(y0, ty);
-      x1 = Math.max(x1, tx);
-      y1 = Math.max(y1, ty);
-      const i = ty * TEX + tx;
-      if (!lake[i] && surf(tx, ty) < level) (lake[i] = 1), tq.push(i);
+      const sv = surf(tx, ty);
+      if (sv < level && floodable(tx, ty, id, level)) {
+        lake[ty * TEX + tx] = Math.max(1e-4, level - sv);
+        tq.push(ty * TEX + tx);
+      }
     }
-    const pad = DRAIN_STEP * 4;
-    x0 = Math.max(1, x0 - pad);
-    y0 = Math.max(1, y0 - pad);
-    x1 = Math.min(TEX - 2, x1 + pad);
-    y1 = Math.min(TEX - 2, y1 + pad);
     for (let h = 0; h < tq.length; h++) {
       const i = tq[h]!;
       const tx = i % TEX;
@@ -978,11 +1105,11 @@ function carveDrainage(
       for (const [dx, dy] of LAKE_NB) {
         const xx = tx + dx;
         const yy = ty + dy;
-        if (xx < x0 || yy < y0 || xx > x1 || yy > y1) continue;
-        const j = yy * TEX + xx;
-        if (lake[j] || surf(xx, yy) >= level) continue;
-        lake[j] = 1;
-        tq.push(j);
+        if (xx < 1 || yy < 1 || xx > TEX - 2 || yy > TEX - 2) continue;
+        const sv = surf(xx, yy);
+        if (sv >= level || !floodable(xx, yy, id, level)) continue;
+        lake[yy * TEX + xx] = Math.max(1e-4, level - sv);
+        tq.push(yy * TEX + xx);
       }
     }
   }
@@ -1049,6 +1176,84 @@ const DRAIN_NB = [1, 0, -1, 0, 0, 1, 0, -1, 1, 1, 1, -1, -1, 1, -1, -1];
 const LAKE_NB = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
 
 const MAIN_STEP = 6;
+/** Trunk channel edge raggedness: noise frequency (per texel) and radius swing. */
+const MAIN_EDGE_FREQ = 0.11;
+const MAIN_EDGE_JAG = 0.22;
+
+/** stampRiver with a ragged edge: each texel's cutoff radius varies with 2D noise at that texel. */
+function stampRiverRagged(biome: Uint8Array, riverRad: Float32Array, x: number, y: number, rad: number, seed: number): void {
+  const r = Math.max(rad, 0.5);
+  const outer = r * (1 + MAIN_EDGE_JAG);
+  const inner = r * (1 - MAIN_EDGE_JAG);
+  const ir = Math.ceil(outer);
+  for (let oy = -ir; oy <= ir; oy++) {
+    for (let ox = -ir; ox <= ir; ox++) {
+      const xx = x + ox;
+      const yy = y + oy;
+      if (xx < 0 || yy < 0 || xx >= TEX || yy >= TEX) continue;
+      const d = Math.hypot(ox, oy);
+      if (d > outer) continue;
+      const i = yy * TEX + xx;
+      if (d > inner) {
+        const jag = (fbm(xx * MAIN_EDGE_FREQ, yy * MAIN_EDGE_FREQ, seed + 507, 2) - 0.5) * 2 * MAIN_EDGE_JAG;
+        if (d > r * (1 + jag)) continue;
+      }
+      biome[i] = BIOME_ID.river;
+      if (r > riverRad[i]!) riverRad[i] = r;
+    }
+  }
+}
+
+/** Blur radius (texels) for the trunk valley's along-river parameter. */
+const MAIN_T_BLUR = 20;
+
+/** Box-blur `v` over only the `touched` texels (others neither read nor written), radius r. */
+function blurTouched(v: Float32Array, touched: number[], r: number): void {
+  if (!touched.length) return;
+  let x0 = TEX;
+  let y0 = TEX;
+  let x1 = 0;
+  let y1 = 0;
+  for (const i of touched) {
+    const x = i % TEX;
+    const y = (i / TEX) | 0;
+    if (x < x0) x0 = x;
+    if (y < y0) y0 = y;
+    if (x > x1) x1 = x;
+    if (y > y1) y1 = y;
+  }
+  const w = x1 - x0 + 1;
+  const h = y1 - y0 + 1;
+  const sv = new Float64Array((w + 1) * (h + 1));
+  const sw = new Float64Array((w + 1) * (h + 1));
+  const mask = new Uint8Array(w * h);
+  for (const i of touched) mask[(((i / TEX) | 0) - y0) * w + (i % TEX) - x0] = 1;
+  for (let y = 0; y < h; y++) {
+    let rv = 0;
+    let rw = 0;
+    for (let x = 0; x < w; x++) {
+      if (mask[y * w + x]) {
+        rv += v[(y + y0) * TEX + x + x0]!;
+        rw += 1;
+      }
+      const o = (y + 1) * (w + 1) + x + 1;
+      sv[o] = sv[o - (w + 1)]! + rv;
+      sw[o] = sw[o - (w + 1)]! + rw;
+    }
+  }
+  const box = (a: Float64Array, ax: number, ay: number, bx: number, by: number) =>
+    a[by * (w + 1) + bx]! - a[ay * (w + 1) + bx]! - a[by * (w + 1) + ax]! + a[ay * (w + 1) + ax]!;
+  for (const i of touched) {
+    const x = (i % TEX) - x0;
+    const y = ((i / TEX) | 0) - y0;
+    const ax = Math.max(0, x - r);
+    const ay = Math.max(0, y - r);
+    const bx = Math.min(w, x + r + 1);
+    const by = Math.min(h, y + r + 1);
+    const n = box(sw, ax, ay, bx, by);
+    if (n > 0) v[i] = box(sv, ax, ay, bx, by) / n;
+  }
+}
 /** Trunk half-width (texels) at source → mouth. */
 const MAIN_W0 = 4;
 const MAIN_W1 = 14;
@@ -1214,6 +1419,9 @@ function carveMainRivers(height: Float32Array, biome: Uint8Array, riverRad: Floa
         }
       }
     }
+    // Nearest-segment t jumps where two stretches are equally close (bend medial axis); blur it so
+    // the stepped-down floodplain has no creases there.
+    blurTouched(tAt, touched, MAIN_T_BLUR);
     for (const i of touched) {
       const t = tAt[i]!;
       const w = widthAt(t);
@@ -1223,11 +1431,14 @@ function carveMainRivers(height: Float32Array, biome: Uint8Array, riverRad: Floa
       if (target < height[i]!) height[i] = target;
       dMin[i] = Infinity;
     }
-    for (const sp of samples) {
+    for (let k = 0; k < samples.length; k++) {
+      const sp = samples[k]!;
       const x = Math.round(sp.x);
       const y = Math.round(sp.y);
       if (x < 1 || y < 1 || x >= TEX - 1 || y >= TEX - 1) continue;
-      stampRiver(biome, riverRad, x, y, widthAt(sp.t));
+      // Slow width wander along the arc; the ragged edge itself comes from 2D noise in the stamp.
+      const wander = 1 + (fbm(k * 0.012, 1.7, seed + 501, 2) - 0.5) * 0.24;
+      stampRiverRagged(biome, riverRad, x, y, widthAt(sp.t) * wander, seed);
     }
   }
 }
@@ -1419,11 +1630,17 @@ function shadeTerrainTexel(
   tiles: (ImageData | null)[] | undefined,
   bankT: Float32Array | undefined,
   x: number,
-  y: number
+  y: number,
+  lakeDepth?: Float32Array,
+  mouth?: Float32Array,
+  shore?: Float32Array
 ): [number, number, number] {
   const i = y * TEX + x;
-  const h = raw[i]!;
+  const raw0 = raw[i]!;
   const b = biome[i]!;
+  // Lakes sit above sea level in `raw`; shade them by their own depth so they grade like the sea.
+  const depth = lakeDepth ? lakeDepth[i]! : 0;
+  const h = b === BIOME_ID.water && depth > 0 ? H_WATER - depth * LAKE_SHADE_DEPTH : raw0;
   const n = fbm(x * 0.08, y * 0.08, seed + 99, 2) * 18 - 9;
   const wet = b === BIOME_ID.sand && bankT && bankT[i]! >= 0 ? 1 - bankT[i]! : 0;
   let rgb = baseTerrainColor(theme, b, h, wet, n);
@@ -1440,6 +1657,21 @@ function shadeTerrainTexel(
       overlayChan(rgb[1], tile.data[to + 1]!, 0.7),
       overlayChan(rgb[2], tile.data[to + 2]!, 0.7),
     ];
+    // Near the outlet, fade into the open-water look it flows into (shallow water + water tile).
+    const m = mouth ? mouth[i]! : 0;
+    if (m > 0) {
+      let wrgb = baseTerrainColor(theme, BIOME_ID.water, H_WATER - 0.004, 0, n);
+      const wt = tiles?.[BIOME_ID.water];
+      if (wt) {
+        const wo = ((y % wt.height) * wt.width + (x % wt.width)) * 4;
+        wrgb = [
+          overlayChan(wrgb[0], wt.data[wo]!, 0.52),
+          overlayChan(wrgb[1], wt.data[wo + 1]!, 0.52),
+          overlayChan(wrgb[2], wt.data[wo + 2]!, 0.52),
+        ];
+      }
+      rgb = [lerp(rgb[0], wrgb[0], m), lerp(rgb[1], wrgb[1], m), lerp(rgb[2], wrgb[2], m)];
+    }
   } else if (bank && sandTile) {
     const tw = sandTile.width;
     const th = sandTile.height;
@@ -1460,6 +1692,15 @@ function shadeTerrainTexel(
       overlayChan(rgb[2], tile.data[to + 2]!, 0.52),
     ];
   }
+  // Lake shore: fade from wet sand at the water back to the ground's own look across the shore.
+  const st = shore ? shore[i]! : -1;
+  if (st >= 0 && b !== BIOME_ID.water && b !== BIOME_ID.river) {
+    const k = 1 - smooth01(0, 0.6, st);
+    if (k > 0) {
+      const wetSand = baseTerrainColor(theme, BIOME_ID.sand, h, 1, n);
+      rgb = [lerp(rgb[0], wetSand[0], k * 0.85), lerp(rgb[1], wetSand[1], k * 0.85), lerp(rgb[2], wetSand[2], k * 0.85)];
+    }
+  }
   return rgb;
 }
 
@@ -1470,6 +1711,7 @@ function overlayChan(base: number, tex: number, a: number): number {
   return clamp((b * (1 - a) + o * a) * 255, 0, 255);
 }
 
+
 function paintTerrain(
   raw: Float32Array,
   biome: Uint8Array,
@@ -1477,14 +1719,17 @@ function paintTerrain(
   theme: ThemeSpec,
   tiles?: (ImageData | null)[],
   bankT?: Float32Array,
-  onProgress?: WorldProgress
+  onProgress?: WorldProgress,
+  lakeDepth?: Float32Array,
+  mouth?: Float32Array,
+  shore?: Float32Array
 ): ImageData {
   const img = new ImageData(TEX, TEX);
   const d = img.data;
   for (let y = 0; y < TEX; y++) {
     if (y % 150 === 0) onProgress?.(0.82 + (y / TEX) * 0.13, "terrain paint");
     for (let x = 0; x < TEX; x++) {
-      const rgb = shadeTerrainTexel(raw, biome, seed, theme, tiles, bankT, x, y);
+      const rgb = shadeTerrainTexel(raw, biome, seed, theme, tiles, bankT, x, y, lakeDepth, mouth, shore);
       const o = (y * TEX + x) * 4;
       d[o] = rgb[0];
       d[o + 1] = rgb[1];
