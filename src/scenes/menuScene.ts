@@ -360,11 +360,14 @@ export class MenuScene extends Phaser.Scene {
         .setStrokeStyle(1, 0x5d5544, 0.8)
         .setDepth(2)
         .setInteractive({ useHandCursor: true });
-      // Fit (not stretch) like the craft art — the square thumbnail must not distort to fill
-      // a non-square box.
+      // Cover the box (scale up, crop the overflow evenly) — fills it without distorting the square thumbnail.
       const art = this.add.image(missionX, missionCardY, `menu_mission_preview_${mission.kind}`).setDepth(3);
-      const artScale = craftPreviewFitScale(art.width, art.height, missionW - 8, missionH - 8);
-      art.setScale(artScale);
+      const boxW = missionW - 4;
+      const boxH = missionH - 4;
+      const artScale = Math.max(boxW / art.width, boxH / art.height);
+      const cropW = boxW / artScale;
+      const cropH = boxH / artScale;
+      art.setCrop((art.width - cropW) / 2, (art.height - cropH) / 2, cropW, cropH).setScale(artScale);
       const label = this.add
         .text(missionX, missionLabelY, mission.label, {
           fontFamily: "Share Tech Mono, monospace",
