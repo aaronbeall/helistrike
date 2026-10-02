@@ -111,7 +111,7 @@ export class Countermeasures {
       const ang = (i / dots) * Math.PI * 2;
       const cos = Math.cos(ang);
       const sin = Math.sin(ang);
-      this.s.emitVisualBurst(
+      this.s.fx.emitVisualBurst(
         h.x + cos * r,
         h.y + sin * r,
         z0,
@@ -128,7 +128,7 @@ export class Countermeasures {
           gravity: 30,
           depthOff: ZOff.fire + 0.5,
         },
-        this.s.reactiveArmorSpark
+        this.s.fx.reactiveArmorSpark
       );
     }
   }
@@ -151,7 +151,7 @@ export class Countermeasures {
     const ox = h.x + dx * r;
     const oy = h.y + dy * r;
     const z0 = h.z + h.height * 0.5;
-    this.s.emitVisualBurst(
+    this.s.fx.emitVisualBurst(
       ox,
       oy,
       z0,
@@ -168,7 +168,7 @@ export class Countermeasures {
         gravity: 30,
         depthOff: ZOff.fire + 0.5,
       },
-      this.s.reactiveArmorSpark
+      this.s.fx.reactiveArmorSpark
     );
   }
 
@@ -482,14 +482,14 @@ export class Countermeasures {
     if (this.reactiveArmorT > 0) this.reactiveArmorT = Math.max(0, this.reactiveArmorT - dt);
     if (this.smokeScreenT > 0) {
       this.smokeScreenT = Math.max(0, this.smokeScreenT - dt);
-      if (this.s.fxChance(0.18)) this.fireSmokeScreen(1);
+      if (this.s.fx.chance(0.18)) this.fireSmokeScreen(1);
     }
     for (const r of this.s.remotes) {
       if (r.detonate || r.dock) continue;
       if ((r.cmCd ?? 0) > 0) r.cmCd = Math.max(0, (r.cmCd ?? 0) - dt);
       if ((r.smokeT ?? 0) > 0) {
         r.smokeT = Math.max(0, (r.smokeT ?? 0) - dt);
-        if (r.smokeT > 0 && this.s.fxChance(0.18)) this.fireSmokeScreen(1, r);
+        if (r.smokeT > 0 && this.s.fx.chance(0.18)) this.fireSmokeScreen(1, r);
       }
     }
     if (this.pulseT > 0) this.pulseT = Math.max(0, this.pulseT - dt);
@@ -564,14 +564,14 @@ export class Countermeasures {
     const at = worldToScreen(x, y, z);
     const spd = Math.hypot(f.vx, f.vy, f.vz);
     const burn = 0.55 + 0.45 * Phaser.Math.Clamp(f.life / Math.max(0.2, f.max), 0, 1);
-    this.s.withTrailFx(1, () => {
-      const nTrail = this.s.fxEmitCount((0.7 + Math.min(1.1, spd / 240)) * burn);
+    this.s.fx.withTrail(1, () => {
+      const nTrail = this.s.fx.emitCount((0.7 + Math.min(1.1, spd / 240)) * burn);
       if (nTrail) {
-        this.s.emitBudgeted("fire", this.s.fxAt(z, y, this.s.flareTrail, ZOff.fire), at.x, at.y, nTrail);
+        this.s.fx.emitBudgeted("fire", this.s.fx.at(z, y, this.s.fx.flareTrail, ZOff.fire), at.x, at.y, nTrail);
       }
-      const nCore = this.s.fxEmitCount(0.95 * burn);
+      const nCore = this.s.fx.emitCount(0.95 * burn);
       if (nCore) {
-        this.s.emitBudgeted("short", this.s.fxAt(z, y, this.s.flareSpark, ZOff.fire + 0.45), at.x, at.y, nCore);
+        this.s.fx.emitBudgeted("short", this.s.fx.at(z, y, this.s.fx.flareSpark, ZOff.fire + 0.45), at.x, at.y, nCore);
       }
     });
   }
@@ -600,7 +600,7 @@ export class Countermeasures {
       if (Math.hypot(u.x - h.x, u.y - h.y) > r) continue;
       // Fried electronics → freefall crash, boom on ground (not a mid-air stun).
       if (specOf(u.kind).empCrashes) {
-        this.s.destroyUnit(u, true, true, false, true);
+        this.s.destruction.destroyUnit(u, true, true, false, true);
         this.s.tesla.emitSparks(u.x, u.y, u.z + 4, 5, 0.45);
         continue;
       }
@@ -631,7 +631,7 @@ export class Countermeasures {
       expand: 3.2,
     });
     const at = worldToScreen(x, y, z);
-    this.s.spawnImpactFlash(at.x, at.y, z, 0x88f0ff, radius * 0.62 * at.scale, 0.82, 240);
+    this.s.fx.spawnImpactFlash(at.x, at.y, z, 0x88f0ff, radius * 0.62 * at.scale, 0.82, 240);
     this.s.tesla.emitSparks(x, y, z, 18, 1.05);
     for (let i = 0; i < 12; i++) {
       const a = (i / 12) * Math.PI * 2 + range(-0.2, 0.2);
@@ -653,7 +653,7 @@ export class Countermeasures {
       this.empBurstT = Math.max(0, this.empBurstT - dt);
       const burst = this.empBurst;
       const u = 1 - this.empBurstT / 0.42;
-      const n = this.s.fxEmitCount(1.35);
+      const n = this.s.fx.emitCount(1.35);
       for (let i = 0; i < n; i++) {
         const a = Math.random() * Math.PI * 2;
         const r = burst.radius * (0.22 + u * 0.85) * range(0.82, 1.08);

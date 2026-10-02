@@ -445,7 +445,7 @@ export class Tesla {
   }
 
   emitSparks(x: number, y: number, z: number, n: number, scaleMul: number): void {
-    this.s.emitVisualBurst(
+    this.s.fx.emitVisualBurst(
       x,
       y,
       z,
@@ -460,7 +460,7 @@ export class Tesla {
         scaleMul,
         stretchMul: 1.42,
       },
-      this.s.teslaSparkBurst
+      this.s.fx.teslaSparkBurst
     );
   }
 

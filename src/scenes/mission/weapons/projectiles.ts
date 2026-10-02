@@ -405,9 +405,9 @@ export class Projectiles {
         helixDx = px * lat;
         helixDy = py * lat;
         helixDz = hz;
-        this.s.simulateHelixRibbon(s, dt, s.x + helixDx, s.y + helixDy, s.z + helixDz);
+        this.s.trails.simulateHelixRibbon(s, dt, s.x + helixDx, s.y + helixDy, s.z + helixDz);
       } else if (s.energyTrail || s.energyTrails) {
-        this.s.simulateEnergyTrail(s, dt);
+        this.s.trails.simulateEnergyTrail(s, dt);
       }
 
       const kickPre =
@@ -475,7 +475,7 @@ export class Projectiles {
           const dmg = s.dmg * 0.65 * (this.s.countermeasures.reactiveArmorT > 0 && isHost ? 0.22 : 1);
           this.s.targeting.damageTarget(tgt, dmg, s.vx, s.vy);
           if (this.s.countermeasures.reactiveArmorT > 0 && isHost) {
-            this.s.spawnImpactFlash(tgt.x, tgt.y, tgt.z + 8, 0xffcc66, 48, 0.9, 140);
+            this.s.fx.spawnImpactFlash(tgt.x, tgt.y, tgt.z + 8, 0xffcc66, 48, 0.9, 140);
             this.s.countermeasures.fireReactiveArmorImpactBurst(s.vx, s.vy);
           }
           return true;
@@ -569,7 +569,7 @@ export class Projectiles {
         }
       }
       if (hit) {
-        this.s.releaseEnergyTrail(s);
+        this.s.trails.releaseEnergyTrail(s);
         // Linger policy (hold lengths; cam.linger not authored yet):
         // - thermal + povCam: long + keep sensor palette
         // - wire: medium
@@ -664,23 +664,23 @@ export class Projectiles {
         s.x += helixDx;
         s.y += helixDy;
         s.z += helixDz;
-        this.s.emitShotTrail(s, x0 + helixDx, y0 + helixDy, z0 + helixDz);
+        this.s.trails.emitShotTrail(s, x0 + helixDx, y0 + helixDy, z0 + helixDz);
         s.x -= helixDx;
         s.y -= helixDy;
         s.z -= helixDz;
       } else {
-        this.s.emitShotTrail(s, x0, y0, z0);
+        this.s.trails.emitShotTrail(s, x0, y0, z0);
       }
       if (!s.deadfall && exhaustWarpMotes(s.beh?.exhaust)) {
-        this.s.emitWarpTrailFx(s, x0, y0, z0);
+        this.s.trails.emitWarpTrailFx(s, x0, y0, z0);
       }
       if (!s.deadfall && exhaustIsSignalFlare(s.beh?.exhaust)) {
-        this.s.emitSignalFlareTrailFx(s, x0, y0, z0);
+        this.s.trails.emitSignalFlareTrailFx(s, x0, y0, z0);
       }
       shots[w++] = s;
     }
     shots.length = w;
-    this.s.ageEnergyLinger(dt);
+    this.s.trails.ageEnergyLinger(dt);
     this.s.refractor.tick(dt);
     if (this.s.perf.enabled) {
       const t = performance.now();
@@ -1285,16 +1285,16 @@ export class Projectiles {
     const small = troopMissileTrail(s);
     const n = small ? Math.max(2, Math.round(5 * sc)) : Math.max(2, Math.round(8 * sc));
     const tail = this.shotUvScreenPos(s, SHOT_TAIL.x, SHOT_TAIL.y);
-    this.s.withTrailFx(sc, () => {
-      const { fire, smoke } = this.s.pairFx(s.z, s.y, this.s.burn, this.s.shortTrailSmoke, ZOff.fire, ZOff.smoke);
-      this.s.emitBudgeted("fire", fire, tail.x, tail.y, n);
-      this.s.emitBudgeted("smoke", smoke, tail.x, tail.y, Math.max(1, Math.round((small ? 3 : 6) * sc)));
+    this.s.fx.withTrail(sc, () => {
+      const { fire, smoke } = this.s.fx.pair(s.z, s.y, this.s.fx.burn, this.s.fx.shortTrailSmoke, ZOff.fire, ZOff.smoke);
+      this.s.fx.emitBudgeted("fire", fire, tail.x, tail.y, n);
+      this.s.fx.emitBudgeted("smoke", smoke, tail.x, tail.y, Math.max(1, Math.round((small ? 3 : 6) * sc)));
       if (!small) {
-        this.s.blastFire.setDepth(worldDepth(s.z, ZOff.fire + 0.2, s.y));
-        this.s.emitBudgeted("fire", this.s.blastFire, tail.x, tail.y, Math.max(1, Math.round(4 * sc)));
+        this.s.fx.blastFire.setDepth(worldDepth(s.z, ZOff.fire + 0.2, s.y));
+        this.s.fx.emitBudgeted("fire", this.s.fx.blastFire, tail.x, tail.y, Math.max(1, Math.round(4 * sc)));
       }
     });
-    this.s.emitVisualBurst(s.x, s.y, s.z, {
+    this.s.fx.emitVisualBurst(s.x, s.y, s.z, {
       n: Math.max(4, Math.round(10 * sc)),
       spdMin: 80,
       spdMax: 240,
@@ -1303,7 +1303,7 @@ export class Projectiles {
       bz: 0.1,
       tight: 0.55,
       scaleMul: sc,
-    }, this.s.muzzleBurst);
+    }, this.s.fx.muzzleBurst);
   }
 
   /** Sagging command wire: trail points relax toward wing→missile chord (87ea78e). */
@@ -1394,8 +1394,8 @@ export class Projectiles {
     const payload = shot?.beh?.payload;
     if (payloadIsSmoke(payload)) {
       const at = worldToScreen(x, y, z);
-      this.s.spawnImpactFlash(at.x, at.y, z, 0xf0e0a0, 16 * at.scale, 0.35, 55);
-      this.s.emitVisualBurst(
+      this.s.fx.spawnImpactFlash(at.x, at.y, z, 0xf0e0a0, 16 * at.scale, 0.35, 55);
+      this.s.fx.emitVisualBurst(
         x,
         y,
         z + 2,
@@ -1410,7 +1410,7 @@ export class Projectiles {
           scaleMul: 0.28,
           gravity: 150,
         },
-        this.s.shortBurst
+        this.s.fx.shortBurst
       );
       this.s.shake = Math.min(3.2, this.s.shake + 0.45);
       if (!fxOnly) this.applyBlastDamage(x, y, z, blast, dmg, direct, dx, dy, dz, true, shot);
@@ -1419,8 +1419,8 @@ export class Projectiles {
     if (payloadIsCallStrike(payload)) {
       // Marker rest: soft pink pop only — barrage carries the damage.
       const at = worldToScreen(x, y, z);
-      this.s.spawnImpactFlash(at.x, at.y, z, 0xff4068, 28 * at.scale, 0.72, 140);
-      this.s.emitVisualBurst(
+      this.s.fx.spawnImpactFlash(at.x, at.y, z, 0xff4068, 28 * at.scale, 0.72, 140);
+      this.s.fx.emitVisualBurst(
         x,
         y,
         z + 4,
@@ -1435,7 +1435,7 @@ export class Projectiles {
           scaleMul: 0.55,
           gravity: 80,
         },
-        this.s.signalFlareSpark
+        this.s.fx.signalFlareSpark
       );
       this.s.shake = Math.min(2.8, this.s.shake + 0.35);
       return;
@@ -1463,7 +1463,7 @@ export class Projectiles {
       const graze = Phaser.Math.Clamp(Math.hypot(dx, dy) / travel, 0, 1);
       const distN = Phaser.Math.Clamp(Math.hypot(x - this.s.player.x, y - this.s.player.y) / 780, 0, 1);
       const acute = Math.max(graze, distN);
-      this.s.spawnDirtParticles(x, y, z + 3, {
+      this.s.fx.spawnDirtParticles(x, y, z + 3, {
         n: 22,
         spdMin: Phaser.Math.Linear(36, 200, acute * acute),
         spdMax: Phaser.Math.Linear(200, 520, acute * acute),
@@ -1477,7 +1477,7 @@ export class Projectiles {
     if (objectHit) {
       // Troops: blood only. Motorcycle: blood + mech sparks. Everything else: mech sparks.
       if (!softBloodHit || !isOrganic(direct!.kind)) {
-        this.s.emitVisualBurst(x, y, z + 4, {
+        this.s.fx.emitVisualBurst(x, y, z + 4, {
           n: scaledProjectileFxCount(
             Math.min(56, Math.round((he ? 36 : 18) * fx.n)),
             impactFxScale
@@ -1491,10 +1491,10 @@ export class Projectiles {
           scaleMul: fx.size,
           expBias,
           gravity: 180,
-        }, this.s.shortBurst);
+        }, this.s.fx.shortBurst);
       }
     } else if (water) {
-      this.s.emitVisualBurst(x, y, z + 3, {
+      this.s.fx.emitVisualBurst(x, y, z + 3, {
         n: Math.min(80, Math.round(20 * fx.n)),
         spdMin: 50 * fx.spd,
         spdMax: 220 * fx.spd,
@@ -1505,7 +1505,7 @@ export class Projectiles {
         scaleMul: fx.size,
         expBias: missileBias,
         gravity: 240,
-      }, this.s.splashBurst);
+      }, this.s.fx.splashBurst);
     } else {
       const graze = Phaser.Math.Clamp(Math.hypot(dx, dy) / travel, 0, 1);
       const distN = Phaser.Math.Clamp(Math.hypot(x - this.s.player.x, y - this.s.player.y) / 780, 0, 1);
@@ -1519,7 +1519,7 @@ export class Projectiles {
         );
         const baseSparkN = Math.max(1, Math.round(total * (he ? 0.02 : 0.035)));
         const sparkN = scaledProjectileFxCount(baseSparkN, impactFxScale);
-        this.s.spawnDirtParticles(x, y, z + 3, {
+        this.s.fx.spawnDirtParticles(x, y, z + 3, {
           n: Math.max(0, total - baseSparkN),
           spdMin: Phaser.Math.Linear(50, 160, acute) * fx.spd,
           spdMax: Phaser.Math.Linear(220, 420, acute) * fx.spd,
@@ -1530,18 +1530,18 @@ export class Projectiles {
           scaleMul: fx.size * Phaser.Math.Linear(1, 1.08, blend),
           expBias: missileBias,
         });
-        this.s.emitVisualBurst(x, y, z + 3, {
+        this.s.fx.emitVisualBurst(x, y, z + 3, {
           n: sparkN,
           spdMin: Phaser.Math.Linear(50, 160, acute) * fx.spd,
           spdMax: Phaser.Math.Linear(220, 420, acute) * fx.spd,
           bx: simParticleBx, by: simParticleBy, bz: simParticleBz,
           tight: 0.22, scaleMul: fx.size * 0.42, expBias: missileBias, gravity: 180,
-        }, this.s.shortBurst);
+        }, this.s.fx.shortBurst);
       } else {
         const total = Math.min(80, Math.round(26 * fx.n * dustMul));
         const baseSparkN = Math.max(1, Math.round(total * 0.04));
         const sparkN = scaledProjectileFxCount(baseSparkN, impactFxScale);
-        this.s.spawnDirtParticles(x, y, z + 3, {
+        this.s.fx.spawnDirtParticles(x, y, z + 3, {
           n: Math.max(0, total - baseSparkN),
           spdMin: Phaser.Math.Linear(36, 200, acute * acute) * fx.spd,
           spdMax: Phaser.Math.Linear(200, 520, acute * acute) * fx.spd,
@@ -1551,13 +1551,13 @@ export class Projectiles {
           tight: Phaser.Math.Linear(0.28, 0.72, acute),
           scaleMul: fx.size,
         });
-        this.s.emitVisualBurst(x, y, z + 3, {
+        this.s.fx.emitVisualBurst(x, y, z + 3, {
           n: sparkN,
           spdMin: Phaser.Math.Linear(36, 200, acute * acute) * fx.spd,
           spdMax: Phaser.Math.Linear(200, 520, acute * acute) * fx.spd,
           bx: simParticleBx, by: simParticleBy, bz: Phaser.Math.Linear(90, 22, acute),
           tight: Phaser.Math.Linear(0.28, 0.72, acute), scaleMul: fx.size * 0.42, gravity: 180,
-        }, this.s.shortBurst);
+        }, this.s.fx.shortBurst);
       }
     }
     const impactAt = worldToScreen(x, y, z);
@@ -1575,7 +1575,7 @@ export class Projectiles {
       const bigBoom =
         dropHeBomb || !!(he && shot?.beh?.payload.detonate?.bigBoom);
       if (photonic && !fxOnly) {
-        this.s.emitPhotonImpactSparks(x, y, z, dx, dy, dz, blast);
+        this.s.fx.emitPhotonImpactSparks(x, y, z, dx, dy, dz, blast);
       }
       if (energyHit && !photonic && !fxOnly && shot?.beh?.payload.stun) {
         const zapN = 5;
@@ -1585,7 +1585,7 @@ export class Projectiles {
           this.s.tesla.spawnZap(x + Math.cos(a) * r, y + Math.sin(a) * r, z + range(-10, 20), range(0.6, 1.1), range(1.1, 1.9));
         }
       }
-      this.s.heFireBurst(
+      this.s.fx.heFireBurst(
         x,
         y,
         z,
@@ -1603,7 +1603,7 @@ export class Projectiles {
         undefined,
         energyHit
           ? {
-              spark: this.s.energyStreakBurst,
+              spark: this.s.fx.energyStreakBurst,
               flash: photonic ? 0xe8c0ff : 0xc4ffff,
               flashMin: bomblet ? 22 : photonic ? 160 : 110,
               visMul: bomblet ? 0.32 : photonic ? 1.45 : 1,
@@ -1617,7 +1617,7 @@ export class Projectiles {
       // Drop bombs / authored big-boom HE get the cel fireball + shockwave.
       if (bigBoom) {
         const building = !!direct && !!specOf(direct.kind).building;
-        this.s.spawnToonBlast(x, y, z + (building ? 10 : 4), {
+        this.s.fx.spawnToonBlast(x, y, z + (building ? 10 : 4), {
           building,
           size01: Phaser.Math.Clamp((blast - 36) / 320, 0.38, 1),
           waveMul: building ? 1.22 : 1.18,
@@ -1625,8 +1625,8 @@ export class Projectiles {
         if (blast >= 120) {
           const boomZ = z + (building ? 14 : 6);
           const boomSize = Phaser.Math.Clamp((blast - 80) / 280, 0.45, 1);
-          this.s.emitBigBoomSparks(x, y, boomZ, boomSize, dx, dy, dz);
-          this.s.emitBigBoomDebris(x, y, boomZ, boomSize, dx, dy, dz);
+          this.s.fx.emitBigBoomSparks(x, y, boomZ, boomSize, dx, dy, dz);
+          this.s.fx.emitBigBoomDebris(x, y, boomZ, boomSize, dx, dy, dz);
         }
         // Own ring sized to the weapon blast — not the victim’s body radius.
         this.spawnBlastRing(x, y, z, Math.max(48, blast * 0.32), {
@@ -1639,30 +1639,30 @@ export class Projectiles {
     if (!water && !objectHit) {
       if (he) {
         const raw = (blast / 72) * range(0.55, 1.05);
-        this.s.stampBlastCrater(x, y, raw);
+        this.s.groundMarks.stampBlastCrater(x, y, raw);
         if (shotWantsEmberCrater(shot, kind)) {
-          this.s.spawnCraterEmbers(x, y, this.s.softCapBlastCraterScale(raw));
+          this.s.groundMarks.spawnCraterEmbers(x, y, this.s.groundMarks.softCapBlastCraterScale(raw));
         }
       } else {
-        this.s.stampCannonScar(x, y, dx, dy, dz);
+        this.s.fx.stampCannonScar(x, y, dx, dy, dz);
         if (heBlend > 0.25) {
           const raw = (blast / 95) * heBlend * range(0.4, 0.75);
-          this.s.stampBlastCrater(x, y, raw, 0.55 + heBlend * 0.35);
+          this.s.groundMarks.stampBlastCrater(x, y, raw, 0.55 + heBlend * 0.35);
         }
       }
     }
     if (!water) {
-      this.s.smoke.setDepth(worldDepth(z, 0.2, y));
-      this.s.emitBudgeted(
+      this.s.fx.smoke.setDepth(worldDepth(z, 0.2, y));
+      this.s.fx.emitBudgeted(
         "smoke",
-        this.s.smoke,
+        this.s.fx.smoke,
         impactX,
         impactY + 12,
         he ? (shot?.st?.bomblet ? 4 : 16) : objectHit ? 6 : Math.round(8 * Math.max(1, dustMul * 0.85 + heBlend))
       );
     }
     this.s.shake = Math.min(8, this.s.shake + blast * (he ? 0.055 : 0.028 + heBlend * 0.02));
-    if (!he) this.s.spawnImpactFlash(impactX, impactY, z, 0xffc878, 34 * impactScale, 0.85, 160);
+    if (!he) this.s.fx.spawnImpactFlash(impactX, impactY, z, 0xffc878, 34 * impactScale, 0.85, 160);
     // HE already splashed — skip a second death splash. Chain gun should still run vehicle death splash.
     if (!fxOnly) this.applyBlastDamage(x, y, z, blast, dmg, direct, dx, dy, dz, he, shot);
   }
@@ -1802,7 +1802,7 @@ export class Projectiles {
   hurt(u: Unit, dmg: number, fromBlast = false): void {
     u.health -= dmg;
     if (u.health <= 0) {
-      this.s.destroyUnit(u, false, fromBlast);
+      this.s.destruction.destroyUnit(u, false, fromBlast);
       return;
     }
     if (isOrganic(u.kind) && specOf(u.kind).weapon && u.health > 1) {

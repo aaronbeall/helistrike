@@ -154,32 +154,32 @@ export class CallStrike {
       if (m.firstImpactEta > 0) m.firstImpactEta = Math.max(0, m.firstImpactEta - dt);
 
       // Heavy upward flare column while the mark is still signaling.
-      if (showFlare && cameraPointVisible(m.z, m.y) && this.s.fxChance(0.92)) {
+      if (showFlare && cameraPointVisible(m.z, m.y) && this.s.fx.chance(0.92)) {
         const at = worldToScreen(m.x, m.y, m.z + 6);
-        this.s.withTrailFx(1.7, () => {
-          const nf = this.s.fxEmitCount(1.45);
-          const ns = this.s.fxEmitCount(1.35);
+        this.s.fx.withTrail(1.7, () => {
+          const nf = this.s.fx.emitCount(1.45);
+          const ns = this.s.fx.emitCount(1.35);
           if (nf) {
-            this.s.emitBudgeted(
+            this.s.fx.emitBudgeted(
               "fire",
-              this.s.fxAt(m.z, m.y, this.s.signalFlareTrail, ZOff.fire + 0.4),
+              this.s.fx.at(m.z, m.y, this.s.fx.signalFlareTrail, ZOff.fire + 0.4),
               at.x,
               at.y,
               nf
             );
           }
           if (ns) {
-            this.s.emitBudgeted(
+            this.s.fx.emitBudgeted(
               "smoke",
-              this.s.fxAt(m.z, m.y, this.s.signalFlareSmoke, ZOff.smoke),
+              this.s.fx.at(m.z, m.y, this.s.fx.signalFlareSmoke, ZOff.smoke),
               at.x,
               at.y,
               ns
             );
           }
         });
-        if (this.s.fxChance(0.7)) {
-          this.s.emitVisualBurst(
+        if (this.s.fx.chance(0.7)) {
+          this.s.fx.emitVisualBurst(
             m.x,
             m.y,
             m.z + 10,
@@ -195,7 +195,7 @@ export class CallStrike {
               gravity: 28,
               depthOff: ZOff.fire + 0.8,
             },
-            this.s.signalFlareSpark
+            this.s.fx.signalFlareSpark
           );
         }
       }

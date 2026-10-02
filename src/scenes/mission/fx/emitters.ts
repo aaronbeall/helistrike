@@ -1,16 +1,17 @@
 import Phaser from "phaser";
-import { FX_SHEET_SIZE } from "../art/sprites";
-import { craftExhaustFlameSheet } from "../sim/crafts";
-import { range } from "../util/rng";
-import { Layer } from "./depth";
-import type { BurstParticle, MissionScene } from "../scenes/missionScene";
+import { FX_SHEET_SIZE } from "../../../art/sprites";
+import { craftExhaustFlameSheet } from "../../../sim/crafts";
+import { range } from "../../../util/rng";
+import { Layer } from "../../../render/depth";
+import type { MissionScene } from "../../missionScene";
+import type { BurstParticle } from "./fx";
 
 /** Build + register the mission's pooled particle emitters (configs read live scene FX state). */
 export function createFxEmitters(scene: MissionScene): void {
   const craft = scene.player.spec;
   const fxFrames = { frames: [0, 1, 2, 3], cycle: false as const };
   const fxSpin = { min: -80, max: 80 };
-  scene.smoke = scene.add.particles(0, 0, "fx_smoke", {
+  scene.fx.smoke = scene.add.particles(0, 0, "fx_smoke", {
     lifespan: 900,
     speed: { min: 10, max: 70 },
     scale: { start: 0.6, end: 2.4 },
@@ -20,25 +21,25 @@ export function createFxEmitters(scene: MissionScene): void {
     frame: fxFrames,
     rotate: fxSpin,
   });
-  scene.smoke.setDepth(Layer.WORLD);
-  scene.registerFx("smoke", scene.smoke);
+  scene.fx.smoke.setDepth(Layer.WORLD);
+  scene.fx.register("smoke", scene.fx.smoke);
   const seedBurst = (p: Phaser.GameObjects.Particles.Particle | undefined, min: number, max: number): number => {
-    scene.sampleBurstScreenVelocity(p as BurstParticle | undefined);
+    scene.fx.sampleBurstScreenVelocity(p as BurstParticle | undefined);
     return range(min, max);
   };
   const burstVelocityX = (p?: Phaser.GameObjects.Particles.Particle): number =>
-    (p as BurstParticle | undefined)?.burstVx ?? scene.sampleBurstScreenVelocity(p as BurstParticle | undefined).x;
+    (p as BurstParticle | undefined)?.burstVx ?? scene.fx.sampleBurstScreenVelocity(p as BurstParticle | undefined).x;
   const burstVelocityY = (p?: Phaser.GameObjects.Particles.Particle): number =>
-    (p as BurstParticle | undefined)?.burstVy ?? scene.sampleBurstScreenVelocity(p as BurstParticle | undefined).y;
+    (p as BurstParticle | undefined)?.burstVy ?? scene.fx.sampleBurstScreenVelocity(p as BurstParticle | undefined).y;
   const burstRotation = (p?: Phaser.GameObjects.Particles.Particle): number =>
     Phaser.Math.RadToDeg((p as BurstParticle | undefined)?.burstHeading ?? 0);
   const burstStretchOf = (p: BurstParticle): number => {
     const spd = Math.hypot(p.velocityX || p.burstVx || 0, p.velocityY || p.burstVy || 0);
     const raw = Math.min(3.8, 1 + spd * 0.0052);
-    const mul = scene.burstLaunch.stretchMul;
+    const mul = scene.fx.burstLaunch.stretchMul;
     return 1 + (raw - 1) * mul;
   };
-  scene.shortBurst = scene.poolFx("short", () =>
+  scene.fx.shortBurst = scene.fx.pool("short", () =>
     scene.add.particles(0, 0, "fx_spark", {
       lifespan: { onEmit: (p) => seedBurst(p, 220, 640) },
       speedX: { onEmit: burstVelocityX },
@@ -46,7 +47,7 @@ export function createFxEmitters(scene: MissionScene): void {
       scaleX: {
         onEmit: (p) => {
           const q = p as BurstParticle;
-          q.launchScale = scene.burstLaunch.scale * range(0.72, 1.18);
+          q.launchScale = scene.fx.burstLaunch.scale * range(0.72, 1.18);
           q.launchStretch = burstStretchOf(q);
           return q.launchScale * q.launchStretch * range(1.2, 1.55);
         },
@@ -59,7 +60,7 @@ export function createFxEmitters(scene: MissionScene): void {
         onEmit: (p) => {
           const q = p as BurstParticle;
           const stretch = q.launchStretch ?? burstStretchOf(q);
-          return (q.launchScale ?? scene.burstLaunch.scale) * (0.36 / Math.max(0.55, Math.sqrt(stretch)));
+          return (q.launchScale ?? scene.fx.burstLaunch.scale) * (0.36 / Math.max(0.55, Math.sqrt(stretch)));
         },
         onUpdate: (p, _k, t) => {
           const q = p as BurstParticle;
@@ -84,7 +85,7 @@ export function createFxEmitters(scene: MissionScene): void {
     const spd = Math.hypot(p.velocityX || p.burstVx || 0, p.velocityY || p.burstVy || 0);
     return Math.min(5.5, 1.4 + spd * 0.0028);
   };
-  scene.streakBurst = scene.poolFx("short", () =>
+  scene.fx.streakBurst = scene.fx.pool("short", () =>
     scene.add.particles(0, 0, "fx_spark", {
       // Long enough to travel before brake + fade finish them.
       lifespan: { onEmit: (p) => seedBurst(p, 320, 520) },
@@ -93,7 +94,7 @@ export function createFxEmitters(scene: MissionScene): void {
       scaleX: {
         onEmit: (p) => {
           const q = p as BurstParticle;
-          q.launchScale = scene.burstLaunch.scale * range(1.35, 2.1);
+          q.launchScale = scene.fx.burstLaunch.scale * range(1.35, 2.1);
           q.launchStretch = streakStretchOf(q);
           return q.launchScale * q.launchStretch * range(0.7, 1.05);
         },
@@ -108,7 +109,7 @@ export function createFxEmitters(scene: MissionScene): void {
         onEmit: (p) => {
           const q = p as BurstParticle;
           const stretch = q.launchStretch ?? streakStretchOf(q);
-          return (q.launchScale ?? scene.burstLaunch.scale) * (0.28 / Math.max(0.7, Math.sqrt(stretch)));
+          return (q.launchScale ?? scene.fx.burstLaunch.scale) * (0.28 / Math.max(0.7, Math.sqrt(stretch)));
         },
         onUpdate: (p, _k, t) => {
           const q = p as BurstParticle;
@@ -139,7 +140,7 @@ export function createFxEmitters(scene: MissionScene): void {
     })
   );
   // Reactive armor spark burst: streakBurst's big stretched-streak shape, signal-flare red/pink tint.
-  scene.reactiveArmorSpark = scene.poolFx("short", () =>
+  scene.fx.reactiveArmorSpark = scene.fx.pool("short", () =>
     scene.add.particles(0, 0, "fx_spark", {
       lifespan: { onEmit: (p) => seedBurst(p, 320, 520) },
       speedX: { onEmit: burstVelocityX },
@@ -147,7 +148,7 @@ export function createFxEmitters(scene: MissionScene): void {
       scaleX: {
         onEmit: (p) => {
           const q = p as BurstParticle;
-          q.launchScale = scene.burstLaunch.scale * range(1.35, 2.1);
+          q.launchScale = scene.fx.burstLaunch.scale * range(1.35, 2.1);
           q.launchStretch = streakStretchOf(q);
           const sx = q.launchScale * q.launchStretch * range(0.7, 1.05);
           // Center-origin streak: nudge forward by half length so the tail doesn't spawn over the hull.
@@ -167,7 +168,7 @@ export function createFxEmitters(scene: MissionScene): void {
         onEmit: (p) => {
           const q = p as BurstParticle;
           const stretch = q.launchStretch ?? streakStretchOf(q);
-          return (q.launchScale ?? scene.burstLaunch.scale) * (0.28 / Math.max(0.7, Math.sqrt(stretch)));
+          return (q.launchScale ?? scene.fx.burstLaunch.scale) * (0.28 / Math.max(0.7, Math.sqrt(stretch)));
         },
         onUpdate: (p, _k, t) => {
           const q = p as BurstParticle;
@@ -190,7 +191,7 @@ export function createFxEmitters(scene: MissionScene): void {
       },
     })
   );
-  scene.bigBoomSparkBurst = scene.poolFx("short", () =>
+  scene.fx.bigBoomSparkBurst = scene.fx.pool("short", () =>
     scene.add.particles(0, 0, "fx_spark", {
       // Long hang so coast + gravity arc reads.
       lifespan: { onEmit: (p) => seedBurst(p, 1600, 2600) },
@@ -199,8 +200,8 @@ export function createFxEmitters(scene: MissionScene): void {
       scaleX: {
         onEmit: (p) => {
           const q = p as BurstParticle;
-          q.launchScale = scene.burstLaunch.scale * range(1.05, 1.5);
-          q.launchStretch = range(2.4, 3.6) * scene.burstLaunch.stretchMul;
+          q.launchScale = scene.fx.burstLaunch.scale * range(1.05, 1.5);
+          q.launchStretch = range(2.4, 3.6) * scene.fx.burstLaunch.stretchMul;
           q.launchSpd = Math.max(40, Math.hypot(q.burstVx ?? 0, q.burstVy ?? 0));
           return q.launchScale * q.launchStretch;
         },
@@ -216,7 +217,7 @@ export function createFxEmitters(scene: MissionScene): void {
         onEmit: (p) => {
           const q = p as BurstParticle;
           q.launchThick = range(0.4, 0.58);
-          return (q.launchScale ?? scene.burstLaunch.scale) * q.launchThick;
+          return (q.launchScale ?? scene.fx.burstLaunch.scale) * q.launchThick;
         },
         onUpdate: (p, _k, t) => {
           const q = p as BurstParticle;
@@ -241,7 +242,7 @@ export function createFxEmitters(scene: MissionScene): void {
       },
     })
   );
-  scene.bigBoomDirtBurst = scene.poolFx("dust", () =>
+  scene.fx.bigBoomDirtBurst = scene.fx.pool("dust", () =>
     scene.add.particles(0, 0, "fx_dirt", {
       lifespan: { onEmit: (p) => seedBurst(p, 1500, 2400) },
       speedX: { onEmit: burstVelocityX },
@@ -250,8 +251,8 @@ export function createFxEmitters(scene: MissionScene): void {
         onEmit: (p) => {
           const q = p as BurstParticle;
           // Long along travel (~0.7–0.9 of big-boom spark length band).
-          q.launchScale = scene.burstLaunch.scale * range(1.0, 1.45);
-          q.launchStretch = range(1.7, 3.15) * scene.burstLaunch.stretchMul;
+          q.launchScale = scene.fx.burstLaunch.scale * range(1.0, 1.45);
+          q.launchStretch = range(1.7, 3.15) * scene.fx.burstLaunch.stretchMul;
           return q.launchScale * q.launchStretch;
         },
         // Hold size while falling — no speed/life unshrink.
@@ -265,7 +266,7 @@ export function createFxEmitters(scene: MissionScene): void {
           const q = p as BurstParticle;
           // Wider than spark needles (~2–3× that thickness band).
           q.launchThick = range(0.85, 1.65);
-          return (q.launchScale ?? scene.burstLaunch.scale) * q.launchThick;
+          return (q.launchScale ?? scene.fx.burstLaunch.scale) * q.launchThick;
         },
         onUpdate: (p) => {
           const q = p as BurstParticle;
@@ -287,7 +288,7 @@ export function createFxEmitters(scene: MissionScene): void {
       },
     })
   );
-  scene.energyStreakBurst = scene.poolFx("short", () =>
+  scene.fx.energyStreakBurst = scene.fx.pool("short", () =>
     scene.add.particles(0, 0, "fx_spark", {
       lifespan: { onEmit: (p) => seedBurst(p, 280, 480) },
       speedX: { onEmit: burstVelocityX },
@@ -295,7 +296,7 @@ export function createFxEmitters(scene: MissionScene): void {
       scaleX: {
         onEmit: (p) => {
           const q = p as BurstParticle;
-          q.launchScale = scene.burstLaunch.scale * range(1.55, 2.4);
+          q.launchScale = scene.fx.burstLaunch.scale * range(1.55, 2.4);
           q.launchStretch = streakStretchOf(q);
           return q.launchScale * q.launchStretch * range(0.85, 1.2);
         },
@@ -308,7 +309,7 @@ export function createFxEmitters(scene: MissionScene): void {
         onEmit: (p) => {
           const q = p as BurstParticle;
           const stretch = q.launchStretch ?? streakStretchOf(q);
-          return (q.launchScale ?? scene.burstLaunch.scale) * (0.62 / Math.max(0.65, Math.sqrt(stretch)));
+          return (q.launchScale ?? scene.fx.burstLaunch.scale) * (0.62 / Math.max(0.65, Math.sqrt(stretch)));
         },
         onUpdate: (p, _k, t) => {
           const q = p as BurstParticle;
@@ -331,7 +332,7 @@ export function createFxEmitters(scene: MissionScene): void {
       },
     })
   );
-  scene.teslaSparkBurst = scene.poolFx("short", () =>
+  scene.fx.teslaSparkBurst = scene.fx.pool("short", () =>
     scene.add.particles(0, 0, "fx_spark", {
       lifespan: { onEmit: (p) => seedBurst(p, 240, 420) },
       speedX: { onEmit: burstVelocityX },
@@ -339,8 +340,8 @@ export function createFxEmitters(scene: MissionScene): void {
       scaleX: {
         onEmit: (p) => {
           const q = p as BurstParticle;
-          q.launchScale = scene.burstLaunch.scale * range(1.15, 1.7);
-          q.launchStretch = Math.min(4.1, 1.45 + Math.hypot(q.velocityX || q.burstVx || 0, q.velocityY || q.burstVy || 0) * 0.0018) * scene.burstLaunch.stretchMul;
+          q.launchScale = scene.fx.burstLaunch.scale * range(1.15, 1.7);
+          q.launchStretch = Math.min(4.1, 1.45 + Math.hypot(q.velocityX || q.burstVx || 0, q.velocityY || q.burstVy || 0) * 0.0018) * scene.fx.burstLaunch.stretchMul;
           return q.launchScale * q.launchStretch;
         },
         onUpdate: (p, _k, t) => {
@@ -352,7 +353,7 @@ export function createFxEmitters(scene: MissionScene): void {
         onEmit: (p) => {
           const q = p as BurstParticle;
           const stretch = q.launchStretch ?? 1;
-          return (q.launchScale ?? scene.burstLaunch.scale) * (0.19 / Math.max(0.85, Math.sqrt(stretch)));
+          return (q.launchScale ?? scene.fx.burstLaunch.scale) * (0.19 / Math.max(0.85, Math.sqrt(stretch)));
         },
         onUpdate: (p, _k, t) => {
           const q = p as BurstParticle;
@@ -376,17 +377,17 @@ export function createFxEmitters(scene: MissionScene): void {
     })
   );
   // Rail mote: one jitter kick that eases out, size fades on the same curve, then it's gone.
-  scene.railSparkTrail = scene.poolFx("short", () =>
+  scene.fx.railSparkTrail = scene.fx.pool("short", () =>
     scene.add.particles(0, 0, "fx_spark", {
-      lifespan: { onEmit: () => range(1600, 2800) * scene.trailFxLife },
+      lifespan: { onEmit: () => range(1600, 2800) * scene.fx.trailFxLife },
       speedX: {
         onEmit: (p) => {
           const q = p as Phaser.GameObjects.Particles.Particle & { railJx?: number; railJy?: number };
           const a = Math.random() * Math.PI * 2;
           const mag = range(40, 90);
           const bias = range(160, 280);
-          q.railJx = Math.cos(a) * mag + scene.exhaustVx * bias;
-          q.railJy = Math.sin(a) * mag + scene.exhaustVy * bias;
+          q.railJx = Math.cos(a) * mag + scene.fx.exhaustVx * bias;
+          q.railJy = Math.sin(a) * mag + scene.fx.exhaustVy * bias;
           return q.railJx;
         },
       },
@@ -397,7 +398,7 @@ export function createFxEmitters(scene: MissionScene): void {
       scale: {
         onEmit: (p) => {
           const q = p as Phaser.GameObjects.Particles.Particle & { exhaustScaleY?: number };
-          q.exhaustScaleY = (0.16 + Math.pow(Math.random(), 0.75) * 0.58) * scene.trailFxScale;
+          q.exhaustScaleY = (0.16 + Math.pow(Math.random(), 0.75) * 0.58) * scene.fx.trailFxScale;
           return q.exhaustScaleY;
         },
         // Heavy ease-out: most of the shrink happens up front, then a long crawl to nothing.
@@ -418,12 +419,12 @@ export function createFxEmitters(scene: MissionScene): void {
       rotate: { onEmit: () => range(0, 360) },
     })
   );
-  scene.warpTrail = scene.poolFx("short", () =>
+  scene.fx.warpTrail = scene.fx.pool("short", () =>
     scene.add.particles(0, 0, "fx_spark", {
-      lifespan: { onEmit: () => range(900, 1600) * scene.trailFxLife },
+      lifespan: { onEmit: () => range(900, 1600) * scene.fx.trailFxLife },
       speed: { min: 4, max: 28 },
       scale: {
-        onEmit: (p) => fxEmit(p, () => (0.28 + Math.pow(Math.random(), 0.6) * 0.22) * scene.trailFxScale),
+        onEmit: (p) => fxEmit(p, () => (0.28 + Math.pow(Math.random(), 0.6) * 0.22) * scene.fx.trailFxScale),
         onUpdate: (p, _k, t) => fxLife(p, t, (u) => 1 - u * 0.9, 0.38),
       },
       alpha: { start: 0.92, end: 0 },
@@ -435,12 +436,12 @@ export function createFxEmitters(scene: MissionScene): void {
       rotate: fxSpin,
     })
   );
-  scene.warpOrb = scene.poolFx("short", () =>
+  scene.fx.warpOrb = scene.fx.pool("short", () =>
     scene.add.particles(0, 0, "fx_spark", {
-      lifespan: { onEmit: () => range(520, 980) * scene.trailFxLife },
+      lifespan: { onEmit: () => range(520, 980) * scene.fx.trailFxLife },
       speed: { min: 6, max: 42 },
       scale: {
-        onEmit: (p) => fxEmit(p, () => (0.72 + Math.pow(Math.random(), 0.55) * 0.55) * scene.trailFxScale),
+        onEmit: (p) => fxEmit(p, () => (0.72 + Math.pow(Math.random(), 0.55) * 0.55) * scene.fx.trailFxScale),
         onUpdate: (p, _k, t) => fxLife(p, t, (u) => 1 - u * 0.78, 0.7),
       },
       alpha: { start: 1, end: 0 },
@@ -452,7 +453,7 @@ export function createFxEmitters(scene: MissionScene): void {
       rotate: fxSpin,
     })
   );
-  scene.warpSparkBurst = scene.poolFx("short", () =>
+  scene.fx.warpSparkBurst = scene.fx.pool("short", () =>
     scene.add.particles(0, 0, "fx_spark", {
       lifespan: { onEmit: (p) => seedBurst(p, 220, 400) },
       speedX: { onEmit: burstVelocityX },
@@ -460,7 +461,7 @@ export function createFxEmitters(scene: MissionScene): void {
       scaleX: {
         onEmit: (p) => {
           const q = p as BurstParticle;
-          q.launchScale = scene.burstLaunch.scale * range(1.2, 1.9);
+          q.launchScale = scene.fx.burstLaunch.scale * range(1.2, 1.9);
           q.launchStretch = streakStretchOf(q);
           return q.launchScale * q.launchStretch * range(0.9, 1.25);
         },
@@ -473,7 +474,7 @@ export function createFxEmitters(scene: MissionScene): void {
         onEmit: (p) => {
           const q = p as BurstParticle;
           const stretch = q.launchStretch ?? streakStretchOf(q);
-          return (q.launchScale ?? scene.burstLaunch.scale) * (0.55 / Math.max(0.65, Math.sqrt(stretch)));
+          return (q.launchScale ?? scene.fx.burstLaunch.scale) * (0.55 / Math.max(0.65, Math.sqrt(stretch)));
         },
         onUpdate: (p, _k, t) => {
           const q = p as BurstParticle;
@@ -499,7 +500,7 @@ export function createFxEmitters(scene: MissionScene): void {
       },
     })
   );
-  scene.muzzleBurst = scene.poolFx("short", () =>
+  scene.fx.muzzleBurst = scene.fx.pool("short", () =>
     scene.add.particles(0, 0, "fx_flame", {
       lifespan: { onEmit: (p) => seedBurst(p, 120, 280) },
       speedX: { onEmit: burstVelocityX },
@@ -507,7 +508,7 @@ export function createFxEmitters(scene: MissionScene): void {
       scaleX: {
         onEmit: (p) => {
           const q = p as BurstParticle;
-          q.launchScale = scene.burstLaunch.scale * range(0.72, 1.18);
+          q.launchScale = scene.fx.burstLaunch.scale * range(0.72, 1.18);
           q.launchStretch = burstStretchOf(q);
           const sx = q.launchScale * q.launchStretch * range(1.7, 2.4);
           // Center-origin streaks: nudge forward by half length so the tail sits on the muzzle.
@@ -526,7 +527,7 @@ export function createFxEmitters(scene: MissionScene): void {
         onEmit: (p) => {
           const q = p as BurstParticle;
           const stretch = q.launchStretch ?? burstStretchOf(q);
-          return (q.launchScale ?? scene.burstLaunch.scale) * (0.42 / Math.max(0.55, Math.sqrt(stretch)));
+          return (q.launchScale ?? scene.fx.burstLaunch.scale) * (0.42 / Math.max(0.55, Math.sqrt(stretch)));
         },
         onUpdate: (p, _k, t) => {
           const q = p as BurstParticle;
@@ -546,7 +547,7 @@ export function createFxEmitters(scene: MissionScene): void {
       },
     })
   );
-  scene.splashBurst = scene.poolFx("short", () =>
+  scene.fx.splashBurst = scene.fx.pool("short", () =>
     scene.add.particles(0, 0, "fx_splash", {
       lifespan: { onEmit: (p) => seedBurst(p, 320, 600) },
       speedX: { onEmit: burstVelocityX },
@@ -554,13 +555,13 @@ export function createFxEmitters(scene: MissionScene): void {
       scaleX: {
         onEmit: (p) => {
           const q = p as BurstParticle;
-          q.launchScale = scene.burstLaunch.scale * range(0.72, 1.18);
+          q.launchScale = scene.fx.burstLaunch.scale * range(0.72, 1.18);
           return q.launchScale;
         },
         onUpdate: (p, _k, t) => ((p as BurstParticle).launchScale ?? 1) * (1 - t * 0.82),
       },
       scaleY: {
-        onEmit: (p) => ((p as BurstParticle).launchScale ?? scene.burstLaunch.scale) * 0.48,
+        onEmit: (p) => ((p as BurstParticle).launchScale ?? scene.fx.burstLaunch.scale) * 0.48,
         onUpdate: (p, _k, t) => ((p as BurstParticle).launchScale ?? 1) * (0.48 - t * 0.36),
       },
       alpha: { start: 0.9, end: 0 },
@@ -575,7 +576,7 @@ export function createFxEmitters(scene: MissionScene): void {
       },
     })
   );
-  scene.explosionPuff = scene.poolFx("fire", () =>
+  scene.fx.explosionPuff = scene.fx.pool("fire", () =>
     scene.add.particles(0, 0, "fx_flame", {
       lifespan: { onEmit: (p) => seedBurst(p, 180, 400) },
       speedX: { onEmit: burstVelocityX },
@@ -583,7 +584,7 @@ export function createFxEmitters(scene: MissionScene): void {
       scaleX: {
         onEmit: (p) => {
           const q = p as BurstParticle;
-          q.launchScale = scene.burstLaunch.scale * range(0.7, 1.25);
+          q.launchScale = scene.fx.burstLaunch.scale * range(0.7, 1.25);
           q.launchStretch = range(1.8, 3.5);
           q.swirl = (Math.random() < 0.5 ? -1 : 1) * range(1.8, 4.5);
           return q.launchScale * q.launchStretch;
@@ -595,7 +596,7 @@ export function createFxEmitters(scene: MissionScene): void {
         },
       },
       scaleY: {
-        onEmit: (p) => (p as BurstParticle).launchScale ?? scene.burstLaunch.scale,
+        onEmit: (p) => (p as BurstParticle).launchScale ?? scene.fx.burstLaunch.scale,
         onUpdate: (p, _k, t) => ((p as BurstParticle).launchScale ?? 1) * Math.pow(1 - t, 1.35),
       },
       alpha: 1,
@@ -623,18 +624,18 @@ export function createFxEmitters(scene: MissionScene): void {
       },
     })
   );
-  scene.craftExhaust = scene.poolFx("fire", () =>
+  scene.fx.craftExhaust = scene.fx.pool("fire", () =>
     scene.add.particles(0, 0, craftExhaustFlameSheet(craft.kind), {
-      lifespan: { onEmit: () => scene.exhaustLife },
-      speedX: { onEmit: () => scene.exhaustVx + range(-4, 4) },
-      speedY: { onEmit: () => scene.exhaustVy + range(-4, 4) },
+      lifespan: { onEmit: () => scene.fx.exhaustLife },
+      speedX: { onEmit: () => scene.fx.exhaustVx + range(-4, 4) },
+      speedY: { onEmit: () => scene.fx.exhaustVy + range(-4, 4) },
       scaleX: {
         onEmit: (p) => {
           const q = p as Phaser.GameObjects.Particles.Particle & {
             exhaustScaleX?: number;
             exhaustJitter?: number;
           };
-          q.exhaustScaleX = scene.exhaustScaleX;
+          q.exhaustScaleX = scene.fx.exhaustScaleX;
           q.exhaustJitter = range(-1, 1);
           return q.exhaustScaleX;
         },
@@ -649,7 +650,7 @@ export function createFxEmitters(scene: MissionScene): void {
       scaleY: {
         onEmit: (p) => {
           const q = p as Phaser.GameObjects.Particles.Particle & { exhaustScaleY?: number };
-          q.exhaustScaleY = scene.exhaustScaleY;
+          q.exhaustScaleY = scene.fx.exhaustScaleY;
           return q.exhaustScaleY;
         },
         onUpdate: (p, _k, t) => {
@@ -678,7 +679,7 @@ export function createFxEmitters(scene: MissionScene): void {
       alpha: {
         onEmit: (p) => {
           const q = p as Phaser.GameObjects.Particles.Particle & { exhaustAlpha?: number };
-          q.exhaustAlpha = scene.exhaustAlpha;
+          q.exhaustAlpha = scene.fx.exhaustAlpha;
           return q.exhaustAlpha;
         },
         onUpdate: (p, _k, t) => {
@@ -694,8 +695,8 @@ export function createFxEmitters(scene: MissionScene): void {
       rotate: {
         onEmit: (p) => {
           const q = p as Phaser.GameObjects.Particles.Particle & { exhaustAngle?: number };
-          q.exhaustAngle = scene.exhaustAngle;
-          return Phaser.Math.RadToDeg(scene.exhaustAngle);
+          q.exhaustAngle = scene.fx.exhaustAngle;
+          return Phaser.Math.RadToDeg(scene.fx.exhaustAngle);
         },
         onUpdate: (p, _k, t) => {
           const q = p as Phaser.GameObjects.Particles.Particle & {
@@ -704,20 +705,20 @@ export function createFxEmitters(scene: MissionScene): void {
           };
           const late = Math.pow(Phaser.Math.Clamp((t - 0.4) / 0.6, 0, 1), 1.3);
           const wobble = (q.exhaustJitter ?? 0) * 18 * late;
-          return Phaser.Math.RadToDeg(q.exhaustAngle ?? scene.exhaustAngle) + wobble;
+          return Phaser.Math.RadToDeg(q.exhaustAngle ?? scene.fx.exhaustAngle) + wobble;
         },
       },
     })
   );
-  scene.craftExhaustMote = scene.poolFx("short", () =>
+  scene.fx.craftExhaustMote = scene.fx.pool("short", () =>
     scene.add.particles(0, 0, "fx_spark", {
       lifespan: { min: 280, max: 520 },
-      speedX: { onEmit: () => scene.exhaustVx * 0.5 + range(-16, 16) },
-      speedY: { onEmit: () => scene.exhaustVy * 0.5 + range(-16, 16) },
+      speedX: { onEmit: () => scene.fx.exhaustVx * 0.5 + range(-16, 16) },
+      speedY: { onEmit: () => scene.fx.exhaustVy * 0.5 + range(-16, 16) },
       scale: {
         onEmit: (p) => {
           const q = p as Phaser.GameObjects.Particles.Particle & { exhaustScaleY?: number };
-          q.exhaustScaleY = 0.18 + scene.exhaustScaleY * 0.55;
+          q.exhaustScaleY = 0.18 + scene.fx.exhaustScaleY * 0.55;
           return q.exhaustScaleY;
         },
         onUpdate: (p, _k, t) => {
@@ -728,7 +729,7 @@ export function createFxEmitters(scene: MissionScene): void {
       alpha: {
         onEmit: (p) => {
           const q = p as Phaser.GameObjects.Particles.Particle & { exhaustAlpha?: number };
-          q.exhaustAlpha = scene.exhaustAlpha * 0.92;
+          q.exhaustAlpha = scene.fx.exhaustAlpha * 0.92;
           return q.exhaustAlpha;
         },
         onUpdate: (p, _k, t) => {
@@ -736,23 +737,23 @@ export function createFxEmitters(scene: MissionScene): void {
           return (q.exhaustAlpha ?? 0.9) * (1 - t);
         },
       },
-      tint: { onEmit: () => scene.exhaustTint },
+      tint: { onEmit: () => scene.fx.exhaustTint },
       blendMode: "ADD",
       radial: false,
       emitting: false,
       frame: fxFrames,
-      rotate: { onEmit: () => Phaser.Math.RadToDeg(scene.exhaustAngle) },
+      rotate: { onEmit: () => Phaser.Math.RadToDeg(scene.fx.exhaustAngle) },
     })
   );
-  scene.craftExhaustSmoke = scene.poolFx("smoke", () =>
+  scene.fx.craftExhaustSmoke = scene.fx.pool("smoke", () =>
     scene.add.particles(0, 0, "fx_smoke", {
       lifespan: { min: 2400, max: 4000 },
-      speedX: { onEmit: () => scene.exhaustVx * 0.42 + range(-10, 10) },
-      speedY: { onEmit: () => scene.exhaustVy * 0.42 + range(-10, 10) },
+      speedX: { onEmit: () => scene.fx.exhaustVx * 0.42 + range(-10, 10) },
+      speedY: { onEmit: () => scene.fx.exhaustVy * 0.42 + range(-10, 10) },
       scale: {
         onEmit: (p) => {
           const q = p as Phaser.GameObjects.Particles.Particle & { exhaustScaleY?: number };
-          q.exhaustScaleY = 0.22 + scene.exhaustScaleY * 0.7;
+          q.exhaustScaleY = 0.22 + scene.fx.exhaustScaleY * 0.7;
           return q.exhaustScaleY;
         },
         onUpdate: (p, _k, t) => {
@@ -763,7 +764,7 @@ export function createFxEmitters(scene: MissionScene): void {
       alpha: {
         onEmit: (p) => {
           const q = p as Phaser.GameObjects.Particles.Particle & { exhaustAlpha?: number };
-          q.exhaustAlpha = scene.exhaustAlpha * 0.82;
+          q.exhaustAlpha = scene.fx.exhaustAlpha * 0.82;
           return q.exhaustAlpha;
         },
         onUpdate: (p, _k, t) => {
@@ -771,22 +772,22 @@ export function createFxEmitters(scene: MissionScene): void {
           return (q.exhaustAlpha ?? 0.82) * (1 - t);
         },
       },
-      tint: { onEmit: () => scene.exhaustSmokeTint },
+      tint: { onEmit: () => scene.fx.exhaustSmokeTint },
       radial: false,
       emitting: false,
       frame: fxFrames,
       rotate: fxSpin,
     })
   );
-  scene.jetWingTrail = scene.poolFx("smoke", () =>
+  scene.fx.jetWingTrail = scene.fx.pool("smoke", () =>
     scene.add.particles(0, 0, scene.textures.exists("fx_smoke_tint") ? "fx_smoke_tint" : "fx_smoke", {
-      lifespan: { onEmit: () => scene.wingTrailLife },
-      speedX: { onEmit: () => scene.wingTrailVx + range(-3, 3) },
-      speedY: { onEmit: () => scene.wingTrailVy + range(-3, 3) },
+      lifespan: { onEmit: () => scene.fx.wingTrailLife },
+      speedX: { onEmit: () => scene.fx.wingTrailVx + range(-3, 3) },
+      speedY: { onEmit: () => scene.fx.wingTrailVy + range(-3, 3) },
       scaleX: {
         onEmit: (p) => {
           const q = p as Phaser.GameObjects.Particles.Particle & { wingScaleX?: number };
-          q.wingScaleX = scene.wingTrailScaleX;
+          q.wingScaleX = scene.fx.wingTrailScaleX;
           return q.wingScaleX;
         },
         onUpdate: (p, _k, t) => {
@@ -797,7 +798,7 @@ export function createFxEmitters(scene: MissionScene): void {
       scaleY: {
         onEmit: (p) => {
           const q = p as Phaser.GameObjects.Particles.Particle & { wingScaleY?: number };
-          q.wingScaleY = scene.wingTrailScaleY;
+          q.wingScaleY = scene.fx.wingTrailScaleY;
           return q.wingScaleY;
         },
         onUpdate: (p, _k, t) => {
@@ -806,7 +807,7 @@ export function createFxEmitters(scene: MissionScene): void {
         },
       },
       alpha: { start: 0.55, end: 0 },
-      tint: { onEmit: () => scene.wingTrailTint },
+      tint: { onEmit: () => scene.fx.wingTrailTint },
       gravityY: -4,
       radial: false,
       emitting: false,
@@ -814,25 +815,25 @@ export function createFxEmitters(scene: MissionScene): void {
       rotate: {
         onEmit: (p) => {
           const q = p as Phaser.GameObjects.Particles.Particle & { wingAngle?: number };
-          q.wingAngle = scene.wingTrailAngle;
-          return Phaser.Math.RadToDeg(scene.wingTrailAngle);
+          q.wingAngle = scene.fx.wingTrailAngle;
+          return Phaser.Math.RadToDeg(scene.fx.wingTrailAngle);
         },
         onUpdate: (p) => {
           const q = p as Phaser.GameObjects.Particles.Particle & { wingAngle?: number };
-          return Phaser.Math.RadToDeg(q.wingAngle ?? scene.wingTrailAngle);
+          return Phaser.Math.RadToDeg(q.wingAngle ?? scene.fx.wingTrailAngle);
         },
       },
     })
   );
-  scene.flame = scene.poolFx("fire", () =>
+  scene.fx.flame = scene.fx.pool("fire", () =>
     scene.add.particles(0, 0, "fx_flame", {
-      lifespan: { onEmit: () => 480 * scene.trailFxLife },
+      lifespan: { onEmit: () => 480 * scene.fx.trailFxLife },
       speed: { min: 8, max: 40 },
       scale: {
         onEmit: (p) => {
           const q = p as Phaser.GameObjects.Particles.Particle & { s0?: number };
           // Bake both knobs at emit — recycled particles must not inherit a stale s0.
-          q.s0 = scene.dmgFlameScale * scene.trailFxScale * (0.38 + Math.random() * 0.16);
+          q.s0 = scene.fx.dmgFlameScale * scene.fx.trailFxScale * (0.38 + Math.random() * 0.16);
           return q.s0;
         },
         onUpdate: (p, _k, t) => {
@@ -849,14 +850,14 @@ export function createFxEmitters(scene: MissionScene): void {
       rotate: fxSpin,
     })
   );
-  scene.hotFlame = scene.poolFx("fire", () =>
+  scene.fx.hotFlame = scene.fx.pool("fire", () =>
     scene.add.particles(0, 0, "fx_flame", {
-      lifespan: { onEmit: () => 480 * scene.trailFxLife },
+      lifespan: { onEmit: () => 480 * scene.fx.trailFxLife },
       speed: { min: 8, max: 40 },
       scale: {
         onEmit: (p) => {
           const q = p as Phaser.GameObjects.Particles.Particle & { s0?: number };
-          q.s0 = scene.dmgFlameScale * scene.trailFxScale * (0.38 + Math.random() * 0.16);
+          q.s0 = scene.fx.dmgFlameScale * scene.fx.trailFxScale * (0.38 + Math.random() * 0.16);
           return q.s0;
         },
         onUpdate: (p, _k, t) => {
@@ -873,12 +874,12 @@ export function createFxEmitters(scene: MissionScene): void {
       rotate: fxSpin,
     })
   );
-  scene.hurtSmoke = scene.poolFx("smoke", () =>
+  scene.fx.hurtSmoke = scene.fx.pool("smoke", () =>
     scene.add.particles(0, 0, "fx_smoke", {
       lifespan: {
         onEmit: () => {
           const base = range(2400, 4200);
-          return base * Math.max(1, scene.trailFxLife * 0.85);
+          return base * Math.max(1, scene.fx.trailFxLife * 0.85);
         },
       },
       speed: { min: 3, max: 16 },
@@ -893,12 +894,12 @@ export function createFxEmitters(scene: MissionScene): void {
       rotate: { min: -70, max: 70 },
     })
   );
-  scene.playerHurtSmoke = scene.poolFx("smoke", () =>
+  scene.fx.playerHurtSmoke = scene.fx.pool("smoke", () =>
     scene.add.particles(0, 0, "fx_smoke", {
       lifespan: {
         onEmit: () => {
           const base = range(2400, 4200);
-          return base * Math.max(1, scene.trailFxLife * 0.85);
+          return base * Math.max(1, scene.fx.trailFxLife * 0.85);
         },
       },
       speed: { min: 3, max: 16 },
@@ -928,12 +929,12 @@ export function createFxEmitters(scene: MissionScene): void {
     const q = p as (Phaser.GameObjects.Particles.Particle & { s0?: number }) | undefined;
     return (q?.s0 ?? fallback) * mul(t);
   };
-  scene.burn = scene.poolFx("fire", () =>
+  scene.fx.burn = scene.fx.pool("fire", () =>
     scene.add.particles(0, 0, "fx_flame", {
-      lifespan: { onEmit: () => range(240, 420) * scene.trailFxLife },
+      lifespan: { onEmit: () => range(240, 420) * scene.fx.trailFxLife },
       speed: { min: 2, max: 14 },
       scale: {
-        onEmit: (p) => fxEmit(p, () => (0.7 + Math.pow(Math.random(), 0.65) * 0.7) * scene.trailFxScale),
+        onEmit: (p) => fxEmit(p, () => (0.7 + Math.pow(Math.random(), 0.65) * 0.7) * scene.fx.trailFxScale),
         onUpdate: (p, _k, t) => fxLife(p, t, (u) => 1 - u * 0.9, 0.7),
       },
       alpha: { start: 1, end: 0 },
@@ -945,14 +946,14 @@ export function createFxEmitters(scene: MissionScene): void {
       rotate: fxSpin,
     })
   );
-  scene.blastBurn = scene.poolFx("fire", () =>
+  scene.fx.blastBurn = scene.fx.pool("fire", () =>
     scene.add.particles(0, 0, "fx_flame", {
       // Match lingerSmoke buoyancy/path so fire fades into the same rising plume.
-      lifespan: { onEmit: () => range(240, 420) * scene.trailFxLife },
+      lifespan: { onEmit: () => range(240, 420) * scene.fx.trailFxLife },
       speed: { min: 4, max: 18 },
       angle: { min: -128, max: -52 },
       scale: {
-        onEmit: (p) => fxEmit(p, () => (0.28 + Math.pow(Math.random(), 0.65) * 0.28) * scene.trailFxScale),
+        onEmit: (p) => fxEmit(p, () => (0.28 + Math.pow(Math.random(), 0.65) * 0.28) * scene.fx.trailFxScale),
         onUpdate: (p, _k, t) => fxLife(p, t, (u) => 1 - u * 0.9, 0.28),
       },
       alpha: { start: 1, end: 0 },
@@ -966,7 +967,7 @@ export function createFxEmitters(scene: MissionScene): void {
       rotate: fxSpin,
     })
   );
-  scene.blastFire = scene.add.particles(0, 0, "fx_flame", {
+  scene.fx.blastFire = scene.add.particles(0, 0, "fx_flame", {
     lifespan: { min: 180, max: 320 },
     speed: { min: 180, max: 480 },
     scale: { start: 1.15, end: 0.18 },
@@ -977,14 +978,14 @@ export function createFxEmitters(scene: MissionScene): void {
     frame: fxFrames,
     rotate: fxSpin,
   });
-  scene.blastFire.setDepth(Layer.WORLD);
-  scene.registerFx("fire", scene.blastFire);
-  scene.ember = scene.poolFx("fire", () =>
+  scene.fx.blastFire.setDepth(Layer.WORLD);
+  scene.fx.register("fire", scene.fx.blastFire);
+  scene.fx.ember = scene.fx.pool("fire", () =>
     scene.add.particles(0, 0, "fx_flame", {
-      lifespan: { onEmit: () => range(180, 320) * scene.trailFxLife },
+      lifespan: { onEmit: () => range(180, 320) * scene.fx.trailFxLife },
       speed: { min: 1, max: 10 },
       scale: {
-        onEmit: (p) => fxEmit(p, () => (0.12 + Math.pow(Math.random(), 0.65) * 0.12) * scene.trailFxScale),
+        onEmit: (p) => fxEmit(p, () => (0.12 + Math.pow(Math.random(), 0.65) * 0.12) * scene.fx.trailFxScale),
         onUpdate: (p, _k, t) => fxLife(p, t, (u) => 1 - u * 0.9, 0.12),
       },
       alpha: { start: 0.9, end: 0 },
@@ -996,12 +997,12 @@ export function createFxEmitters(scene: MissionScene): void {
       rotate: fxSpin,
     })
   );
-  scene.flareTrail = scene.poolFx("fire", () =>
+  scene.fx.flareTrail = scene.fx.pool("fire", () =>
     scene.add.particles(0, 0, "fx_spark", {
-      lifespan: { onEmit: () => range(1600, 2800) * scene.trailFxLife },
+      lifespan: { onEmit: () => range(1600, 2800) * scene.fx.trailFxLife },
       speed: { min: 2, max: 18 },
       scale: {
-        onEmit: (p) => fxEmit(p, () => (0.42 + Math.pow(Math.random(), 0.65) * 0.22) * scene.trailFxScale),
+        onEmit: (p) => fxEmit(p, () => (0.42 + Math.pow(Math.random(), 0.65) * 0.22) * scene.fx.trailFxScale),
         onUpdate: (p, _k, t) => fxLife(p, t, (u) => 1 - u * 0.88, 0.48),
       },
       alpha: { start: 0.95, end: 0 },
@@ -1013,12 +1014,12 @@ export function createFxEmitters(scene: MissionScene): void {
       rotate: fxSpin,
     })
   );
-  scene.flareSpark = scene.poolFx("short", () =>
+  scene.fx.flareSpark = scene.fx.pool("short", () =>
     scene.add.particles(0, 0, "fx_spark", {
       lifespan: { onEmit: () => range(220, 420) },
       speed: { min: 12, max: 86 },
       scale: {
-        onEmit: (p) => fxEmit(p, () => (0.52 + Math.pow(Math.random(), 0.55) * 0.28) * scene.trailFxScale),
+        onEmit: (p) => fxEmit(p, () => (0.52 + Math.pow(Math.random(), 0.55) * 0.28) * scene.fx.trailFxScale),
         onUpdate: (p, _k, t) => fxLife(p, t, (u) => 1 - u * 0.82, 0.62),
       },
       alpha: { start: 1, end: 0 },
@@ -1031,13 +1032,13 @@ export function createFxEmitters(scene: MissionScene): void {
     })
   );
   // Signal-flare gun pellet: pink/red flame loft with strong screen-up (Y/Z) drift.
-  scene.signalFlareTrail = scene.poolFx("fire", () =>
+  scene.fx.signalFlareTrail = scene.fx.pool("fire", () =>
     scene.add.particles(0, 0, "fx_flame", {
-      lifespan: { onEmit: () => range(520, 980) * scene.trailFxLife },
+      lifespan: { onEmit: () => range(520, 980) * scene.fx.trailFxLife },
       speed: { min: 6, max: 28 },
       angle: { min: -130, max: -50 },
       scale: {
-        onEmit: (p) => fxEmit(p, () => (0.28 + Math.pow(Math.random(), 0.6) * 0.22) * scene.trailFxScale),
+        onEmit: (p) => fxEmit(p, () => (0.28 + Math.pow(Math.random(), 0.6) * 0.22) * scene.fx.trailFxScale),
         onUpdate: (p, _k, t) => fxLife(p, t, (u) => 1 - u * 0.72, 0.28),
       },
       alpha: { start: 0.95, end: 0 },
@@ -1050,13 +1051,13 @@ export function createFxEmitters(scene: MissionScene): void {
       rotate: fxSpin,
     })
   );
-  scene.signalFlareSmoke = scene.poolFx("smoke", () =>
+  scene.fx.signalFlareSmoke = scene.fx.pool("smoke", () =>
     scene.add.particles(0, 0, scene.textures.exists("fx_smoke_tint") ? "fx_smoke_tint" : "fx_smoke", {
-      lifespan: { onEmit: () => range(900, 1600) * Math.max(1, scene.trailFxLife * 0.8) },
+      lifespan: { onEmit: () => range(900, 1600) * Math.max(1, scene.fx.trailFxLife * 0.8) },
       speed: { min: 4, max: 22 },
       angle: { min: -135, max: -45 },
       scale: {
-        onEmit: (p) => fxEmit(p, () => (0.22 + Math.random() * 0.16) * scene.trailFxScale),
+        onEmit: (p) => fxEmit(p, () => (0.22 + Math.random() * 0.16) * scene.fx.trailFxScale),
         onUpdate: (p, _k, t) => fxLife(p, t, (u) => 1 + 2.6 * u, 0.22),
       },
       alpha: { start: 0.55, end: 0 },
@@ -1069,12 +1070,12 @@ export function createFxEmitters(scene: MissionScene): void {
       rotate: { min: -70, max: 70 },
     })
   );
-  scene.signalFlareSpark = scene.poolFx("short", () =>
+  scene.fx.signalFlareSpark = scene.fx.pool("short", () =>
     scene.add.particles(0, 0, "fx_spark", {
       lifespan: { onEmit: () => range(90, 220) },
       speed: { min: 140, max: 420 },
       scale: {
-        onEmit: (p) => fxEmit(p, () => (0.22 + Math.pow(Math.random(), 0.45) * 0.2) * scene.trailFxScale),
+        onEmit: (p) => fxEmit(p, () => (0.22 + Math.pow(Math.random(), 0.45) * 0.2) * scene.fx.trailFxScale),
         onUpdate: (p, _k, t) => fxLife(p, t, (u) => 1 - u * 0.9, 0.28),
       },
       alpha: { start: 1, end: 0 },
@@ -1086,12 +1087,12 @@ export function createFxEmitters(scene: MissionScene): void {
       rotate: fxSpin,
     })
   );
-  scene.shortTrailSmoke = scene.poolFx("smoke", () =>
+  scene.fx.shortTrailSmoke = scene.fx.pool("smoke", () =>
     scene.add.particles(0, 0, "fx_smoke", {
-      lifespan: { onEmit: () => 520 * scene.trailFxLife },
+      lifespan: { onEmit: () => 520 * scene.fx.trailFxLife },
       speed: { min: 8, max: 36 },
       scale: {
-        onEmit: (p) => fxEmit(p, () => 0.35 * scene.trailFxScale),
+        onEmit: (p) => fxEmit(p, () => 0.35 * scene.fx.trailFxScale),
         onUpdate: (p, _k, t) => fxLife(p, t, (u) => 1 + 3 * u, 0.35),
       },
       alpha: { start: 0.5, end: 0 },
@@ -1101,15 +1102,15 @@ export function createFxEmitters(scene: MissionScene): void {
       rotate: fxSpin,
     })
   );
-  scene.lingerSmoke = scene.poolFx("smoke", () =>
+  scene.fx.lingerSmoke = scene.fx.pool("smoke", () =>
     scene.add.particles(0, 0, "fx_smoke", {
       lifespan: {
-        onEmit: () => range(2200, 4000) * Math.max(1, scene.trailFxLife * 0.7),
+        onEmit: () => range(2200, 4000) * Math.max(1, scene.fx.trailFxLife * 0.7),
       },
       speed: { min: 4, max: 18 },
       angle: { min: -128, max: -52 },
       scale: {
-        onEmit: (p) => fxEmit(p, () => 0.38 * scene.trailFxScale),
+        onEmit: (p) => fxEmit(p, () => 0.38 * scene.fx.trailFxScale),
         onUpdate: (p, _k, t) => fxLife(p, t, (u) => 1 + 2.4 * u, 0.38),
       },
       alpha: { start: 0.88, end: 0 },
@@ -1121,16 +1122,16 @@ export function createFxEmitters(scene: MissionScene): void {
       rotate: { min: -80, max: 80 },
     })
   );
-  scene.rocketSmoke = scene.poolFx("smoke", () =>
+  scene.fx.rocketSmoke = scene.fx.pool("smoke", () =>
     scene.add.particles(0, 0, "fx_smoke", {
       lifespan: {
-        onEmit: () => range(1600, 2800) * Math.max(1, scene.trailFxLife * 0.75),
+        onEmit: () => range(1600, 2800) * Math.max(1, scene.fx.trailFxLife * 0.75),
       },
       speed: { min: 8, max: 32 },
       scaleX: {
         onEmit: (p) => {
           const q = p as Phaser.GameObjects.Particles.Particle & { rocketScaleX?: number };
-          q.rocketScaleX = 0.48 * scene.trailFxScale * range(1.7, 2.5);
+          q.rocketScaleX = 0.48 * scene.fx.trailFxScale * range(1.7, 2.5);
           return q.rocketScaleX;
         },
         onUpdate: (p, _k, t) => {
@@ -1141,7 +1142,7 @@ export function createFxEmitters(scene: MissionScene): void {
       scaleY: {
         onEmit: (p) => {
           const q = p as Phaser.GameObjects.Particles.Particle & { rocketScaleY?: number };
-          q.rocketScaleY = 0.2 * scene.trailFxScale * range(0.9, 1.15);
+          q.rocketScaleY = 0.2 * scene.fx.trailFxScale * range(0.9, 1.15);
           return q.rocketScaleY;
         },
         onUpdate: (p, _k, t) => {
@@ -1156,17 +1157,17 @@ export function createFxEmitters(scene: MissionScene): void {
       rotate: {
         onEmit: (p) => {
           const q = p as Phaser.GameObjects.Particles.Particle & { rocketAngle?: number };
-          q.rocketAngle = scene.shotTrailAngle;
-          return Phaser.Math.RadToDeg(scene.shotTrailAngle);
+          q.rocketAngle = scene.fx.shotTrailAngle;
+          return Phaser.Math.RadToDeg(scene.fx.shotTrailAngle);
         },
         onUpdate: (p) => {
           const q = p as Phaser.GameObjects.Particles.Particle & { rocketAngle?: number };
-          return Phaser.Math.RadToDeg(q.rocketAngle ?? scene.shotTrailAngle);
+          return Phaser.Math.RadToDeg(q.rocketAngle ?? scene.fx.shotTrailAngle);
         },
       },
     })
   );
-  scene.heliDust = scene.add.particles(0, 0, "fx_smoke", {
+  scene.fx.heliDust = scene.add.particles(0, 0, "fx_smoke", {
     lifespan: { min: 900, max: 1600 },
     speed: { min: 240, max: 460 },
     scale: { start: 0.48, end: 2.1 },
@@ -1191,6 +1192,6 @@ export function createFxEmitters(scene: MissionScene): void {
     accelerationX: { onUpdate: (p) => -p.velocityX * 5.2 },
     accelerationY: { onUpdate: (p) => -p.velocityY * 5.2 },
   });
-  scene.heliDust.setDepth(Layer.WORLD);
-  scene.registerFx("dust", scene.heliDust);
+  scene.fx.heliDust.setDepth(Layer.WORLD);
+  scene.fx.register("dust", scene.fx.heliDust);
 }

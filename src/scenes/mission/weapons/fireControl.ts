@@ -1104,7 +1104,7 @@ export class FireControl {
       if (
 specIsShellGun(spec)
       ) {
-        this.s.spawnShellEject({
+        this.s.fx.spawnShellEject({
           x: px,
           y: py,
           z: h.z - 12,
@@ -1287,7 +1287,7 @@ specIsShellGun(spec)
       if (exhaustIsGunSpark(spec.exhaust)) {
         // Slow rail shots never stack the tiny per-round heat Tesla builds by firing constantly.
         if (!fixed) this.s.pulseTurretGunHeat(mountedGunI, 0.9);
-        this.s.emitRailMuzzle(tip.x, tip.y, z0, Math.cos(ang), Math.sin(ang), dirz);
+        this.s.fx.emitRailMuzzle(tip.x, tip.y, z0, Math.cos(ang), Math.sin(ang), dirz);
       } else if (!fixed) this.s.pulseTurretGunHeat(mountedGunI);
       if (spec.launch.mode === "beam") {
         const beamEnd = worldToScreen(tx, ty, tz);
@@ -1300,7 +1300,7 @@ specIsShellGun(spec)
       } else if (!!(spec.fire?.muzzleFlash ?? true)) {
         const muzzleMul = playerMuzzleFxMul(spec);
         const sparkMul = Phaser.Math.Linear(0.55, 1, Phaser.Math.Clamp((muzzleMul - 0.4) / 0.6, 0, 1));
-        this.s.emitVisualBurst(tip.x, tip.y, z0, {
+        this.s.fx.emitVisualBurst(tip.x, tip.y, z0, {
           n: scaledProjectileFxCount(8, shotFxScale * Math.sqrt(sparkMul)),
           spdMin: 6 + 6 * sparkMul,
           spdMax: 110 + 90 * sparkMul,
@@ -1313,8 +1313,8 @@ specIsShellGun(spec)
           // 260° full cone; density + speed both favor the aim axis.
           coneHalf: (260 * Math.PI) / 360,
           depthOff: this.playerMuzzleDepthOff(slot, placeBarrel),
-        }, this.s.muzzleBurst);
-        this.s.showMuzzle({
+        }, this.s.fx.muzzleBurst);
+        this.s.fx.showMuzzle({
           life: 0.1,
           ang,
           scaleMul: 0.78 * muzzleMul * range(0.9, 1.12),
@@ -1330,7 +1330,7 @@ specIsShellGun(spec)
         const gunTips = lookupSpriteMuzzles(gunTex);
         const side = muzzleUv
           ? (muzzleUv.x < craftOrigin(craft).x ? -1 : 1)
-          : this.s.shellEjectSide({
+          : this.s.fx.shellEjectSide({
               muzzleUv: gunTips[gunMuzzleI ?? 0] ?? gunTips[0],
               mountUv: mountedGunUv,
             });
@@ -1338,7 +1338,7 @@ specIsShellGun(spec)
         if (
 specIsShellGun(spec)
         ) {
-          this.s.spawnShellEject({
+          this.s.fx.spawnShellEject({
             x: ejectAt.x,
             y: ejectAt.y,
             z: z0 - 4,
@@ -1353,7 +1353,7 @@ specIsShellGun(spec)
         }
       } else if (spec.fire?.muzzleSparks) {
         // Suppressed weapons: a few small sparks only — no flash sprite/glow, no shell eject.
-        this.s.emitVisualBurst(tip.x, tip.y, z0, {
+        this.s.fx.emitVisualBurst(tip.x, tip.y, z0, {
           n: scaledProjectileFxCount(3, shotFxScale),
           spdMin: 10,
           spdMax: 70,
@@ -1365,7 +1365,7 @@ specIsShellGun(spec)
           stretchMul: 1.2,
           coneHalf: (200 * Math.PI) / 360,
           depthOff: this.playerMuzzleDepthOff(slot, placeBarrel),
-        }, this.s.muzzleBurst);
+        }, this.s.fx.muzzleBurst);
       }
     }
   }
@@ -2022,7 +2022,7 @@ specIsShellGun(spec)
   missileMuzzle(x: number, y: number, z: number, ang: number, fxScale = 1, depthOff?: number): void {
     const ca = Math.cos(ang);
     const sa = Math.sin(ang);
-    this.s.emitVisualBurst(x, y, z, {
+    this.s.fx.emitVisualBurst(x, y, z, {
       n: scaledProjectileFxCount(12, fxScale),
       spdMin: 35,
       spdMax: 420,
@@ -2034,8 +2034,8 @@ specIsShellGun(spec)
       stretchMul: 2.8,
       coneHalf: (260 * Math.PI) / 360,
       depthOff,
-    }, this.s.muzzleBurst);
-    this.s.showMuzzle({
+    }, this.s.fx.muzzleBurst);
+    this.s.fx.showMuzzle({
       life: 0.12,
       ang,
       scaleMul: 0.92 * range(0.9, 1.12),

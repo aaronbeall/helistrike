@@ -499,9 +499,9 @@ export class DebugOverlays {
     if (this.s.terrain25d) {
       this.s.terrain25d
         .setTerrainTexture(key)
-        .setDecalTexture(this.showHeightMap ? null : this.s.wreckLayer);
+        .setDecalTexture(this.showHeightMap ? null : this.s.groundMarks.wreckLayer);
     } else {
-      this.s.wreckLayer.setVisible(!this.showHeightMap);
+      this.s.groundMarks.wreckLayer.setVisible(!this.showHeightMap);
     }
     this.s.flatWreckage.setVisible(!!this.s.terrain25d && !this.s.terrainMesh && !this.showHeightMap);
     this.s.minimap.wrecks.setVisible(!this.showHeightMap && this.s.minimap.terrain.visible);

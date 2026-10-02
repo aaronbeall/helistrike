@@ -133,7 +133,7 @@ export class UnitSim {
         if (dist3 < h.spec.radius + radius(u.kind)) {
           this.s.targeting.damageTarget(h, 38, u.vx, u.vy);
           // Kamikaze: explode in place — no falling crash hull.
-          this.s.destroyUnit(u, false, false, true);
+          this.s.destruction.destroyUnit(u, false, false, true);
           return;
         }
       }
@@ -830,13 +830,13 @@ export class UnitSim {
         const back = specOf(u.kind).radius * 0.72;
         const px = Phaser.Math.Linear(trackX0, u.x, t) - Math.cos(u.angle) * back;
         const py = Phaser.Math.Linear(trackY0, u.y, t) - Math.sin(u.angle) * back;
-        this.s.stampWreck(
+        this.s.groundMarks.stampWreck(
           this.s.textures.exists(key) ? key : "fx_track_mono",
           px,
           py,
           u.angle + Math.PI / 2,
           d.trackScale * 0.85,
-          this.s.trackPrintAlpha(0.7, px, py)
+          this.s.groundMarks.trackPrintAlpha(0.7, px, py)
         );
       }
       u.track = (u.track + step) % printGap;
@@ -860,7 +860,7 @@ export class UnitSim {
       u.health = 0.01;
       return false;
     }
-    this.s.destroyUnit(u, true);
+    this.s.destruction.destroyUnit(u, true);
     return true;
   }
 
@@ -1163,7 +1163,7 @@ export class UnitSim {
             if (u.track < -8) u.track = 0;
             u.track += dt;
             if (u.track > 0) {
-              this.s.stampSoldierBlood(u, range(-4.5, 4.5), range(-4.5, 4.5), range(0, Math.PI * 2));
+              this.s.groundMarks.stampSoldierBlood(u, range(-4.5, 4.5), range(-4.5, 4.5), range(0, Math.PI * 2));
               u.track = -range(1.5, 3.4);
             }
           } else if ((fleeing || kiting) && vision > 0) {
@@ -1214,7 +1214,7 @@ export class UnitSim {
                 const side = walk > 0 ? 1 : -1;
                 const px = -Math.sin(u.angle);
                 const py = Math.cos(u.angle);
-                this.s.stampSoldierBlood(
+                this.s.groundMarks.stampSoldierBlood(
                   u,
                   px * range(2.2, 5.5) * side,
                   py * range(2.2, 5.5) * side,

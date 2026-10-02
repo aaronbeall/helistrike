@@ -96,7 +96,7 @@ export class Refractor {
       );
       if (end) {
         // Fork point: sparks only, strongly biased along the beam (no backsplash / fireball).
-        this.s.emitVisualBurst(
+        this.s.fx.emitVisualBurst(
           end.x,
           end.y,
           end.z,
@@ -112,9 +112,9 @@ export class Refractor {
             stretchMul: 2.35,
             coneHalf: 0.32,
           },
-          this.s.teslaSparkBurst
+          this.s.fx.teslaSparkBurst
         );
-        this.s.emitVisualBurst(
+        this.s.fx.emitVisualBurst(
           end.x,
           end.y,
           end.z,
@@ -130,11 +130,11 @@ export class Refractor {
             stretchMul: 1.85,
             coneHalf: 0.55,
           },
-          this.s.teslaSparkBurst
+          this.s.fx.teslaSparkBurst
         );
         const splitAt = worldToScreen(end.x, end.y, end.z);
-        this.s.spawnImpactFlash(splitAt.x, splitAt.y, end.z, 0xc070ff, 48 * splitAt.scale, 0.55, 200);
-        this.s.spawnImpactFlash(splitAt.x, splitAt.y, end.z, 0xf0d0ff, 22 * splitAt.scale, 0.85, 140);
+        this.s.fx.spawnImpactFlash(splitAt.x, splitAt.y, end.z, 0xc070ff, 48 * splitAt.scale, 0.55, 200);
+        this.s.fx.spawnImpactFlash(splitAt.x, splitAt.y, end.z, 0xf0d0ff, 22 * splitAt.scale, 0.85, 140);
         let ax = aim.x - end.x;
         let ay = aim.y - end.y;
         let az = aim.z - end.z;
@@ -187,7 +187,7 @@ export class Refractor {
       }
     }
 
-    this.s.emitVisualBurst(
+    this.s.fx.emitVisualBurst(
       tip.x,
       tip.y,
       tipZ,
@@ -202,7 +202,7 @@ export class Refractor {
         scaleMul: 0.55,
         stretchMul: 1.8,
       },
-      this.s.teslaSparkBurst
+      this.s.fx.teslaSparkBurst
     );
   }
 
@@ -373,7 +373,7 @@ export class Refractor {
     this.s.tesla.spawnZap(x, y, z + 6, 0.85, 1.1);
     this.s.tesla.emitSparks(x, y, z, ground ? 14 : 18, ground ? 0.9 : 1.15);
     // Colorful spark spray — no HE fireball / blast trails on energy hits.
-    this.s.emitVisualBurst(
+    this.s.fx.emitVisualBurst(
       x,
       y,
       z + 2,
@@ -388,10 +388,10 @@ export class Refractor {
         scaleMul: 0.7,
         stretchMul: 1.6,
       },
-      this.s.teslaSparkBurst
+      this.s.fx.teslaSparkBurst
     );
     const at = worldToScreen(x, y, z);
-    this.s.spawnImpactFlash(at.x, at.y, z, 0xd090ff, 22 * at.scale, 0.7, 120);
+    this.s.fx.spawnImpactFlash(at.x, at.y, z, 0xd090ff, 22 * at.scale, 0.7, 120);
     this.s.shake = Math.min(5.5, this.s.shake + (ground ? 0.55 : 0.85));
   }
 

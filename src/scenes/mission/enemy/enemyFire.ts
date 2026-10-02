@@ -34,7 +34,7 @@ export class EnemyFire {
       const bodyTips = lookupSpriteMuzzles(textureOf(u.kind));
       if (bodyTips.length) muzzleUv = bodyTips[tipIdx % bodyTips.length];
     }
-    return this.s.shellEjectSide({ muzzleUv, mountUv });
+    return this.s.fx.shellEjectSide({ muzzleUv, mountUv });
   }
 
   /**
@@ -183,7 +183,7 @@ export class EnemyFire {
         );
     const muzzle = this.enemyMuzzle(u, gunI, tip);
     if (extraFlash) {
-      this.s.spawnExtraMuzzleFlash(muzzle.x, muzzle.y, u.z, barrelAng, sp.organic ? 0.7 : 1.15);
+      this.s.fx.spawnExtraMuzzleFlash(muzzle.x, muzzle.y, u.z, barrelAng, sp.organic ? 0.7 : 1.15);
     } else {
       u.muzzleGun = gunI;
       u.muzzleFireTip = tip;
@@ -197,7 +197,7 @@ export class EnemyFire {
     const spawn = this.s.projectiles.shotSpawnXY(muzzle.x, muzzle.y, fireAng, muzzleZ, wpn.look, wpn.scale);
     const shotDist = Math.max(40, Math.hypot(aimTgt.x - spawn.x, aimTgt.y - spawn.y));
     const muzzleAt = worldToScreen(muzzle.x, muzzle.y, u.z);
-    this.s.spawnMuzzleLight(
+    this.s.fx.spawnMuzzleLight(
       muzzleAt.x,
       muzzleAt.y,
       u.z,
@@ -233,7 +233,7 @@ export class EnemyFire {
       u.muzzleFireTip = tip;
       const side = this.enemyShellEjectSide(u, gunI);
       u.muzzleFireTip = flashTip;
-      this.s.spawnShellEject({
+      this.s.fx.spawnShellEject({
         x: ejectAt.x,
         y: ejectAt.y,
         z: shellZ,

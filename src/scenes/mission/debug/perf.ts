@@ -148,7 +148,7 @@ export class PerfMonitor {
       const avg = averages[i]!;
       lines.push(`${PERF_LABELS[i]!.padEnd(9)} ${avg.toFixed(2)} avg  ${p95s[i]!.toFixed(2)} p95  ${((avg / Math.max(frameAvg, 0.01)) * 100).toFixed(1)}%`);
     }
-    lines.push(`objects  u${this.s.units.length} s${this.s.shots.length} d${this.s.debris.length} p${this.s.simParticles.length}`);
+    lines.push(`objects  u${this.s.units.length} s${this.s.shots.length} d${this.s.debris.length} p${this.s.fx.simParticles.length}`);
     this.hud.setText(lines.join("\n"));
   }
 }

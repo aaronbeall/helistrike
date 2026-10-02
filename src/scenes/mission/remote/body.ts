@@ -176,7 +176,7 @@ export class RemoteBody {
     const muzzleMul = playerMuzzleFxMul(spec);
     const gunSc = craftGunScale(drone.spec);
     const fxScale = projectileFxScale("player", fxInterval) * 0.7;
-    this.s.emitVisualBurst(mx, my, mz, {
+    this.s.fx.emitVisualBurst(mx, my, mz, {
       n: scaledProjectileFxCount(12, fxScale),
       spdMin: 35,
       spdMax: 420,
@@ -187,9 +187,9 @@ export class RemoteBody {
       scaleMul: 0.3,
       stretchMul: 2.8,
       coneHalf: (260 * Math.PI) / 360,
-    }, this.s.muzzleBurst);
+    }, this.s.fx.muzzleBurst);
     const flashMul = 0.95 * muzzleMul * range(0.9, 1.12);
-    this.s.showMuzzle({
+    this.s.fx.showMuzzle({
       life: 0.12,
       ang: aimAng,
       scaleMul: flashMul,
@@ -200,8 +200,8 @@ export class RemoteBody {
       worldZ: mz,
     });
     const at = worldToScreen(mx, my, mz);
-    this.s.spawnMuzzleLight(at.x, at.y, mz, 18 * at.scale);
-    this.s.emitVisualBurst(mx, my, mz, {
+    this.s.fx.spawnMuzzleLight(at.x, at.y, mz, 18 * at.scale);
+    this.s.fx.emitVisualBurst(mx, my, mz, {
       n: 4,
       spdMin: 8,
       spdMax: 90,
@@ -213,15 +213,15 @@ export class RemoteBody {
       stretchMul: 1.4,
       coneHalf: (220 * Math.PI) / 360,
       depthOff: ZOff.shot,
-    }, this.s.muzzleBurst);
+    }, this.s.fx.muzzleBurst);
     if (specIsShellGun(spec)) {
       const gunIm = this.remoteGunImage(drone);
       const gunTips = gunIm ? lookupSpriteMuzzles(gunIm.texture.key) : [];
-      const side = this.s.shellEjectSide({ muzzleUv: gunTips[0] });
+      const side = this.s.fx.shellEjectSide({ muzzleUv: gunTips[0] });
       const ejectAt = gunIm
         ? screenToWorldAtZ(gunIm.x, gunIm.y, mz)
         : { x: mx, y: my };
-      this.s.spawnShellEject({
+      this.s.fx.spawnShellEject({
         x: ejectAt.x,
         y: ejectAt.y,
         z: drone.spec.ground ? drone.z + drone.spec.height * 0.7 : mz - 4,
@@ -893,18 +893,18 @@ export class RemoteBody {
   emitHoundLandingThud(drone: RemoteCraft): void {
     if (isWater(this.s.world, drone.x, drone.y)) return;
     const gnd = groundZ(this.s.world, drone.x, drone.y);
-    this.s.heliDust.setDepth(worldDepth(gnd, 0.25, drone.y));
+    this.s.fx.heliDust.setDepth(worldDepth(gnd, 0.25, drone.y));
     for (let i = 0; i < 10; i++) {
       const a = Math.random() * Math.PI * 2;
       const r = range(10, 42);
       const wx = drone.x + Math.cos(a) * r;
       const wy = drone.y + Math.sin(a) * r;
       const p = worldToScreen(wx, wy, groundZ(this.s.world, wx, wy));
-      this.s.heliDust.setEmitterAngle(Phaser.Math.RadToDeg(a) + (Math.random() - 0.5) * 36);
-      this.s.emitBudgeted("dust", this.s.heliDust, p.x, p.y, 1);
+      this.s.fx.heliDust.setEmitterAngle(Phaser.Math.RadToDeg(a) + (Math.random() - 0.5) * 36);
+      this.s.fx.emitBudgeted("dust", this.s.fx.heliDust, p.x, p.y, 1);
     }
-    this.s.stampDirtSmears(drone.x, drone.y, drone.vx * 0.35, drone.vy * 0.35);
-    const admitted = this.s.reserveSimParticleSlots("dust", 14);
+    this.s.groundMarks.stampDirtSmears(drone.x, drone.y, drone.vx * 0.35, drone.vy * 0.35);
+    const admitted = this.s.fx.reserveSimParticleSlots("dust", 14);
     const biome = sampleBiome(this.s.world, drone.x, drone.y);
     for (let i = 0; i < admitted; i++) {
       const a = Math.random() * Math.PI * 2;
@@ -913,7 +913,7 @@ export class RemoteBody {
       const spd = range(180, 420);
       const life = range(0.35, 0.7);
       const look = simParticleLook("dirt", biome);
-      this.s.simParticles.push({
+      this.s.fx.simParticles.push({
         x: drone.x + ca * range(2, 12),
         y: drone.y + sa * range(2, 12),
         z: gnd + range(2, 10),
@@ -1037,33 +1037,33 @@ export class RemoteBody {
       }
       // Sparse light trail wash (not a dense jet ribbon).
       if (spd > min * 0.7) {
-        this.s.exhaustTint = profile.tint;
-        this.s.exhaustSmokeTint = profile.smoke;
-        this.s.exhaustAlpha = 0.18 + power * 0.4;
-        this.s.exhaustScaleX = profile.sx * (0.35 + power * 0.45);
-        this.s.exhaustScaleY = profile.sy * (0.35 + power * 0.4);
-        this.s.exhaustLife = profile.life;
-        this.s.exhaustAngle = jetAng;
-        this.s.exhaustVx = Math.cos(r.angle + Math.PI) * profile.speed * (0.4 + power * 0.45);
-        this.s.exhaustVy = Math.sin(r.angle + Math.PI) * profile.speed * (0.4 + power * 0.45);
-        const glowFx = this.s.fxAt(r.z, r.y, this.s.craftExhaust, ZOff.exhaust + 0.04);
+        this.s.fx.exhaustTint = profile.tint;
+        this.s.fx.exhaustSmokeTint = profile.smoke;
+        this.s.fx.exhaustAlpha = 0.18 + power * 0.4;
+        this.s.fx.exhaustScaleX = profile.sx * (0.35 + power * 0.45);
+        this.s.fx.exhaustScaleY = profile.sy * (0.35 + power * 0.4);
+        this.s.fx.exhaustLife = profile.life;
+        this.s.fx.exhaustAngle = jetAng;
+        this.s.fx.exhaustVx = Math.cos(r.angle + Math.PI) * profile.speed * (0.4 + power * 0.45);
+        this.s.fx.exhaustVy = Math.sin(r.angle + Math.PI) * profile.speed * (0.4 + power * 0.45);
+        const glowFx = this.s.fx.at(r.z, r.y, this.s.fx.craftExhaust, ZOff.exhaust + 0.04);
         glowFx.setDepth(bodyDepth - 1.2);
         for (const mount of mounts) {
           const at = spriteUvPos(pose, mount.x, mount.y);
-          const take = this.s.fxEmitCount(0.35 + power * 0.35);
-          if (take) this.s.emitBudgeted("fire", glowFx, at.x, at.y, take);
+          const take = this.s.fx.emitCount(0.35 + power * 0.35);
+          if (take) this.s.fx.emitBudgeted("fire", glowFx, at.x, at.y, take);
         }
       }
     } else if (mounts.length && spd > min * 0.7) {
       const pose = this.remoteBodyDrawPose(body);
-      this.s.withTrailFx(0.7, () => {
+      this.s.fx.withTrail(0.7, () => {
         for (const ex of mounts) {
           const at = spriteUvPos(pose, ex.x, ex.y);
-          const take = this.s.fxEmitCount(0.45);
+          const take = this.s.fx.emitCount(0.45);
           if (take) {
-            this.s.emitBudgeted(
+            this.s.fx.emitBudgeted(
               "smoke",
-              this.s.fxAt(r.z, r.y, this.s.craftExhaustSmoke, ZOff.smoke - 0.2),
+              this.s.fx.at(r.z, r.y, this.s.fx.craftExhaustSmoke, ZOff.smoke - 0.2),
               at.x,
               at.y,
               take
@@ -1092,13 +1092,13 @@ export class RemoteBody {
       const back = r.spec.radius * 0.55;
       const px = Phaser.Math.Linear(x0, r.x, t) - Math.cos(r.angle) * back;
       const py = Phaser.Math.Linear(y0, r.y, t) - Math.sin(r.angle) * back;
-      this.s.stampWreck(
+      this.s.groundMarks.stampWreck(
         this.s.textures.exists(key) ? key : "fx_track_mono",
         px,
         py,
         r.angle + Math.PI / 2,
         sc,
-        this.s.trackPrintAlpha(0.65, px, py)
+        this.s.groundMarks.trackPrintAlpha(0.65, px, py)
       );
     }
     r.track = ((r.track ?? 0) + step) % printGap;
@@ -1318,16 +1318,16 @@ export class RemoteBody {
         const uv = this.s.sampleSolidUv(body.texture.key, r.spec.radius);
         r.dmgSites.push({ ...uv, scale: range(0.38, 0.75) });
       }
-      const { fire, smoke } = this.s.pairHurtFx(r.z, r.y, this.s.flame, this.s.hurtSmoke);
+      const { fire, smoke } = this.s.fx.pairHurt(r.z, r.y, this.s.fx.flame, this.s.fx.hurtSmoke);
       const sizeMul = r.spec.ground ? 1 : 1.65;
       for (const site of r.dmgSites) {
         const base = spriteUvPos(body, site.u, site.v);
         const p = jitterDisk(base.x, base.y, 0.5 + site.scale * 0.4);
-        this.s.withDmgFlameScale(site.scale * sizeMul, () => {
-          const nFire = this.s.fxEmitCount(0.45);
-          const nSmoke = this.s.fxEmitCount(0.26);
-          if (nFire) this.s.emitBudgeted("fire", fire, p.x, p.y, nFire);
-          if (nSmoke) this.s.emitBudgeted("smoke", smoke, p.x, p.y, nSmoke);
+        this.s.fx.withDmgFlameScale(site.scale * sizeMul, () => {
+          const nFire = this.s.fx.emitCount(0.45);
+          const nSmoke = this.s.fx.emitCount(0.26);
+          if (nFire) this.s.fx.emitBudgeted("fire", fire, p.x, p.y, nFire);
+          if (nSmoke) this.s.fx.emitBudgeted("smoke", smoke, p.x, p.y, nSmoke);
         });
       }
     }
