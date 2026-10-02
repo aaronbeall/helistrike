@@ -3,6 +3,22 @@ import { baseHeight, makeShape, MAP_SHAPES, type MapShape, type ShapeField } fro
 import { applyDunes, applyLandforms, LANDFORM_KINDS, NO_LANDFORMS, type LandformKind } from "../worldgen/landforms";
 import { RIG_INFO, RIG_VALUE, makeRigText, setStackedTexts, syncRigSystemCursor } from "./rigUi";
 import { nameGameTexture } from "../art/sprites";
+import {
+  baseTerrainColor,
+  classifyBiome,
+  DRAINAGE_STAGES,
+  moistureAt,
+  OUTLET_EDGE,
+  OUTLET_TRUNK,
+  OUTLET_WATER,
+  previewDrainage,
+  terrainLight,
+  TEX,
+  WATER_LEVEL,
+  type DrainagePreview,
+} from "../worldgen/world";
+import { themeOf } from "../worldgen/theme";
+import { missionOf } from "../sim/mission";
 
 const DEPTH = 9500;
 const MONO = "Share Tech Mono, monospace";
@@ -16,17 +32,29 @@ const SIZE = 300;
 /** Stamp sandbox size (texels): landforms place by texel radius, so this sets their scale. */
 const SANDBOX = 900;
 const FLAT = 0.45;
-const WATER = 0.34;
 const CONTOUR = 0.05;
 
-type Entry = { kind: "shape"; id: MapShape; label: string; desc: string } | { kind: "landform"; id: LandformKind; label: string; desc: string };
+type Entry =
+  | { kind: "shape"; id: MapShape; label: string; desc: string }
+  | { kind: "landform"; id: LandformKind; label: string; desc: string }
+  | { kind: "drainage"; id: "drainage"; label: string; desc: string };
 
 const ENTRIES: Entry[] = [
   ...MAP_SHAPES.map((m): Entry => ({ kind: "shape", id: m.id, label: m.label, desc: m.description })),
   ...LANDFORM_KINDS.map((l): Entry => ({ kind: "landform", id: l.id, label: l.label, desc: l.description })),
+  {
+    kind: "drainage",
+    id: "drainage",
+    label: "DRAINAGE",
+    desc: "River network for the selected mission: real world-gen code, step by step (← → or V).",
+  },
 ];
 
-const VIEWS = { shape: ["FIELD", "WITH NOISE"], landform: ["RELIEF", "HEIGHT"] } as const;
+const VIEWS: Record<Entry["kind"], readonly string[]> = {
+  shape: ["FIELD", "WITH NOISE"],
+  landform: ["RELIEF", "HEIGHT"],
+  drainage: DRAINAGE_STAGES.map((st, i) => `${i + 1} ${st.label}`),
+};
 
 /** Preview-only: map shapes and landform stamps in isolation, from the real worldgen functions on scratch buffers. */
 export class TerrainRig {
@@ -45,6 +73,7 @@ export class TerrainRig {
   private values = new Float32Array(SIZE * SIZE);
   private valueLabel = "";
   private field: ShapeField | null = null;
+  private drain: { key: string; data: DrainagePreview } | null = null;
 
   root: Phaser.GameObjects.Container;
   private dim!: Phaser.GameObjects.Rectangle;
@@ -99,6 +128,14 @@ export class TerrainRig {
       this.view = (this.view + 1) % VIEWS[this.entry().kind].length;
       this.dirty = true;
     });
+    const step = (dir: number) => {
+      if (!this.open) return;
+      const n = VIEWS[this.entry().kind].length;
+      this.view = (this.view + dir + n) % n;
+      this.dirty = true;
+    };
+    kb?.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT).on("down", () => step(-1));
+    kb?.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT).on("down", () => step(1));
     kb?.addKey(Phaser.Input.Keyboard.KeyCodes.R).on("down", () => {
       if (!this.open) return;
       this.seed = (Math.random() * 0xffffffff) >>> 0;
@@ -106,9 +143,8 @@ export class TerrainRig {
     });
     scene.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
       if (!this.open || !p.leftButtonDown() || p.x < LIST_X || p.x >= LIST_X + LIST_W) return;
-      const row = Math.floor((p.y - LIST_Y) / LINE_H) - 1;
-      const i = row - (row > MAP_SHAPES.length ? 2 : 0);
-      if (row >= 0 && row !== MAP_SHAPES.length && row !== MAP_SHAPES.length + 1 && i >= 0 && i < ENTRIES.length) this.select(i);
+      const i = listRowToEntry(Math.floor((p.y - LIST_Y) / LINE_H));
+      if (i >= 0) this.select(i);
     });
   }
 
@@ -147,9 +183,19 @@ export class TerrainRig {
     const e = this.entry();
     const shapes = ENTRIES.filter((x) => x.kind === "shape");
     const forms = ENTRIES.filter((x) => x.kind === "landform");
+    const rivers = ENTRIES.filter((x) => x.kind === "drainage");
     const row = (x: Entry) => `${x === e ? "▸" : " "} ${x.label}`;
     this.listTxt.setText(
-      [`— SHAPES  (${shapes.length}) —`, ...shapes.map(row), "", `— LANDFORMS  (${forms.length}) —`, ...forms.map(row)].join("\n")
+      [
+        `— SHAPES  (${shapes.length}) —`,
+        ...shapes.map(row),
+        "",
+        `— LANDFORMS  (${forms.length}) —`,
+        ...forms.map(row),
+        "",
+        `— RIVERS  (${rivers.length}) —`,
+        ...rivers.map(row),
+      ].join("\n")
     );
     const hover = this.hoverValue();
     setStackedTexts(
@@ -162,10 +208,13 @@ export class TerrainRig {
       this.infoTxt.x,
       this.infoTxt.y
     );
-    this.hintTxt.setText(`TERRAIN RIG   ↑ ↓ select   V view   R reseed   - + zoom ${this.zoom}×   (preview only — map gen untouched)`);
+    this.hintTxt.setText(
+      `TERRAIN RIG   ↑ ↓ select   V / ← → view${e.kind === "drainage" ? " (step)" : ""}   R reseed   - + zoom ${this.zoom}×   (preview only — map gen untouched)`
+    );
   }
 
   private legend(e: Entry): string[] {
+    if (e.kind === "drainage") return this.drainLegend();
     if (e.kind === "shape" && this.view === 0)
       return [
         "Height offset added to the noise.",
@@ -173,8 +222,9 @@ export class TerrainRig {
         `Contours every ${CONTOUR}. Dim: noise flattened.`,
         "Magenta: spawn hint · red: stronghold keep.",
       ];
-    if (e.kind === "shape") return ["baseHeight with warp 1, relief 1, no edge", "falloff or bias: shape + noise together.", "Water line 0.34."];
-    if (this.view === 0) return ["Stamped alone on flat ground, hillshaded", "with the game's light direction.", "Colors by height band (water/ground/rock/peak)."];
+    const m = missionOf();
+    if (e.kind === "shape") return [`baseHeight with ${m.label}'s profile, this shape.`, `Biomes + palette: world gen (${themeOf(m.profile.theme).label}).`];
+    if (this.view === 0) return ["Stamped alone on flat ground.", `Biomes, palette (${themeOf(m.profile.theme).label}) and light: world gen.`];
     return ["Raw height after the stamp (grey ramp).", `Contours every ${CONTOUR}.`];
   }
 
@@ -182,7 +232,8 @@ export class TerrainRig {
     const e = this.entry();
     const img = this.g.createImageData(SIZE, SIZE);
     if (e.kind === "shape") this.renderShape(e.id, img.data);
-    else this.renderLandform(e.id, img.data);
+    else if (e.kind === "landform") this.renderLandform(e.id, img.data);
+    else this.renderDrainage(img.data);
     this.g.putImageData(img, 0, 0);
     const tex = this.scene.textures;
     if (tex.exists(this.previewKey)) tex.remove(this.previewKey);
@@ -194,7 +245,7 @@ export class TerrainRig {
     const f = makeShape(id, this.seed);
     this.field = f;
     const noise = this.view === 1;
-    const prof = { landBias: 0, relief: 1, edgeFalloff: 0, shape: id, warp: 1 };
+    const prof = { ...missionOf().profile, shape: id };
     for (let y = 0; y < SIZE; y++) {
       for (let x = 0; x < SIZE; x++) {
         const nx = x / SIZE;
@@ -209,7 +260,7 @@ export class TerrainRig {
         const i = y * SIZE + x;
         const v = this.values[i]!;
         let c: number[];
-        if (noise) c = bandColor(v);
+        if (noise) c = this.ground(v, x / SIZE, y / SIZE);
         else {
           const t = Math.max(-1, Math.min(1, v / 0.3));
           const rl = f.relief ? f.relief(x / SIZE, y / SIZE) : 1;
@@ -231,7 +282,7 @@ export class TerrainRig {
     const h = new Float32Array(n * n).fill(FLAT);
     const far = { x: -1e6, y: -1e6 };
     if (id === "dunes") applyDunes(h, n, 1, this.seed, far, () => true);
-    else applyLandforms(h, n, { ...NO_LANDFORMS, [id]: 1 }, this.seed, far, WATER);
+    else applyLandforms(h, n, { ...NO_LANDFORMS, [id]: 1 }, this.seed, far, WATER_LEVEL);
     // Frame the stamp's footprint.
     let x0 = n;
     let y0 = n;
@@ -263,12 +314,7 @@ export class TerrainRig {
         const v = this.values[i]!;
         let c: number[];
         if (this.view === 0) {
-          const j = at(x, y);
-          const dx = (h[j + 1]! - h[j - 1]!) * 52;
-          const dy = (h[j + n]! - h[j - n]!) * 52;
-          const len = Math.hypot(dx, dy, 1);
-          const lit = 0.38 + Math.pow(Math.max(0, Math.min(1, (-dx * -0.64 + -dy * -0.44 + 0.62) / len)), 1.15) * 0.82;
-          c = bandColor(v).map((q) => q * lit);
+          c = shaded(this.ground(v, x / SIZE, y / SIZE), h, at(x, y), n);
         } else {
           const g = Math.max(0, Math.min(255, (v - 0.25) * 400));
           c = this.contour(i, x, y) ? [232, 184, 74] : [g, g, g];
@@ -276,6 +322,81 @@ export class TerrainRig {
         put(d, i, c);
       }
     }
+  }
+
+  private drainData(): DrainagePreview {
+    const m = missionOf();
+    const key = `${this.seed}:${m.kind}:${JSON.stringify(m.profile)}`;
+    if (this.drain?.key !== key) this.drain = { key, data: previewDrainage(this.seed, m.profile) };
+    return this.drain.data;
+  }
+
+  private drainLegend(): string[] {
+    const d = this.drain?.data;
+    const m = missionOf();
+    const t = d?.trace;
+    const head = `${m.label} · RIVERS ${m.profile.riverTarget} · MAIN ${m.profile.mainRivers}`;
+    const streams = t ? Array.from(t.area).filter((a, c) => !t.outlet[c] && a >= t.minArea).length : 0;
+    const lakes = t ? new Set(Array.from(t.lakeOf).filter((v) => v >= 0)).size : 0;
+    const stats = t ? `grid ${t.n}² (${t.step} tx/cell) · threshold ${Math.round(t.minArea)} cells · ${streams} stream cells · ${lakes} lakes` : "no drainage (RIVERS 0)";
+    const stage = DRAINAGE_STAGES[this.view]!;
+    return [head, stats, "", stage.description, STAGE_KEY[stage.id]];
+  }
+
+  private renderDrainage(d: Uint8ClampedArray): void {
+    this.field = null;
+    const data = this.drainData();
+    const { relief, trunk: trunkMask, trace: t, lake } = data;
+    const h = relief.height;
+    const tx = (x: number) => Math.min(TEX - 2, Math.max(1, Math.floor(((x + 0.5) / SIZE) * TEX)));
+    let maxLog = 1;
+    if (t) for (let c = 0; c < t.area.length; c++) maxLog = Math.max(maxLog, Math.log(t.area[c]!));
+    const stage = DRAINAGE_STAGES[this.view]!.id;
+    this.valueLabel = stage === "filled" ? "flooded depth" : stage === "area" || stage === "streams" ? "drainage cells" : "height";
+    for (let y = 0; y < SIZE; y++) {
+      for (let x = 0; x < SIZE; x++) {
+        const i = tx(y) * TEX + tx(x);
+        const p = y * SIZE + x;
+        const base = shaded(this.ground(h[i]!, (i % TEX) / TEX, Math.floor(i / TEX) / TEX), h, i, TEX);
+        const dim = base.map((q) => q * 0.45 + 30);
+        const c = t ? Math.min(t.n - 1, Math.floor(((y + 0.5) / SIZE) * t.n)) * t.n + Math.min(t.n - 1, Math.floor(((x + 0.5) / SIZE) * t.n)) : -1;
+        const trunk = trunkMask[i] !== 0;
+        let col = base;
+        let val = h[i]!;
+        if (stage === "terrain") {
+          if (trunk) col = TRUNK_COL;
+        } else if (!t) {
+          col = dim;
+        } else if (stage === "outlets") {
+          col = t.outlet[c] ? OUTLET_COL[t.outlet[c]!]! : dim;
+        } else if (stage === "filled") {
+          const depth = t.fill[c]! - t.gh[c]!;
+          val = depth;
+          col = t.outlet[c] ? [40, 70, 110] : depth > t.floodEps ? dim.map((q, k) => q + [0, 120, 110][k]! * Math.min(1, depth / 0.04)) : dim;
+        } else if (stage === "area") {
+          val = t.area[c]!;
+          const v = Math.log(t.area[c]!) / maxLog;
+          col = t.outlet[c] ? [20, 30, 50] : t.area[c]! >= t.minArea ? [240, 210, 70] : [20 + v * 120, 30 + v * 150, 60 + v * 190];
+        } else if (stage === "streams") {
+          val = t.area[c]!;
+          col = dim;
+          if (t.outlet[c]) col = OUTLET_COL[t.outlet[c]!]!;
+          else if (t.lakeOf[c]! >= 0) col = [60, 170, 200];
+          else if (t.area[c]! >= t.minArea) col = [70, 140, 255];
+        } else {
+          if (lake[i]) col = [50, 120, 170];
+          else if (relief.biome[i] !== 0) col = TRUNK_COL;
+        }
+        this.values[p] = val;
+        put(d, p, col);
+      }
+    }
+  }
+
+  /** World-gen biome + palette for this height (selected mission's theme). */
+  private ground(h: number, nx: number, ny: number): number[] {
+    const theme = themeOf(missionOf().profile.theme);
+    return baseTerrainColor(theme, classifyBiome(h, moistureAt(nx, ny, this.seed)), h);
   }
 
   private contour(i: number, x: number, y: number): boolean {
@@ -314,13 +435,43 @@ export class TerrainRig {
   }
 }
 
-function bandColor(v: number): number[] {
-  if (v < WATER) return [40, 90, 120];
-  if (v < 0.4) return [196, 172, 122];
-  if (v > 0.72) return [226, 226, 232];
-  if (v > 0.62) return [150, 110, 80];
-  return [120 + (v - 0.4) * 120, 140 + (v - 0.4) * 60, 84];
+/** List line → entry index (section headers + blank separators skipped), or -1. */
+function listRowToEntry(line: number): number {
+  let l = 0;
+  let idx = 0;
+  for (const kind of ["shape", "landform", "drainage"] as const) {
+    const count = ENTRIES.filter((x) => x.kind === kind).length;
+    l++; // header
+    if (line >= l && line < l + count) return idx + (line - l);
+    l += count + 1; // entries + blank
+    idx += count;
+  }
+  return -1;
 }
+
+const LIGHT = { lit: 1, spec: 0 };
+
+/** Apply the game's terrain light (terrainLight) at texel i of a stride-wide height grid. */
+function shaded(c: number[], h: Float32Array, i: number, stride: number): number[] {
+  terrainLight(h[i + 1]! - h[i - 1]!, h[i + stride]! - h[i - stride]!, LIGHT);
+  return [c[0]! * LIGHT.lit + LIGHT.spec, c[1]! * LIGHT.lit + LIGHT.spec * 0.92, c[2]! * LIGHT.lit + LIGHT.spec * 0.78];
+}
+
+// Rig-only overlay colors (visualization, not terrain data).
+const TRUNK_COL = [30, 60, 120];
+const OUTLET_COL: Record<number, number[]> = {
+  [OUTLET_WATER]: [40, 110, 200],
+  [OUTLET_TRUNK]: [80, 220, 230],
+  [OUTLET_EDGE]: [240, 140, 40],
+};
+const STAGE_KEY: Record<(typeof DRAINAGE_STAGES)[number]["id"], string> = {
+  terrain: "Dark blue: trunk river channel.",
+  outlets: "Blue: water · cyan: trunk river · orange: map edge.",
+  filled: "Teal: flooded depth.",
+  area: "Log scale · yellow: at or above the threshold.",
+  streams: "Blue: streams · teal: kept lakes.",
+  result: "Rivers + lakes as world gen stamps them.",
+};
 
 function put(d: Uint8ClampedArray, i: number, c: number[]): void {
   const o = i * 4;

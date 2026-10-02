@@ -124,5 +124,6 @@ export class RemoteFleet {
 - **Comments:** terse — one short line, even for a non-obvious *why*. History and rationale belong in commit messages, not code.
 - **Catalog `description` strings** (weapons, countermeasures, crafts) are role/fantasy only: standalone, no references to other items, no tuning numbers, no mechanics. Mechanics and how-to go in tactical tips (`src/catalog/tips.ts`).
 - **Don't add unrequested mechanics.** Implement what was asked; suggest extras separately.
+- **Rigs read from the source.** A rig previews real code: it imports the module's own lists, constants and functions (export them if needed) instead of re-cataloguing values, thresholds or formulas.
 - **Behaviour-preserving refactors:** keep them mechanical and verifiable (type check, build, and no new runtime import cycles).
 - **Git:** don't commit unless explicitly asked. Keep commit messages short: a title, a one-sentence summary, and at most a few dash points.

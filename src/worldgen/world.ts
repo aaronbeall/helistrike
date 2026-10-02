@@ -1,5 +1,5 @@
 import { fbm } from "./noise";
-import { baseHeight, makeShape, type MapShape } from "./shape";
+import { baseHeight, makeShape, type MapShape, type ShapeField } from "./shape";
 import { applyDunes, applyLandforms, type Landforms } from "./landforms";
 import { lookColor, themedTiles, themeOf, type TerrainTheme, type ThemeSpec } from "./theme";
 import { Rng } from "../util/rng";
@@ -115,6 +115,7 @@ export interface WorldGenProfile {
   warp: number;
   /** Terrain palette + tiles + decor (visual only). */
   theme: TerrainTheme;
+  /** Drainage network density (0 = none): higher shows streams from smaller catchments. */
   riverTarget: number;
   /** Long trunk rivers that carve their own valley to the sea (tributaries join them). */
   mainRivers: number;
@@ -173,9 +174,60 @@ const BIOME_ID: Record<Biome, number> = {
 };
 
 const H_WATER = 0.34;
+/** Sea level on the height scale (biome water below it). */
+export const WATER_LEVEL = H_WATER;
 const H_SAND = 0.4;
 const H_ROCK = 0.62;
 const H_PEAK = 0.72;
+/** Moisture field at normalized coords (drives forest). */
+export function moistureAt(nx: number, ny: number, seed: number): number {
+  return fbm(nx * 5.4 + 40, ny * 5.4, seed + 17, 4);
+}
+
+/** Biome id from pre-terrace height + moisture (rivers/lakes are stamped separately). */
+export function classifyBiome(h: number, m: number): number {
+  if (h < H_WATER) return BIOME_ID.water;
+  if (h < H_SAND) return BIOME_ID.sand;
+  if (h > H_PEAK) return BIOME_ID.peak;
+  if (h > H_ROCK) return BIOME_ID.rock;
+  if (m > 0.58 && h < 0.58) return BIOME_ID.forest;
+  return BIOME_ID.grass;
+}
+
+/** Terrain base color for a biome before tiles + lighting. `wet` = river-bank wetness (sand), `n` = fine color noise. */
+export function baseTerrainColor(theme: ThemeSpec, b: number, h: number, wet = 0, n = 0): [number, number, number] {
+  const lk = theme.looks[b]!;
+  let t = 0;
+  if (b === BIOME_ID.water) t = clamp((H_WATER - h) * 4, 0, 1);
+  else if (b === BIOME_ID.sand) t = wet;
+  else if (b === BIOME_ID.peak) t = (h - 0.74) * 8;
+  else if (b === BIOME_ID.grass || b === BIOME_ID.forest) t = h;
+  const shade = 0.82 + h * 0.35;
+  return [
+    clamp((lookColor(lk, t, 0) + n * lk.nz[0]) * shade, 0, 255),
+    clamp((lookColor(lk, t, 1) + n * lk.nz[1]) * shade, 0, 255),
+    clamp((lookColor(lk, t, 2) + n * lk.nz[2]) * shade, 0, 255),
+  ];
+}
+
+/** Terrain hillshade from height gradient (the game's light): multiplier + specular add. */
+export function terrainLight(dHx: number, dHy: number, out: { lit: number; spec: number }): void {
+  const dx = dHx * 52;
+  const dy = dHy * 52;
+  let nx = -dx;
+  let ny = -dy;
+  let nz = 1;
+  const len = Math.hypot(nx, ny, nz) || 1;
+  nx /= len;
+  ny /= len;
+  nz /= len;
+  const ndot = clamp(nx * -0.64 + ny * -0.44 + nz * 0.62, 0, 1);
+  out.lit = 0.38 + Math.pow(ndot, 1.15) * 0.82;
+  out.spec = Math.pow(Math.max(0, ndot - 0.48), 1.85) * 72;
+}
+
+const LIGHT = { lit: 1, spec: 0 };
+
 /** Bank width as a multiple of local river half-width (2 = full river width each side). */
 export const RIVER_BANK_MUL = 4.4;
 export const RIVER_BANK_MIN = 6.5;
@@ -193,17 +245,20 @@ const HEIGHT_BANDS: { lo: number; hi: number; k: number }[] = [
   { lo: H_PEAK, hi: 1.08, k: 2.45 },
 ];
 
-export function generateWorld(
-  seed: number,
-  tiles?: (ImageData | null)[],
-  onProgress?: WorldProgress,
-  profile: WorldGenProfile = DEFAULT_WORLD_PROFILE
-): WorldGen {
-  const rng = new Rng(seed);
-  const height = new Float32Array(TEX * TEX);
-  const moisture = new Float32Array(TEX * TEX);
-  const biome = new Uint8Array(TEX * TEX);
+export interface Relief {
+  height: Float32Array;
+  moisture: Float32Array;
+  biome: Uint8Array;
+  riverRad: Float32Array;
+  field: ShapeField;
+  hint: { x: number; y: number };
+}
 
+/** Pre-river terrain: shape + noise heights, landform stamps, trunk rivers. Shared by world gen and the terrain rig. */
+export function buildRelief(seed: number, profile: WorldGenProfile, onProgress?: WorldProgress, withMoisture = false): Relief {
+  const height = new Float32Array(TEX * TEX);
+  const moisture = new Float32Array(withMoisture ? TEX * TEX : 0);
+  const biome = new Uint8Array(TEX * TEX);
   onProgress?.(0.02, "relief");
   const field = makeShape(profile.shape, seed);
   for (let y = 0; y < TEX; y++) {
@@ -213,29 +268,87 @@ export function generateWorld(
       const nx = x / TEX;
       const ny = y / TEX;
       height[i] = baseHeight(nx, ny, seed, profile, field);
-      moisture[i] = fbm(nx * 5.4 + 40, ny * 5.4, seed + 17, 4);
+      if (withMoisture) moisture[i] = moistureAt(nx, ny, seed);
     }
   }
-
   const hint = { x: field.spawnX * TEX, y: field.spawnY * TEX };
   applyLandforms(height, TEX, profile.landforms, seed, hint, H_WATER);
-
   onProgress?.(0.32, "river carve");
   const riverRad = new Float32Array(TEX * TEX);
-  const mains = carveMainRivers(height, biome, riverRad, seed, profile.mainRivers);
-  carveRivers(height, biome, rng, riverRad, profile.riverTarget, mains);
+  carveMainRivers(height, biome, riverRad, seed, profile.mainRivers);
+  return { height, moisture, biome, riverRad, field, hint };
+}
+
+/** carveDrainage internals on its coarse grid (n × n, DRAIN_STEP texels per cell), for the terrain rig. */
+export interface DrainageTrace {
+  n: number;
+  step: number;
+  /** Routing surface (terrain + routing jitter). */
+  gh: Float32Array;
+  /** 0 = drains onward, else OUTLET_WATER / OUTLET_TRUNK / OUTLET_EDGE. */
+  outlet: Uint8Array;
+  /** Spill level after pit filling (≥ gh). */
+  fill: Float32Array;
+  /** Cell each cell drains into (-1 = outlet). */
+  down: Int32Array;
+  /** Drainage area in cells. */
+  area: Float32Array;
+  minArea: number;
+  /** Kept lake id per cell (≥ 0), or < 0. */
+  lakeOf: Int32Array;
+  /** Fill above ground that counts as flooded. */
+  floodEps: number;
+}
+
+/** The drainage pipeline's steps, in order (what carveDrainage does; the terrain rig steps through these). */
+export const DRAINAGE_STAGES = [
+  { id: "terrain", label: "TERRAIN", description: "Input relief: shape + noise + landforms, with trunk rivers carved." },
+  { id: "outlets", label: "OUTLETS", description: "Where water leaves: sea and existing water, trunk river channels, the map edge." },
+  { id: "filled", label: "FILLED", description: "Pit fill from the outlets: every hollow flooded to its spill level, so all land drains." },
+  { id: "area", label: "DRAINAGE AREA", description: "Cells draining through each cell; at or above the threshold becomes a stream." },
+  { id: "streams", label: "STREAMS + LAKES", description: "Stream cells plus lakes kept (deep enough, big enough, fed by a real stream)." },
+  { id: "result", label: "RESULT", description: "Branches traced, smoothed and stamped at full res; lakes flooded to real shorelines." },
+] as const;
+export type DrainageStage = (typeof DRAINAGE_STAGES)[number]["id"];
+
+export interface DrainagePreview {
+  relief: Relief;
+  /** Trunk-river channels only (relief.biome also gets the drainage streams). */
+  trunk: Uint8Array;
+  trace: DrainageTrace | null;
+  lake: Uint8Array;
+}
+
+/** Same relief + drainage code as world gen, stopping before biomes; returns every intermediate for preview. */
+export function previewDrainage(seed: number, profile: WorldGenProfile): DrainagePreview {
+  const relief = buildRelief(seed, profile);
+  const trunk = new Uint8Array(relief.biome);
+  const lake = new Uint8Array(TEX * TEX);
+  let trace: DrainageTrace | null = null;
+  carveDrainage(relief.height, relief.biome, relief.riverRad, seed, profile.riverTarget, lake, (t) => (trace = t));
+  return { relief, trunk, trace, lake };
+}
+
+export function generateWorld(
+  seed: number,
+  tiles?: (ImageData | null)[],
+  onProgress?: WorldProgress,
+  profile: WorldGenProfile = DEFAULT_WORLD_PROFILE
+): WorldGen {
+  const rng = new Rng(seed);
+  const { height, moisture, biome, riverRad, field, hint } = buildRelief(seed, profile, onProgress, true);
+  const lake = new Uint8Array(TEX * TEX);
+  carveDrainage(height, biome, riverRad, seed, profile.riverTarget, lake);
   onProgress?.(0.52, "biomes");
 
   for (let i = 0; i < TEX * TEX; i++) {
+    // Lakes win over the river channels that run through them.
+    if (lake[i]) {
+      biome[i] = BIOME_ID.water;
+      continue;
+    }
     if (biome[i] === BIOME_ID.river) continue;
-    const h = height[i];
-    const m = moisture[i];
-    if (h < H_WATER) biome[i] = BIOME_ID.water;
-    else if (h < H_SAND) biome[i] = BIOME_ID.sand;
-    else if (h > H_PEAK) biome[i] = BIOME_ID.peak;
-    else if (h > H_ROCK) biome[i] = BIOME_ID.rock;
-    else if (m > 0.58 && h < 0.58) biome[i] = BIOME_ID.forest;
-    else biome[i] = BIOME_ID.grass;
+    biome[i] = classifyBiome(height[i]!, moisture[i]!);
   }
 
   onProgress?.(0.58, "river banks");
@@ -246,7 +359,7 @@ export function generateWorld(
   const bed = H_WATER - 0.02;
   for (let i = 0; i < height.length; i++) {
     height[i] = remapBand(height[i]!);
-    if (biome[i] === BIOME_ID.river) {
+    if (biome[i] === BIOME_ID.river || lake[i]) {
       height[i] = Math.min(height[i]!, bed);
     } else if (bankT[i]! >= 0) {
       const t = bankT[i]!;
@@ -706,87 +819,243 @@ export function groundSlope(world: WorldData, x: number, y: number): { dx: numbe
   };
 }
 
-function carveRivers(
+const DRAIN_STEP = 3;
+/** Drainage area (coarse cells) for a stream to show, at RIVERS = 1; density divides it. */
+const DRAIN_AREA = 60000;
+/** Hollow depth (height) worth a lake, and lake size limits (coarse cells). */
+const LAKE_DEPTH = 0.02;
+const LAKE_MIN = 40;
+const LAKE_MAX = 2600;
+/** Routing-only height noise: breaks up parallel flow on flats so streams merge. */
+const DRAIN_JITTER = 0.006;
+/** Fill above ground that counts as flooded (a hollow). */
+const DRAIN_FLOOD_EPS = 1e-4;
+/** Outlet kinds in DrainageTrace.outlet (0 = drains onward). */
+export const OUTLET_WATER = 1;
+export const OUTLET_TRUNK = 2;
+export const OUTLET_EDGE = 3;
+
+/**
+ * Drainage-network rivers: fill pits from the outlets (sea, water, trunk rivers, map edge), route every
+ * cell downhill, accumulate drainage area, and draw cells above a threshold as rivers (width by area).
+ * Hollows the network flows through become lakes filled to their spill level. Reads terrain, never reshapes it.
+ */
+function carveDrainage(
   height: Float32Array,
   biome: Uint8Array,
-  rng: Rng,
   riverRad: Float32Array,
-  target: number,
-  mains: RiverPt[][] = []
+  seed: number,
+  density: number,
+  lake: Uint8Array,
+  trace?: (t: DrainageTrace) => void
 ): void {
-  const channel = new Int32Array(TEX * TEX);
-  const discharge = new Float32Array(TEX * TEX);
-  channel.fill(-1);
-  // Trunk rivers first, so marbles that reach them join as tributaries.
-  for (const m of mains) {
-    registerChannel(m, channel);
-    registerDischarge(m, discharge);
+  if (density <= 0) return;
+  const n = Math.floor(TEX / DRAIN_STEP);
+  const N = n * n;
+  const half = DRAIN_STEP >> 1;
+  const jitter = (cx: number, cy: number) => (fbm(cx * 0.05, cy * 0.05, seed + 401, 3) - 0.5) * 2 * DRAIN_JITTER;
+  const gh = new Float32Array(N);
+  const outlet = new Uint8Array(N);
+  for (let cy = 0; cy < n; cy++) {
+    for (let cx = 0; cx < n; cx++) {
+      const i = (cy * DRAIN_STEP + half) * TEX + cx * DRAIN_STEP + half;
+      const c = cy * n + cx;
+      gh[c] = height[i]! + jitter(cx, cy);
+      // Biomes aren't assigned yet (all 0 = water), so water comes from height; river = trunk channels.
+      if (gh[c]! < H_WATER) outlet[c] = OUTLET_WATER;
+      else if (biome[i] === BIOME_ID.river) outlet[c] = OUTLET_TRUNK;
+      else if (cx === 0 || cy === 0 || cx === n - 1 || cy === n - 1) outlet[c] = OUTLET_EDGE;
+    }
   }
-  let made = 0;
-  const attempts = Math.max(80, target * 4);
-  for (let attempt = 0; attempt < attempts && made < target; attempt++) {
-    let x = rng.int(40, TEX - 41);
-    let y = rng.int(40, TEX - 41);
-    let best = -1;
-    for (let k = 0; k < 50; k++) {
-      const sx = rng.int(24, TEX - 25);
-      const sy = rng.int(24, TEX - 25);
-      const h = height[sy * TEX + sx]!;
-      if (h > best) {
-        best = h;
-        x = sx;
-        y = sy;
+  // Priority-flood: `fill` = spill level, `down` = cell this one drains into, `order` = pop order (downstream first).
+  const fill = new Float32Array(N).fill(Infinity);
+  const down = new Int32Array(N).fill(-1);
+  const order = new Int32Array(N);
+  let popped = 0;
+  const heap: HeapItem[] = [];
+  for (let c = 0; c < N; c++) {
+    if (!outlet[c]) continue;
+    fill[c] = gh[c]!;
+    heapPush(heap, { h: gh[c]!, i: c });
+  }
+  const done = new Uint8Array(N);
+  for (let it = heapPop(heap); it; it = heapPop(heap)) {
+    const c = it.i;
+    if (done[c]) continue;
+    done[c] = 1;
+    order[popped++] = c;
+    const cx = c % n;
+    const cy = (c / n) | 0;
+    for (let k = 0; k < 8; k++) {
+      const xx = cx + DRAIN_NB[k * 2]!;
+      const yy = cy + DRAIN_NB[k * 2 + 1]!;
+      if (xx < 0 || yy < 0 || xx >= n || yy >= n) continue;
+      const j = yy * n + xx;
+      if (done[j] || fill[j]! < Infinity) continue;
+      // Tiny rise per step keeps filled flats draining toward their outlet.
+      fill[j] = Math.max(gh[j]!, fill[c]! + 1e-6);
+      down[j] = c;
+      heapPush(heap, { h: fill[j]!, i: j });
+    }
+  }
+  // Drainage area: walk upstream-first, pushing area downhill.
+  const area = new Float32Array(N).fill(1);
+  for (let k = popped - 1; k >= 0; k--) {
+    const c = order[k]!;
+    const d = down[c]!;
+    if (d >= 0) area[d] = area[d]! + area[c]!;
+  }
+  const minArea = DRAIN_AREA / density;
+  const isRiver = (c: number) => !outlet[c] && area[c]! >= minArea;
+
+  // Lakes: flooded hollows (fill above ground) that a river runs through.
+  const lakeOf = new Int32Array(N).fill(-1);
+  const q = new Int32Array(N);
+  const lakeLevel: number[] = [];
+  for (let c0 = 0; c0 < N; c0++) {
+    if (lakeOf[c0]! !== -1 || outlet[c0] || fill[c0]! - gh[c0]! < DRAIN_FLOOD_EPS) continue;
+    let qh = 0;
+    let qt = 0;
+    q[qt++] = c0;
+    lakeOf[c0] = -2;
+    let deep = 0;
+    let level = 0;
+    let fed = false;
+    while (qh < qt) {
+      const c = q[qh++]!;
+      deep = Math.max(deep, fill[c]! - gh[c]!);
+      level = Math.max(level, fill[c]!);
+      if (area[c]! >= minArea * 3) fed = true;
+      const cx = c % n;
+      const cy = (c / n) | 0;
+      for (let k = 0; k < 8; k++) {
+        const xx = cx + DRAIN_NB[k * 2]!;
+        const yy = cy + DRAIN_NB[k * 2 + 1]!;
+        if (xx < 0 || yy < 0 || xx >= n || yy >= n) continue;
+        const j = yy * n + xx;
+        if (lakeOf[j]! !== -1 || outlet[j] || fill[j]! - gh[j]! < DRAIN_FLOOD_EPS) continue;
+        lakeOf[j] = -2;
+        q[qt++] = j;
       }
     }
-    if (best < 0.52) continue;
-    const rolled = rollMarble(height, x, y, rng, channel);
-    if (!rolled) continue;
-    const { path, joinAt } = rolled;
-    if (path.length < (joinAt >= 0 ? 24 : 70)) continue;
-    const jitterEnd = joinAt >= 0 ? joinAt : path.length;
-    jitterPath(path, 1, jitterEnd, rng);
-    if (joinAt >= 0) followChannel(path, channel, path[joinAt]!, path[joinAt]!.spd);
-    accumulateFlow(path, joinAt, discharge);
-    for (const p of path) stampRiver(biome, riverRad, p.x, p.y, radFromFlow(p.flow));
-    for (const pond of rolled.ponds) {
-      const outlet = pond.spill ?? path[path.length - 1]!;
-      const oi = outlet.y * TEX + outlet.x;
-      for (const c of pond.cells) {
-        const i = c.y * TEX + c.x;
-        biome[i] = BIOME_ID.river;
-        riverRad[i] = Math.max(riverRad[i]!, 2.5);
-        if (channel[i]! < 0) channel[i] = oi;
+    const keep = fed && deep >= LAKE_DEPTH && qt >= LAKE_MIN && qt <= LAKE_MAX;
+    const id = keep ? lakeLevel.length : -3;
+    if (keep) lakeLevel.push(level);
+    for (let k = 0; k < qt; k++) lakeOf[q[k]!] = id;
+  }
+  // Fill lakes at full res: flood out from each lake's cells over texels below its spill level, so the
+  // shoreline follows the real ground (not coarse cells). Bounded per lake so it can't leak at the spill.
+  const lakeCells: number[][] = lakeLevel.map(() => []);
+  for (let c = 0; c < N; c++) if (lakeOf[c]! >= 0) lakeCells[lakeOf[c]!]!.push(c);
+  const surf = (tx: number, ty: number) => height[ty * TEX + tx]! + jitter((tx - half) / DRAIN_STEP, (ty - half) / DRAIN_STEP);
+  const tq: number[] = [];
+  for (let id = 0; id < lakeLevel.length; id++) {
+    const level = lakeLevel[id]!;
+    let x0 = TEX;
+    let y0 = TEX;
+    let x1 = 0;
+    let y1 = 0;
+    tq.length = 0;
+    for (const c of lakeCells[id]!) {
+      const tx = (c % n) * DRAIN_STEP + half;
+      const ty = ((c / n) | 0) * DRAIN_STEP + half;
+      x0 = Math.min(x0, tx);
+      y0 = Math.min(y0, ty);
+      x1 = Math.max(x1, tx);
+      y1 = Math.max(y1, ty);
+      const i = ty * TEX + tx;
+      if (!lake[i] && surf(tx, ty) < level) (lake[i] = 1), tq.push(i);
+    }
+    const pad = DRAIN_STEP * 4;
+    x0 = Math.max(1, x0 - pad);
+    y0 = Math.max(1, y0 - pad);
+    x1 = Math.min(TEX - 2, x1 + pad);
+    y1 = Math.min(TEX - 2, y1 + pad);
+    for (let h = 0; h < tq.length; h++) {
+      const i = tq[h]!;
+      const tx = i % TEX;
+      const ty = (i / TEX) | 0;
+      for (const [dx, dy] of LAKE_NB) {
+        const xx = tx + dx;
+        const yy = ty + dy;
+        if (xx < x0 || yy < y0 || xx > x1 || yy > y1) continue;
+        const j = yy * TEX + xx;
+        if (lake[j] || surf(xx, yy) >= level) continue;
+        lake[j] = 1;
+        tq.push(j);
       }
     }
-    registerChannel(path, channel);
-    registerDischarge(path, discharge);
-    made++;
   }
+
+  // Trace each branch from its head down to a confluence / outlet, smooth it, stamp it.
+  const traced = new Uint8Array(N);
+  const hasUp = new Uint8Array(N);
+  for (let c = 0; c < N; c++) if (isRiver(c) && down[c]! >= 0) hasUp[down[c]!] = 1;
+  const rng = new Rng((seed ^ 0xd7a1e) >>> 0);
+  const radAt = (c: number) => Math.min(10, 0.6 + 1.1 * Math.sqrt(area[c]! / minArea));
+  for (let k = popped - 1; k >= 0; k--) {
+    const head = order[k]!;
+    if (!isRiver(head) || hasUp[head] || traced[head]) continue;
+    let pts: { x: number; y: number; r: number }[] = [];
+    let c = head;
+    for (;;) {
+      pts.push({ x: (c % n) * DRAIN_STEP + half, y: ((c / n) | 0) * DRAIN_STEP + half, r: radAt(c) });
+      const d = down[c]!;
+      if (d < 0) break;
+      if (traced[c]) break;
+      traced[c] = 1;
+      if (outlet[d] || traced[d]) {
+        pts.push({ x: (d % n) * DRAIN_STEP + half, y: ((d / n) | 0) * DRAIN_STEP + half, r: radAt(c) });
+        break;
+      }
+      c = d;
+    }
+    if (pts.length < 2) continue;
+    for (let it = 0; it < 4; it++) {
+      const sm = [pts[0]!];
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i]!;
+        const b = pts[i + 1]!;
+        sm.push(
+          { x: a.x * 0.75 + b.x * 0.25, y: a.y * 0.75 + b.y * 0.25, r: a.r * 0.75 + b.r * 0.25 },
+          { x: a.x * 0.25 + b.x * 0.75, y: a.y * 0.25 + b.y * 0.75, r: a.r * 0.25 + b.r * 0.75 }
+        );
+      }
+      sm.push(pts[pts.length - 1]!);
+      pts = sm;
+    }
+    const wob = rng.range(0, 1000);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i]!;
+      const b = pts[i + 1]!;
+      const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y)));
+      const dl = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+      for (let s = 0; s < steps; s++) {
+        const u = s / steps;
+        // Light wander off the grid path; pinned at the ends so confluences stay joined.
+        const endFade = Math.min(1, i / 16, (pts.length - 1 - i) / 16);
+        const off = (fbm((i + u) * 0.03 + wob, 3.7, seed + 311, 2) - 0.5) * 7 * endFade;
+        const x = Math.round(a.x + (b.x - a.x) * u - ((b.y - a.y) / dl) * off);
+        const y = Math.round(a.y + (b.y - a.y) * u + ((b.x - a.x) / dl) * off);
+        if (x < 1 || y < 1 || x >= TEX - 1 || y >= TEX - 1) continue;
+        stampRiver(biome, riverRad, x, y, a.r + (b.r - a.r) * u);
+      }
+    }
+  }
+  trace?.({ n, step: DRAIN_STEP, gh, outlet, fill, down, area, minArea, lakeOf, floodEps: DRAIN_FLOOD_EPS });
 }
 
-type RiverPt = { x: number; y: number; spd: number; flow: number };
+const DRAIN_NB = [1, 0, -1, 0, 0, 1, 0, -1, 1, 1, 1, -1, -1, 1, -1, -1];
+const LAKE_NB = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
 
 const MAIN_STEP = 6;
 /** Trunk half-width (texels) at source → mouth. */
 const MAIN_W0 = 4;
 const MAIN_W1 = 14;
 
-/** Flow whose radFromFlow ≈ rad (bisection; radFromFlow is monotonic). */
-function flowForRad(rad: number): number {
-  let lo = 0;
-  let hi = 4000;
-  for (let k = 0; k < 30; k++) {
-    const mid = (lo + hi) / 2;
-    if (radFromFlow(mid) < rad) lo = mid;
-    else hi = mid;
-  }
-  return hi;
-}
-
 /** Long meandering trunk rivers from high ground to the sea (or map edge), each in its own carved valley. */
-function carveMainRivers(height: Float32Array, biome: Uint8Array, riverRad: Float32Array, seed: number, count: number): RiverPt[][] {
-  const out: RiverPt[][] = [];
-  if (count <= 0) return out;
+function carveMainRivers(height: Float32Array, biome: Uint8Array, riverRad: Float32Array, seed: number, count: number): void {
+  if (count <= 0) return;
   const rng = new Rng((seed ^ 0x3a1b7) >>> 0);
   const n = Math.floor(TEX / MAIN_STEP);
   const N = n * n;
@@ -910,7 +1179,6 @@ function carveMainRivers(height: Float32Array, biome: Uint8Array, riverRad: Floa
       const off = Math.sin(ph) * amp;
       bent.push({ x: pts[i]!.x - ((b.y - a.y) / dl) * off, y: pts[i]!.y + ((b.x - a.x) / dl) * off, t });
     }
-    const path: RiverPt[] = [];
     const samples = resample(bent);
     const center = resample(pts.map((p, i) => ({ x: p.x, y: p.y, t: arc[i]! / L })));
     // Valley around the centerline (meanders stay inside a flat floodplain), lowered toward a stepped-down floor.
@@ -918,24 +1186,30 @@ function carveMainRivers(height: Float32Array, biome: Uint8Array, riverRad: Floa
     const valleyW = (w: number) => plainW(w) + 4 * w + 36;
     const srcH = gh[src]!;
     const touched: number[] = [];
-    for (let k = 0; k < center.length; ) {
-      const sp = center[k]!;
-      const w = widthAt(sp.t);
-      const V = valleyW(w);
-      k += Math.max(2, Math.round(V / 10));
-      const x0 = Math.max(1, Math.floor(sp.x - V));
-      const x1 = Math.min(TEX - 2, Math.ceil(sp.x + V));
-      const y0 = Math.max(1, Math.floor(sp.y - V));
-      const y1 = Math.min(TEX - 2, Math.ceil(sp.y + V));
+    // Distance to segments between sparse centerline samples (exact, so no radial creases between samples).
+    for (let k = 0; k < center.length - 1; ) {
+      const a = center[k]!;
+      const step = Math.max(2, Math.round(valleyW(widthAt(a.t)) / 10));
+      const b = center[Math.min(center.length - 1, k + step)]!;
+      k += step;
+      const V = Math.max(valleyW(widthAt(a.t)), valleyW(widthAt(b.t)));
+      const sx = b.x - a.x;
+      const sy = b.y - a.y;
+      const sl = sx * sx + sy * sy || 1;
+      const x0 = Math.max(1, Math.floor(Math.min(a.x, b.x) - V));
+      const x1 = Math.min(TEX - 2, Math.ceil(Math.max(a.x, b.x) + V));
+      const y0 = Math.max(1, Math.floor(Math.min(a.y, b.y) - V));
+      const y1 = Math.min(TEX - 2, Math.ceil(Math.max(a.y, b.y) + V));
       for (let y = y0; y <= y1; y++) {
         for (let x = x0; x <= x1; x++) {
-          const d = Math.hypot(x - sp.x, y - sp.y);
+          const u = clamp(((x - a.x) * sx + (y - a.y) * sy) / sl, 0, 1);
+          const d = Math.hypot(x - (a.x + sx * u), y - (a.y + sy * u));
           if (d > V) continue;
           const i = y * TEX + x;
           if (dMin[i] === Infinity) touched.push(i);
           if (d < dMin[i]!) {
             dMin[i] = d;
-            tAt[i] = sp.t;
+            tAt[i] = a.t + (b.t - a.t) * u;
           }
         }
       }
@@ -953,14 +1227,9 @@ function carveMainRivers(height: Float32Array, biome: Uint8Array, riverRad: Floa
       const x = Math.round(sp.x);
       const y = Math.round(sp.y);
       if (x < 1 || y < 1 || x >= TEX - 1 || y >= TEX - 1) continue;
-      const w = widthAt(sp.t);
-      stampRiver(biome, riverRad, x, y, w);
-      const last = path[path.length - 1];
-      if (!last || last.x !== x || last.y !== y) path.push({ x, y, spd: 0, flow: flowForRad(w) });
+      stampRiver(biome, riverRad, x, y, widthAt(sp.t));
     }
-    out.push(path);
   }
-  return out;
 }
 
 /** Polyline → ~1-texel samples, interpolating t. */
@@ -981,180 +1250,6 @@ function resample(pts: { x: number; y: number; t: number }[]): { x: number; y: n
 function smooth01(e0: number, e1: number, x: number): number {
   const t = clamp((x - e0) / (e1 - e0), 0, 1);
   return t * t * (3 - 2 * t);
-}
-
-function radFromFlow(flow: number): number {
-  return 0.4 + Math.min(12, 0.16 * Math.sqrt(flow) + 0.0075 * flow);
-}
-
-function accumulateFlow(path: RiverPt[], joinAt: number, discharge: Float32Array): void {
-  let flow = 0.08;
-  for (let i = 0; i < path.length; i++) {
-    const p = path[i]!;
-    if (joinAt >= 0 && i === joinAt) {
-      flow += discharge[p.y * TEX + p.x]!;
-    }
-    if (joinAt >= 0 && i > joinAt) {
-      flow = Math.max(flow, discharge[p.y * TEX + p.x]!);
-      flow += p.spd * 0.22;
-    } else {
-      flow += p.spd;
-    }
-    p.flow = flow;
-  }
-}
-
-function registerDischarge(path: RiverPt[], discharge: Float32Array): void {
-  for (const p of path) {
-    const i = p.y * TEX + p.x;
-    discharge[i] = Math.max(discharge[i]!, p.flow);
-  }
-}
-
-function jitterPath(path: RiverPt[], lo: number, hi: number, rng: Rng): void {
-  const end = Math.min(hi, path.length);
-  for (let i = lo; i < end - 1; i++) {
-    const a = path[i - 1]!;
-    const c = path[i + 1]!;
-    const b = path[i]!;
-    const dx = c.x - a.x;
-    const dy = c.y - a.y;
-    const d = Math.hypot(dx, dy) || 1;
-    const j = rng.range(-2.6, 2.6);
-    b.x = clamp(Math.round(b.x + (-dy / d) * j), 1, TEX - 2);
-    b.y = clamp(Math.round(b.y + (dx / d) * j), 1, TEX - 2);
-  }
-}
-
-function followChannel(path: RiverPt[], channel: Int32Array, from: RiverPt, spd: number): void {
-  let i = from.y * TEX + from.x;
-  let hops = 0;
-  let flow = spd;
-  const seen = new Set<number>();
-  while (i >= 0 && hops++ < 20000) {
-    if (seen.has(i)) break;
-    seen.add(i);
-    const x = i % TEX;
-    const y = (i / TEX) | 0;
-    const last = path[path.length - 1]!;
-    if (last.x !== x || last.y !== y) path.push({ x, y, spd: flow, flow: 0 });
-    const n = channel[i]!;
-    if (n < 0 || n === i) break;
-    i = n;
-  }
-}
-
-function nearbyChannel(channel: Int32Array, ix: number, iy: number): number {
-  for (let oy = -2; oy <= 2; oy++) {
-    for (let ox = -2; ox <= 2; ox++) {
-      const xx = ix + ox;
-      const yy = iy + oy;
-      if (xx < 0 || yy < 0 || xx >= TEX || yy >= TEX) continue;
-      const i = yy * TEX + xx;
-      if (channel[i]! >= 0) return i;
-    }
-  }
-  return -1;
-}
-
-function registerChannel(path: RiverPt[], channel: Int32Array): void {
-  for (let k = 0; k < path.length - 1; k++) {
-    const a = path[k]!;
-    const b = path[k + 1]!;
-    const i = a.y * TEX + a.x;
-    if (channel[i]! < 0) channel[i] = b.y * TEX + b.x;
-  }
-}
-
-type Pond = { cells: { x: number; y: number }[]; spill: { x: number; y: number } | null };
-
-function estimateFlow(path: RiverPt[]): number {
-  let f = 0.08;
-  for (const p of path) f += p.spd;
-  return f;
-}
-
-function maxPondArea(flow: number): number {
-  const r = radFromFlow(flow);
-  return Math.round(clamp(40 + r * r * 15, 56, 2100));
-}
-
-function kickDownhill(
-  height: Float32Array,
-  fx: number,
-  fy: number,
-  rng: Rng,
-  mag: number
-): { vx: number; vy: number } {
-  const kick = slopeAccel(height, fx, fy);
-  const klen = Math.hypot(kick.ax, kick.ay);
-  if (klen > 1e-8) return { vx: (kick.ax / klen) * mag, vy: (kick.ay / klen) * mag };
-  const a = rng.range(0, Math.PI * 2);
-  return { vx: Math.cos(a) * mag, vy: Math.sin(a) * mag };
-}
-
-function rollMarble(
-  height: Float32Array,
-  sx: number,
-  sy: number,
-  rng: Rng,
-  channel: Int32Array
-): { path: RiverPt[]; joinAt: number; ponds: Pond[] } | null {
-  const path: RiverPt[] = [{ x: sx, y: sy, spd: 0.2, flow: 0 }];
-  const ponds: Pond[] = [];
-  let fx = sx + 0.5;
-  let fy = sy + 0.5;
-  let { vx, vy } = kickDownhill(height, fx, fy, rng, 0.35);
-  let lastI = sy * TEX + sx;
-  let still = 0;
-  let resumes = 0;
-  const G = 18;
-  const drag = 0.978;
-  const maxSpd = 1.25;
-  for (let step = 0; step < 18000; step++) {
-    const { ax, ay } = slopeAccel(height, fx, fy);
-    vx += ax * G;
-    vy += ay * G;
-    vx *= drag;
-    vy *= drag;
-    let spd = Math.hypot(vx, vy);
-    if (spd > maxSpd) {
-      vx = (vx / spd) * maxSpd;
-      vy = (vy / spd) * maxSpd;
-      spd = maxSpd;
-    }
-    fx += vx;
-    fy += vy;
-    if (fx < 2 || fy < 2 || fx > TEX - 3 || fy > TEX - 3) break;
-    const ix = clamp(Math.round(fx), 0, TEX - 1);
-    const iy = clamp(Math.round(fy), 0, TEX - 1);
-    const i = iy * TEX + ix;
-    if (i !== lastI) {
-      const hit = path.length > 12 ? nearbyChannel(channel, ix, iy) : -1;
-      if (hit >= 0) {
-        path.push({ x: hit % TEX, y: (hit / TEX) | 0, spd, flow: 0 });
-        return { path, joinAt: path.length - 1, ponds };
-      }
-      path.push({ x: ix, y: iy, spd, flow: 0 });
-      lastI = i;
-    }
-    if (sampleH(height, fx, fy) < H_WATER) break;
-    if (spd < 0.045) still++;
-    else still = 0;
-    if (still <= 35) continue;
-    if (path.length < 20 || resumes >= 8) break;
-    const pond = fillBasin(height, ix, iy, maxPondArea(estimateFlow(path)));
-    if (pond.cells.length >= 8) ponds.push(pond);
-    if (!pond.spill) break;
-    resumes++;
-    fx = pond.spill.x + 0.5;
-    fy = pond.spill.y + 0.5;
-    ({ vx, vy } = kickDownhill(height, fx, fy, rng, 0.42));
-    still = 0;
-    lastI = pond.spill.y * TEX + pond.spill.x;
-    path.push({ x: pond.spill.x, y: pond.spill.y, spd: 0.42, flow: 0 });
-  }
-  return { path, joinAt: -1, ponds };
 }
 
 type HeapItem = { h: number; i: number };
@@ -1191,88 +1286,6 @@ function heapPop(heap: HeapItem[]): HeapItem | undefined {
     i = s;
   }
   return top;
-}
-
-function fillBasin(
-  height: Float32Array,
-  ox: number,
-  oy: number,
-  maxArea: number
-): Pond {
-  let x = ox;
-  let y = oy;
-  for (let g = 0; g < 80; g++) {
-    let best = height[y * TEX + x]!;
-    let bx = x;
-    let by = y;
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        const nx = x + dx;
-        const ny = y + dy;
-        if (nx < 1 || ny < 1 || nx >= TEX - 1 || ny >= TEX - 1) continue;
-        const h = height[ny * TEX + nx]!;
-        if (h < best) {
-          best = h;
-          bx = nx;
-          by = ny;
-        }
-      }
-    }
-    if (bx === x && by === y) break;
-    x = bx;
-    y = by;
-  }
-  const visited = new Set<number>();
-  const heap: HeapItem[] = [];
-  const seed = y * TEX + x;
-  heapPush(heap, { h: height[seed]!, i: seed });
-  visited.add(seed);
-  const cells: { x: number; y: number }[] = [];
-  let water = height[seed]!;
-  let spill: { x: number; y: number } | null = null;
-  while (heap.length) {
-    const cur = heapPop(heap)!;
-    water = Math.max(water, cur.h);
-    cells.push({ x: cur.i % TEX, y: (cur.i / TEX) | 0 });
-    if (cells.length >= maxArea) {
-      spill = null;
-      break;
-    }
-    const cx = cur.i % TEX;
-    const cy = (cur.i / TEX) | 0;
-    let drained = false;
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        if (!dx && !dy) continue;
-        const nx = cx + dx;
-        const ny = cy + dy;
-        if (nx < 1 || ny < 1 || nx >= TEX - 1 || ny >= TEX - 1) {
-          drained = true;
-          continue;
-        }
-        const ni = ny * TEX + nx;
-        if (visited.has(ni)) continue;
-        const nh = height[ni]!;
-        if (nh < H_WATER) {
-          drained = true;
-          continue;
-        }
-        if (nh < water - 0.002) {
-          spill = { x: nx, y: ny };
-          break;
-        }
-        visited.add(ni);
-        heapPush(heap, { h: nh, i: ni });
-      }
-      if (spill) break;
-    }
-    if (spill) break;
-    if (drained && cells.length > 12) {
-      spill = null;
-      break;
-    }
-  }
-  return { cells, spill };
 }
 
 function slopeAccel(height: Float32Array, fx: number, fy: number): { ax: number; ay: number } {
@@ -1412,21 +1425,8 @@ function shadeTerrainTexel(
   const h = raw[i]!;
   const b = biome[i]!;
   const n = fbm(x * 0.08, y * 0.08, seed + 99, 2) * 18 - 9;
-  const lk = theme.looks[b]!;
-  let t = 0;
-  if (b === BIOME_ID.water) t = clamp((H_WATER - h) * 4, 0, 1);
-  else if (b === BIOME_ID.sand) t = bankT && bankT[i]! >= 0 ? 1 - bankT[i]! : 0;
-  else if (b === BIOME_ID.peak) t = (h - 0.74) * 8;
-  else if (b === BIOME_ID.grass || b === BIOME_ID.forest) t = h;
-  const r = lookColor(lk, t, 0) + n * lk.nz[0];
-  const gch = lookColor(lk, t, 1) + n * lk.nz[1];
-  const bl = lookColor(lk, t, 2) + n * lk.nz[2];
-  const shade = 0.82 + h * 0.35;
-  let rgb: [number, number, number] = [
-    clamp(r * shade, 0, 255),
-    clamp(gch * shade, 0, 255),
-    clamp(bl * shade, 0, 255),
-  ];
+  const wet = b === BIOME_ID.sand && bankT && bankT[i]! >= 0 ? 1 - bankT[i]! : 0;
+  let rgb = baseTerrainColor(theme, b, h, wet, n);
   const tile = tiles?.[b];
   const riverBed = b === BIOME_ID.river && tile;
   const bank = !!(bankT && bankT[i]! >= 0);
@@ -1505,18 +1505,9 @@ function lightTerrainPixel(
   oy: number
 ): void {
   const i = y * TEX + x;
-  const dx = (height[i + 1]! - height[i - 1]!) * 52;
-  const dy = (height[i + TEX]! - height[i - TEX]!) * 52;
-  let nx = -dx;
-  let ny = -dy;
-  let nz = 1;
-  const len = Math.hypot(nx, ny, nz) || 1;
-  nx /= len;
-  ny /= len;
-  nz /= len;
-  const ndot = clamp(nx * -0.64 + ny * -0.44 + nz * 0.62, 0, 1);
-  const lit = 0.38 + Math.pow(ndot, 1.15) * 0.82;
-  const spec = Math.pow(Math.max(0, ndot - 0.48), 1.85) * 72;
+  terrainLight(height[i + 1]! - height[i - 1]!, height[i + TEX]! - height[i - TEX]!, LIGHT);
+  const lit = LIGHT.lit;
+  const spec = LIGHT.spec;
   const o = ((y - oy) * stride + (x - ox)) * 4;
   d[o] = clamp(d[o]! * lit + spec, 0, 255);
   d[o + 1] = clamp(d[o + 1]! * lit + spec * 0.92, 0, 255);
@@ -1773,13 +1764,7 @@ function assignBiomeFromHeight(biome: Uint8Array, height: Float32Array, seed: nu
   const i = y * TEX + x;
   const h = height[i]!;
   if (biome[i] === BIOME_ID.river && h < H_SAND) return;
-  const m = fbm((x / TEX) * 5.4 + 40, (y / TEX) * 5.4, seed + 17, 4);
-  if (h < H_WATER) biome[i] = BIOME_ID.water;
-  else if (h < H_SAND) biome[i] = BIOME_ID.sand;
-  else if (h > H_PEAK) biome[i] = BIOME_ID.peak;
-  else if (h > H_ROCK) biome[i] = BIOME_ID.rock;
-  else if (m > 0.58 && h < 0.58) biome[i] = BIOME_ID.forest;
-  else biome[i] = BIOME_ID.grass;
+  biome[i] = classifyBiome(h, moistureAt(x / TEX, y / TEX, seed));
 }
 
 export function rebuildWorldPatch(

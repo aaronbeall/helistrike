@@ -20,7 +20,7 @@ import { LANDFORM_KINDS } from "../worldgen/landforms";
 import { OBJECTIVE_SITINGS } from "../worldgen/world";
 import { TERRAIN_THEME_IDS, themeOf } from "../worldgen/theme";
 import { craftFirepowerRating } from "../sim/remote";
-import { installRigHotkeys } from "../rigs/rigs";
+import { installRigHotkeys, rigsAnyOpen } from "../rigs/rigs";
 import { ensureExhaustGlow } from "../art/sprites";
 import {
   adjustThreeRegionMadMul,
@@ -893,7 +893,7 @@ export class MenuScene extends Phaser.Scene {
       {
         label: "RIVERS",
         group: "WORLD",
-        description: "How many rivers are carved from the high ground down to the water.",
+        description: "Stream network density: how much of the land drains into visible streams, rivers and lakes.",
         value: (p: typeof customProfile) => String(p.riverTarget),
         adjust: (dir: number) => {
           customProfile.riverTarget = Phaser.Math.Clamp(customProfile.riverTarget + dir * 4, 0, 72);
@@ -985,6 +985,31 @@ export class MenuScene extends Phaser.Scene {
         strokeThickness: 2,
       })
       .setDepth(3);
+    // Presets only: start a CUSTOM map from this preset's params.
+    const customizeBtn = this.add
+      .text(moreInfoX1, mapHeaderY + 6, "CUSTOMIZE  ›", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "10px",
+        color: "#1c1812",
+        backgroundColor: "#e8b84a",
+        padding: { x: 8, y: 3 },
+      })
+      .setOrigin(1, 0.5)
+      .setDepth(4)
+      .setInteractive({ useHandCursor: true });
+    customizeBtn.on("pointerover", () => {
+      customizeBtn.setStyle({ backgroundColor: "#f2d579" });
+      this.tweens.add({ targets: customizeBtn, scale: 1.06, duration: 120, ease: "Back.Out" });
+    });
+    customizeBtn.on("pointerout", () => {
+      customizeBtn.setStyle({ backgroundColor: "#e8b84a" });
+      this.tweens.add({ targets: customizeBtn, scale: 1, duration: 140, ease: "Sine.Out" });
+    });
+    customizeBtn.on("pointerdown", () => customizePreset());
+    // Rigs share keys (roster rig uses C); only customize from the bare menu.
+    this.input.keyboard?.on("keydown-C", () => {
+      if (!fieldManual.isOpen && !rigsAnyOpen(this)) customizePreset();
+    });
     // Grouped grid: a small sub-header per group, two columns of cards under it.
     const customParamCol = 85;
     const groupLabel = (text: string, y: number, x: number) =>
@@ -1093,6 +1118,7 @@ export class MenuScene extends Phaser.Scene {
       const editable = mission.kind === "custom";
       const focused = editable ? row - 3 : -1;
       customParamsHeader.setVisible(true);
+      customizeBtn.setVisible(!editable);
       for (const h of groupHeaders) h.setVisible(true);
       customParamCards.forEach((card, i) => {
         const isFocused = i === focused;
@@ -1109,15 +1135,30 @@ export class MenuScene extends Phaser.Scene {
       customParamDesc.setVisible(!!shown).setText(desc);
     }
 
-    function adjustCustomParam(i: number, dir: number): void {
-      row = 3 + i;
-      customParams[i]!.adjust(dir);
+    function redrawCustomPreview(): void {
       const key = "menu_mission_preview_custom";
       const customIndex = missions.findIndex((mission) => mission.kind === "custom");
       if (customIndex >= 0) missionCards[customIndex]!.art.setTexture("menu_mission_preview_river_run");
       if (thisScene.textures.exists(key)) thisScene.textures.remove(key);
       ensureMissionPreviews(thisScene.textures);
       if (customIndex >= 0) missionCards[customIndex]!.art.setTexture(key);
+    }
+
+    function adjustCustomParam(i: number, dir: number): void {
+      row = 3 + i;
+      customParams[i]!.adjust(dir);
+      redrawCustomPreview();
+      refreshSelection();
+    }
+
+    /** Copy the selected preset's profile into CUSTOM and switch to it. */
+    function customizePreset(): void {
+      const preset = missions[missionIndex]!;
+      if (preset.kind === "custom") return;
+      Object.assign(customProfile, { ...preset.profile, landforms: { ...preset.profile.landforms }, id: customProfile.id });
+      missionIndex = missions.findIndex((mission) => mission.kind === "custom");
+      row = 1;
+      redrawCustomPreview();
       refreshSelection();
     }
 
