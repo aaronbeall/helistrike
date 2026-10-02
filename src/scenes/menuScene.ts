@@ -15,6 +15,8 @@ import {
   selectCraft,
 } from "../sim/crafts";
 import { allMissions, missionOf, selectMission } from "../sim/mission";
+import { MAP_SHAPES } from "../worldgen/shape";
+import { TERRAIN_THEME_IDS, themeOf } from "../worldgen/theme";
 import { craftFirepowerRating } from "../sim/remote";
 import { installRigHotkeys } from "../rigs/rigs";
 import { ensureExhaustGlow } from "../art/sprites";
@@ -803,7 +805,50 @@ export class MenuScene extends Phaser.Scene {
     const customMission = missions.find((mission) => mission.kind === "custom")!;
     const customProfile = customMission.profile;
     const forceMixes = ["mixed", "naval", "heavy"] as const;
+    const forceMixInfo: Record<(typeof forceMixes)[number], string> = {
+      mixed: "A balanced mix of armor, air defense, infantry and boats. Changing FORCES resets NAVAL to match.",
+      naval: "Boat-heavy: gunboats and coastal defenses dominate. Changing FORCES resets NAVAL to match.",
+      heavy: "Armor-heavy: tanks, artillery and fortified positions. Changing FORCES resets NAVAL to match.",
+    };
     const customParams = [
+      {
+        label: "SHAPE",
+        group: "THEATER",
+        description: (p: typeof customProfile) => MAP_SHAPES.find((m) => m.id === p.shape)?.description ?? "",
+        value: (p: typeof customProfile) => MAP_SHAPES.find((m) => m.id === p.shape)?.label ?? p.shape.toUpperCase(),
+        adjust: (dir: number) => {
+          const i = MAP_SHAPES.findIndex((m) => m.id === customProfile.shape);
+          customProfile.shape = MAP_SHAPES[(i + dir + MAP_SHAPES.length) % MAP_SHAPES.length]!.id;
+        },
+      },
+      {
+        label: "THEME",
+        group: "THEATER",
+        description: (p: typeof customProfile) => themeOf(p.theme).description,
+        value: (p: typeof customProfile) => themeOf(p.theme).label,
+        adjust: (dir: number) => {
+          const i = TERRAIN_THEME_IDS.indexOf(customProfile.theme);
+          customProfile.theme = TERRAIN_THEME_IDS[(i + dir + TERRAIN_THEME_IDS.length) % TERRAIN_THEME_IDS.length]!;
+        },
+      },
+      {
+        label: "WARP",
+        group: "THEATER",
+        description: "Twists the terrain. 0 keeps smooth rounded hills; higher bends ridges and carves ragged coves and inlets.",
+        value: (p: typeof customProfile) => p.warp.toFixed(2),
+        adjust: (dir: number) => {
+          customProfile.warp = Phaser.Math.Clamp(Math.round((customProfile.warp + dir * 0.25) * 100) / 100, 0, 2);
+        },
+      },
+      {
+        label: "CLOUDS",
+        group: "THEATER",
+        description: "Cloud cover drifting over the battlefield. 0 is clear skies; higher stacks more cloud banks.",
+        value: (p: typeof customProfile) => p.clouds.toFixed(1),
+        adjust: (dir: number) => {
+          customProfile.clouds = Phaser.Math.Clamp(Math.round((customProfile.clouds + dir * 0.2) * 10) / 10, 0, 2);
+        },
+      },
       {
         label: "LAND",
         group: "WORLD",
@@ -850,15 +895,6 @@ export class MenuScene extends Phaser.Scene {
         },
       },
       {
-        label: "CLOUDS",
-        group: "WORLD",
-        description: "Cloud cover drifting over the battlefield. 0 is clear skies; higher stacks more cloud banks.",
-        value: (p: typeof customProfile) => p.clouds.toFixed(1),
-        adjust: (dir: number) => {
-          customProfile.clouds = Phaser.Math.Clamp(Math.round((customProfile.clouds + dir * 0.2) * 10) / 10, 0, 2);
-        },
-      },
-      {
         label: "OBJECTIVES",
         group: "FORCES",
         description: "Number of high-value targets you must destroy to win.",
@@ -897,7 +933,7 @@ export class MenuScene extends Phaser.Scene {
       {
         label: "FORCES",
         group: "FORCES",
-        description: "Enemy composition — MIXED, NAVAL (boat-heavy) or HEAVY (armor-heavy). Also resets NAVAL to match.",
+        description: (p: typeof customProfile) => forceMixInfo[p.forceMix],
         value: (p: typeof customProfile) => p.forceMix.toUpperCase(),
         adjust: (dir: number) => {
           const i = forceMixes.indexOf(customProfile.forceMix);
@@ -918,9 +954,9 @@ export class MenuScene extends Phaser.Scene {
       .setDepth(3);
     // Grouped grid: a small sub-header per group, two columns of cards under it.
     const customParamCol = 85;
-    const groupLabel = (text: string, y: number) =>
+    const groupLabel = (text: string, y: number, x: number) =>
       this.add
-        .text(moreInfoX0, y, text, {
+        .text(x, y, text, {
           fontFamily: "Share Tech Mono, monospace",
           fontSize: "9px",
           color: "#7f7766",
@@ -929,19 +965,26 @@ export class MenuScene extends Phaser.Scene {
         })
         .setOrigin(0, 0.5)
         .setDepth(3);
-    const paramGroups = ["WORLD", "FORCES"] as const;
+    // THEATER sits under the briefing; WORLD + FORCES stack in the more-info zone.
+    const paramGroups = [
+      { id: "THEATER", x0: infoX0, cx: infoX0 + infoW / 2 - 6 },
+      { id: "WORLD", x0: moreInfoX0, cx: moreInfoCenterX },
+      { id: "FORCES", x0: moreInfoX0, cx: moreInfoCenterX },
+    ] as const;
     const groupHeaders: Phaser.GameObjects.Text[] = [];
     const cardPos: { x: number; y: number }[] = [];
     let gy = mapHeaderY + 24;
     for (const group of paramGroups) {
-      groupHeaders.push(groupLabel(group, gy));
-      const members = customParams.map((p, i) => ({ p, i })).filter(({ p }) => p.group === group);
+      let y = group.id === "THEATER" ? mapHeaderY + 102 : gy;
+      groupHeaders.push(groupLabel(group.id, y, group.x0));
+      const members = customParams.map((p, i) => ({ p, i })).filter(({ p }) => p.group === group.id);
       members.forEach(({ i }, k) => {
         const col = k % 2;
         const line = (k / 2) | 0;
-        cardPos[i] = { x: moreInfoCenterX + (col === 0 ? -customParamCol : customParamCol), y: gy + 18 + line * 25 };
+        cardPos[i] = { x: group.cx + (col === 0 ? -customParamCol : customParamCol), y: y + 18 + line * 25 };
       });
-      gy += 18 + Math.ceil(members.length / 2) * 25 + 6;
+      y += 18 + Math.ceil(members.length / 2) * 25 + 6;
+      if (group.id !== "THEATER") gy = y;
     }
     let hoverParam = -1;
     const customParamCards = customParams.map((param, i) => {
@@ -1025,7 +1068,8 @@ export class MenuScene extends Phaser.Scene {
           .setColor(editable ? "#d8d0ba" : "#aaa28f");
       });
       const shown = customParams[hoverParam >= 0 ? hoverParam : focused];
-      customParamDesc.setVisible(!!shown).setText(shown?.description ?? "");
+      const desc = shown ? (typeof shown.description === "function" ? shown.description(mission.profile) : shown.description) : "";
+      customParamDesc.setVisible(!!shown).setText(desc);
     }
 
     function adjustCustomParam(i: number, dir: number): void {

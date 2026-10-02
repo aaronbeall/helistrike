@@ -2,6 +2,8 @@ import Phaser from "phaser";
 import { craftControlScheme, craftOf, type CraftSpec } from "../sim/crafts";
 import { allMissions } from "../sim/mission";
 import { fbm } from "../worldgen/noise";
+import { baseHeight, makeShape } from "../worldgen/shape";
+import { lookColor, themeOf } from "../worldgen/theme";
 
 /**
  * Blackbody-style heat gradient for segmented stat bars: deep red (t=0, left) through the
@@ -158,22 +160,17 @@ export function ensureMissionPreviews(textures: Phaser.Textures.TextureManager):
     const img = g.createImageData(width, height);
     const p = mission.profile;
     const seed = 8101 + m * 977;
+    const field = makeShape(p.shape, seed);
+    const looks = themeOf(p.theme).looks;
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const nx = x / width;
         const ny = y / height;
-        const ridge = 1 - Math.abs(fbm(nx * 3.1 + 20, ny * 3.1, seed + 9, 3) * 2 - 1);
-        let h = fbm(nx * 6.2, ny * 6.2, seed, 4, 2.05, 0.52) * 0.72 + ridge * 0.28;
-        const radial = Math.pow(Math.hypot(nx - 0.5, ny - 0.5) * 1.15, 2);
-        h = 0.5 + (h - 0.5) * p.relief;
-        h -= radial * p.edgeFalloff;
-        h += p.landBias;
-        let color: [number, number, number];
-        if (h < 0.34) color = [31, 75, 86];
-        else if (h < 0.4) color = [174, 145, 87];
-        else if (h > 0.72) color = [180, 171, 145];
-        else if (h > 0.62) color = [91, 84, 66];
-        else color = [76, 105, 65];
+        const h = baseHeight(nx, ny, seed, p, field, 0);
+        // Slots: water 0, sand 2, grass 3, rock 5, peak 6.
+        const l = looks[h < 0.34 ? 0 : h < 0.4 ? 2 : h > 0.72 ? 6 : h > 0.62 ? 5 : 3]!;
+        const t = l === looks[3] ? h : l === looks[6] ? 0.6 : 0.3;
+        const color = [lookColor(l, t, 0), lookColor(l, t, 1), lookColor(l, t, 2)];
         const shade = 0.76 + fbm(nx * 18, ny * 18, seed + 41, 2) * 0.38;
         const i = (y * width + x) * 4;
         img.data[i] = color[0] * shade;

@@ -1,4 +1,6 @@
 import { fbm } from "./noise";
+import { baseHeight, makeShape, type MapShape } from "./shape";
+import { lookColor, themedTiles, themeOf, type TerrainTheme, type ThemeSpec } from "./theme";
 import { Rng } from "../util/rng";
 import { pickTroop, type UnitKind } from "../sim/roster";
 import { drawBridgeStamp, drawRoadStamp } from "../art/artGen";
@@ -73,6 +75,7 @@ export interface Road {
 export interface WorldData {
   seed: number;
   missionId: string;
+  theme: TerrainTheme;
   height: Float32Array;
   biome: Uint8Array;
   spawnX: number;
@@ -97,6 +100,12 @@ export interface WorldGenProfile {
   relief: number;
   /** Strength of the world-edge drop toward water. */
   edgeFalloff: number;
+  /** Macro land/sea silhouette the noise details. */
+  shape: MapShape;
+  /** Domain warp strength (0 = none): twists ridges and coastlines. */
+  warp: number;
+  /** Terrain palette + tiles + decor (visual only). */
+  theme: TerrainTheme;
   riverTarget: number;
   objectiveCount: number;
   garrisonScale: number;
@@ -114,6 +123,9 @@ export const DEFAULT_WORLD_PROFILE: WorldGenProfile = {
   landBias: 0,
   relief: 1,
   edgeFalloff: 0.18,
+  shape: "open",
+  warp: 0,
+  theme: "temperate",
   riverTarget: 50,
   objectiveCount: 4,
   garrisonScale: 1,
@@ -173,21 +185,14 @@ export function generateWorld(
   const biome = new Uint8Array(TEX * TEX);
 
   onProgress?.(0.02, "relief");
+  const field = makeShape(profile.shape, seed);
   for (let y = 0; y < TEX; y++) {
     if (y % 150 === 0) onProgress?.(0.02 + (y / TEX) * 0.28, "relief");
     for (let x = 0; x < TEX; x++) {
       const i = y * TEX + x;
       const nx = x / TEX;
       const ny = y / TEX;
-      let h = fbm(nx * 6.2, ny * 6.2, seed, 6, 2.05, 0.52);
-      const ridge = 1 - Math.abs(fbm(nx * 3.1 + 20, ny * 3.1, seed + 9, 4) * 2 - 1);
-      h = h * 0.72 + ridge * 0.28;
-      const dx = nx - 0.5;
-      const dy = ny - 0.5;
-      h = 0.5 + (h - 0.5) * profile.relief;
-      h -= Math.pow(Math.hypot(dx, dy) * 1.15, 2) * profile.edgeFalloff;
-      h += profile.landBias;
-      height[i] = h;
+      height[i] = baseHeight(nx, ny, seed, profile, field);
       moisture[i] = fbm(nx * 5.4 + 40, ny * 5.4, seed + 17, 4);
     }
   }
@@ -233,19 +238,20 @@ export function generateWorld(
   }
 
   onProgress?.(0.82, "terrain paint");
-  const terrain = paintTerrain(raw, biome, seed, tiles, bankT, onProgress);
+  const theme = themeOf(profile.theme);
+  const terrain = paintTerrain(raw, biome, seed, theme, themedTiles(theme, tiles), bankT, onProgress);
   onProgress?.(0.96, "force laydown");
-  const { spawnX, spawnY } = findSpawn(height, biome, rng);
+  const { spawnX, spawnY } = findSpawn(height, biome, rng, field.spawnX, field.spawnY);
   const { hv, spawns } = placeForces(height, biome, rng, spawnX, spawnY, profile);
   const roads = makeRoads(hv, spawns, height, biome, rng, profile.roadDensity);
   applyRoadBridgeHeights(height, roads);
   // Road sprites stamp on the main-thread canvas (worker has no document canvas).
-  const decor = placeDecor(biome, rng);
+  const decor = placeDecor(biome, rng, theme);
   const trees = decor.filter((d) => d.kind === "tree" || d.kind === "pine" || d.kind === "palm").map((d) => ({ x: d.x, y: d.y }));
   const rocks = decor.filter((d) => d.kind === "rock" || d.kind === "boulder" || d.kind === "snowrock").map((d) => ({ x: d.x, y: d.y }));
 
   onProgress?.(0.97, "laydown");
-  return { seed, missionId: profile.id, height, biome, spawnX, spawnY, hv, spawns, trees, rocks, decor, roads, terrain };
+  return { seed, missionId: profile.id, theme: theme.id, height, biome, spawnX, spawnY, hv, spawns, trees, rocks, decor, roads, terrain };
 }
 
 export function imageDataToCanvas(img: ImageData): HTMLCanvasElement {
@@ -1138,6 +1144,7 @@ function shadeTerrainTexel(
   raw: Float32Array,
   biome: Uint8Array,
   seed: number,
+  theme: ThemeSpec,
   tiles: (ImageData | null)[] | undefined,
   bankT: Float32Array | undefined,
   x: number,
@@ -1147,41 +1154,15 @@ function shadeTerrainTexel(
   const h = raw[i]!;
   const b = biome[i]!;
   const n = fbm(x * 0.08, y * 0.08, seed + 99, 2) * 18 - 9;
-  let r = 0,
-    gch = 0,
-    bl = 0;
-  if (b === BIOME_ID.water) {
-    const deep = clamp((H_WATER - h) * 4, 0, 1);
-    r = 28 + n * 0.3;
-    gch = 72 - deep * 22;
-    bl = 92 - deep * 10;
-  } else if (b === BIOME_ID.river) {
-    r = 48 + n * 0.25;
-    gch = 52 + n * 0.2;
-    bl = 40;
-  } else if (b === BIOME_ID.sand) {
-    const wet = bankT && bankT[i]! >= 0 ? 1 - bankT[i]! : 0;
-    r = 196 + n - wet * 72;
-    gch = 168 + n * 0.6 - wet * 48;
-    bl = 112 - wet * 18;
-  } else if (b === BIOME_ID.forest) {
-    r = 42 + n * 0.4;
-    gch = 78 + h * 20;
-    bl = 44;
-  } else if (b === BIOME_ID.rock) {
-    r = 92 + n;
-    gch = 86 + n;
-    bl = 78;
-  } else if (b === BIOME_ID.peak) {
-    const snow = (h - 0.74) * 8;
-    r = 140 + snow * 80 + n;
-    gch = 138 + snow * 80 + n;
-    bl = 132 + snow * 90;
-  } else {
-    r = 110 + h * 40 + n;
-    gch = 124 + h * 28 + n * 0.5;
-    bl = 62;
-  }
+  const lk = theme.looks[b]!;
+  let t = 0;
+  if (b === BIOME_ID.water) t = clamp((H_WATER - h) * 4, 0, 1);
+  else if (b === BIOME_ID.sand) t = bankT && bankT[i]! >= 0 ? 1 - bankT[i]! : 0;
+  else if (b === BIOME_ID.peak) t = (h - 0.74) * 8;
+  else if (b === BIOME_ID.grass || b === BIOME_ID.forest) t = h;
+  const r = lookColor(lk, t, 0) + n * lk.nz[0];
+  const gch = lookColor(lk, t, 1) + n * lk.nz[1];
+  const bl = lookColor(lk, t, 2) + n * lk.nz[2];
   const shade = 0.82 + h * 0.35;
   let rgb: [number, number, number] = [
     clamp(r * shade, 0, 255),
@@ -1235,6 +1216,7 @@ function paintTerrain(
   raw: Float32Array,
   biome: Uint8Array,
   seed: number,
+  theme: ThemeSpec,
   tiles?: (ImageData | null)[],
   bankT?: Float32Array,
   onProgress?: WorldProgress
@@ -1244,7 +1226,7 @@ function paintTerrain(
   for (let y = 0; y < TEX; y++) {
     if (y % 150 === 0) onProgress?.(0.82 + (y / TEX) * 0.13, "terrain paint");
     for (let x = 0; x < TEX; x++) {
-      const rgb = shadeTerrainTexel(raw, biome, seed, tiles, bankT, x, y);
+      const rgb = shadeTerrainTexel(raw, biome, seed, theme, tiles, bankT, x, y);
       const o = (y * TEX + x) * 4;
       d[o] = rgb[0];
       d[o + 1] = rgb[1];
@@ -1326,7 +1308,8 @@ function pushGroup(
   spacing: number,
   sizeMin: number,
   sizeMax: number,
-  at?: { tx: number; ty: number }
+  at?: { tx: number; ty: number },
+  swap?: ThemeSpec["decor"]
 ): void {
   const c = at ?? pickBiomeTexel(biome, rng, id);
   if (!c) return;
@@ -1339,8 +1322,10 @@ function pushGroup(
     const tx = Math.round(c.tx + origin + gx * spacing + rng.range(-jit, jit));
     const ty = Math.round(c.ty + origin + gy * spacing + rng.range(-jit, jit));
     if (!texelInBiome(biome, tx, ty, id)) continue;
+    const kind = rng.pick(kinds);
+    const alt = swap?.[kind];
     out.push({
-      kind: rng.pick(kinds),
+      kind: alt ? rng.pick(alt) : kind,
       x: (tx + 0.5) * SCALE,
       y: (ty + 0.5) * SCALE,
       size: rng.range(sizeMin, sizeMax),
@@ -1349,27 +1334,27 @@ function pushGroup(
   }
 }
 
-function placeDecor(biome: Uint8Array, rng: Rng): Decor[] {
+function placeDecor(biome: Uint8Array, rng: Rng, theme: ThemeSpec): Decor[] {
   const out: Decor[] = [];
   const u = TEX / 1400;
   for (let i = 0; i < 52; i++)
-    pushGroup(out, biome, rng, BIOME_ID.forest, ["tree", "tree", "pine", "bush"], 6 + rng.int(0, 5), 7 * u, 5.5 * u, 13 * u);
+    pushGroup(out, biome, rng, BIOME_ID.forest, ["tree", "tree", "pine", "bush"], 6 + rng.int(0, 5), 7 * u, 5.5 * u, 13 * u, undefined, theme.decor);
   for (let i = 0; i < 22; i++)
-    pushGroup(out, biome, rng, BIOME_ID.grass, ["tree", "bush", "shrub"], 4 + rng.int(0, 4), 9 * u, 4.5 * u, 10 * u);
+    pushGroup(out, biome, rng, BIOME_ID.grass, ["tree", "bush", "shrub"], 4 + rng.int(0, 4), 9 * u, 4.5 * u, 10 * u, undefined, theme.decor);
   for (let i = 0; i < 18; i++)
-    pushGroup(out, biome, rng, BIOME_ID.grass, ["shrub", "bush", "rock"], 5 + rng.int(0, 3), 6 * u, 3.5 * u, 7 * u);
+    pushGroup(out, biome, rng, BIOME_ID.grass, ["shrub", "bush", "rock"], 5 + rng.int(0, 3), 6 * u, 3.5 * u, 7 * u, undefined, theme.decor);
   for (let i = 0; i < 24; i++)
-    pushGroup(out, biome, rng, BIOME_ID.sand, ["cactus", "cactus2", "shrub"], 3 + rng.int(0, 4), 8 * u, 4 * u, 9.5 * u);
+    pushGroup(out, biome, rng, BIOME_ID.sand, ["cactus", "cactus2", "shrub"], 3 + rng.int(0, 4), 8 * u, 4 * u, 9.5 * u, undefined, theme.decor);
   for (let i = 0; i < 10; i++)
-    pushGroup(out, biome, rng, BIOME_ID.sand, ["rock", "boulder"], 3 + rng.int(0, 2), 7 * u, 4 * u, 8 * u);
+    pushGroup(out, biome, rng, BIOME_ID.sand, ["rock", "boulder"], 3 + rng.int(0, 2), 7 * u, 4 * u, 8 * u, undefined, theme.decor);
   for (let i = 0; i < 8; i++)
-    pushGroup(out, biome, rng, BIOME_ID.sand, ["palm"], 3 + rng.int(0, 2), 11 * u, 6 * u, 12 * u);
+    pushGroup(out, biome, rng, BIOME_ID.sand, ["palm"], 3 + rng.int(0, 2), 11 * u, 6 * u, 12 * u, undefined, theme.decor);
   for (let i = 0; i < 26; i++)
-    pushGroup(out, biome, rng, BIOME_ID.rock, ["boulder", "rock", "rock"], 3 + rng.int(0, 3), 6 * u, 4.5 * u, 9 * u);
+    pushGroup(out, biome, rng, BIOME_ID.rock, ["boulder", "rock", "rock"], 3 + rng.int(0, 3), 6 * u, 4.5 * u, 9 * u, undefined, theme.decor);
   for (let i = 0; i < 8; i++)
-    pushGroup(out, biome, rng, BIOME_ID.rock, ["pine", "dead"], 3 + rng.int(0, 2), 10 * u, 5 * u, 11 * u);
+    pushGroup(out, biome, rng, BIOME_ID.rock, ["pine", "dead"], 3 + rng.int(0, 2), 10 * u, 5 * u, 11 * u, undefined, theme.decor);
   for (let i = 0; i < 16; i++)
-    pushGroup(out, biome, rng, BIOME_ID.peak, ["snowrock", "boulder"], 3 + rng.int(0, 3), 7 * u, 4 * u, 8.5 * u);
+    pushGroup(out, biome, rng, BIOME_ID.peak, ["snowrock", "boulder"], 3 + rng.int(0, 3), 7 * u, 4 * u, 8.5 * u, undefined, theme.decor);
   for (let i = 0; i < 14; i++) {
     const c = pickBiomeTexel(biome, rng, BIOME_ID.sand);
     if (!c) continue;
@@ -1381,7 +1366,7 @@ function placeDecor(biome: Uint8Array, rng: Rng): Decor[] {
       }
     }
     if (!shore) continue;
-    pushGroup(out, biome, rng, BIOME_ID.sand, ["reed", "shrub"], 5 + rng.int(0, 4), 5 * u, 3.2 * u, 6.5 * u, c);
+    pushGroup(out, biome, rng, BIOME_ID.sand, ["reed", "shrub"], 5 + rng.int(0, 4), 5 * u, 3.2 * u, 6.5 * u, c, theme.decor);
   }
   return out;
 }
@@ -1553,6 +1538,8 @@ export function rebuildWorldPatch(
   x1 = clamp(Math.ceil(x1), 1, TEX - 2);
   y1 = clamp(Math.ceil(y1), 1, TEX - 2);
   if (x1 < x0 || y1 < y0) return;
+  const theme = themeOf(world.theme);
+  const themed = themedTiles(theme, tiles);
   for (let y = y0; y <= y1; y++) {
     for (let x = x0; x <= x1; x++) {
       assignBiomeFromHeight(world.biome, world.height, world.seed, x, y);
@@ -1564,7 +1551,7 @@ export function rebuildWorldPatch(
   const d = img.data;
   for (let y = y0; y <= y1; y++) {
     for (let x = x0; x <= x1; x++) {
-      const rgb = shadeTerrainTexel(world.height, world.biome, world.seed, tiles, undefined, x, y);
+      const rgb = shadeTerrainTexel(world.height, world.biome, world.seed, theme, themed, undefined, x, y);
       const o = ((y - y0) * w + (x - x0)) * 4;
       d[o] = rgb[0];
       d[o + 1] = rgb[1];
@@ -1591,11 +1578,15 @@ export function rebuildWorldPatch(
 function findSpawn(
   height: Float32Array,
   biome: Uint8Array,
-  rng: Rng
+  rng: Rng,
+  hintX: number,
+  hintY: number
 ): { spawnX: number; spawnY: number } {
+  const cx = clamp(hintX, 0.12, 0.88);
+  const cy = clamp(hintY, 0.12, 0.88);
   for (let i = 0; i < 400; i++) {
-    const tx = rng.int(TEX * 0.18, TEX * 0.35);
-    const ty = rng.int(TEX * 0.18, TEX * 0.35);
+    const tx = rng.int(TEX * (cx - 0.085), TEX * (cx + 0.085));
+    const ty = rng.int(TEX * (cy - 0.085), TEX * (cy + 0.085));
     const b = biome[ty * TEX + tx]!;
     const h = height[ty * TEX + tx]!;
     if (b === BIOME_ID.grass || b === BIOME_ID.sand) {
@@ -1603,9 +1594,9 @@ function findSpawn(
         return { spawnX: (tx + 0.5) * SCALE, spawnY: (ty + 0.5) * SCALE };
     }
   }
-  // Water-heavy maps: nearest valid pad to the preferred corner anywhere on the map (no rng, so other maps are unchanged).
-  const prefX = TEX * 0.265;
-  const prefY = TEX * 0.265;
+  // Water-heavy maps: nearest valid pad to the hint anywhere on the map.
+  const prefX = TEX * cx;
+  const prefY = TEX * cy;
   let best = -1;
   let bestD = Infinity;
   for (let ty = 60; ty < TEX - 60; ty += 6) {

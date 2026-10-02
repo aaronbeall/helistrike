@@ -19,8 +19,10 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 
 ## Content
 
-* [ ] Mutliple terrain biome textures (current: full range, arctic: ice->snow->rock snow->snowcaps, desert: lake->sand->rock, tropic: water->jungle->rock, coastal: water->beach->greenery->jungle)
-* [x] Multiple map gen presets (partial: river_run, island_chain, highland_siege, custom — still want urban / richer coastal / rugged as distinct feel)
+* [x] Mutliple terrain biome textures (current: full range, arctic: ice->snow->rock snow->snowcaps, desert: lake->sand->rock, tropic: water->jungle->rock, coastal: water->beach->greenery->jungle)
+  * [x] Terrain themes (`worldgen/theme.ts`) — palette + tinted existing tiles + decor swaps
+  * [ ] Dedicated tile art per theme (currently recolored shared tiles)
+* [x] Multiple map gen presets (river_run, coastal_strike, island_chain, highland_siege, desert_flats, custom; macro shapes in `worldgen/shape.ts`)
   * [x] Current / river
   * [x] Islands
   * [x] Highland / rugged-ish
