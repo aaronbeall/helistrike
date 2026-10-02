@@ -10,10 +10,15 @@ import { debrisKeys, heightOf, hulkOf, radius, textureOf, wheelDebrisKeys, type 
 import { Layer, ZOff, worldDepth } from "../../../render/depth";
 import { isGroundVehicle, hasSoftBlood, specOf, gunsOf } from "../../../sim/roster";
 import { circumRadiusOf, footprintOf, randomInFootprint, type Footprint } from "../../../render/footprint";
-import { craftOrigin, craftRotorIsProp, craftRotorMounts, rotorDrawSpan, rotorMountsOf, rotorSpinSign } from "../../../sim/crafts";
+import { craftGunSocketSlots, craftOrigin, craftRotorIsProp, craftRotorMounts, rotorDrawSpan, rotorMountsOf, rotorSpinSign, type CraftSpec } from "../../../sim/crafts";
 import { shadowKey, FX_VARIANTS, spritePivot } from "../../../art/sprites";
-import { groundSlope, groundZ, worldToScreen, cameraPointVisible, screenVelX, screenVelY, projectHeading, castZ, isWater, waterSurfaceZ } from "../../../worldgen/world";
+import { groundSlope, groundZ, worldToScreen, cameraPointVisible, screenVelX, screenVelY, projectHeading, castZ, isWater, waterSurfaceZ, screenToWorldAtZ, zScale } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
+
+/** Generic debris touchdown bounce test (fast, steep impact with bounces left). */
+function debrisWillBounce(f: Debris): boolean {
+  return f.bounces > 0 && f.vz < -50 && Math.hypot(f.vx, f.vy, f.vz) > 120;
+}
 
 /** Destruction: unit death, vehicle/heli crashes, boat sinking, player crash, rotor hulks, debris sim + settle + trails + sprites. */
 export class Destruction {
@@ -274,29 +279,8 @@ export class Destruction {
           hp.y,
           hs.sy
         );
-        const throwOff = (key: string, ang: number, x: number, y: number, scale = 1, extra: Partial<Debris> = {}) => {
-          const a = Math.random() * Math.PI * 2;
-          const throwSp = range(90, 200);
-          this.admitDebris({
-            x,
-            y,
-            z: u.z + 18,
-            vx: Math.cos(a) * throwSp,
-            vy: Math.sin(a) * throwSp,
-            vz: range(190, 270),
-            angle: ang,
-            spin: range(-5, 5),
-            life: 5,
-            key,
-            settled: false,
-            gravity: true,
-            bounces: Math.random() < 1 / 3 ? 2 + ((Math.random() * 2) | 0) : 0,
-            trailR: this.s.trails.texTrailR(key) * scale,
-            scale,
-            debrisClass: "critical",
-            ...extra,
-          });
-        };
+        const throwOff = (key: string, ang: number, x: number, y: number, scale = 1, extra: Partial<Debris> = {}) =>
+          this.throwPart(key, ang, x, y, u.z + 18, scale, extra);
         if (throwGuns) {
           guns.forEach((g, gi) => {
             const raw = this.s.textures.exists(g.hulk ?? "") ? g.hulk! : g.tex;
@@ -310,6 +294,7 @@ export class Destruction {
             // Turret hulks are large textures; don't inherit full debris trailR bump.
             throwOff(turretKey, (u.turrets[gi] ?? u.turret) + Math.PI / 2, at.x, at.y, scale, {
               trailR: this.s.trails.texTrailR(turretKey) * scale * 0.38,
+              turretPop: true,
             });
           });
         }
@@ -497,22 +482,68 @@ export class Destruction {
     });
   }
 
+  /** Pop a detached part (turret hulk, dish…) off a wreck: random toss, spin, maybe bounce. */
+  throwPart(key: string, ang: number, x: number, y: number, z: number, scale = 1, extra: Partial<Debris> = {}): void {
+    const a = Math.random() * Math.PI * 2;
+    const throwSp = range(90, 200);
+    this.admitDebris({
+      x,
+      y,
+      z,
+      vx: Math.cos(a) * throwSp,
+      vy: Math.sin(a) * throwSp,
+      vz: range(190, 270),
+      angle: ang,
+      spin: range(-5, 5),
+      life: 5,
+      key,
+      settled: false,
+      gravity: true,
+      bounces: Math.random() < 1 / 3 ? 2 + ((Math.random() * 2) | 0) : 0,
+      trailR: this.s.trails.texTrailR(key) * scale,
+      scale,
+      debrisClass: "critical",
+      ...extra,
+    });
+  }
+
+  /**
+   * Craft turret hulks: every live turret overlay whose socket has `gunHulk` pops off like an enemy turret.
+   * Position + size come from the live turret sprite (screen → world), so it matches what was on screen.
+   */
+  popCraftTurrets(spec: CraftSpec, guns: { im: Phaser.GameObjects.Image | undefined; slot: number }[], z: number, gunAngle: number): void {
+    for (const { im, slot } of guns) {
+      const hulk = spec.sockets[slot]?.gunHulk;
+      if (!hulk || !im || !im.visible || !this.s.textures.exists(hulk)) continue;
+      const at = screenToWorldAtZ(im.x, im.y, z);
+      // Hulk is the same size as the live turret; slightly under so it reads as wreckage (like enemies).
+      const scale = (im.scaleX / Math.max(zScale(z, at.y), 1e-3)) * 0.86;
+      this.throwPart(hulk, gunAngle + Math.PI / 2, at.x, at.y, z + 18, scale, {
+        trailR: this.s.trails.texTrailR(hulk) * scale * 0.38,
+        turretPop: true,
+      });
+    }
+  }
+
   spawnWheelDebris(u: Unit): void {
-    const maxW = specOf(u.kind).wheels;
-    if (!maxW) return;
+    const sp = specOf(u.kind);
+    if (sp.wheels) this.spawnWheels(u.x, u.y, u.z, sp.wheels, sp.wheelDebrisScale);
+  }
+
+  /** Throw 1–2 (≤ maxW) rolling wheels from a wrecked ground vehicle (units + ground remotes). */
+  spawnWheels(x: number, y: number, z: number, maxW: number, scaleRange: [number, number] = [0.78, 0.95]): void {
     const keys = wheelDebrisKeys().filter((k) => this.s.textures.exists(k));
     if (!keys.length) return;
     const n = Math.min(maxW, 1 + ((Math.random() * 2) | 0));
-    const [scLo, scHi] = specOf(u.kind).wheelDebrisScale ?? [0.78, 0.95];
-    const sc = range(scLo, scHi);
+    const sc = range(scaleRange[0], scaleRange[1]);
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
       const throwSp = range(120, 260);
       const key = keys[(Math.random() * keys.length) | 0]!;
       this.admitDebris({
-        x: u.x + range(-10, 10),
-        y: u.y + range(-10, 10),
-        z: u.z + range(14, 32),
+        x: x + range(-10, 10),
+        y: y + range(-10, 10),
+        z: z + range(14, 32),
         vx: Math.cos(a) * throwSp,
         vy: Math.sin(a) * throwSp,
         vz: range(170, 300),
@@ -836,6 +867,8 @@ export class Destruction {
     this.s.hostCraft.unwrapTilt(this.s.hostCraft.body);
     this.s.hostCraft.body.setVisible(false);
     for (const rotor of this.s.hostCraft.rotors) rotor.setVisible(false);
+    const gunSlots = craftGunSocketSlots(h.spec);
+    this.popCraftTurrets(h.spec, this.s.hostCraft.guns.map((im, i) => ({ im, slot: gunSlots[i] ?? -1 })), h.z, h.gunAngle);
     for (const gun of this.s.hostCraft.guns) gun.setVisible(false);
     this.s.hostCraft.gun.setVisible(false);
     for (const glow of this.s.hostCraft.gunHeatGlows) glow.setVisible(false);
@@ -1008,6 +1041,7 @@ export class Destruction {
               this.settleBoomBit(f);
             } else {
               if (!f.linger) this.s.groundMarks.stampDirtSmears(f.x, f.y, f.vx, f.vy);
+              if (f.turretPop) this.turretTouchdown(f);
               if (f.heliCrash) {
                 this.impactHeliCrash(f);
                 this.settleDebris(f);
@@ -1031,11 +1065,7 @@ export class Destruction {
                   const hang = Math.hypot(f.vx, f.vy) > 8 ? Math.atan2(f.vy, f.vx) : f.angle;
                   this.s.groundMarks.stampWheelTrack(f.x, f.y, hang, range(0.65, 0.9), range(0.28, 0.44));
                 }
-              } else if (
-                f.bounces > 0 &&
-                f.vz < -50 &&
-                Math.hypot(f.vx, f.vy, f.vz) > 120
-              ) {
+              } else if (debrisWillBounce(f)) {
                 const ivx = f.vx;
                 const ivy = f.vy;
                 f.bounces--;
@@ -1176,6 +1206,26 @@ export class Destruction {
     }
     f.trailFade = 0;
     f.life = 0;
+  }
+
+  /** First touchdown of a popped-off turret: a small version of the heli-crash dust kick. */
+  turretTouchdown(f: Debris): void {
+    f.turretPop = false;
+    if (isWater(this.s.world, f.x, f.y)) return;
+    const s = Phaser.Math.Clamp(f.scale ?? 1, 0.4, 1.4);
+    this.s.hostCraft.emitDustShock(f.x, f.y, 0.22 * s);
+    // Skipping off: dirt sprays along the travel. Thudding to rest: it kicks straight up.
+    const skip = debrisWillBounce(f);
+    this.s.fx.spawnDirtParticles(f.x, f.y, f.z + 2, {
+      n: Math.round(9 * s),
+      spdMin: 50,
+      spdMax: skip ? 150 : 170,
+      bx: skip ? f.vx : f.vx * 0.15,
+      by: skip ? f.vy : f.vy * 0.15,
+      bz: skip ? 120 : 260,
+      tight: skip ? 0.35 : 0.6,
+      scaleMul: 0.8 * s,
+    });
   }
 
   impactHeliCrash(f: Debris): void {

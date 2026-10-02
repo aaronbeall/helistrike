@@ -1078,6 +1078,8 @@ export interface Debris {
   flamePts?: { lx: number; ly: number; sc: number }[];
   /** Match live radar dish foreshortening (scaleY squash). */
   dishFlat?: boolean;
+  /** Popped-off turret: small dirt burst on first touchdown (cleared once spent). */
+  turretPop?: boolean;
   /** Strong air drag for spinning rotor debris. */
   rotorThrow?: boolean;
   /** Rotor stays on the falling hull mount instead of flying off. */

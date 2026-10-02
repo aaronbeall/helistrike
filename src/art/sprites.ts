@@ -1,5 +1,5 @@
 import type Phaser from "phaser";
-import { craftOf, craftPivot, EXHAUST_TRAIL_FLAME_HUES } from "../sim/crafts";
+import { allCrafts, craftOf, craftPivot, EXHAUST_TRAIL_FLAME_HUES, socketGunTex } from "../sim/crafts";
 import { lookupSpriteOrigin, setSpriteOrigin } from "./spriteOrigin";
 
 const SRC = {
@@ -1049,6 +1049,19 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   ];
   for (const key of shadowSrc) {
     if (textures.exists(key)) bakeShadows(textures, key);
+  }
+  // Craft turret hulks (socket `gunHulk`): darkened copy of the live turret unless authored art exists.
+  for (const c of allCrafts()) {
+    for (const sock of c.sockets) {
+      const live = socketGunTex(sock);
+      if (!sock.gunHulk || textures.exists(sock.gunHulk) || !live || !textures.exists(live)) continue;
+      const img = textures.get(live).getSourceImage() as HTMLImageElement | HTMLCanvasElement;
+      const copy = document.createElement("canvas");
+      copy.width = img.width;
+      copy.height = img.height;
+      copy.getContext("2d")!.drawImage(img, 0, 0);
+      put(textures, sock.gunHulk, darkenWreck(copy), "generated");
+    }
   }
   // Wreck / pop-hulk atlases (guns, rotors, hulls) — needed for in-flight debris shadows.
   for (const key of textures.getTextureKeys()) {

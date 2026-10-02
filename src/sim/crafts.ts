@@ -78,6 +78,11 @@ export interface CraftSocket {
    */
   gunTex?: string;
   /**
+   * Turret hulk texture: when set, this turret pops off the wreck when the craft dies (like enemy turrets).
+   * Without authored art of that key, prepareArt bakes a darkened copy of the live turret.
+   */
+  gunHulk?: string;
+  /**
    * Which side of the hull this mount sits on.
    * Draws a turret sprite on that side, and sets leave height and flash sort
    * for turrets and hardpoints. Default below (heli chin / under-wing pylon).
@@ -260,6 +265,10 @@ export interface CraftSpec {
   track?: TrackKind;
   trackGap?: number;
   trackScale?: number;
+  /** Rolling wheel debris thrown on death (ground hulls), like unit `wheels`. */
+  wheels?: number;
+  /** Wheel debris draw scale range [lo, hi]. */
+  wheelDebrisScale?: [number, number];
   /**
    * Rotor / thruster overlay texture. Omit for fixed-wing (gunship / warthog).
    * Spin bake is `${rotor}_spin` when present.
@@ -700,6 +709,11 @@ function craftGunOverlayBarrels(
     }
   }
   return out;
+}
+
+/** Live turret overlay texture for a socket (authored gunTex, else the weapon's mount art). */
+export function socketGunTex(s: CraftSocket): string | undefined {
+  return s.gunTex ?? weaponMountTex(s.weapon);
 }
 
 /** A craft's onboard turret socket, if it has one — the one source of gun art/scale. */

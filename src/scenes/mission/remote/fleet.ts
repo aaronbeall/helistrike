@@ -735,6 +735,11 @@ export class RemoteFleet {
           hold: 1.65,
         });
         this.s.projectiles.explode(r.x, r.y, r.z, r.spec.detonateBlast, r.spec.detonateDmg, undefined, r.vx, r.vy, r.vz, false, "guided-missile", 1);
+        if (r.spec.wheels) this.s.destruction.spawnWheels(r.x, r.y, r.z, r.spec.wheels, r.spec.wheelDebrisScale);
+        const turret = r.spec.sockets.findIndex((sk) => sk.class === "turret");
+        if (turret >= 0) {
+          this.s.destruction.popCraftTurrets(r.spec, [{ im: this.s.remoteBody.remoteGunImage(r), slot: turret }], r.z, r.gunAngle ?? r.angle);
+        }
         continue;
       }
       // Shadow-Craft remotes spin rotors inside Craft.update.
