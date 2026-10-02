@@ -161,8 +161,8 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [ ] Low flying shooting just immediately hits ground
 * [ ] Enemies should not leave map
 * [ ] Enemy collision/avoidance sucks/doesn't work -- should avoid unit-to-unit collisions and buildings
-* [ ] Building placement should avoid overlaps
-* [ ] Unit/building spawns should not overlap water or cliffs (check the footprint, not just the center point)
+* [x] Building placement should avoid overlaps
+* [x] Unit/building spawns should not overlap water or cliffs (check the footprint, not just the center point)
 * [ ] Ground units should avoid water -- partially implemented but it sucks
 * [ ] Z-ordering is not ideal -- debris/missiles flicker above and below their flame trail (trail smoke-over-flame across depth bands fixed; debris still open)
 * [ ] Mech debris should not include vehicle type specific parts (rotors, treads, wheels)
@@ -170,7 +170,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [ ] Enemy helis rotar hulks are wrong -- should be the 5 point and sized correctly
 * [ ] Cleanup unused sprites
 * [ ] Hit areas -- use rects where appropriate?
-* [ ] Boat spawns should happen only with enough space
+* [x] Boat spawns should happen only with enough space
 * [ ] Chroma key bleed
 * [ ] Camera change shouldn't change reticle location
 * [ ] Spash down debris/hulks/shells in water should either disappear or become blue and sink to bottom, and not draw craters

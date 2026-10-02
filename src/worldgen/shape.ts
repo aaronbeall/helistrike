@@ -33,6 +33,8 @@ export interface ShapeField {
   /** Preferred player spawn, normalized. */
   spawnX: number;
   spawnY: number;
+  /** Natural stronghold spot (plateau top, peninsula tip…), normalized. */
+  keep?: { x: number; y: number };
 }
 
 function smooth(e0: number, e1: number, x: number): number {
@@ -82,6 +84,7 @@ export function makeShape(shape: MapShape, seed: number): ShapeField {
         at: (nx, ny) => LAND + (SEA - LAND) * smooth(w * 0.55, w, segDist(nx, ny, ax, ay, bx, by)),
         spawnX: ax + (bx - ax) * 0.3,
         spawnY: ay + (by - ay) * 0.3,
+        keep: { x: bx, y: by },
       };
     }
     case "valley": {
@@ -102,6 +105,7 @@ export function makeShape(shape: MapShape, seed: number): ShapeField {
           return -0.04 + 0.12 * sd - 0.22 * tilt(nx, ny) * (1 - sd * 0.7);
         },
         relief: (nx, ny) => 0.45 + 0.55 * side(nx, ny),
+        keep: { x: 0.5 + dx * 0.22, y: 0.5 + dy * 0.22 },
         spawnX: 0.5 - dx * 0.3 - dy * curve * 0.64,
         spawnY: 0.5 - dy * 0.3 + dx * curve * 0.64,
       };
@@ -116,6 +120,7 @@ export function makeShape(shape: MapShape, seed: number): ShapeField {
         relief: (nx, ny) => 1 - 0.6 * top(nx, ny),
         spawnX: OPEN_SPAWN * 0.7,
         spawnY: OPEN_SPAWN * 0.7,
+        keep: { x: cx, y: cy },
       };
     }
     case "caldera": {
@@ -130,6 +135,7 @@ export function makeShape(shape: MapShape, seed: number): ShapeField {
         },
         spawnX: OPEN_SPAWN * 0.8,
         spawnY: OPEN_SPAWN * 0.8,
+        keep: { x: cx + r * 0.7, y: cy + r * 0.7 },
       };
     }
     case "archipelago": {
@@ -169,6 +175,7 @@ export function makeShape(shape: MapShape, seed: number): ShapeField {
         },
         spawnX: ax,
         spawnY: ay,
+        keep: { x: bx, y: by },
       };
     }
     default:

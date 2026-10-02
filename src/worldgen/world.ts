@@ -3,6 +3,7 @@ import { baseHeight, makeShape, type MapShape } from "./shape";
 import { lookColor, themedTiles, themeOf, type TerrainTheme, type ThemeSpec } from "./theme";
 import { Rng } from "../util/rng";
 import { pickTroop, type UnitKind } from "../sim/roster";
+import { UNIT_SPECS } from "../catalog/units";
 import { drawBridgeStamp, drawRoadStamp } from "../art/artGen";
 
 export const WORLD = 5600;
@@ -92,6 +93,13 @@ export interface WorldData {
 export type WorldGen = Omit<WorldData, "canvas"> & { terrain: ImageData };
 export type WorldProgress = (t: number, label: string) => void;
 
+export type ObjectiveSiting = "scattered" | "tactical";
+
+export const OBJECTIVE_SITINGS: { id: ObjectiveSiting; label: string; description: string }[] = [
+  { id: "scattered", label: "SCATTERED", description: "Objectives dropped at random open spots across the map, anywhere on dry ground." },
+  { id: "tactical", label: "TACTICAL", description: "Objectives sited by terrain: air defense on high ground, bases by the shore, HQs dug in deep." },
+];
+
 export interface WorldGenProfile {
   id: string;
   /** Positive values expose more land; negative values produce more open water. */
@@ -108,6 +116,8 @@ export interface WorldGenProfile {
   theme: TerrainTheme;
   riverTarget: number;
   objectiveCount: number;
+  /** Objective placement: random legal spots, or by terrain role (high ground, shore, cover…). */
+  siting: ObjectiveSiting;
   garrisonScale: number;
   patrolCount: number;
   waterPatrolBias: number;
@@ -128,6 +138,7 @@ export const DEFAULT_WORLD_PROFILE: WorldGenProfile = {
   theme: "temperate",
   riverTarget: 50,
   objectiveCount: 4,
+  siting: "tactical",
   garrisonScale: 1,
   patrolCount: 22,
   waterPatrolBias: 1,
@@ -242,7 +253,7 @@ export function generateWorld(
   const terrain = paintTerrain(raw, biome, seed, theme, themedTiles(theme, tiles), bankT, onProgress);
   onProgress?.(0.96, "force laydown");
   const { spawnX, spawnY } = findSpawn(height, biome, rng, field.spawnX, field.spawnY);
-  const { hv, spawns } = placeForces(height, biome, rng, spawnX, spawnY, profile);
+  const { hv, spawns } = placeForces(height, biome, rng, spawnX, spawnY, profile, field.keep);
   const roads = makeRoads(hv, spawns, height, biome, rng, profile.roadDensity);
   applyRoadBridgeHeights(height, roads);
   // Road sprites stamp on the main-thread canvas (worker has no document canvas).
@@ -2036,25 +2047,279 @@ export function paintRoadsRect(
   paintRoadsOntoCanvas(world.canvas, world.roads, { x0, y0, x1, y1 });
 }
 
+/** Max ground-height span (world z) across a footprint, as a fraction of its radius. */
+const FIT_SLOPE_BUILDING = 0.28;
+const FIT_SLOPE_GROUND = 0.7;
+
+function footprintR(kind: UnitKind): number {
+  const sp = UNIT_SPECS[kind];
+  return sp.box ? Math.max(sp.box.halfW, sp.box.halfL) : sp.radius;
+}
+
+/** Whole footprint on legal ground: dry + not across a cliff (land), open water (boats), anything (air). */
+function spawnFits(height: Uint8Array | Float32Array, biome: Uint8Array, kind: UnitKind, x: number, y: number): boolean {
+  const sp = UNIT_SPECS[kind];
+  if (sp.aerial) return true;
+  const r = footprintR(kind) * (sp.water ? 1.4 : 1);
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let k = 0; k < 17; k++) {
+    const ring = k === 0 ? 0 : k <= 8 ? r : r * 0.5;
+    const a = (k % 8) * (Math.PI / 4) + (k > 8 ? Math.PI / 8 : 0);
+    const tx = Math.floor((x + Math.cos(a) * ring) / SCALE);
+    const ty = Math.floor((y + Math.sin(a) * ring) / SCALE);
+    if (tx < 1 || ty < 1 || tx >= TEX - 1 || ty >= TEX - 1) return false;
+    const i = ty * TEX + tx;
+    const b = biome[i]!;
+    const wet = b === BIOME_ID.water || b === BIOME_ID.river;
+    if (wet !== !!sp.water) return false;
+    const h = height[i]!;
+    if (h < lo) lo = h;
+    if (h > hi) hi = h;
+  }
+  if (sp.water) return true;
+  const span = (hi - lo) * GROUND_Z_SCALE;
+  return span <= Math.max(4, r * (sp.building ? FIT_SLOPE_BUILDING : FIT_SLOPE_GROUND));
+}
+
+/** Objective terrain preference: high ground, deep + flat, by the water, under cover. */
+type SiteRole = "high" | "stronghold" | "shore" | "hidden";
+
+/** Coarse terrain features for objective siting. */
+interface SiteGrid {
+  n: number;
+  h: Float32Array;
+  prom: Float32Array;
+  slope: Float32Array;
+  shore: Float32Array;
+  forest: Float32Array;
+  comp: Int32Array;
+  compSize: Int32Array;
+  largestComp: number;
+  /** One landmass holds most of the land (vs an archipelago). */
+  mainland: boolean;
+  hasWater: boolean;
+  compAt(x: number, y: number): number;
+}
+
+const SITE_STEP = 6;
+const SITE_PROM_R = 16;
+const SITE_FOREST_R = 3;
+/** Smallest landmass (cells) worth an objective + garrison. */
+const SITE_MIN_COMP = 160;
+const SITE_MAX_SLOPE = 0.05;
+
+function boxMean(src: Float32Array, n: number, r: number): Float32Array {
+  const sat = new Float64Array((n + 1) * (n + 1));
+  for (let y = 0; y < n; y++) {
+    let row = 0;
+    for (let x = 0; x < n; x++) {
+      row += src[y * n + x]!;
+      sat[(y + 1) * (n + 1) + x + 1] = sat[y * (n + 1) + x + 1]! + row;
+    }
+  }
+  const out = new Float32Array(n * n);
+  for (let y = 0; y < n; y++) {
+    const y0 = Math.max(0, y - r);
+    const y1 = Math.min(n, y + r + 1);
+    for (let x = 0; x < n; x++) {
+      const x0 = Math.max(0, x - r);
+      const x1 = Math.min(n, x + r + 1);
+      const sum = sat[y1 * (n + 1) + x1]! - sat[y0 * (n + 1) + x1]! - sat[y1 * (n + 1) + x0]! + sat[y0 * (n + 1) + x0]!;
+      out[y * n + x] = sum / ((y1 - y0) * (x1 - x0));
+    }
+  }
+  return out;
+}
+
+function buildSiteGrid(height: Float32Array, biome: Uint8Array): SiteGrid {
+  const n = Math.floor(TEX / SITE_STEP);
+  const N = n * n;
+  const h = new Float32Array(N);
+  const land = new Uint8Array(N);
+  const forestF = new Float32Array(N);
+  const slope = new Float32Array(N);
+  let hasWater = false;
+  for (let cy = 0; cy < n; cy++) {
+    for (let cx = 0; cx < n; cx++) {
+      const tx = cx * SITE_STEP + (SITE_STEP >> 1);
+      const ty = cy * SITE_STEP + (SITE_STEP >> 1);
+      const i = ty * TEX + tx;
+      const c = cy * n + cx;
+      h[c] = height[i]!;
+      const b = biome[i]!;
+      land[c] = b === BIOME_ID.water || b === BIOME_ID.river ? 0 : 1;
+      if (!land[c]) hasWater = true;
+      forestF[c] = b === BIOME_ID.forest ? 1 : 0;
+      const xa = clamp(tx - SITE_STEP, 0, TEX - 1);
+      const xb = clamp(tx + SITE_STEP, 0, TEX - 1);
+      const ya = clamp(ty - SITE_STEP, 0, TEX - 1);
+      const yb = clamp(ty + SITE_STEP, 0, TEX - 1);
+      slope[c] = Math.hypot(height[ty * TEX + xb]! - height[ty * TEX + xa]!, height[yb * TEX + tx]! - height[ya * TEX + tx]!);
+    }
+  }
+  const mean = boxMean(h, n, SITE_PROM_R);
+  const prom = new Float32Array(N);
+  for (let c = 0; c < N; c++) prom[c] = h[c]! - mean[c]!;
+  // Distance to water (cells), multi-source BFS.
+  const shore = new Float32Array(N).fill(1e9);
+  const q = new Int32Array(N);
+  let qh = 0;
+  let qt = 0;
+  for (let c = 0; c < N; c++) if (!land[c]) (shore[c] = 0), (q[qt++] = c);
+  while (qh < qt) {
+    const c = q[qh++]!;
+    const cx = c % n;
+    const cy = (c / n) | 0;
+    const d = shore[c]! + 1;
+    if (cx > 0 && shore[c - 1]! > d) (shore[c - 1] = d), (q[qt++] = c - 1);
+    if (cx < n - 1 && shore[c + 1]! > d) (shore[c + 1] = d), (q[qt++] = c + 1);
+    if (cy > 0 && shore[c - n]! > d) (shore[c - n] = d), (q[qt++] = c - n);
+    if (cy < n - 1 && shore[c + n]! > d) (shore[c + n] = d), (q[qt++] = c + n);
+  }
+  // Landmass ids.
+  const comp = new Int32Array(N).fill(-1);
+  const sizes: number[] = [];
+  for (let c0 = 0; c0 < N; c0++) {
+    if (!land[c0] || comp[c0]! >= 0) continue;
+    const id = sizes.length;
+    let size = 0;
+    qh = qt = 0;
+    q[qt++] = c0;
+    comp[c0] = id;
+    while (qh < qt) {
+      const c = q[qh++]!;
+      size++;
+      const cx = c % n;
+      const cy = (c / n) | 0;
+      const nb = [cx > 0 ? c - 1 : -1, cx < n - 1 ? c + 1 : -1, cy > 0 ? c - n : -1, cy < n - 1 ? c + n : -1];
+      for (const k of nb) if (k >= 0 && land[k] && comp[k]! < 0) (comp[k] = id), (q[qt++] = k);
+    }
+    sizes.push(size);
+  }
+  const largestComp = sizes.reduce((a, b) => Math.max(a, b), 0);
+  const landTotal = sizes.reduce((a, b) => a + b, 0);
+  const compSize = new Int32Array(N);
+  for (let c = 0; c < N; c++) compSize[c] = comp[c]! >= 0 ? sizes[comp[c]!]! : 0;
+  const forest = boxMean(forestF, n, SITE_FOREST_R);
+  const compAt = (x: number, y: number) => {
+    const cx = clamp(Math.floor(x / SCALE / SITE_STEP), 0, n - 1);
+    const cy = clamp(Math.floor(y / SCALE / SITE_STEP), 0, n - 1);
+    return comp[cy * n + cx]!;
+  };
+  return { n, h, prom, slope, shore, forest, comp, compSize, largestComp, mainland: largestComp > landTotal * 0.6, hasWater, compAt };
+}
+
+function siteScore(g: SiteGrid, c: number, role: SiteRole, spawnN: number): number {
+  const hN = clamp((g.h[c]! - H_SAND) / (H_PEAK - H_SAND), 0, 1);
+  const promN = clamp(g.prom[c]! / 0.08, -1, 1);
+  const flat = 1 - clamp(g.slope[c]! / SITE_MAX_SLOPE, 0, 1);
+  const shoreN = g.hasWater ? Math.exp(-g.shore[c]! / 6) : 0;
+  switch (role) {
+    case "high":
+      return 1.2 * promN + 0.6 * hN + 0.3 * flat;
+    case "stronghold":
+      return 1.1 * spawnN + 0.7 * flat + 0.3 * hN - 0.4 * shoreN;
+    case "shore":
+      return (g.hasWater ? 1.1 * shoreN : 0) + 0.5 * flat + 0.6 * (1 - Math.abs(spawnN - 0.4) * 2);
+    case "hidden":
+      return 1.2 * g.forest[c]! - 0.4 * promN + 0.3 * spawnN;
+  }
+}
+
+/** Best-scoring legal site for a role (with jitter), or null. */
+function pickSite(
+  g: SiteGrid,
+  role: SiteRole,
+  rng: Rng,
+  spawnX: number,
+  spawnY: number,
+  used: { x: number; y: number }[],
+  usedComps: Set<number>,
+  fits: (x: number, y: number) => boolean,
+  keep?: { x: number; y: number }
+): { x: number; y: number } | null {
+  const n = g.n;
+  const margin = Math.ceil(80 / SITE_STEP);
+  const reach = WORLD * 0.9;
+  let best = -Infinity;
+  let bx = 0;
+  let by = 0;
+  for (let cy = margin; cy < n - margin; cy++) {
+    for (let cx = margin; cx < n - margin; cx++) {
+      const c = cy * n + cx;
+      if (g.comp[c]! < 0 || g.compSize[c]! < SITE_MIN_COMP) continue;
+      if (g.h[c]! > H_PEAK || g.slope[c]! > SITE_MAX_SLOPE || g.shore[c]! < 2) continue;
+      const x = (cx * SITE_STEP + SITE_STEP * 0.5) * SCALE;
+      const y = (cy * SITE_STEP + SITE_STEP * 0.5) * SCALE;
+      const spawnD = Math.hypot(x - spawnX, y - spawnY);
+      if (spawnD < 700) continue;
+      let near = false;
+      for (const u of used) if (Math.hypot(u.x - x, u.y - y) < 900) (near = true);
+      if (near) continue;
+      let score = siteScore(g, c, role, spawnD / reach) + rng.range(0, 0.35);
+      // Archipelago: spread across islands. Mainland: stay off stray islets.
+      if (!g.mainland) score += usedComps.has(g.comp[c]!) ? 0 : 0.6;
+      else if (g.compSize[c]! < g.largestComp * 0.25) score -= 0.8;
+      if (keep && role === "stronghold") score += 1.2 * Math.exp(-((Math.hypot(x / WORLD - keep.x, y / WORLD - keep.y) / 0.12) ** 2));
+      if (score > best && fits(x, y)) {
+        best = score;
+        bx = x;
+        by = y;
+      }
+    }
+  }
+  return best > -Infinity ? { x: bx, y: by } : null;
+}
+
+const SPAWN_TRIES = 6;
+
+/** Original siting: first random dry, non-peak spot clear of spawn + other objectives. */
+function scatterSite(
+  height: Float32Array,
+  biome: Uint8Array,
+  rng: Rng,
+  spawnX: number,
+  spawnY: number,
+  used: { x: number; y: number }[],
+  fits: (x: number, y: number) => boolean
+): { x: number; y: number } | null {
+  for (let t = 0; t < 200; t++) {
+    const tx = rng.int(80, TEX - 81);
+    const ty = rng.int(80, TEX - 81);
+    const b = biome[ty * TEX + tx]!;
+    const h = height[ty * TEX + tx]!;
+    const x = (tx + 0.5) * SCALE;
+    const y = (ty + 0.5) * SCALE;
+    if (b === BIOME_ID.water || b === BIOME_ID.river || h > 0.74) continue;
+    if (Math.hypot(x - spawnX, y - spawnY) < 700) continue;
+    if (used.some((u) => Math.hypot(u.x - x, u.y - y) < 900)) continue;
+    if (!fits(x, y)) continue;
+    return { x, y };
+  }
+  return null;
+}
+
 function placeForces(
   height: Float32Array,
   biome: Uint8Array,
   rng: Rng,
   spawnX: number,
   spawnY: number,
-  profile: WorldGenProfile
+  profile: WorldGenProfile,
+  keep?: { x: number; y: number }
 ): { hv: HvSpec[]; spawns: Spawn[] } {
   const hv: HvSpec[] = [];
   const spawns: Spawn[] = [];
-  const names: [HvKind, string][] = [
-    ["bunker", "Command Bunker"],
-    ["radar", "Radar Site"],
-    ["tower", "AA Battery"],
-    ["fob", "Forward Base"],
-    ["lookout", "Lookout Post"],
-    ["officer", "Field Officer"],
-    ["bunker", "Ammo Dump"],
-    ["radar", "Forward HQ"],
+  const names: [HvKind, string, SiteRole][] = [
+    ["bunker", "Command Bunker", "stronghold"],
+    ["radar", "Radar Site", "high"],
+    ["tower", "AA Battery", "high"],
+    ["fob", "Forward Base", "shore"],
+    ["lookout", "Lookout Post", "high"],
+    ["officer", "Field Officer", "hidden"],
+    ["bunker", "Ammo Dump", "stronghold"],
+    ["radar", "Forward HQ", "shore"],
   ];
   for (let i = names.length - 1; i > 0; i--) {
     const j = rng.int(0, i);
@@ -2064,21 +2329,30 @@ function placeForces(
   }
 
   const used: { x: number; y: number }[] = [{ x: spawnX, y: spawnY }];
+  const buildings: { x: number; y: number; r: number }[] = [];
+  // Footprint on legal ground, and buildings clear of each other (units may stand anywhere off them).
+  const placeable = (kind: UnitKind, px: number, py: number) => {
+    if (!spawnFits(height, biome, kind, px, py)) return false;
+    const r = footprintR(kind);
+    for (const b of buildings) if (Math.hypot(b.x - px, b.y - py) < b.r + r + 6) return false;
+    return true;
+  };
+  const sites = buildSiteGrid(height, biome);
+  const usedComps = new Set<number>([sites.compAt(spawnX, spawnY)]);
   const count = profile.objectiveCount;
   for (let i = 0; i < count; i++) {
     let x = 0,
       y = 0,
       ok = false;
-    for (let t = 0; t < 200 && !ok; t++) {
-      const tx = rng.int(80, TEX - 81);
-      const ty = rng.int(80, TEX - 81);
-      const b = biome[ty * TEX + tx]!;
-      const h = height[ty * TEX + tx]!;
-      x = (tx + 0.5) * SCALE;
-      y = (ty + 0.5) * SCALE;
-      if (b === BIOME_ID.water || b === BIOME_ID.river || h > 0.74) continue;
-      if (Math.hypot(x - spawnX, y - spawnY) < 700) continue;
-      if (used.some((u) => Math.hypot(u.x - x, u.y - y) < 900)) continue;
+    const hvKind = names[i]![0];
+    const fits = (fx: number, fy: number) => spawnFits(height, biome, hvKind, fx, fy);
+    const pick =
+      profile.siting === "scattered"
+        ? scatterSite(height, biome, rng, spawnX, spawnY, used, fits)
+        : pickSite(sites, names[i]![2], rng, spawnX, spawnY, used, usedComps, fits, keep);
+    if (pick) {
+      x = pick.x;
+      y = pick.y;
       ok = true;
     }
     if (!ok) {
@@ -2092,6 +2366,7 @@ function placeForces(
           const wy = (ty + 0.5) * SCALE;
           const spawnD = Math.hypot(wx - spawnX, wy - spawnY);
           if (spawnD < 500) continue;
+          if (!fits(wx, wy)) continue;
           let spacing = spawnD;
           for (const p of used) spacing = Math.min(spacing, Math.hypot(wx - p.x, wy - p.y));
           if (spacing > bestScore) {
@@ -2105,25 +2380,37 @@ function placeForces(
     }
     if (!ok) continue;
     used.push({ x, y });
+    usedComps.add(sites.compAt(x, y));
     const [kind, name] = names[i]!;
     const id = `hv-${i}`;
     hv.push({ id, name, kind, x, y });
     spawns.push({ kind, x, y, hv: id });
+    buildings.push({ x, y, r: footprintR(kind) });
     const garrison = Math.max(3, Math.round((8 + rng.int(0, 6)) * profile.garrisonScale));
     for (let k = 0; k < garrison; k++) {
-      const a = rng.range(0, Math.PI * 2);
-      const d = rng.range(60, 280);
-      const gx = x + Math.cos(a) * d;
-      const gy = y + Math.sin(a) * d;
-      if (isWaterAt(biome, gx, gy)) continue;
-      spawns.push({ kind: pickGarrison(rng, profile.forceMix), x: gx, y: gy });
+      const gk = pickGarrison(rng, profile.forceMix);
+      for (let t = 0; t < SPAWN_TRIES; t++) {
+        const a = rng.range(0, Math.PI * 2);
+        // Widen on retries so cramped sites (benches, islets) still get their garrison.
+        const d = rng.range(60, 280 + t * 90);
+        const gx = x + Math.cos(a) * d;
+        const gy = y + Math.sin(a) * d;
+        if (!placeable(gk, gx, gy)) continue;
+        spawns.push({ kind: gk, x: gx, y: gy });
+        if (UNIT_SPECS[gk].building) buildings.push({ x: gx, y: gy, r: footprintR(gk) });
+        break;
+      }
     }
     if (rng.chance(0.55)) {
-      spawns.push({
-        kind: rng.chance(0.5) ? "tent" : "barn",
-        x: x + rng.range(-90, 90),
-        y: y + rng.range(-90, 90),
-      });
+      const bk: UnitKind = rng.chance(0.5) ? "tent" : "barn";
+      for (let t = 0; t < SPAWN_TRIES; t++) {
+        const bx = x + rng.range(-90, 90) * (1 + t * 0.4);
+        const by = y + rng.range(-90, 90) * (1 + t * 0.4);
+        if (!placeable(bk, bx, by)) continue;
+        spawns.push({ kind: bk, x: bx, y: by });
+        buildings.push({ x: bx, y: by, r: footprintR(bk) });
+        break;
+      }
     }
     if (rng.chance(0.7)) {
       spawns.push({
@@ -2143,11 +2430,13 @@ function placeForces(
     if (Math.hypot(x - spawnX, y - spawnY) < 400) continue;
     if (b === BIOME_ID.water || b === BIOME_ID.river) {
       if (rng.chance(Math.min(1, profile.waterPatrolBias))) {
-        spawns.push({ kind: pickWater(rng), x, y });
+        const wk = pickWater(rng);
+        if (placeable(wk, x, y)) spawns.push({ kind: wk, x, y });
       }
     } else if (b !== BIOME_ID.peak) {
       if (rng.chance(Math.min(1, 1 / Math.max(0.1, profile.waterPatrolBias)))) {
-        spawns.push({ kind: pickPatrol(rng, profile.forceMix), x, y });
+        const pk = pickPatrol(rng, profile.forceMix);
+        if (placeable(pk, x, y)) spawns.push({ kind: pk, x, y });
       }
     }
   }
@@ -2228,11 +2517,4 @@ function pickWater(rng: Rng): UnitKind {
   if (r < 0.18) return "battleship";
   if (r < 0.55) return "ptboat";
   return "boat";
-}
-
-function isWaterAt(biome: Uint8Array, x: number, y: number): boolean {
-  const tx = clamp(Math.floor((x / WORLD) * TEX), 0, TEX - 1);
-  const ty = clamp(Math.floor((y / WORLD) * TEX), 0, TEX - 1);
-  const b = biome[ty * TEX + tx]!;
-  return b === BIOME_ID.water || b === BIOME_ID.river;
 }

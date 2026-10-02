@@ -16,6 +16,7 @@ import {
 } from "../sim/crafts";
 import { allMissions, missionOf, selectMission } from "../sim/mission";
 import { MAP_SHAPES } from "../worldgen/shape";
+import { OBJECTIVE_SITINGS } from "../worldgen/world";
 import { TERRAIN_THEME_IDS, themeOf } from "../worldgen/theme";
 import { craftFirepowerRating } from "../sim/remote";
 import { installRigHotkeys } from "../rigs/rigs";
@@ -901,6 +902,16 @@ export class MenuScene extends Phaser.Scene {
         value: (p: typeof customProfile) => String(p.objectiveCount),
         adjust: (dir: number) => {
           customProfile.objectiveCount = Phaser.Math.Clamp(customProfile.objectiveCount + dir, 2, 7);
+        },
+      },
+      {
+        label: "SITING",
+        group: "FORCES",
+        description: (p: typeof customProfile) => OBJECTIVE_SITINGS.find((o) => o.id === p.siting)?.description ?? "",
+        value: (p: typeof customProfile) => OBJECTIVE_SITINGS.find((o) => o.id === p.siting)?.label ?? p.siting.toUpperCase(),
+        adjust: (dir: number) => {
+          const i = OBJECTIVE_SITINGS.findIndex((o) => o.id === customProfile.siting);
+          customProfile.siting = OBJECTIVE_SITINGS[(i + dir + OBJECTIVE_SITINGS.length) % OBJECTIVE_SITINGS.length]!.id;
         },
       },
       {
