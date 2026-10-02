@@ -235,7 +235,6 @@ export class MenuScene extends Phaser.Scene {
     const infoX0 = carouselX1 + zoneGap;
     const infoW = 340;
     const infoX1 = infoX0 + infoW;
-    const infoCenterX = (infoX0 + infoX1) / 2;
 
     const moreInfoX0 = infoX1 + zoneGap;
     const moreInfoX1 = contentX1;
@@ -782,17 +781,17 @@ export class MenuScene extends Phaser.Scene {
       })
       .setDepth(3);
     const detailTxt = this.add
-      .text(infoCenterX, mapHeaderY + 24, "", {
+      .text(infoX0, mapHeaderY + 24, "", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "12px",
         color: "#d8d0ba",
-        align: "center",
+        align: "left",
         lineSpacing: 5,
         wordWrap: { width: infoW - 12 },
         stroke: "#1c1812",
         strokeThickness: 3,
       })
-      .setOrigin(0.5, 0)
+      .setOrigin(0, 0)
       .setDepth(2)
       .setAlpha(0);
     this.tweens.add({ targets: detailTxt, alpha: 1, duration: 420, delay: 340, ease: "Sine.Out" });
@@ -804,63 +803,99 @@ export class MenuScene extends Phaser.Scene {
     const customParams = [
       {
         label: "LAND",
-        value: () => customProfile.landBias.toFixed(2),
+        group: "WORLD",
+        description: "How much of the map is land. Higher raises the ground out of the sea; lower floods it with open water.",
+        value: (p: typeof customProfile) => p.landBias.toFixed(2),
         adjust: (dir: number) => {
           customProfile.landBias = Phaser.Math.Clamp(customProfile.landBias + dir * 0.025, -0.2, 0.18);
         },
       },
       {
         label: "RELIEF",
-        value: () => customProfile.relief.toFixed(2),
+        group: "WORLD",
+        description: "Elevation contrast. Higher makes taller peaks and deeper valleys; lower flattens toward rolling grassland.",
+        value: (p: typeof customProfile) => p.relief.toFixed(2),
         adjust: (dir: number) => {
           customProfile.relief = Phaser.Math.Clamp(customProfile.relief + dir * 0.1, 0.7, 1.6);
         },
       },
       {
         label: "COAST",
-        value: () => customProfile.edgeFalloff.toFixed(2),
+        group: "WORLD",
+        description: "How hard the map edges drop into the sea. Higher rings the battlefield with water, like one large island.",
+        value: (p: typeof customProfile) => p.edgeFalloff.toFixed(2),
         adjust: (dir: number) => {
           customProfile.edgeFalloff = Phaser.Math.Clamp(customProfile.edgeFalloff + dir * 0.05, 0.05, 0.55);
         },
       },
       {
         label: "RIVERS",
-        value: () => String(customProfile.riverTarget),
+        group: "WORLD",
+        description: "How many rivers are carved from the high ground down to the water.",
+        value: (p: typeof customProfile) => String(p.riverTarget),
         adjust: (dir: number) => {
           customProfile.riverTarget = Phaser.Math.Clamp(customProfile.riverTarget + dir * 4, 0, 72);
         },
       },
       {
+        label: "ROADS",
+        group: "WORLD",
+        description: "Road network density. 0 is no roads; higher runs spur roads out to more distant lookouts and towers.",
+        value: (p: typeof customProfile) => p.roadDensity.toFixed(2),
+        adjust: (dir: number) => {
+          customProfile.roadDensity = Phaser.Math.Clamp(Math.round((customProfile.roadDensity + dir * 0.25) * 100) / 100, 0, 2);
+        },
+      },
+      {
+        label: "CLOUDS",
+        group: "WORLD",
+        description: "Cloud cover drifting over the battlefield. 0 is clear skies; higher stacks more cloud banks.",
+        value: (p: typeof customProfile) => p.clouds.toFixed(1),
+        adjust: (dir: number) => {
+          customProfile.clouds = Phaser.Math.Clamp(Math.round((customProfile.clouds + dir * 0.2) * 10) / 10, 0, 2);
+        },
+      },
+      {
         label: "OBJECTIVES",
-        value: () => String(customProfile.objectiveCount),
+        group: "FORCES",
+        description: "Number of high-value targets you must destroy to win.",
+        value: (p: typeof customProfile) => String(p.objectiveCount),
         adjust: (dir: number) => {
           customProfile.objectiveCount = Phaser.Math.Clamp(customProfile.objectiveCount + dir, 2, 7);
         },
       },
       {
         label: "GARRISON",
-        value: () => customProfile.garrisonScale.toFixed(1),
+        group: "FORCES",
+        description: "Size of the defending force posted around each objective.",
+        value: (p: typeof customProfile) => p.garrisonScale.toFixed(1),
         adjust: (dir: number) => {
           customProfile.garrisonScale = Phaser.Math.Clamp(customProfile.garrisonScale + dir * 0.1, 0.4, 1.8);
         },
       },
       {
         label: "PATROLS",
-        value: () => String(customProfile.patrolCount),
+        group: "FORCES",
+        description: "How many roaming patrol groups are scattered across the map.",
+        value: (p: typeof customProfile) => String(p.patrolCount),
         adjust: (dir: number) => {
           customProfile.patrolCount = Phaser.Math.Clamp(customProfile.patrolCount + dir * 2, 8, 40);
         },
       },
       {
         label: "NAVAL",
-        value: () => customProfile.waterPatrolBias.toFixed(2),
+        group: "FORCES",
+        description: "Weights patrols toward the water: higher spawns more boats and fewer land patrols.",
+        value: (p: typeof customProfile) => p.waterPatrolBias.toFixed(2),
         adjust: (dir: number) => {
           customProfile.waterPatrolBias = Phaser.Math.Clamp(customProfile.waterPatrolBias + dir * 0.25, 0.25, 3);
         },
       },
       {
         label: "FORCES",
-        value: () => customProfile.forceMix.toUpperCase(),
+        group: "FORCES",
+        description: "Enemy composition — MIXED, NAVAL (boat-heavy) or HEAVY (armor-heavy). Also resets NAVAL to match.",
+        value: (p: typeof customProfile) => p.forceMix.toUpperCase(),
         adjust: (dir: number) => {
           const i = forceMixes.indexOf(customProfile.forceMix);
           customProfile.forceMix = forceMixes[(i + dir + forceMixes.length) % forceMixes.length]!;
@@ -878,14 +913,37 @@ export class MenuScene extends Phaser.Scene {
         strokeThickness: 2,
       })
       .setDepth(3);
-    const customParamsY0 = mapHeaderY + 30;
+    // Grouped grid: a small sub-header per group, two columns of cards under it.
     const customParamCol = 85;
+    const groupLabel = (text: string, y: number) =>
+      this.add
+        .text(moreInfoX0, y, text, {
+          fontFamily: "Share Tech Mono, monospace",
+          fontSize: "9px",
+          color: "#7f7766",
+          stroke: "#1c1812",
+          strokeThickness: 2,
+        })
+        .setOrigin(0, 0.5)
+        .setDepth(3);
+    const paramGroups = ["WORLD", "FORCES"] as const;
+    const groupHeaders: Phaser.GameObjects.Text[] = [];
+    const cardPos: { x: number; y: number }[] = [];
+    let gy = mapHeaderY + 24;
+    for (const group of paramGroups) {
+      groupHeaders.push(groupLabel(group, gy));
+      const members = customParams.map((p, i) => ({ p, i })).filter(({ p }) => p.group === group);
+      members.forEach(({ i }, k) => {
+        const col = k % 2;
+        const line = (k / 2) | 0;
+        cardPos[i] = { x: moreInfoCenterX + (col === 0 ? -customParamCol : customParamCol), y: gy + 18 + line * 25 };
+      });
+      gy += 18 + Math.ceil(members.length / 2) * 25 + 6;
+    }
+    let hoverParam = -1;
     const customParamCards = customParams.map((param, i) => {
-      const col = i % 2;
-      const line = (i / 2) | 0;
-      const x = moreInfoCenterX + (col === 0 ? -customParamCol : customParamCol);
-      const y = customParamsY0 + line * 27;
-      const frame = this.add.rectangle(x, y, 158, 23, 0x0b0a08, 0.86).setDepth(2);
+      const { x, y } = cardPos[i]!;
+      const frame = this.add.rectangle(x, y, 158, 21, 0x0b0a08, 0.86).setDepth(2);
       const minus = this.add
         .text(x - 64, y, "−", {
           fontFamily: "Share Tech Mono, monospace",
@@ -916,23 +974,55 @@ export class MenuScene extends Phaser.Scene {
       hoverPunch(plus, () => 1, 1.3);
       minus.on("pointerdown", () => adjustCustomParam(i, -1));
       plus.on("pointerdown", () => adjustCustomParam(i, 1));
-      value.setText(`${param.label}  ${param.value()}`);
+      // Hover shows the description; clicking selects (custom) or pins the description (presets).
+      frame.setInteractive({ useHandCursor: true });
+      frame.on("pointerover", () => {
+        hoverParam = i;
+        syncCustomParams();
+      });
+      frame.on("pointerout", () => {
+        if (hoverParam === i) hoverParam = -1;
+        syncCustomParams();
+      });
+      frame.on("pointerdown", () => {
+        if (missions[missionIndex]!.kind === "custom") row = 3 + i;
+        hoverParam = i;
+        refreshSelection();
+      });
+      value.setText(`${param.label}  ${param.value(customProfile)}`);
       return { frame, minus, value, plus };
     });
 
+    const customParamDesc = this.add
+      .text(moreInfoX0, gy - 2, "", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "10px",
+        color: "#aaa28f",
+        align: "left",
+        lineSpacing: 3,
+        wordWrap: { width: moreInfoX1 - moreInfoX0 },
+      })
+      .setOrigin(0, 0)
+      .setDepth(3);
+
     function syncCustomParams(): void {
-      const visible = missions[missionIndex]!.kind === "custom";
-      const focused = row - 3;
-      customParamsHeader.setVisible(visible);
+      const mission = missions[missionIndex]!;
+      const editable = mission.kind === "custom";
+      const focused = editable ? row - 3 : -1;
+      customParamsHeader.setVisible(true);
+      for (const h of groupHeaders) h.setVisible(true);
       customParamCards.forEach((card, i) => {
-        const isFocused = visible && i === focused;
-        card.frame
-          .setVisible(visible)
-          .setStrokeStyle(isFocused ? 2 : 1, isFocused ? 0xe8b84a : 0x554c39, 0.9);
-        card.minus.setVisible(visible);
-        card.plus.setVisible(visible);
-        card.value.setVisible(visible).setText(`${customParams[i]!.label}  ${customParams[i]!.value()}`);
+        const isFocused = i === focused;
+        card.frame.setVisible(true).setStrokeStyle(isFocused ? 2 : 1, isFocused ? 0xe8b84a : 0x554c39, 0.9);
+        card.minus.setVisible(editable);
+        card.plus.setVisible(editable);
+        card.value
+          .setVisible(true)
+          .setText(`${customParams[i]!.label}  ${customParams[i]!.value(mission.profile)}`)
+          .setColor(editable ? "#d8d0ba" : "#aaa28f");
       });
+      const shown = customParams[hoverParam >= 0 ? hoverParam : focused];
+      customParamDesc.setVisible(!!shown).setText(shown?.description ?? "");
     }
 
     function adjustCustomParam(i: number, dir: number): void {

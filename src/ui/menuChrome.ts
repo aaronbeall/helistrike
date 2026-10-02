@@ -168,10 +168,6 @@ export function ensureMissionPreviews(textures: Phaser.Textures.TextureManager):
         h = 0.5 + (h - 0.5) * p.relief;
         h -= radial * p.edgeFalloff;
         h += p.landBias;
-        if (mission.kind === "river_run") {
-          const riverY = 0.48 + Math.sin(nx * 11 + 0.7) * 0.13;
-          if (Math.abs(ny - riverY) < 0.035) h = 0.27;
-        }
         let color: [number, number, number];
         if (h < 0.34) color = [31, 75, 86];
         else if (h < 0.4) color = [174, 145, 87];

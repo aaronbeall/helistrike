@@ -8,6 +8,7 @@ import { range } from "../../../util/rng";
 import { MAP_AIR_SOFT, craftCameraEdgeLocked } from "../../../sim/craft";
 import { type ThermalPalette } from "../../../render/thermal";
 import type { MissionScene } from "../../missionScene";
+import { missionOf } from "../../../sim/mission";
 
 /** Framing zoom for a craft at altitude / speed (host or remote hull). */
 export function craftPlayZoom(
@@ -479,6 +480,7 @@ export class MissionCamera {
     );
     if (!keys.length) return;
     const look = craftCloudParallax(this.s.player.spec);
+    const coverage = Math.max(0, missionOf().profile.clouds);
     // Above craft / world / field HUD tracking; just under chrome HUD.
     const cloudDepth = Layer.HUD - 40;
     // High cruise: distant banks (low scroll). Low cruise: nearer (scroll pulled up).
@@ -524,7 +526,7 @@ export class MissionCamera {
       const hx = this.s.player.x * sf;
       const hy = this.s.player.y * sf;
       // A few bank centers per layer, clouds jittered tightly around each.
-      const clumpN = Math.max(2, Math.round(layer.n / 3));
+      const clumpN = Math.max(2, Math.round((layer.n * Math.max(1, coverage)) / 3));
       const clumps: { cx: number; cy: number }[] = [];
       for (let c = 0; c < clumpN; c++) {
         clumps.push({
@@ -532,7 +534,8 @@ export class MissionCamera {
           cy: hy + range(-1800, 1800),
         });
       }
-      for (let n = 0; n < layer.n; n++, i++) {
+      const count = Math.round(layer.n * coverage);
+      for (let n = 0; n < count; n++, i++) {
         const key = keys[i % keys.length]!;
         const clump = clumps[n % clumps.length]!;
         const x = clump.cx + range(-280, 280);

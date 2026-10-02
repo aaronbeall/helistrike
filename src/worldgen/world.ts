@@ -103,6 +103,10 @@ export interface WorldGenProfile {
   patrolCount: number;
   waterPatrolBias: number;
   forceMix: "mixed" | "naval" | "heavy";
+  /** Roads: 0 = none; otherwise trunks between objectives + spurs to lookouts/towers within roadDensity × ROAD_SPUR_MAX. */
+  roadDensity: number;
+  /** Cloud cover multiplier (visual only; 0 = clear, 1 = standard, 2 = heavy). Not used by world gen. */
+  clouds: number;
 }
 
 export const DEFAULT_WORLD_PROFILE: WorldGenProfile = {
@@ -116,6 +120,8 @@ export const DEFAULT_WORLD_PROFILE: WorldGenProfile = {
   patrolCount: 22,
   waterPatrolBias: 1,
   forceMix: "mixed",
+  roadDensity: 1,
+  clouds: 1,
 };
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -231,7 +237,7 @@ export function generateWorld(
   onProgress?.(0.96, "force laydown");
   const { spawnX, spawnY } = findSpawn(height, biome, rng);
   const { hv, spawns } = placeForces(height, biome, rng, spawnX, spawnY, profile);
-  const roads = makeRoads(hv, spawns, height, biome, rng);
+  const roads = makeRoads(hv, spawns, height, biome, rng, profile.roadDensity);
   applyRoadBridgeHeights(height, roads);
   // Road sprites stamp on the main-thread canvas (worker has no document canvas).
   const decor = placeDecor(biome, rng);
@@ -1597,6 +1603,26 @@ function findSpawn(
         return { spawnX: (tx + 0.5) * SCALE, spawnY: (ty + 0.5) * SCALE };
     }
   }
+  // Water-heavy maps: nearest valid pad to the preferred corner anywhere on the map (no rng, so other maps are unchanged).
+  const prefX = TEX * 0.265;
+  const prefY = TEX * 0.265;
+  let best = -1;
+  let bestD = Infinity;
+  for (let ty = 60; ty < TEX - 60; ty += 6) {
+    for (let tx = 60; tx < TEX - 60; tx += 6) {
+      const i = ty * TEX + tx;
+      const b = biome[i]!;
+      const h = height[i]!;
+      if (b !== BIOME_ID.grass && b !== BIOME_ID.sand) continue;
+      if (h <= 0.4 || h >= 0.55) continue;
+      const d = Math.hypot(tx - prefX, ty - prefY);
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+  }
+  if (best >= 0) return { spawnX: ((best % TEX) + 0.5) * SCALE, spawnY: (Math.floor(best / TEX) + 0.5) * SCALE };
   return { spawnX: WORLD * 0.22, spawnY: WORLD * 0.22 };
 }
 
@@ -1618,9 +1644,11 @@ function makeRoads(
   spawns: Spawn[],
   height: Float32Array,
   biome: Uint8Array,
-  rng: Rng
+  rng: Rng,
+  density = 1
 ): Road[] {
   const roads: Road[] = [];
+  if (density <= 0) return roads;
   if (hv.length >= 2) {
     const connected = new Set<number>([0]);
     const remaining = new Set<number>();
@@ -1658,11 +1686,12 @@ function makeRoads(
   }
 
   // Spur roads to garrison lookouts / AA towers near the trunk (permanent sites).
+  const spurMax = ROAD_SPUR_MAX * density;
   let siteN = 0;
   for (const s of spawns) {
     if (s.hv || !ROAD_SPUR_KINDS.has(s.kind)) continue;
     const hitch = nearestTrunkAttach(roads, hv, s.x, s.y);
-    if (!hitch || hitch.dist > ROAD_SPUR_MAX) continue;
+    if (!hitch || hitch.dist > spurMax) continue;
     if (hitch.dist < 28) continue;
     const nodes = traceFlowRoad(hitch.x, hitch.y, s.x, s.y, height, biome, rng, {
       stiff: 1.15,
