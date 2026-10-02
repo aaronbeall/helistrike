@@ -16,6 +16,7 @@ import {
 } from "../sim/crafts";
 import { allMissions, missionOf, selectMission } from "../sim/mission";
 import { MAP_SHAPES } from "../worldgen/shape";
+import { LANDFORM_KINDS } from "../worldgen/landforms";
 import { OBJECTIVE_SITINGS } from "../worldgen/world";
 import { TERRAIN_THEME_IDS, themeOf } from "../worldgen/theme";
 import { craftFirepowerRating } from "../sim/remote";
@@ -850,6 +851,18 @@ export class MenuScene extends Phaser.Scene {
           customProfile.clouds = Phaser.Math.Clamp(Math.round((customProfile.clouds + dir * 0.2) * 10) / 10, 0, 2);
         },
       },
+      ...LANDFORM_KINDS.map((lf) => ({
+        label: lf.label,
+        group: "LANDFORMS",
+        description: lf.description,
+        value: (p: typeof customProfile) => String(p.landforms[lf.id]),
+        adjust: (dir: number) => {
+          customProfile.landforms = {
+            ...customProfile.landforms,
+            [lf.id]: Phaser.Math.Clamp(customProfile.landforms[lf.id] + dir, 0, lf.max),
+          };
+        },
+      })),
       {
         label: "LAND",
         group: "WORLD",
@@ -884,6 +897,15 @@ export class MenuScene extends Phaser.Scene {
         value: (p: typeof customProfile) => String(p.riverTarget),
         adjust: (dir: number) => {
           customProfile.riverTarget = Phaser.Math.Clamp(customProfile.riverTarget + dir * 4, 0, 72);
+        },
+      },
+      {
+        label: "MAIN RIVER",
+        group: "WORLD",
+        description: "Major rivers that wind from the high ground to the sea in their own wide valley, fed by tributaries.",
+        value: (p: typeof customProfile) => String(p.mainRivers),
+        adjust: (dir: number) => {
+          customProfile.mainRivers = Phaser.Math.Clamp(customProfile.mainRivers + dir, 0, 2);
         },
       },
       {
@@ -979,14 +1001,17 @@ export class MenuScene extends Phaser.Scene {
     // THEATER sits under the briefing; WORLD + FORCES stack in the more-info zone.
     const paramGroups = [
       { id: "THEATER", x0: infoX0, cx: infoX0 + infoW / 2 - 6 },
+      { id: "LANDFORMS", x0: infoX0, cx: infoX0 + infoW / 2 - 6 },
       { id: "WORLD", x0: moreInfoX0, cx: moreInfoCenterX },
       { id: "FORCES", x0: moreInfoX0, cx: moreInfoCenterX },
     ] as const;
     const groupHeaders: Phaser.GameObjects.Text[] = [];
     const cardPos: { x: number; y: number }[] = [];
     let gy = mapHeaderY + 24;
+    let iy = mapHeaderY + 102;
     for (const group of paramGroups) {
-      let y = group.id === "THEATER" ? mapHeaderY + 102 : gy;
+      const info = group.x0 === infoX0;
+      let y = info ? iy : gy;
       groupHeaders.push(groupLabel(group.id, y, group.x0));
       const members = customParams.map((p, i) => ({ p, i })).filter(({ p }) => p.group === group.id);
       members.forEach(({ i }, k) => {
@@ -995,7 +1020,8 @@ export class MenuScene extends Phaser.Scene {
         cardPos[i] = { x: group.cx + (col === 0 ? -customParamCol : customParamCol), y: y + 18 + line * 25 };
       });
       y += 18 + Math.ceil(members.length / 2) * 25 + 6;
-      if (group.id !== "THEATER") gy = y;
+      if (info) iy = y;
+      else gy = y;
     }
     let hoverParam = -1;
     const customParamCards = customParams.map((param, i) => {

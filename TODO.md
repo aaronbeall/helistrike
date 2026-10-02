@@ -82,6 +82,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
   * [x] Reactive Armor
   * [ ] Turtle (drone)
 * [ ] Last stand / base defense game mode
+* [ ] Moving patrols: ground/boat/air groups that travel routes around the map (roads, rivers, between objectives) instead of holding their spawn
 * [ ] Enemy line-of-sight behavior (hide behind terrain, etc)
   * [ ] TOWs and Hellfire collide on launch making fire behind cover ineffective
 * [ ] Sound effects
@@ -92,7 +93,11 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [x] Mission outcome screen (MISSION COMPLETE / AIRCRAFT DOWN)
 * [x] Water wreckage should sink
 * [ ] Water ripples and wakes
+* [ ] Water surface animation (waves, shimmer, shoreline foam)
+* [ ] Lava: glowing volcano summit crater, lava flows down the flanks (damaging / impassable)
 * [x] Laser sight ray should collide with terrain
+* [x] Landform stamps (mesas + buttes, craters, volcanoes, dunes) and trunk rivers with carved valleys
+  * [ ] Escarpments, canyons, lakes/dams
 * [ ] Designed maps (seed + brush + placements)
 * More enemy targets:
   * [ ] HV: missile silo
@@ -153,8 +158,9 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [ ] Stats (mission, all time)
 * [ ] Score
   * [ ] Kill
-  * [ ] Double/Tripple/Multi kill
-  * [ ] 
+  * [ ] Bonuses: Double/Tripple/Multi kill
+  * [ ] Records
+* [ ] Power lines -- poles and wires that break/fall, lots of sparks
 
 ## Fix
 
@@ -165,17 +171,16 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [x] Unit/building spawns should not overlap water or cliffs (check the footprint, not just the center point)
 * [ ] Ground units should avoid water -- partially implemented but it sucks
 * [ ] Z-ordering is not ideal -- debris/missiles flicker above and below their flame trail (trail smoke-over-flame across depth bands fixed; debris still open)
-* [ ] Mech debris should not include vehicle type specific parts (rotors, treads, wheels)
-  * [ ] Add wheels to wheeled vehicle debris
-* [ ] Enemy helis rotar hulks are wrong -- should be the 5 point and sized correctly
-* [ ] Cleanup unused sprites
-* [ ] Hit areas -- use rects where appropriate?
+* [x] Mech debris should not include vehicle type specific parts (rotors, treads, wheels)
+  * [x] Add wheels to wheeled vehicle debris
+* [x] Enemy helis rotar hulks are wrong -- should be the 5 point and sized correctly
+* [x] Cleanup unused sprites
+* [x] Hit areas -- use rects where appropriate?
 * [x] Boat spawns should happen only with enough space
 * [ ] Chroma key bleed
-* [ ] Camera change shouldn't change reticle location
+* [x] Camera change shouldn't change reticle location
 * [ ] Spash down debris/hulks/shells in water should either disappear or become blue and sink to bottom, and not draw craters
 * [ ] Switching from thermal to normal reveals pink graphics
-* [ ] Power lines -- poles and wires that break/fall, lots of sparks
 * [ ] Dropship artillery strike should not follow the player reticle while active -- it messes it up
 * [ ] Map/theater view draws the current-view frame in the wrong location -- likely the captured play-camera view vs the map's zoom/projection pose (pre-existing)
 * [ ] Sustained Starscream fire causes big framerate drops and short freezes (GC?) -- energy ribbons allocate per frame across dozens of live shots + bomblets; reuse buffers, profile explosion cost (pre-existing)
@@ -201,12 +206,13 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
   * Lightning Round -- beat a mission without ever letting go of thrust
   * Thunder Run -- beat a mission with 90% of time spent firing
   * Guns Blazing -- complete a mission with guns only (no missiles, rockets, bombs or flares)
-  * Knife Fight -- complete a mission with Little Bird without taking damage
-  * Can't Touch This -- dodge 100 locked on missiles
+  * Knife Fight -- complete a mission with Little Bird, Murder Hornet or Cyber Hawk without taking damage
+  * Can't Touch This -- dodge 50 locked on missiles in a single mission
   * Silent Assassin -- kill an armored enemy with whisper cannons while they are blinded
   * Never Saw it Coming -- sneak up and kill an enemy from close range using cover
   * Armeggedon -- wipe out an entire garrison with a single bomb (MOAB, Rockeye, etc)
   * Top Hat Double Tap -- kill a field officer with kinetic slugs
+  * Leadership Decapitation -- kill a field officer with rotors
   * Flying Circus -- beat a mission with the biplane
   * Red Baron -- beat a mission with the biplane without taking any damage
   * Buzzcut -- rotor kill a troop with the Murder Hornet

@@ -104,8 +104,10 @@ export class RemoteFleet {
 | Deaths, crashes, debris | `destruction/destruction` |
 | HUD element | the matching `hud/…` module, or a new one |
 | Debug tool / overlay | `debug/…` |
+| Dev rig (overlay tool, cycled with `` ` ``) | `src/rigs/…`, registered in `rigs.ts` |
 | Map silhouette / domain warp | `src/worldgen/shape.ts` |
 | Terrain palette, tiles, decor per theme | `src/worldgen/theme.ts` |
+| Landform stamps (mesas, craters, volcanoes, dunes) | `src/worldgen/landforms.ts` |
 
 ## Gotchas (learned the hard way)
 
