@@ -12,7 +12,7 @@ import { isGroundVehicle, hasSoftBlood, specOf, gunsOf } from "../../../sim/rost
 import { circumRadiusOf, footprintOf, randomInFootprint, type Footprint } from "../../../render/footprint";
 import { craftGunSocketSlots, craftOrigin, craftRotorIsProp, craftRotorMounts, rotorDrawSpan, rotorMountsOf, rotorSpinSign, type CraftSpec } from "../../../sim/crafts";
 import { shadowKey, FX_VARIANTS, spritePivot } from "../../../art/sprites";
-import { groundSlope, groundZ, worldToScreen, cameraPointVisible, screenVelX, screenVelY, projectHeading, castZ, isWater, waterSurfaceZ, screenToWorldAtZ, zScale } from "../../../worldgen/world";
+import { groundSlope, groundZ, worldToScreen, cameraPointVisible, screenVelX, screenVelY, projectHeading, castZ, isWater, bedZ, screenToWorldAtZ, zScale } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
 
 /** Generic debris touchdown bounce test (fast, steep impact with bounces left). */
@@ -612,7 +612,7 @@ export class Destruction {
     const baseKey = this.s.textures.exists(hullKey) ? hullKey : textureOf(u.kind);
     const sinkKey = `${baseKey}_sink`;
     const key = this.s.textures.exists(sinkKey) ? sinkKey : baseKey;
-    const surface = waterSurfaceZ();
+    const surface = groundZ(this.s.world, u.x, u.y);
     this.admitDebris({
       x: u.x,
       y: u.y,
@@ -1183,9 +1183,9 @@ export class Destruction {
     // Keep a gentle yaw the whole way down.
     f.angle += f.spin * dt;
     f.spin = Phaser.Math.Linear(f.spin, f.spin >= 0 ? 0.12 : -0.12, 1 - Math.pow(0.5, dt));
-    // Surface → terrain bed (ignore waterline). Scale shrinks with depth.
-    const surface = waterSurfaceZ();
-    const bed = groundZ(this.s.world, f.x, f.y);
+    // Water surface → bed below it. Scale shrinks with depth.
+    const surface = groundZ(this.s.world, f.x, f.y);
+    const bed = bedZ(this.s.world, f.x, f.y);
     f.z = Phaser.Math.Linear(surface, bed, ease);
     f.vz = 0;
     f.scale = Phaser.Math.Linear(1, 0.55, ease);

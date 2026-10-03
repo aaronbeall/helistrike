@@ -1,7 +1,7 @@
 import { fbm } from "./noise";
 import { baseHeight, makeShape, type MapShape, type ShapeField } from "./shape";
 import { applyDunes, applyLandforms, type Landforms } from "./landforms";
-import { lookColor, themedTiles, themeOf, type TerrainTheme, type ThemeSpec } from "./theme";
+import { lookColor, themedTiles, themeOf, waterBandLooks, type TerrainTheme, type ThemeSpec } from "./theme";
 import { Rng } from "../util/rng";
 import { pickTroop, type UnitKind } from "../sim/roster";
 import { UNIT_SPECS } from "../catalog/units";
@@ -78,7 +78,10 @@ export interface WorldData {
   seed: number;
   missionId: string;
   theme: TerrainTheme;
+  /** Ground / bed height (under water this is the bottom). */
   height: Float32Array;
+  /** Water surface height per texel, -1 where dry. Sea, lakes and rivers each sit at their own level. */
+  water: Float32Array;
   biome: Uint8Array;
   spawnX: number;
   spawnY: number;
@@ -176,9 +179,135 @@ const BIOME_ID: Record<Biome, number> = {
 const H_WATER = 0.34;
 /** Sea level on the height scale (biome water below it). */
 export const WATER_LEVEL = H_WATER;
-/** Lake depth → bed below the water line, and → shading depth (lakes are shallower than the sea). */
-const LAKE_BED_DEPTH = 1.5;
+/** Lake depth → shading depth (lakes are shallower than the sea). Beds stay natural, at least LAKE_MIN_DEPTH down. */
 const LAKE_SHADE_DEPTH = 2.5;
+const LAKE_MIN_DEPTH = 0.003;
+/** Bed relief gain from the un-terraced height (lakes: depth below level; rivers: local bumps). */
+const LAKE_BED_GAIN = 1.2;
+const RIVER_BED_GAIN = 2.5;
+/** River channel length (texels) over which its bed rises to meet a lake's shallow edge. */
+const RIVER_LAKE_FADE = 24;
+/** River half-width assumed for a lake's carve depth when no river touches it. */
+const LAKE_DEFAULT_RAD = 3;
+/** River surface = local ground smoothed over this radius (texels), then dropped into a ravine (riverRavine). */
+const RIVER_SURF_BLUR = 6;
+
+/** How far a river's surface sits below the surrounding ground (banks become the ravine walls), by half-width. */
+function riverRavine(rad: number): number {
+  return 0.13 + rad * 0.007;
+}
+
+/** Max rise (height per texel) of a river surface away from lower water it touches. */
+const RIVER_JOIN_SLOPE = 0.0012;
+
+/**
+ * Smooth junctions: a river surface may rise at most RIVER_JOIN_SLOPE per texel above adjacent lower water.
+ * Chamfer sweeps lower river texels only (lakes and sea stay flat), so tributaries, lake inlets and mouths ease
+ * into the level they meet instead of stepping.
+ */
+function gradeRiverJoins(biome: Uint8Array, water: Float32Array): void {
+  const s1 = RIVER_JOIN_SLOPE;
+  const s2 = RIVER_JOIN_SLOPE * Math.SQRT2;
+  // Lowered toward lower adjacent water.
+  const relax = (i: number, j: number, k: number): boolean => {
+    const wj = water[j]!;
+    if (wj < 0) return false;
+    if (water[i]! > wj + k) {
+      water[i] = wj + k;
+      return true;
+    }
+    return false;
+  };
+  for (let pass = 0; pass < 8; pass++) {
+    let changed = false;
+    for (let y = 1; y < TEX - 1; y++) {
+      for (let x = 1; x < TEX - 1; x++) {
+        const i = y * TEX + x;
+        if (biome[i] !== BIOME_ID.river || water[i]! < 0) continue;
+        changed = relax(i, i - 1, s1) || changed;
+        changed = relax(i, i - TEX, s1) || changed;
+        changed = relax(i, i - TEX - 1, s2) || changed;
+        changed = relax(i, i - TEX + 1, s2) || changed;
+      }
+    }
+    for (let y = TEX - 2; y >= 1; y--) {
+      for (let x = TEX - 2; x >= 1; x--) {
+        const i = y * TEX + x;
+        if (biome[i] !== BIOME_ID.river || water[i]! < 0) continue;
+        changed = relax(i, i + 1, s1) || changed;
+        changed = relax(i, i + TEX, s1) || changed;
+        changed = relax(i, i + TEX + 1, s2) || changed;
+        changed = relax(i, i + TEX - 1, s2) || changed;
+      }
+    }
+    if (!changed) break;
+  }
+}
+
+/**
+ * Water can't stand above the dry ground beside it: lower any surface that tops a dry neighbor,
+ * then keep every bed at least `minDepth` under its surface. Runs before bridge decks are laid.
+ */
+function settleWaterSurfaces(
+  height: Float32Array,
+  water: Float32Array,
+  minDepth: number,
+  lakeGroup: Int32Array,
+  biome: Uint8Array
+): void {
+  const settleTexels = () => {
+    for (let pass = 0; pass < 2; pass++) {
+      for (let y = 1; y < TEX - 1; y++) {
+        for (let x = 1; x < TEX - 1; x++) {
+          const i = y * TEX + x;
+          if (lakeGroup[i]! >= 0) continue;
+          let w = water[i]!;
+          if (w < 0) continue;
+          for (const j of [i - 1, i + 1, i - TEX, i + TEX]) if (water[j]! < 0 && height[j]! < w) w = height[j]!;
+          water[i] = w;
+        }
+      }
+    }
+  };
+  // Lakes lower as a whole so they stay flat: to their lowest leaking rim, and to their outflow (a lake can't
+  // stand above the river draining it). Inflows then grade down into it.
+  const lowerLakes = () => {
+    const groupLow = new Map<number, number>();
+    for (let y = 1; y < TEX - 1; y++) {
+      for (let x = 1; x < TEX - 1; x++) {
+        const i = y * TEX + x;
+        const g = lakeGroup[i]!;
+        if (g < 0) continue;
+        let w = groupLow.get(g) ?? water[i]!;
+        for (const j of [i - 1, i + 1, i - TEX, i + TEX]) {
+          if (water[j]! < 0 && height[j]! < w) w = height[j]!;
+          else if (biome[j] === BIOME_ID.river && water[j]! >= 0 && water[j]! < w) w = water[j]!;
+        }
+        groupLow.set(g, w);
+      }
+    }
+    for (let i = 0; i < water.length; i++) {
+      const g = lakeGroup[i]!;
+      if (g >= 0) water[i] = Math.min(water[i]!, groupLow.get(g)!);
+    }
+  };
+  // Alternate: lakes to rim / outflow, rivers settle, rivers re-grade into what they meet.
+  for (let round = 0; round < 4; round++) {
+    lowerLakes();
+    settleTexels();
+    gradeRiverJoins(biome, water);
+  }
+  settleTexels();
+  for (let i = 0; i < height.length; i++) {
+    const w = water[i]!;
+    if (w >= 0) height[i] = Math.min(height[i]!, w - minDepth);
+  }
+}
+
+/** Channel depth below a river's surface, by half-width (texels). */
+function riverDepth(rad: number): number {
+  return 0.006 + rad * 0.0014;
+}
 /** River texels within this distance (texels, along the channel) of open water blend toward its color. */
 const RIVER_MOUTH_BLEND = 36;
 
@@ -215,6 +344,8 @@ function riverMouthBlend(biome: Uint8Array): Float32Array {
   return out;
 }
 const H_SAND = 0.4;
+/** Underwater shelf edge: shallow band [H_SHELF, H_WATER), deep below. Paint + terrace only (still water). */
+const H_SHELF = 0.305;
 const H_ROCK = 0.62;
 const H_PEAK = 0.72;
 /** Moisture field at normalized coords (drives forest). */
@@ -234,10 +365,19 @@ export function classifyBiome(h: number, m: number): number {
 
 /** Terrain base color for a biome before tiles + lighting. `wet` = river-bank wetness (sand), `n` = fine color noise. */
 export function baseTerrainColor(theme: ThemeSpec, b: number, h: number, wet = 0, n = 0): [number, number, number] {
-  const lk = theme.looks[b]!;
+  let lk = theme.looks[b]!;
   let t = 0;
-  if (b === BIOME_ID.water) t = clamp((H_WATER - h) * 4, 0, 1);
-  else if (b === BIOME_ID.sand) t = wet;
+  if (b === BIOME_ID.water) {
+    // Shallow shelf and deep water: separate gradients, so the shelf edge reads as a drop-off.
+    const bands = waterBandLooks(lk);
+    if (h >= H_SHELF) {
+      lk = bands.shallow;
+      t = clamp((H_WATER - h) / (H_WATER - H_SHELF), 0, 1);
+    } else {
+      lk = bands.deep;
+      t = clamp((H_SHELF - h) * 4, 0, 1);
+    }
+  } else if (b === BIOME_ID.sand) t = wet;
   else if (b === BIOME_ID.peak) t = (h - 0.74) * 8;
   else if (b === BIOME_ID.grass || b === BIOME_ID.forest) t = h;
   const shade = 0.82 + h * 0.35;
@@ -280,16 +420,18 @@ const LAKE_BEACH = 0.35;
  * (some stretches drop sharply, some shelve gently). Returns t (0 at the water → 1 at the shore's outer
  * edge, -1 = not shore); the nearest band becomes sand. Rock / peak shores stay as they are.
  */
-function stampLakeShores(biome: Uint8Array, lake: Float32Array, seed: number): Float32Array {
+function stampLakeShores(biome: Uint8Array, lake: Float32Array, seed: number): { t: Float32Array; near: Int32Array } {
   const out = new Float32Array(TEX * TEX).fill(-1);
+  const near = new Int32Array(TEX * TEX).fill(-1);
   const dist = new Float32Array(TEX * TEX).fill(Infinity);
   const q: number[] = [];
   for (let i = 0; i < lake.length; i++) {
     if (!lake[i]) continue;
     dist[i] = 0;
+    near[i] = i;
     q.push(i);
   }
-  if (!q.length) return out;
+  if (!q.length) return { t: out, near };
   // Chamfer-ish BFS outward over land (orthogonal 1, diagonal √2), capped at the widest shore.
   const nb: [number, number, number][] = [
     [1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1],
@@ -309,6 +451,7 @@ function stampLakeShores(biome: Uint8Array, lake: Float32Array, seed: number): F
       const d = dist[i]! + w;
       if (d >= dist[j]! || d > LAKE_SHORE_MAX) continue;
       dist[j] = d;
+      near[j] = near[i]!;
       q.push(j);
     }
   }
@@ -328,7 +471,7 @@ function stampLakeShores(biome: Uint8Array, lake: Float32Array, seed: number): F
     const b = biome[i]!;
     if (t < LAKE_BEACH && (b === BIOME_ID.grass || b === BIOME_ID.forest)) biome[i] = BIOME_ID.sand;
   }
-  return out;
+  return { t: out, near };
 }
 /** Bank width cap (texels) so trunk rivers don't get huge sand belts. */
 const RIVER_BANK_MAX = 26;
@@ -337,7 +480,8 @@ export const RIVER_BANK_WOBBLE = 0.62;
 /** Extra height jitter on the ramp. */
 export const RIVER_BANK_ROUGH = 0.038;
 const HEIGHT_BANDS: { lo: number; hi: number; k: number }[] = [
-  { lo: 0, hi: H_WATER, k: 2.7 },
+  { lo: 0, hi: H_SHELF, k: 2.7 },
+  { lo: H_SHELF, hi: H_WATER, k: 2.4 },
   { lo: H_WATER, hi: H_SAND, k: 2.35 },
   { lo: H_SAND, hi: H_ROCK, k: 2.9 },
   { lo: H_ROCK, hi: H_PEAK, k: 2.55 },
@@ -415,7 +559,7 @@ export interface DrainagePreview {
   /** Trunk-river channels only (relief.biome also gets the drainage streams). */
   trunk: Uint8Array;
   trace: DrainageTrace | null;
-  /** Lake depth below its spill level per texel (0 = not lake). */
+  /** Lake water level (pre-terrace height) per texel (0 = not lake). */
   lake: Float32Array;
 }
 
@@ -452,20 +596,87 @@ export function generateWorld(
   }
 
   onProgress?.(0.58, "river banks");
-  const bankT = stampRiverBanks(biome, riverRad, seed);
-  const shore = stampLakeShores(biome, lake, seed);
+  const { t: bankT, near: bankNear } = stampRiverBanks(biome, riverRad, seed);
+  const { t: shore, near: shoreNear } = stampLakeShores(biome, lake, seed);
   onProgress?.(0.74, "elevation");
 
   const raw = new Float32Array(height);
-  const bed = H_WATER - 0.02;
+  for (let i = 0; i < height.length; i++) height[i] = remapBand(height[i]!);
+  // Water surfaces: sea at sea level; rivers sunk into a ravine relative to the local ground (channel cut
+  // below); lakes sunk by the same ravine depth as their rivers. Nothing is dug below sea level.
+  const water = new Float32Array(TEX * TEX).fill(-1);
+  const riverCells: number[] = [];
+  // Lakes sink by the same ravine depth as the widest river touching them (a lake's texels share its level).
+  const lakeRad = new Map<number, number>();
+  for (let i = TEX; i < height.length - TEX; i++) {
+    if (biome[i] !== BIOME_ID.river || lake[i]) continue;
+    for (const j of [i - 1, i + 1, i - TEX, i + TEX]) {
+      const lv = lake[j]!;
+      if (lv) lakeRad.set(lv, Math.max(lakeRad.get(lv) ?? 0, riverRad[i]!));
+    }
+  }
+  // Lakes touching each other share the lowest of their surfaces (one water body, one level).
+  const lakeSurf = new Map<number, number>();
+  const parent = new Map<number, number>();
+  const find = (v: number): number => {
+    let r = v;
+    while (parent.get(r) !== undefined && parent.get(r) !== r) r = parent.get(r)!;
+    parent.set(v, r);
+    return r;
+  };
   for (let i = 0; i < height.length; i++) {
-    height[i] = remapBand(height[i]!);
+    const lv = lake[i]!;
+    if (!lv || lakeSurf.has(lv)) continue;
+    lakeSurf.set(lv, Math.max(H_WATER, remapBand(lv) - riverRavine(lakeRad.get(lv) ?? LAKE_DEFAULT_RAD)));
+    parent.set(lv, lv);
+  }
+  for (let i = TEX; i < height.length - TEX; i++) {
+    const lv = lake[i]!;
+    if (!lv) continue;
+    for (const j of [i + 1, i + TEX]) {
+      const lj = lake[j]!;
+      if (!lj || lj === lv) continue;
+      const a = find(lv);
+      const b = find(lj);
+      if (a !== b) parent.set(a, b);
+    }
+  }
+  const groupSurf = new Map<number, number>();
+  // Merged lakes measure basin depth from one reference (the lowest natural level) so their beds don't step.
+  const groupRef = new Map<number, number>();
+  for (const [lv, sf] of lakeSurf) {
+    const r = find(lv);
+    groupSurf.set(r, Math.min(groupSurf.get(r) ?? Infinity, sf));
+    groupRef.set(r, Math.min(groupRef.get(r) ?? Infinity, lv));
+  }
+  const lakeGroup = new Int32Array(TEX * TEX).fill(-1);
+  const lakeBed = new Float32Array(TEX * TEX);
+  const groupId = new Map<number, number>();
+  for (let i = 0; i < height.length; i++) {
+    if (!lake[i]) continue;
+    const r = find(lake[i]!);
+    if (!groupId.has(r)) groupId.set(r, groupId.size);
+    lakeGroup[i] = groupId.get(r)!;
+  }
+  for (let i = 0; i < height.length; i++) {
     if (lake[i]) {
-      // Basin below the water line (depth from the spill level), not a flat floor.
-      height[i] = Math.min(height[i]!, bed - lake[i]! * LAKE_BED_DEPTH);
+      const surf = groupSurf.get(find(lake[i]!))!;
+      // Bed (set after levels settle) from the un-terraced relief: its real depth below the natural level.
+      water[i] = surf;
+      lakeBed[i] = Math.max(0, groupRef.get(find(lake[i]!))! - raw[i]!) * LAKE_BED_GAIN;
     } else if (biome[i] === BIOME_ID.river) {
-      height[i] = Math.min(height[i]!, bed);
-    } else if (bankT[i]! >= 0) {
+      riverCells.push(i);
+    } else if (biome[i] === BIOME_ID.water) {
+      water[i] = H_WATER;
+    }
+  }
+  const riverSurf = new Float32Array(height);
+  blurTouched(riverSurf, riverCells, RIVER_SURF_BLUR);
+  // Deep enough to hide a craft in; lowland ravines bottom out at sea level rather than sinking below it.
+  for (const i of riverCells) water[i] = Math.max(H_WATER, riverSurf[i]! - riverRavine(riverRad[i]!));
+  gradeRiverJoins(biome, water);
+  for (let i = 0; i < height.length; i++) {
+    if (bankT[i]! >= 0) {
       const t = bankT[i]!;
       const x = i % TEX;
       const y = (i / TEX) | 0;
@@ -473,13 +684,58 @@ export function generateWorld(
       const n2 = fbm(x * 0.28, y * 0.28, seed + 77, 3);
       let s = t * t * (3 - 2 * t);
       s = clamp(s + (n1 - 0.5) * 0.42, 0, 1);
-      height[i] = lerp(bed, height[i]!, s);
+      // Bank eases down to its river's surface (not sea level).
+      const nr = bankNear[i]!;
+      const edge = nr >= 0 && water[nr]! >= 0 ? water[nr]! : height[i]!;
+      height[i] = lerp(edge, height[i]!, s);
       height[i] += (n2 - 0.5) * RIVER_BANK_ROUGH * (1 - Math.abs(t * 2 - 1));
     } else if (shore[i]! >= 0) {
-      // Soft lake shore: ease down to just under the water line (sharp or gradual per shore width).
+      // Soft lake shore: ease down to the lake's own surface (sharp or gradual per shore width).
       const t = shore[i]!;
-      height[i] = lerp(H_WATER - 0.004, height[i]!, t * t * (3 - 2 * t));
+      const nl = shoreNear[i]!;
+      const edge = nl >= 0 && water[nl]! >= 0 ? water[nl]! : height[i]!;
+      height[i] = lerp(edge, height[i]!, t * t * (3 - 2 * t));
     }
+  }
+  settleWaterSurfaces(height, water, LAKE_MIN_DEPTH, lakeGroup, biome);
+  // Beds against the settled surfaces. Lakes: natural basin depth. Rivers: channel depth + local relief,
+  // fading to the lake's shallow edge where they run into a lake so the floor doesn't step.
+  for (let i = 0; i < height.length; i++) if (lakeGroup[i]! >= 0) height[i] = water[i]! - LAKE_MIN_DEPTH - lakeBed[i]!;
+  const fromLake = new Int32Array(TEX * TEX).fill(-1);
+  const lakeEdgeBed = new Float32Array(TEX * TEX);
+  const lq: number[] = [];
+  for (const i of riverCells) {
+    let edge = Infinity;
+    for (const j of [i - 1, i + 1, i - TEX, i + TEX]) {
+      if (j < 0 || j >= height.length || lakeGroup[j]! < 0) continue;
+      edge = Math.min(edge, height[j]!);
+    }
+    if (edge === Infinity) continue;
+    fromLake[i] = 0;
+    lakeEdgeBed[i] = edge;
+    lq.push(i);
+  }
+  for (let h = 0; h < lq.length; h++) {
+    const i = lq[h]!;
+    const d = fromLake[i]! + 1;
+    if (d > RIVER_LAKE_FADE) continue;
+    for (const j of [i - 1, i + 1, i - TEX, i + TEX]) {
+      if (j < 0 || j >= height.length || biome[j] !== BIOME_ID.river || fromLake[j]! >= 0 || lakeGroup[j]! >= 0) continue;
+      fromLake[j] = d;
+      lakeEdgeBed[j] = lakeEdgeBed[i]!;
+      lq.push(j);
+    }
+  }
+  const rawSmooth = new Float32Array(raw);
+  blurTouched(rawSmooth, riverCells, RIVER_SURF_BLUR);
+  for (const i of riverCells) {
+    if (water[i]! < 0) continue;
+    const t = fromLake[i]! < 0 ? 1 : fromLake[i]! / RIVER_LAKE_FADE;
+    const f = t * t * (3 - 2 * t);
+    let bed = water[i]! - riverDepth(riverRad[i]!) + (raw[i]! - rawSmooth[i]!) * RIVER_BED_GAIN;
+    // Near a lake: blend toward the lake bed it meets (not a generic depth).
+    if (f < 1) bed = lerp(Math.min(lakeEdgeBed[i]!, water[i]! - LAKE_MIN_DEPTH), bed, f);
+    height[i] = Math.min(height[i]!, bed, water[i]! - LAKE_MIN_DEPTH);
   }
   applyDunes(height, TEX, profile.landforms.dunes, seed, hint, (i) => {
     const b = biome[i]!;
@@ -494,14 +750,14 @@ export function generateWorld(
   const { spawnX, spawnY } = findSpawn(height, biome, rng, field.spawnX, field.spawnY);
   const { hv, spawns } = placeForces(height, biome, rng, spawnX, spawnY, profile, field.keep);
   const roads = makeRoads(hv, spawns, height, biome, rng, profile.roadDensity);
-  applyRoadBridgeHeights(height, roads);
+  applyRoadBridgeHeights(height, water, roads);
   // Road sprites stamp on the main-thread canvas (worker has no document canvas).
   const decor = placeDecor(biome, rng, theme);
   const trees = decor.filter((d) => d.kind === "tree" || d.kind === "pine" || d.kind === "palm").map((d) => ({ x: d.x, y: d.y }));
   const rocks = decor.filter((d) => d.kind === "rock" || d.kind === "boulder" || d.kind === "snowrock").map((d) => ({ x: d.x, y: d.y }));
 
   onProgress?.(0.97, "laydown");
-  return { seed, missionId: profile.id, theme: theme.id, height, biome, spawnX, spawnY, hv, spawns, trees, rocks, decor, roads, terrain };
+  return { seed, missionId: profile.id, theme: theme.id, height, water, biome, spawnX, spawnY, hv, spawns, trees, rocks, decor, roads, terrain };
 }
 
 export function imageDataToCanvas(img: ImageData): HTMLCanvasElement {
@@ -558,6 +814,14 @@ export function generateWorldAsync(
   });
 }
 
+/** Top surface at texel i: water surface where there's water above the ground, else ground. */
+export function surfaceHeightAt(world: WorldData, i: number): number {
+  const w = world.water[i]!;
+  const h = world.height[i]!;
+  return w > h ? w : h;
+}
+
+/** Top surface height (ground, or water where it lies above the ground), bilinear. */
 export function sampleHeight(world: WorldData, x: number, y: number): number {
   const tx = clamp((x / WORLD) * TEX, 0, TEX - 1.001);
   const ty = clamp((y / WORLD) * TEX, 0, TEX - 1.001);
@@ -565,11 +829,12 @@ export function sampleHeight(world: WorldData, x: number, y: number): number {
   const y0 = Math.floor(ty);
   const fx = tx - x0;
   const fy = ty - y0;
-  const h00 = world.height[y0 * TEX + x0]!;
-  const h10 = world.height[y0 * TEX + Math.min(x0 + 1, TEX - 1)]!;
-  const h01 = world.height[Math.min(y0 + 1, TEX - 1) * TEX + x0]!;
-  const h11 =
-    world.height[Math.min(y0 + 1, TEX - 1) * TEX + Math.min(x0 + 1, TEX - 1)]!;
+  const x1 = Math.min(x0 + 1, TEX - 1);
+  const y1 = Math.min(y0 + 1, TEX - 1);
+  const h00 = surfaceHeightAt(world, y0 * TEX + x0);
+  const h10 = surfaceHeightAt(world, y0 * TEX + x1);
+  const h01 = surfaceHeightAt(world, y1 * TEX + x0);
+  const h11 = surfaceHeightAt(world, y1 * TEX + x1);
   return lerp(
     lerp(h00, h10, fx),
     lerp(h01, h11, fx),
@@ -847,26 +1112,42 @@ export function camZoomAt(_z: number): number {
   return CamTune.zoom0;
 }
 
+/** Surface z: ground, or the water surface over water — what things rest on, hit and cast onto. */
 export function groundZ(world: WorldData, x: number, y: number): number {
   const h = sampleHeight(world, x, y);
   return Math.max(0, (h - GROUND_H_ZERO) * GROUND_Z_SCALE);
 }
 
 /** Floating craft ride this Z on water; bed under the water is still `groundZ`. */
-export function waterSurfaceZ(): number {
-  return Math.max(0, (H_WATER - GROUND_H_ZERO) * GROUND_Z_SCALE);
+/** Bottom under any water (true ground / sea floor / lake + river bed), bilinear — what the terrain mesh draws. */
+export function bedZ(world: WorldData, x: number, y: number): number {
+  const tx = clamp((x / WORLD) * TEX, 0, TEX - 1.001);
+  const ty = clamp((y / WORLD) * TEX, 0, TEX - 1.001);
+  const x0 = Math.floor(tx);
+  const y0 = Math.floor(ty);
+  const x1 = Math.min(x0 + 1, TEX - 1);
+  const y1 = Math.min(y0 + 1, TEX - 1);
+  const h = world.height;
+  const top = lerp(h[y0 * TEX + x0]!, h[y0 * TEX + x1]!, tx - x0);
+  const bottom = lerp(h[y1 * TEX + x0]!, h[y1 * TEX + x1]!, tx - x0);
+  return Math.max(0, (lerp(top, bottom, ty - y0) - GROUND_H_ZERO) * GROUND_Z_SCALE);
 }
 
 export function castZ(world: WorldData, x: number, y: number, z: number): number {
   return Math.max(0, z - groundZ(world, x, y));
 }
 
-export type ShadowHit = { x: number; y: number; z: number; cast: number };
+/** `underwater` = water depth (z) above the hit point when the shadow lands on a bed under water, else 0. */
+export type ShadowHit = { x: number; y: number; z: number; cast: number; underwater: number };
 
 /**
  * Intersect a directional sun ray with the heightfield. The light direction is
  * expressed in world units, so camera pitch/zoom never leak into shadow offset.
  * Pass `out` to reuse a buffer; otherwise returns a fresh object.
+ */
+/**
+ * Shadow hit along the light ray. Casters in the air land on the top surface (ground or water);
+ * casters on / under the water land on the bed below it.
  */
 export function castShadowToGround(
   world: WorldData,
@@ -875,15 +1156,17 @@ export function castShadowToGround(
   z: number,
   out?: ShadowHit
 ): ShadowHit {
-  const target = out ?? { x: 0, y: 0, z: 0, cast: 0 };
+  const target = out ?? { x: 0, y: 0, z: 0, cast: 0, underwater: 0 };
   const lightX = 0.24;
   const lightY = 0.58;
-  const sourceGround = groundZ(world, x, y);
+  const floorAt = z > groundZ(world, x, y) + 0.25 ? groundZ : bedZ;
+  const sourceGround = floorAt(world, x, y);
   if (z <= sourceGround + 0.25) {
     target.x = x;
     target.y = y;
     target.z = sourceGround;
     target.cast = 0;
+    target.underwater = floorAt === bedZ ? Math.max(0, groundZ(world, x, y) - sourceGround) : 0;
     return target;
   }
   const rayEnd = Math.max(0, z);
@@ -896,7 +1179,7 @@ export function castShadowToGround(
     const rx = x + lightX * cast;
     const ry = y + lightY * cast;
     const rz = z - cast;
-    if (rz <= groundZ(world, rx, ry)) {
+    if (rz <= floorAt(world, rx, ry)) {
       lo = rayEnd * ((i - 1) / marchSteps);
       hi = cast;
       break;
@@ -907,7 +1190,7 @@ export function castShadowToGround(
     const rx = x + lightX * cast;
     const ry = y + lightY * cast;
     const rz = z - cast;
-    if (rz > groundZ(world, rx, ry)) lo = cast;
+    if (rz > floorAt(world, rx, ry)) lo = cast;
     else hi = cast;
   }
   const cast = (lo + hi) * 0.5;
@@ -917,6 +1200,7 @@ export function castShadowToGround(
   target.y = ry;
   target.z = z - cast;
   target.cast = cast;
+  target.underwater = floorAt === bedZ ? Math.max(0, groundZ(world, rx, ry) - target.z) : 0;
   return target;
 }
 
@@ -1094,7 +1378,7 @@ function carveDrainage(
       const ty = ((c / n) | 0) * DRAIN_STEP + half;
       const sv = surf(tx, ty);
       if (sv < level && floodable(tx, ty, id, level)) {
-        lake[ty * TEX + tx] = Math.max(1e-4, level - sv);
+        lake[ty * TEX + tx] = level;
         tq.push(ty * TEX + tx);
       }
     }
@@ -1108,7 +1392,7 @@ function carveDrainage(
         if (xx < 1 || yy < 1 || xx > TEX - 2 || yy > TEX - 2) continue;
         const sv = surf(xx, yy);
         if (sv >= level || !floodable(xx, yy, id, level)) continue;
-        lake[yy * TEX + xx] = Math.max(1e-4, level - sv);
+        lake[yy * TEX + xx] = level;
         tq.push(yy * TEX + xx);
       }
     }
@@ -1539,7 +1823,8 @@ function stampRiver(biome: Uint8Array, riverRad: Float32Array, x: number, y: num
   }
 }
 
-function stampRiverBanks(biome: Uint8Array, riverRad: Float32Array, seed: number): Float32Array {
+function stampRiverBanks(biome: Uint8Array, riverRad: Float32Array, seed: number): { t: Float32Array; near: Int32Array } {
+  const near = new Int32Array(TEX * TEX).fill(-1);
   const dist = new Float32Array(TEX * TEX);
   const wid = new Float32Array(TEX * TEX);
   dist.fill(1e9);
@@ -1570,6 +1855,7 @@ function stampRiverBanks(biome: Uint8Array, riverRad: Float32Array, seed: number
           if (d < dist[j]!) {
             dist[j] = d;
             wid[j] = base;
+            near[j] = i;
           }
         }
       }
@@ -1588,7 +1874,7 @@ function stampRiverBanks(biome: Uint8Array, riverRad: Float32Array, seed: number
     tOut[i] = dist[i]! / Math.max(localW, 1e-6);
     biome[i] = BIOME_ID.sand;
   }
-  return tOut;
+  return { t: tOut, near };
 }
 
 function terrace(t: number, k: number): number {
@@ -1638,8 +1924,8 @@ function shadeTerrainTexel(
   const i = y * TEX + x;
   const raw0 = raw[i]!;
   const b = biome[i]!;
-  // Lakes sit above sea level in `raw`; shade them by their own depth so they grade like the sea.
-  const depth = lakeDepth ? lakeDepth[i]! : 0;
+  // Lakes sit above sea level in `raw`; shade them by depth below their own level so they grade like the sea.
+  const depth = lakeDepth && lakeDepth[i]! > 0 ? Math.max(1e-4, lakeDepth[i]! - raw0) : 0;
   const h = b === BIOME_ID.water && depth > 0 ? H_WATER - depth * LAKE_SHADE_DEPTH : raw0;
   const n = fbm(x * 0.08, y * 0.08, seed + 99, 2) * 18 - 9;
   const wet = b === BIOME_ID.sand && bankT && bankT[i]! >= 0 ? 1 - bankT[i]! : 0;
@@ -2005,9 +2291,11 @@ export function stampHeightBrush(
   return { x0, y0, x1, y1 };
 }
 
-function assignBiomeFromHeight(biome: Uint8Array, height: Float32Array, seed: number, x: number, y: number): void {
+function assignBiomeFromHeight(biome: Uint8Array, height: Float32Array, water: Float32Array, seed: number, x: number, y: number): void {
   const i = y * TEX + x;
   const h = height[i]!;
+  // Still under its own water surface (lake / river / sea): stays water.
+  if (water[i]! >= 0 && h < water[i]!) return;
   if (biome[i] === BIOME_ID.river && h < H_SAND) return;
   biome[i] = classifyBiome(h, moistureAt(x / TEX, y / TEX, seed));
 }
@@ -2030,7 +2318,7 @@ export function rebuildWorldPatch(
   const themed = themedTiles(theme, tiles);
   for (let y = y0; y <= y1; y++) {
     for (let x = x0; x <= x1; x++) {
-      assignBiomeFromHeight(world.biome, world.height, world.seed, x, y);
+      assignBiomeFromHeight(world.biome, world.height, world.water, world.seed, x, y);
     }
   }
   const w = x1 - x0 + 1;
@@ -2106,7 +2394,7 @@ function findSpawn(
 }
 
 /** Raise water crossings just above the waterline for bridge decks. */
-const ROAD_BRIDGE_H = H_WATER + 0.018;
+const ROAD_BRIDGE_CLEAR = 0.018;
 /** Min spacing between stored road nodes (texels). */
 const ROAD_NODE_STEP = 4.5;
 /** Secondary buildings farther than this from a trunk are skipped. */
@@ -2391,7 +2679,7 @@ function traceFlowRoad(
 }
 
 /** Raise bridge decks slightly above water on the heightfield. */
-function applyRoadBridgeHeights(height: Float32Array, roads: Road[]): void {
+function applyRoadBridgeHeights(height: Float32Array, water: Float32Array, roads: Road[]): void {
   const rad = 2.2;
   for (const road of roads) {
     for (let i = 0; i < road.nodes.length; i++) {
@@ -2416,7 +2704,8 @@ function applyRoadBridgeHeights(height: Float32Array, roads: Road[]): void {
           for (let x = x0; x <= x1; x++) {
             if (Math.hypot(x - cx, y - cy) > rad) continue;
             const i = y * TEX + x;
-            height[i] = Math.max(height[i]!, ROAD_BRIDGE_H);
+            // Deck just above whatever water it spans.
+            if (water[i]! >= 0) height[i] = Math.max(height[i]!, water[i]! + ROAD_BRIDGE_CLEAR);
           }
         }
       }

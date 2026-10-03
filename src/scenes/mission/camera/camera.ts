@@ -1,5 +1,5 @@
 import { craftCameraScale, craftControlScheme, craftOf, craftCloudParallax } from "../../../sim/crafts";
-import { camZoomAt, worldToScreen, setCamera25DFocus, screenToWorldAtZ, waterSurfaceZ, WORLD, CamTune } from "../../../worldgen/world";
+import { camZoomAt, worldToScreen, setCamera25DFocus, screenToWorldAtZ, groundZ, WORLD, CamTune } from "../../../worldgen/world";
 import { PLAYER_WPNS, type PlayerWpnSpec, type Shot } from "../../../sim/combat";
 import Phaser from "phaser";
 
@@ -223,7 +223,9 @@ export class MissionCamera {
     const skyDepth = Layer.TERRAIN - 2;
     // Soft fog bank over the hard map cut.
     const fogDepth = Layer.WRECK + 0.5;
-    const seaZ = waterSurfaceZ();
+    // Off-map scenery sits at the surface of the nearest map edge (sea, shore or land).
+    const edgeZ = (x: number, y: number) =>
+      groundZ(this.s.world, Phaser.Math.Clamp(x, 0, WORLD - 1), Phaser.Math.Clamp(y, 0, WORLD - 1));
     let ki = 0;
 
     const place = (
@@ -316,7 +318,7 @@ export class MissionCamera {
           im,
           x,
           y,
-          z: seaZ + zOff,
+          z: edgeZ(x, y) + zOff,
           sx: sc * flip,
           sy: sc,
         });

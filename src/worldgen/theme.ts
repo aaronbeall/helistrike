@@ -141,6 +141,26 @@ export function themeOf(id: TerrainTheme | undefined): ThemeSpec {
   return TERRAIN_THEMES[id ?? "temperate"] ?? TERRAIN_THEMES.temperate;
 }
 
+const scaleRGB = (c: RGB, k: number, lift = 0): RGB => c.map((v) => Math.min(255, v * k + lift)) as RGB;
+
+/**
+ * Two underwater paint bands from a theme's water look: a light shallow shelf and the darker deep beyond it.
+ * Each is its own lo (shallow end) → hi (deep end) gradient.
+ */
+const bandCache = new WeakMap<BiomeLook, { shallow: BiomeLook; deep: BiomeLook }>();
+
+export function waterBandLooks(water: BiomeLook): { shallow: BiomeLook; deep: BiomeLook } {
+  let out = bandCache.get(water);
+  if (!out) {
+    out = {
+      shallow: { ...water, lo: scaleRGB(water.lo, 1.55, 14), hi: scaleRGB(water.lo, 1.15, 4) },
+      deep: { ...water, lo: scaleRGB(water.lo, 0.9), hi: scaleRGB(water.hi, 0.62) },
+    };
+    bandCache.set(water, out);
+  }
+  return out;
+}
+
 /** Look color at t (extrapolates, like the original per-biome ramps). */
 export function lookColor(l: BiomeLook, t: number, ch: 0 | 1 | 2): number {
   return l.lo[ch] + (l.hi[ch] - l.lo[ch]) * t;

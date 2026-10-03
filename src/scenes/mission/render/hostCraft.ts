@@ -14,6 +14,9 @@ import { groundZ, worldToScreen, cameraPointVisible, screenToWorldAtZ, projectHe
 import type { MissionScene } from "../../missionScene";
 
 /** Host craft rendering: hull/rotor/gun sprites + tilt wraps, cast shadow, gun tips + heat glow, mount positions, exhaust plumes, contrails, dust-off. */
+/** Shadow on a bed under water: softer + slightly spread, full effect by this water depth (z). */
+const UNDERWATER_SHADOW_FULL = 24;
+
 export class HostCraft {
   body!: Phaser.GameObjects.Image;
   rotor!: Phaser.GameObjects.Image;
@@ -70,6 +73,7 @@ export class HostCraft {
       y: number;
       z: number;
       cast: number;
+      underwater: number;
       sourceX: number;
       sourceY: number;
       sourceZ: number;
@@ -91,6 +95,7 @@ export class HostCraft {
         y: 0,
         z: 0,
         cast: 0,
+        underwater: 0,
         sourceX: 0,
         sourceY: 0,
         sourceZ: 0,
@@ -100,6 +105,7 @@ export class HostCraft {
       hit.y = fresh.y;
       hit.z = fresh.z;
       hit.cast = fresh.cast;
+      hit.underwater = fresh.underwater;
       hit.sourceX = x;
       hit.sourceY = y;
       hit.sourceZ = z;
@@ -110,7 +116,9 @@ export class HostCraft {
     const resolved = hit!;
     const cast = resolved.cast;
     const at = worldToScreen(resolved.x, resolved.y, resolved.z);
-    const want = shadowKey(tex, cast);
+    // On a bed under water: the normal shadow, softened (blurriest level) and slightly spread by the water.
+    const wet = resolved.underwater > 0.5 ? Math.min(1, resolved.underwater / UNDERWATER_SHADOW_FULL) : 0;
+    const want = shadowKey(tex, wet > 0 ? Math.max(cast, 90) : cast);
     const sk = this.s.textures.exists(want) ? want : "fx_shadow";
     if (sh.texture.key !== sk) sh.setTexture(sk);
     sh.setPosition(at.x, at.y)
@@ -119,8 +127,8 @@ export class HostCraft {
           ? screenRot
           : projectHeading(rot, resolved.x, resolved.y, resolved.z)
       )
-      .setAlpha(shadowAlpha(cast))
-      .setScale(scale * at.scale);
+      .setAlpha(shadowAlpha(cast) * (1 - 0.2 * wet))
+      .setScale(scale * at.scale * (1 + 0.1 * wet));
     const depth = worldDepth(resolved.z, -12, resolved.y);
     if (sh.depth !== depth) sh.setDepth(depth);
   }

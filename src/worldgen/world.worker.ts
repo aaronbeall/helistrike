@@ -13,6 +13,6 @@ ctx.onmessage = (ev: MessageEvent<Req>) => {
   }, ev.data.profile);
   ctx.postMessage(
     { type: "done", world },
-    [world.height.buffer, world.biome.buffer, world.terrain.data.buffer]
+    [world.height.buffer, world.water.buffer, world.biome.buffer, world.terrain.data.buffer]
   );
 };

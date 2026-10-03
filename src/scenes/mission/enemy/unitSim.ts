@@ -8,7 +8,7 @@ import { trackPrintAlpha } from "../../../render/fxCurves";
 import { noteEnemyVolley } from "./enemyFire";
 import { textureOf, heightOf, radius, unitStunned, tickStunKinematics, recordUnitSpin, type Unit } from "../../../sim/combat";
 import { specOf, gunsOf, crewOf, isGroundVehicle, isInfantry, driveOf } from "../../../sim/roster";
-import { groundZ, worldToScreen, cameraPointVisible, isWater, waterSurfaceZ } from "../../../worldgen/world";
+import { groundZ, worldToScreen, cameraPointVisible, isWater } from "../../../worldgen/world";
 import Phaser from "phaser";
 import { enemyShotBeh, AI_LOCK_BASE, AI_AIM_NARROW_BASE, AI_AIM_WIDE_MUL, advanceAimHold, aimNarrowTime, aimPrecisionSpread, holdProgress, lockAcquireTime } from "../../../sim/weaponRuntime";
 
@@ -607,11 +607,11 @@ export class UnitSim {
       u.y += u.vy * dt;
     } else if (sp.behavior === "patrol_boat") {
       stepOnTerrain(this.s.world, u, u.vx * dt, u.vy * dt, true);
-      u.z = isWater(this.s.world, u.x, u.y) ? waterSurfaceZ() : groundZ(this.s.world, u.x, u.y);
+      u.z = groundZ(this.s.world, u.x, u.y);
     } else if (isGroundVehicle(u.kind) || sp.behavior === "attack_infantry" || sp.behavior === "flee_infantry") {
       stepOnTerrain(this.s.world, u, u.vx * dt, u.vy * dt, false);
       this.separateGround(u);
-      u.z = isWater(this.s.world, u.x, u.y) ? waterSurfaceZ() : groundZ(this.s.world, u.x, u.y);
+      u.z = groundZ(this.s.world, u.x, u.y);
     }
     containOnMap(u, dt);
     this.tickStunZapFx(u, dt);
@@ -962,11 +962,8 @@ export class UnitSim {
           }
         }
         this.leashPinned(u);
-        if (sp.behavior === "patrol_boat" && isWater(this.s.world, u.x, u.y)) {
-          u.z = waterSurfaceZ();
-        } else {
-          u.z = groundZ(this.s.world, u.x, u.y);
-        }
+        // Water surface or ground — groundZ is the top surface either way.
+        u.z = groundZ(this.s.world, u.x, u.y);
       }
       containOnMap(u, dt);
       const guns = gunsOf(u);
