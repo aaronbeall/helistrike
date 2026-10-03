@@ -50,7 +50,7 @@ New gameplay/rendering logic does **not** go in the scene; it goes in the owning
 enemy/        targeting · unitSim · enemyFire
 remote/       fleet · ai · body
 weapons/      fireControl · projectiles · lockOn · countermeasures · tesla · refractor · callStrike
-fx/           fx · trails · groundMarks · emitters (function: createFxEmitters)
+fx/           fx · trails · groundMarks · ripples · emitters (function: createFxEmitters)
 destruction/  destruction
 render/       hostCraft · unitSprites · thermalMode
 camera/       camera
@@ -101,6 +101,7 @@ export class RemoteFleet {
 | Particles / impacts / muzzle flash | `fx/fx` (emitter configs in `fx/emitters`) |
 | Trails / ribbons | `fx/trails` |
 | Craters, scorch, wreck stamps | `fx/groundMarks` |
+| Water ripples (splashes, wakes) | `fx/ripples` (`s.ripples.spawn` / `.splash`) |
 | Deaths, crashes, debris | `destruction/destruction` |
 | HUD element | the matching `hud/…` module, or a new one |
 | Debug tool / overlay | `debug/…` |

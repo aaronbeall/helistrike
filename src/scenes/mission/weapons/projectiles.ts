@@ -1354,6 +1354,7 @@ export class Projectiles {
         }, this.s.fx.shortBurst);
       }
     } else if (water) {
+      this.s.ripples.splash(x, y, Math.max(26, blast * 0.9), Math.min(1, 0.45 + blast / 160));
       this.s.fx.emitVisualBurst(x, y, z + 3, {
         n: Math.min(80, Math.round(20 * fx.n)),
         spdMin: 50 * fx.spd,

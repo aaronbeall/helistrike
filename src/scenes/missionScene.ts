@@ -1,6 +1,7 @@
 import { heightOf, radius, playerLoadoutFromSockets, type Unit, type Debris, type Shot, type PlayerWpnSpec } from "../sim/combat";
 import { makeUnit, spawnCrewFor } from "../sim/units";
 import { stampDecor, GroundMarks } from "./mission/fx/groundMarks";
+import { Ripples } from "./mission/fx/ripples";
 import Phaser from "phaser";
 import { FieldBars } from "./mission/hud/fieldBars";
 import { MissionFlow } from "./mission/flow/missionFlow";
@@ -80,6 +81,7 @@ export class MissionScene extends Phaser.Scene {
   fx = new Fx(this);
   trails = new Trails(this);
   groundMarks = new GroundMarks(this);
+  ripples = new Ripples(this);
   // destruction
   destruction = new Destruction(this);
   // render
@@ -202,6 +204,7 @@ export class MissionScene extends Phaser.Scene {
     this.debris = [];
     this.lockOn.reset();
     this.groundMarks.reset();
+    this.ripples.reset();
     for (const g of this.groundMarks.emberGlows) {
       g.image.destroy();
       g.bloom.destroy();
@@ -288,6 +291,7 @@ export class MissionScene extends Phaser.Scene {
     this.groundMarks.wreckLayer.setDisplaySize(WORLD, WORLD).setDepth(Layer.WRECK);
     (this.groundMarks.wreckLayer.texture as Phaser.Textures.DynamicTexture).setIsSpriteTexture(false);
     this.groundMarks.wreckLayer.clear();
+    this.ripples.create();
     if (this.game.renderer instanceof Phaser.Renderer.WebGL.WebGLRenderer) {
       this.terrain25d = createTerrain25D(this, this.world, {
         terrain: "map_terrain",
@@ -1110,6 +1114,7 @@ export class MissionScene extends Phaser.Scene {
         this.projectiles.updateShots(endDt);
         this.destruction.updateDebris(endDt);
         this.fx.updateSimParticles(endDt);
+        this.ripples.update(endDt);
         this.countermeasures.updateSmokePuffs(endDt);
         this.fx.emitHeliCrashDmgFlames();
         this.reticleHud.hideAimChrome();
@@ -1203,6 +1208,7 @@ export class MissionScene extends Phaser.Scene {
     }
     this.groundMarks.updateThermalWreckMarks(dt);
     this.groundMarks.updateEmberGlows(dt);
+    this.ripples.update(dt);
     this.overlays.tickBlast(wallDt);
 
     if (this.relief.open) this.relief.tick(wallDt);

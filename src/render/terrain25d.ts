@@ -30,6 +30,8 @@ export interface Terrain25DOptions {
   depth?: number;
   /** Disable conservative per-chunk screen culling for diagnostics. */
   cullChunks?: boolean;
+  /** Optional world-sized ripple buffer (alpha = ripple brightness), masked to water. */
+  ripple?: Terrain25DTexture | null;
 }
 
 type GLTextureWrapper = Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper;
@@ -60,6 +62,10 @@ interface Uniforms {
   projectionBlend: WebGLUniformLocation | null;
   shore: WebGLUniformLocation | null;
   shoreParams: WebGLUniformLocation | null;
+  ripple: WebGLUniformLocation | null;
+  waterMask: WebGLUniformLocation | null;
+  rippleParams: WebGLUniformLocation | null;
+  rippleRect: WebGLUniformLocation | null;
 }
 
 interface CameraMatrix {
@@ -109,28 +115,61 @@ void main(void) {
 }
 `;
 
-const FRAGMENT_SHADER = `
+const FRAGMENT_SHADER_SRC = `
+// Texel-space math (vUV × 1800) needs more than mediump's ~10-bit mantissa.
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
 precision mediump float;
+#endif
 uniform sampler2D uTerrain;
 uniform sampler2D uDecal;
 uniform vec2 uDecalParams;
 uniform sampler2D uShore;
 uniform vec3 uShoreParams;
+uniform sampler2D uRipple;
+uniform sampler2D uWaterMask;
+uniform vec2 uRippleParams;
+uniform vec3 uRippleRect;
 varying vec2 vUV;
+
+const float SHORE_TEX = SHORE_TEX_PX;
+
+float shoreCrest(vec2 uv) {
+  vec4 sh = texture2D(uShore, uv);
+  if (sh.r <= 0.004) return 0.0;
+  float d = (1.0 - sh.r) * uShoreParams.z;
+  float wave = sin(d * 1.25 - uShoreParams.y * 2.1 + sh.a * 6.2832);
+  float fade = sh.r * sh.r;
+  // Crests widen as they age (travel outward): thin at the edge, broad by the end of the reach.
+  float lo = mix(0.72, 0.25, 1.0 - sh.r);
+  return smoothstep(lo, 1.0, wave) * fade * 0.42 + smoothstep(0.86, 1.0, sh.r) * 0.14;
+}
 
 void main(void) {
   vec4 base = texture2D(uTerrain, vUV);
-  // Shoreline pulse: soft bright bands moving outward from every water edge (shore texture: L = closeness, A = phase noise).
-  if (uShoreParams.x > 0.5) {
-    vec4 sh = texture2D(uShore, vUV);
-    if (sh.r > 0.004) {
-      float d = (1.0 - sh.r) * uShoreParams.z;
-      float wave = sin(d * 1.25 - uShoreParams.y * 2.1 + sh.a * 6.2832);
-      float fade = sh.r * sh.r;
-      // Crests widen as they age (travel outward): thin at the edge, broad by the end of the reach.
-      float lo = mix(0.72, 0.25, 1.0 - sh.r);
-      float crest = smoothstep(lo, 1.0, wave) * fade * 0.42 + smoothstep(0.86, 1.0, sh.r) * 0.14;
-      base.rgb += vec3(0.78, 0.92, 0.95) * crest;
+  // Shoreline pulse: soft bright bands moving outward from every water edge (shore texture: L = closeness,
+  // A = phase noise). Evaluated at terrain texel centers and blended bilinearly, so it has the same
+  // on-screen resolution as the painted map instead of being pixel-sharp.
+  if (uShoreParams.x > 0.5 && texture2D(uShore, vUV).r > 0.0) {
+    vec2 tp = vUV * SHORE_TEX - 0.5;
+    vec2 f = fract(tp);
+    vec2 c0 = (floor(tp) + 0.5) / SHORE_TEX;
+    vec2 dt = vec2(1.0 / SHORE_TEX, 0.0);
+    float crest = mix(
+      mix(shoreCrest(c0), shoreCrest(c0 + dt.xy), f.x),
+      mix(shoreCrest(c0 + dt.yx), shoreCrest(c0 + dt.xx), f.x),
+      f.y
+    );
+    base.rgb += vec3(0.78, 0.92, 0.95) * crest;
+  }
+  // Ripple buffer (splashes, wakes), clipped to water by the mask.
+  if (uRippleParams.x > 0.5) {
+    vec2 rUV = (vUV - uRippleRect.xy) / uRippleRect.z;
+    if (rUV.x >= 0.0 && rUV.y >= 0.0 && rUV.x <= 1.0 && rUV.y <= 1.0) {
+      rUV.y = mix(rUV.y, 1.0 - rUV.y, uRippleParams.y);
+      float rp = texture2D(uRipple, rUV).a;
+      if (rp > 0.004) base.rgb += vec3(0.8, 0.93, 0.96) * min(rp, 1.0) * texture2D(uWaterMask, vUV).r * 0.85;
     }
   }
   vec2 decalUV = vec2(vUV.x, mix(vUV.y, 1.0 - vUV.y, uDecalParams.y));
@@ -142,6 +181,8 @@ void main(void) {
   );
 }
 `;
+
+const FRAGMENT_SHADER = FRAGMENT_SHADER_SRC.replace("SHORE_TEX_PX", TEX.toFixed(1));
 
 /** Shore wave reach (texels into the water from sea / lake edges). */
 const SHORE_REACH = 26;
@@ -185,6 +226,22 @@ function buildShoreField(world: WorldData): Uint8Array {
     const x = i % TEX;
     const y = (i / TEX) | 0;
     out[i * 2 + 1] = Math.round(255 * fbm(x * 0.012, y * 0.012, 913, 2));
+  }
+  return out;
+}
+
+/** Water mask resolution (half the height map: smooth, and cheap). */
+const WATER_MASK_TEX = TEX / 2;
+
+/** 255 where any water (sea, lake, river) is in the 2×2 texel block, else 0 — clips ripples at shorelines. */
+function buildWaterMask(world: WorldData): Uint8Array {
+  const n = WATER_MASK_TEX;
+  const out = new Uint8Array(n * n);
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const i = y * 2 * TEX + x * 2;
+      if (world.water[i]! >= 0 || world.water[i + 1]! >= 0 || world.water[i + TEX]! >= 0 || world.water[i + TEX + 1]! >= 0) out[y * n + x] = 255;
+    }
   }
   return out;
 }
@@ -259,6 +316,11 @@ export class Terrain25D extends Phaser.GameObjects.GameObject {
   private whiteTexture: WebGLTexture | null = null;
   private shoreTexture: WebGLTexture | null = null;
   private shoreData: Uint8Array | null = null;
+  private waterMaskTexture: WebGLTexture | null = null;
+  private waterMaskData: Uint8Array | null = null;
+  rippleTexture: Terrain25DTexture | null;
+  /** Ripple window in map UV: origin x, y and size. */
+  private rippleRect: [number, number, number] = [0, 0, 1];
   shoreWaves = true;
 
   constructor(scene: Phaser.Scene, world: WorldData, options: Terrain25DOptions) {
@@ -278,6 +340,8 @@ export class Terrain25D extends Phaser.GameObjects.GameObject {
     this._depth = options.depth ?? 0;
     this.buildChunks();
     this.shoreData = buildShoreField(world);
+    this.waterMaskData = buildWaterMask(world);
+    this.rippleTexture = options.ripple ?? null;
     renderer.pipelines.clear();
     try {
       this.createResources();
@@ -314,6 +378,13 @@ export class Terrain25D extends Phaser.GameObjects.GameObject {
   setDecalTexture(texture: Terrain25DTexture | null, opacity = this.decalOpacity): this {
     this.decalTexture = texture;
     this.decalOpacity = Phaser.Math.Clamp(opacity, 0, 1);
+    return this;
+  }
+
+  /** Ripple buffer covering the map-UV window (u0, v0) .. (u0 + size, v0 + size). */
+  setRippleTexture(texture: Terrain25DTexture | null, u0 = 0, v0 = 0, size = 1): this {
+    this.rippleTexture = texture;
+    this.rippleRect = [u0, v0, size];
     return this;
   }
 
@@ -406,6 +477,12 @@ export class Terrain25D extends Phaser.GameObjects.GameObject {
       gl.bindTexture(gl.TEXTURE_2D, decalGL);
       gl.activeTexture(gl.TEXTURE2);
       gl.bindTexture(gl.TEXTURE_2D, this.shoreTexture ?? this.whiteTexture);
+      const ripple = this.rippleTexture ? this.resolveGLTexture(this.rippleTexture)?.webGLTexture ?? null : null;
+      gl.activeTexture(gl.TEXTURE3);
+      gl.bindTexture(gl.TEXTURE_2D, ripple ?? this.whiteTexture);
+      gl.activeTexture(gl.TEXTURE4);
+      gl.bindTexture(gl.TEXTURE_2D, this.waterMaskTexture ?? this.whiteTexture);
+      this.setRippleUniforms(gl, !!ripple && !!this.waterMaskTexture);
 
       gl.enableVertexAttribArray(0);
       gl.enableVertexAttribArray(1);
@@ -537,7 +614,24 @@ export class Terrain25D extends Phaser.GameObjects.GameObject {
       projectionBlend: gl.getUniformLocation(this.program, "uProjectionBlend"),
       shore: gl.getUniformLocation(this.program, "uShore"),
       shoreParams: gl.getUniformLocation(this.program, "uShoreParams"),
+      ripple: gl.getUniformLocation(this.program, "uRipple"),
+      waterMask: gl.getUniformLocation(this.program, "uWaterMask"),
+      rippleParams: gl.getUniformLocation(this.program, "uRippleParams"),
+      rippleRect: gl.getUniformLocation(this.program, "uRippleRect"),
     };
+    if (this.waterMaskData) {
+      this.waterMaskTexture = gl.createTexture();
+      gl.activeTexture(gl.TEXTURE4);
+      gl.bindTexture(gl.TEXTURE_2D, this.waterMaskTexture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, WATER_MASK_TEX, WATER_MASK_TEX, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, this.waterMaskData);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+      gl.activeTexture(gl.TEXTURE0);
+    }
     if (this.shoreData) {
       this.shoreTexture = gl.createTexture();
       gl.activeTexture(gl.TEXTURE2);
@@ -586,6 +680,8 @@ export class Terrain25D extends Phaser.GameObjects.GameObject {
     if (this.whiteTexture) gl.deleteTexture(this.whiteTexture);
     if (this.shoreTexture) gl.deleteTexture(this.shoreTexture);
     this.shoreTexture = null;
+    if (this.waterMaskTexture) gl.deleteTexture(this.waterMaskTexture);
+    this.waterMaskTexture = null;
     this.program = null;
     this.uniforms = null;
     this.whiteTexture = null;
@@ -659,6 +755,14 @@ export class Terrain25D extends Phaser.GameObjects.GameObject {
       this.decalTexture ? this.decalOpacity : 0,
       decalFlipY ? 1 : 0
     );
+  }
+
+  private setRippleUniforms(gl: WebGLRenderingContext, on: boolean): void {
+    const u = this.uniforms!;
+    gl.uniform1i(u.ripple, 3);
+    gl.uniform1i(u.waterMask, 4);
+    gl.uniform2f(u.rippleParams, on ? 1 : 0, this.rippleTexture instanceof Phaser.GameObjects.RenderTexture ? 1 : 0);
+    gl.uniform3f(u.rippleRect, ...this.rippleRect);
   }
 
   private chunkVisible(chunk: Chunk, camera: Phaser.Cameras.Scene2D.Camera): boolean {

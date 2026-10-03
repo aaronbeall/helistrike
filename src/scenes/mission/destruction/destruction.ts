@@ -613,6 +613,7 @@ export class Destruction {
     const sinkKey = `${baseKey}_sink`;
     const key = this.s.textures.exists(sinkKey) ? sinkKey : baseKey;
     const surface = groundZ(this.s.world, u.x, u.y);
+    this.s.ripples.splash(u.x, u.y, radius(u.kind) * 2.6, 1);
     this.admitDebris({
       x: u.x,
       y: u.y,
@@ -1248,6 +1249,7 @@ export class Destruction {
   }
 
   settleDebris(f: Debris): void {
+    if (!f.shellEject && isWater(this.s.world, f.x, f.y)) this.s.ripples.spawn(f.x, f.y, 22 + 26 * (f.scale ?? 1), 0.6);
     if (f.linger) this.s.groundMarks.stampLightBlast(f.x, f.y, f.vx, f.vy);
     if (f.dishFlat) {
       this.s.hostCraft.emitDustShock(f.x, f.y, 0.95);
@@ -1304,6 +1306,7 @@ export class Destruction {
     if (!f.trailOnly) {
       if (isWater(this.s.world, f.x, f.y)) {
         const sc = Math.max(0.08, f.scale ?? 0.2);
+        this.s.ripples.spawn(f.x, f.y, 10 + sc * 30, 0.4, 1.1);
         const n = Math.max(1, Math.round(2 + sc * 6));
         this.s.fx.emitVisualBurst(
           f.x,
