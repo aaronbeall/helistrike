@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { Camera25D, isWater, WORLD } from "../../../worldgen/world";
+import { Camera25D, groundZ, isWater, WORLD } from "../../../worldgen/world";
 import { specOf } from "../../../sim/roster";
 import type { MissionScene } from "../../missionScene";
 
@@ -15,6 +15,9 @@ const MAX_RIPPLES = 640;
 /** Wake: a segment dropped this often (s) above this speed (world units / s). */
 const WAKE_EVERY = 0.22;
 const WAKE_MIN_SPEED = 6;
+/** Land units wading shallows splash this often (s) above this speed. */
+const WADE_EVERY = 0.18;
+const WADE_MIN_SPEED = 5;
 const WAKE_LIFE = 3.2;
 /** Kelvin-like wake arm half-angle: arms spread sideways at tan(angle) × boat speed. */
 const WAKE_ARM = 0.34;
@@ -74,9 +77,44 @@ export class Ripples {
     this.spawn(x, y, size, strength, 2.1);
   }
 
+  /** Land unit moving through shallows: periodic splash spray + ripple. */
+  private wade(u: { x: number; y: number; z: number; vx: number; vy: number; kind: Parameters<typeof specOf>[0] }, dt: number): void {
+    const spd = Math.hypot(u.vx, u.vy);
+    if (spd < WADE_MIN_SPEED || !isWater(this.s.world, u.x, u.y)) return;
+    const t = (this.wakeT.get(u) ?? 0) + dt;
+    if (t < WADE_EVERY) {
+      this.wakeT.set(u, t);
+      return;
+    }
+    this.wakeT.set(u, 0);
+    const r = specOf(u.kind).radius;
+    this.spawn(u.x, u.y, r * 1.8, 0.6, 1.2);
+    this.s.fx.emitVisualBurst(
+      u.x,
+      u.y,
+      groundZ(this.s.world, u.x, u.y) + 2,
+      {
+        n: Math.max(2, Math.round(r / 6)),
+        spdMin: 30,
+        spdMax: 90 + spd,
+        bx: u.vx,
+        by: u.vy,
+        bz: 160,
+        tight: 0.35,
+        scaleMul: 0.4 + r / 60,
+        gravity: 220,
+      },
+      this.s.fx.splashBurst
+    );
+  }
+
   update(dt: number): void {
     for (const u of this.s.units) {
-      if (u.dead || !specOf(u.kind).water) continue;
+      if (u.dead) continue;
+      if (!specOf(u.kind).water) {
+        this.wade(u, dt);
+        continue;
+      }
       const spd = Math.hypot(u.vx, u.vy);
       if (spd < WAKE_MIN_SPEED) continue;
       const t = (this.wakeT.get(u) ?? 0) + dt;

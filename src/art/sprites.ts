@@ -1063,6 +1063,12 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
       put(textures, sock.gunHulk, darkenWreck(copy), "generated");
     }
   }
+  // Sunk-debris art: every hulk + debris piece gets the boat-hulk `_sink` look up front (no first-sink hitch).
+  for (const key of textures.getTextureKeys()) {
+    if (!(key.endsWith("_hulk") || key.startsWith("fx_debris_"))) continue;
+    if (/__(woodland|desert|urban|snow|digital)$/.test(key) || isUtilityDerived(key)) continue;
+    ensureSinkTexture(textures, key);
+  }
   // Wreck / pop-hulk atlases (guns, rotors, hulls) — needed for in-flight debris shadows.
   for (const key of textures.getTextureKeys()) {
     if (!key.endsWith("_hulk")) continue;
@@ -2423,6 +2429,20 @@ function darkenWreck(src: HTMLCanvasElement, mul = 0.55): HTMLCanvasElement {
 }
 
 /** Pre-bake a dark submerged blue cast of a boat hulk. */
+/** `{key}_sink` (the boat-hulk submerged look) for any texture; baked on first use if not prebaked. Returns the sink key. */
+export function ensureSinkTexture(textures: Phaser.Textures.TextureManager, key: string): string {
+  const sink = `${key}_sink`;
+  if (textures.exists(sink)) return sink;
+  if (!textures.exists(key)) return key;
+  const img = textures.get(key).getSourceImage() as HTMLImageElement | HTMLCanvasElement;
+  const c = document.createElement("canvas");
+  c.width = img.width;
+  c.height = img.height;
+  c.getContext("2d")!.drawImage(img, 0, 0);
+  put(textures, sink, submergeBlue(c), "generated");
+  return sink;
+}
+
 function submergeBlue(src: HTMLCanvasElement): HTMLCanvasElement {
   const c = copyCanvas(src);
   const g = c.getContext("2d", { willReadFrequently: true })!;

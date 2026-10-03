@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { type Unit } from "./combat";
 import { specOf, isGroundVehicle, driveOf } from "./roster";
-import { isWater, WORLD, type WorldData } from "../worldgen/world";
+import { isWater, WORLD, type WorldData, isDeepWater } from "../worldgen/world";
 import { MAP_AIR_SOFT } from "./craft";
 import { type RemoteCraft } from "./remote";
 
@@ -269,12 +269,9 @@ export function pickBoatWaypoint(world: WorldData, u: Unit): void {
   u.aiTy = Phaser.Math.Clamp(u.y + Math.sin(u.angle) * 80, lo, hi);
 }
 
-/** Step on preferred terrain only; slide on axes or brake if blocked. */
+/** Step on preferred terrain only; slide on axes or brake if blocked. Land units can wade shallows (not depths). */
 export function stepOnTerrain(world: WorldData, u: Unit, dx: number, dy: number, preferWater: boolean): void {
-  const ok = (px: number, py: number) => {
-    const wet = isWater(world, px, py);
-    return preferWater ? wet : !wet;
-  };
+  const ok = (px: number, py: number) => (preferWater ? isWater(world, px, py) : !isDeepWater(world, px, py));
   const nx = u.x + dx;
   const ny = u.y + dy;
   if (ok(nx, ny)) {

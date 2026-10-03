@@ -138,7 +138,9 @@ export class GroundMarks {
     scaleY?: number,
     frame?: string | number,
     tint?: number,
-    thermal = true
+    thermal = true,
+    /** Multiply tint (keeps detail), e.g. wrecks lying in shallows; `tint` is a solid fill. */
+    mulTint?: number
   ): void {
     if (!this.s.textures.exists(key)) return;
     const k = WRECK_TEX / WORLD;
@@ -154,6 +156,9 @@ export class GroundMarks {
       .setPosition(x * k, y * k);
     if (tint != null) {
       this.stampBrush.setTintFill(tint);
+      this.stampBrush.setBlendMode(Phaser.BlendModes.NORMAL);
+    } else if (mulTint != null) {
+      this.stampBrush.setTint(mulTint);
       this.stampBrush.setBlendMode(Phaser.BlendModes.NORMAL);
     } else {
       this.stampBrush.clearTint();

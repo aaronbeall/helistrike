@@ -11,9 +11,15 @@ import { Layer, ZOff, worldDepth } from "../../../render/depth";
 import { isGroundVehicle, hasSoftBlood, specOf, gunsOf } from "../../../sim/roster";
 import { circumRadiusOf, footprintOf, randomInFootprint, type Footprint } from "../../../render/footprint";
 import { craftGunSocketSlots, craftOrigin, craftRotorIsProp, craftRotorMounts, rotorDrawSpan, rotorMountsOf, rotorSpinSign, type CraftSpec } from "../../../sim/crafts";
-import { shadowKey, FX_VARIANTS, spritePivot } from "../../../art/sprites";
-import { groundSlope, groundZ, worldToScreen, cameraPointVisible, screenVelX, screenVelY, projectHeading, castZ, isWater, bedZ, screenToWorldAtZ, zScale } from "../../../worldgen/world";
+import { ensureSinkTexture, shadowKey, FX_VARIANTS, spritePivot } from "../../../art/sprites";
+import { groundSlope, groundZ, worldToScreen, cameraPointVisible, screenVelX, screenVelY, projectHeading, castZ, isWater, isDeepWater, bedZ, screenToWorldAtZ, zScale } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
+
+/** Multiply tint for wrecks settled in shallow water (lighter than the deep-water sink art). */
+const SHALLOW_WRECK_TINT = 0x9cbfd2;
+
+/** Sinking debris spin kept per second (slow decay after the entry cut). */
+const SINK_SPIN_DECAY = 0.7;
 
 /** Generic debris touchdown bounce test (fast, steep impact with bounces left). */
 function debrisWillBounce(f: Debris): boolean {
@@ -1013,7 +1019,10 @@ export class Destruction {
           f.vy *= Math.pow(0.86, dt);
           if (f.vz <= 0) {
             const g = groundZ(this.s.world, f.x, f.y);
-            if (f.z <= g) {
+            if (f.z <= g && isWater(this.s.world, f.x, f.y)) {
+              f.z = g;
+              this.vanishInWater(f, 0.1);
+            } else if (f.z <= g) {
               f.z = g;
               const spd = Math.hypot(f.vx, f.vy, f.vz);
               if (f.bounces > 0 && spd > 35) {
@@ -1040,6 +1049,15 @@ export class Destruction {
             f.z = g;
             if (f.boomBit) {
               this.settleBoomBit(f);
+            } else if (!f.trailOnly && isDeepWater(this.s.world, f.x, f.y)) {
+              // Deep water: hulks, parts, rotors, turrets splash and sink (crash hulks still get their impact
+              // burst, keeping their spin). Shallows fall through to the normal land death.
+              if (f.heliCrash) {
+                const spin = f.spin;
+                this.impactHeliCrash(f);
+                f.spin = spin;
+              }
+              this.beginWaterSink(f);
             } else {
               if (!f.linger) this.s.groundMarks.stampDirtSmears(f.x, f.y, f.vx, f.vy);
               if (f.turretPop) this.turretTouchdown(f);
@@ -1138,7 +1156,12 @@ export class Destruction {
       f.vy += ay * pull * dt;
     }
     const wet = isWater(this.s.world, f.x, f.y);
-    const fric = wet ? 0.12 : steep > 0.07 ? 0.88 : steep > 0.04 ? 0.62 : 0.38;
+    // Rolled into deep water: splash and sink like other debris.
+    if (wet && !f.trailOnly && isDeepWater(this.s.world, f.x, f.y)) {
+      this.beginWaterSink(f);
+      return;
+    }
+    const fric = steep > 0.07 ? 0.88 : steep > 0.04 ? 0.62 : 0.38;
     f.vx *= Math.pow(fric, dt);
     f.vy *= Math.pow(fric, dt);
     const spd = Math.hypot(f.vx, f.vy);
@@ -1181,15 +1204,16 @@ export class Destruction {
     f.y += f.vy * dt;
     f.vx *= Math.pow(0.35, dt);
     f.vy *= Math.pow(0.35, dt);
-    // Keep a gentle yaw the whole way down.
     f.angle += f.spin * dt;
-    f.spin = Phaser.Math.Linear(f.spin, f.spin >= 0 ? 0.12 : -0.12, 1 - Math.pow(0.5, dt));
-    // Water surface → bed below it. Scale shrinks with depth.
+    // Boats ease to a gentle yaw; other debris keeps its stunted spin, decaying slowly as it goes down.
+    if (!f.waterSink) f.spin = Phaser.Math.Linear(f.spin, f.spin >= 0 ? 0.12 : -0.12, 1 - Math.pow(0.5, dt));
+    else f.spin *= Math.pow(SINK_SPIN_DECAY, dt);
+    // Water surface → bed below it; the camera projection shows the depth (no extra shrink).
     const surface = groundZ(this.s.world, f.x, f.y);
     const bed = bedZ(this.s.world, f.x, f.y);
     f.z = Phaser.Math.Linear(surface, bed, ease);
     f.vz = 0;
-    f.scale = Phaser.Math.Linear(1, 0.55, ease);
+    f.scale = f.sinkScale0 ?? f.scale ?? 1;
     if (u >= 1) this.settleBoatSink(f);
   }
 
@@ -1200,8 +1224,8 @@ export class Destruction {
     f.vz = 0;
     if (!f.trailOnly) {
       const o = debrisStampOrigin(f.key);
-      const hs = wreckDrawScale(this.s.world, f.x, f.y, f.z || 0, f.scale ?? 0.55);
-      // Pre-baked blue sink art — no runtime tintFill.
+      const hs = wreckDrawScale(this.s.world, f.x, f.y, f.z || 0, f.scale ?? 1);
+      // Baked blue sink art (boats and other sunk debris alike) — no runtime tint.
       this.s.groundMarks.stampWreck(f.key, f.x, f.y, f.angle, hs.sx, 0.8, o.x, o.y, hs.sy);
       f.trailOnly = true;
     }
@@ -1236,8 +1260,10 @@ export class Destruction {
     this.s.camera.shake = Math.min(10, this.s.camera.shake + 2.4);
     let sc = Phaser.Math.Linear(0.85, 1.45, f.impactDust ?? 0.5) * range(0.9, 1.2);
     if (f.playerCrash) sc *= 1.12;
-    this.s.groundMarks.stampBlastCrater(f.x, f.y, sc);
-    this.s.groundMarks.spawnCraterEmbers(f.x, f.y, softCapBlastCraterScale(sc));
+    if (!isDeepWater(this.s.world, f.x, f.y)) {
+      this.s.groundMarks.stampBlastCrater(f.x, f.y, sc);
+      this.s.groundMarks.spawnCraterEmbers(f.x, f.y, softCapBlastCraterScale(sc));
+    }
     f.simmer = range(2.6, 4.4);
     f.spin = 0;
     f.spinAccel = 0;
@@ -1277,7 +1303,9 @@ export class Destruction {
         sx *= 1.08;
         sy *= 0.78;
       }
-      this.s.groundMarks.stampWreck(f.key, f.x, f.y, f.angle, sx, 0.92, o.x, o.y, sy);
+      // Normal land death; wrecks lying in shallows get a light water tint.
+      const shallow = isWater(this.s.world, f.x, f.y) ? SHALLOW_WRECK_TINT : undefined;
+      this.s.groundMarks.stampWreck(f.key, f.x, f.y, f.angle, sx, 0.92, o.x, o.y, sy, undefined, undefined, true, shallow);
       if (f.shellEject) {
         this.s.groundMarks.addThermalWreckMark(
           f.key,
@@ -1298,6 +1326,65 @@ export class Destruction {
     if (!f.heliCrash && !f.shellEject && !f.boomBit) this.beginDebrisTrailFade(f);
   }
 
+  /** Water splash spray + ripple, sized 0..1+ (small bits ~0.1, hulks ~1). */
+  waterSplash(x: number, y: number, z: number, size: number): void {
+    const sc = Math.max(0.08, size);
+    this.s.ripples.spawn(x, y, 10 + sc * 34, Math.min(1, 0.35 + sc * 0.5), 1.1 + sc * 0.6);
+    this.s.fx.emitVisualBurst(
+      x,
+      y,
+      z + 2,
+      {
+        n: Math.max(1, Math.round(2 + sc * 10)),
+        spdMin: 40,
+        spdMax: 140 + sc * 60,
+        bx: 0,
+        by: -0.35,
+        bz: 1,
+        tight: 0.55,
+        scaleMul: 0.35 + sc * 0.9,
+        gravity: 220,
+        depthOff: ZOff.fire + 0.3,
+      },
+      this.s.fx.splashBurst
+    );
+  }
+
+  /** Small object hits water: splash and remove (casings, flecks). */
+  vanishInWater(f: Debris, size: number): void {
+    this.waterSplash(f.x, f.y, f.z, size);
+    f.vx = 0;
+    f.vy = 0;
+    f.vz = 0;
+    f.trailOnly = true;
+    // Not marked settled so the trailOnly+life cull can remove it this tick.
+    f.trailFade = 0;
+    f.life = 0;
+    f.settled = false;
+  }
+
+  /** Debris / hulk lands in water: splash, then sink to the bed tinting blue (shares the boat-sink tick). */
+  beginWaterSink(f: Debris): void {
+    const sc = f.scale ?? 1;
+    this.waterSplash(f.x, f.y, f.z, Math.min(1.4, 0.3 + sc * 0.7));
+    f.z = groundZ(this.s.world, f.x, f.y);
+    f.gravity = false;
+    f.boatSink = true;
+    f.waterSink = true;
+    f.sinkT = 0;
+    f.sinkMax = 2 + Math.min(3, sc * 2.4);
+    f.sinkScale0 = sc;
+    // Same submerged look as boat hulks: blue `_sink` art from the first frame.
+    f.key = ensureSinkTexture(this.s.textures, f.key);
+    f.vx *= 0.35;
+    f.vy *= 0.35;
+    f.vz = 0;
+    // Water stunts spin ~85% but doesn't kill it (spinning heli hulks keep turning slowly as they go down).
+    f.spin *= 0.15;
+    f.spinAccel = 0;
+    f.rolling = false;
+  }
+
   /** Tiny mech fleck from a big boom: stamp on land, splash+delete in water. */
   settleBoomBit(f: Debris): void {
     f.vx = 0;
@@ -1305,27 +1392,7 @@ export class Destruction {
     f.vz = 0;
     if (!f.trailOnly) {
       if (isWater(this.s.world, f.x, f.y)) {
-        const sc = Math.max(0.08, f.scale ?? 0.2);
-        this.s.ripples.spawn(f.x, f.y, 10 + sc * 30, 0.4, 1.1);
-        const n = Math.max(1, Math.round(2 + sc * 6));
-        this.s.fx.emitVisualBurst(
-          f.x,
-          f.y,
-          f.z + 2,
-          {
-            n,
-            spdMin: 40,
-            spdMax: 140,
-            bx: 0,
-            by: -0.35,
-            bz: 1,
-            tight: 0.55,
-            scaleMul: 0.35 + sc * 0.9,
-            gravity: 220,
-            depthOff: ZOff.fire + 0.3,
-          },
-          this.s.fx.splashBurst
-        );
+        this.waterSplash(f.x, f.y, f.z, Math.max(0.08, f.scale ?? 0.2));
       } else {
         const o = debrisStampOrigin(f.key);
         const sc = Math.max(0.05, f.scale ?? 0.08);

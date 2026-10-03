@@ -1119,6 +1119,19 @@ export function groundZ(world: WorldData, x: number, y: number): number {
 }
 
 /** Floating craft ride this Z on water; bed under the water is still `groundZ`. */
+/** Water shallower than this (z, surface to bed) is wadeable by land units; deeper blocks them. */
+export const SHALLOW_WATER_Z = 7;
+
+/** Water depth (z) at a point: surface − bed, 0 on dry land. */
+export function waterDepthZ(world: WorldData, x: number, y: number): number {
+  return Math.max(0, groundZ(world, x, y) - bedZ(world, x, y));
+}
+
+/** Water too deep for land units. */
+export function isDeepWater(world: WorldData, x: number, y: number): boolean {
+  return isWater(world, x, y) && waterDepthZ(world, x, y) > SHALLOW_WATER_Z;
+}
+
 /** Bottom under any water (true ground / sea floor / lake + river bed), bilinear — what the terrain mesh draws. */
 export function bedZ(world: WorldData, x: number, y: number): number {
   const tx = clamp((x / WORLD) * TEX, 0, TEX - 1.001);

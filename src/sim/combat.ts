@@ -1078,6 +1078,10 @@ export interface Debris {
   flamePts?: { lx: number; ly: number; sc: number }[];
   /** Match live radar dish foreshortening (scaleY squash). */
   dishFlat?: boolean;
+  /** Generic debris sinking after landing in water (runtime blue tint; boats use baked `_sink` art). */
+  waterSink?: boolean;
+  /** Scale when sinking began (sink shrinks relative to it). */
+  sinkScale0?: number;
   /** Popped-off turret: small dirt burst on first touchdown (cleared once spent). */
   turretPop?: boolean;
   /** Strong air drag for spinning rotor debris. */

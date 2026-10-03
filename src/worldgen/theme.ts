@@ -1,7 +1,7 @@
 /** Terrain themes: per-biome palette, tile texture + tint, and decor swaps. Visual only; biome rules are unchanged. */
 import type { DecorKind } from "./world";
 
-export type TerrainTheme = "temperate" | "arctic" | "desert" | "tropic" | "coastal";
+export type TerrainTheme = "temperate" | "autumn" | "arctic" | "desert" | "tropic" | "coastal";
 export type RGB = [number, number, number];
 
 /** Biome slot order matches world BIOME_ID: water, river, sand, grass, forest, rock, peak. */
@@ -45,6 +45,27 @@ export const TERRAIN_THEMES: Record<TerrainTheme, ThemeSpec> = {
       look([140, 138, 132], [220, 218, 222], N1, 6),
     ],
     decor: {},
+  },
+  autumn: {
+    id: "autumn",
+    label: "AUTUMN",
+    description: "Golden grass, rust and amber woods, bare trees and evergreens under cool grey water.",
+    looks: [
+      look([34, 64, 78], [24, 46, 66], [0.3, 0.1, 0], 0),
+      look([52, 50, 40], [52, 50, 40], [0.25, 0.2, 0], 1),
+      look([176, 150, 104], [118, 108, 86], [1, 0.6, 0.2], 2),
+      look([132, 118, 66], [160, 136, 72], [1, 0.6, 0.2], 3, [146, 128, 72]),
+      look([146, 70, 34], [180, 100, 40], [0.6, 0.4, 0], 4, [164, 84, 38]),
+      look([104, 92, 82], [104, 92, 82], N1, 5),
+      look([150, 144, 138], [214, 210, 206], N1, 6),
+    ],
+    decor: {
+      tree: ["dead", "pine", "dead"],
+      bush: ["shrub", "dead"],
+      palm: ["pine"],
+      cactus: ["shrub"],
+      cactus2: ["dead"],
+    },
   },
   arctic: {
     id: "arctic",
