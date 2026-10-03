@@ -499,7 +499,8 @@ export class DebugOverlays {
     if (this.s.terrain25d) {
       this.s.terrain25d
         .setTerrainTexture(key)
-        .setDecalTexture(this.showHeightMap ? null : this.s.groundMarks.wreckLayer);
+        .setDecalTexture(this.showHeightMap ? null : this.s.groundMarks.wreckLayer)
+        .setShoreWaves(!this.showHeightMap);
     } else {
       this.s.groundMarks.wreckLayer.setVisible(!this.showHeightMap);
     }

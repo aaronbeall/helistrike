@@ -8,6 +8,7 @@ import {
   Z_SCALE_NEAR,
   type WorldData,
 } from "../worldgen/world";
+import { fbm } from "../worldgen/noise";
 
 export type Terrain25DTexture =
   | string
@@ -57,6 +58,8 @@ interface Uniforms {
   decal: WebGLUniformLocation | null;
   decalParams: WebGLUniformLocation | null;
   projectionBlend: WebGLUniformLocation | null;
+  shore: WebGLUniformLocation | null;
+  shoreParams: WebGLUniformLocation | null;
 }
 
 interface CameraMatrix {
@@ -111,10 +114,25 @@ precision mediump float;
 uniform sampler2D uTerrain;
 uniform sampler2D uDecal;
 uniform vec2 uDecalParams;
+uniform sampler2D uShore;
+uniform vec3 uShoreParams;
 varying vec2 vUV;
 
 void main(void) {
   vec4 base = texture2D(uTerrain, vUV);
+  // Shoreline pulse: soft bright bands moving outward from every water edge (shore texture: L = closeness, A = phase noise).
+  if (uShoreParams.x > 0.5) {
+    vec4 sh = texture2D(uShore, vUV);
+    if (sh.r > 0.004) {
+      float d = (1.0 - sh.r) * uShoreParams.z;
+      float wave = sin(d * 1.25 - uShoreParams.y * 2.1 + sh.a * 6.2832);
+      float fade = sh.r * sh.r;
+      // Crests widen as they age (travel outward): thin at the edge, broad by the end of the reach.
+      float lo = mix(0.72, 0.25, 1.0 - sh.r);
+      float crest = smoothstep(lo, 1.0, wave) * fade * 0.42 + smoothstep(0.86, 1.0, sh.r) * 0.14;
+      base.rgb += vec3(0.78, 0.92, 0.95) * crest;
+    }
+  }
   vec2 decalUV = vec2(vUV.x, mix(vUV.y, 1.0 - vUV.y, uDecalParams.y));
   vec4 mark = texture2D(uDecal, decalUV);
   float a = clamp(mark.a * uDecalParams.x, 0.0, 1.0);
@@ -124,6 +142,52 @@ void main(void) {
   );
 }
 `;
+
+/** Shore wave reach (texels into the water from sea / lake edges). */
+const SHORE_REACH = 26;
+
+/**
+ * Shore field (TEX × TEX, LUMINANCE_ALPHA): L = closeness to the nearest water edge — sea, lake or river (255 at
+ * the edge → 0 by SHORE_REACH; 0 on land), A = slow phase noise so crests don't line up along the coast.
+ */
+function buildShoreField(world: WorldData): Uint8Array {
+  const n = TEX * TEX;
+  const out = new Uint8Array(n * 2);
+  const dist = new Float32Array(n).fill(Infinity);
+  const wet = (i: number) => world.water[i]! >= 0;
+  const q: number[] = [];
+  for (let y = 1; y < TEX - 1; y++) {
+    for (let x = 1; x < TEX - 1; x++) {
+      const i = y * TEX + x;
+      if (!wet(i)) continue;
+      if (!wet(i - 1) || !wet(i + 1) || !wet(i - TEX) || !wet(i + TEX)) {
+        dist[i] = 0;
+        q.push(i);
+      }
+    }
+  }
+  const nb: [number, number][] = [[1, 1], [-1, 1], [TEX, 1], [-TEX, 1], [TEX + 1, Math.SQRT2], [TEX - 1, Math.SQRT2], [-TEX + 1, Math.SQRT2], [-TEX - 1, Math.SQRT2]];
+  for (let h = 0; h < q.length; h++) {
+    const i = q[h]!;
+    for (const [o, w] of nb) {
+      const j = i + o;
+      if (j < 0 || j >= n || !wet(j)) continue;
+      const d = dist[i]! + w;
+      if (d >= dist[j]! || d > SHORE_REACH) continue;
+      dist[j] = d;
+      q.push(j);
+    }
+  }
+  for (let i = 0; i < n; i++) {
+    const d = dist[i]!;
+    if (d === Infinity) continue;
+    out[i * 2] = Math.max(1, Math.round(255 * (1 - d / SHORE_REACH)));
+    const x = i % TEX;
+    const y = (i / TEX) | 0;
+    out[i * 2 + 1] = Math.round(255 * fbm(x * 0.012, y * 0.012, 913, 2));
+  }
+  return out;
+}
 
 function clampInt(value: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, Math.round(value)));
@@ -193,6 +257,9 @@ export class Terrain25D extends Phaser.GameObjects.GameObject {
   private program: WebGLProgram | null = null;
   private uniforms: Uniforms | null = null;
   private whiteTexture: WebGLTexture | null = null;
+  private shoreTexture: WebGLTexture | null = null;
+  private shoreData: Uint8Array | null = null;
+  shoreWaves = true;
 
   constructor(scene: Phaser.Scene, world: WorldData, options: Terrain25DOptions) {
     super(scene, "Terrain25D");
@@ -210,6 +277,7 @@ export class Terrain25D extends Phaser.GameObjects.GameObject {
     this.cullChunks = options.cullChunks ?? true;
     this._depth = options.depth ?? 0;
     this.buildChunks();
+    this.shoreData = buildShoreField(world);
     renderer.pipelines.clear();
     try {
       this.createResources();
@@ -246,6 +314,11 @@ export class Terrain25D extends Phaser.GameObjects.GameObject {
   setDecalTexture(texture: Terrain25DTexture | null, opacity = this.decalOpacity): this {
     this.decalTexture = texture;
     this.decalOpacity = Phaser.Math.Clamp(opacity, 0, 1);
+    return this;
+  }
+
+  setShoreWaves(on: boolean): this {
+    this.shoreWaves = on;
     return this;
   }
 
@@ -331,6 +404,8 @@ export class Terrain25D extends Phaser.GameObjects.GameObject {
       gl.bindTexture(gl.TEXTURE_2D, terrain.webGLTexture);
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, decalGL);
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, this.shoreTexture ?? this.whiteTexture);
 
       gl.enableVertexAttribArray(0);
       gl.enableVertexAttribArray(1);
@@ -460,7 +535,20 @@ export class Terrain25D extends Phaser.GameObjects.GameObject {
       decal: gl.getUniformLocation(this.program, "uDecal"),
       decalParams: gl.getUniformLocation(this.program, "uDecalParams"),
       projectionBlend: gl.getUniformLocation(this.program, "uProjectionBlend"),
+      shore: gl.getUniformLocation(this.program, "uShore"),
+      shoreParams: gl.getUniformLocation(this.program, "uShoreParams"),
     };
+    if (this.shoreData) {
+      this.shoreTexture = gl.createTexture();
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, this.shoreTexture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE_ALPHA, TEX, TEX, 0, gl.LUMINANCE_ALPHA, gl.UNSIGNED_BYTE, this.shoreData);
+      gl.activeTexture(gl.TEXTURE0);
+    }
     this.whiteTexture = gl.createTexture();
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.whiteTexture);
@@ -496,6 +584,8 @@ export class Terrain25D extends Phaser.GameObjects.GameObject {
     const gl = this.webglRenderer.gl;
     if (this.program) gl.deleteProgram(this.program);
     if (this.whiteTexture) gl.deleteTexture(this.whiteTexture);
+    if (this.shoreTexture) gl.deleteTexture(this.shoreTexture);
+    this.shoreTexture = null;
     this.program = null;
     this.uniforms = null;
     this.whiteTexture = null;
@@ -556,6 +646,13 @@ export class Terrain25D extends Phaser.GameObjects.GameObject {
     gl.uniform2f(uniforms.viewport, this.webglRenderer.width, this.webglRenderer.height);
     gl.uniform1i(uniforms.terrain, 0);
     gl.uniform1i(uniforms.decal, 1);
+    gl.uniform1i(uniforms.shore, 2);
+    gl.uniform3f(
+      uniforms.shoreParams,
+      this.shoreWaves && this.shoreTexture ? 1 : 0,
+      this.scene.time.now * 0.001,
+      SHORE_REACH
+    );
     gl.uniform1f(uniforms.projectionBlend, this.projectionBlend);
     gl.uniform2f(
       uniforms.decalParams,
