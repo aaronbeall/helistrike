@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { type Unit } from "./combat";
 import { specOf, isGroundVehicle, driveOf } from "./roster";
-import { isWater, WORLD, type WorldData, isDeepWater } from "../worldgen/world";
+import { bedZ, isWater, WORLD, type WorldData, isDeepWater } from "../worldgen/world";
 import { MAP_AIR_SOFT } from "./craft";
 import { type RemoteCraft } from "./remote";
 
@@ -9,6 +9,17 @@ import { type RemoteCraft } from "./remote";
  * Sim yaw toward `want`. Caps hitch dt and per-tick step so units never
  * flip 180° in one frame even with high turn rates or large dt spikes.
  */
+/** Ground grade (z rise per world unit) at which a slope becomes an impassable cliff (~42°). */
+export const CLIFF_GRADE = 0.9;
+/** Speed kept at the steepest climbable grade (uphill only; linear in between). */
+const UPHILL_MIN_SPEED = 0.4;
+
+/** Grade from (x0, y0) to (x1, y1) along the ground (positive = uphill). */
+export function groundGrade(world: WorldData, x0: number, y0: number, x1: number, y1: number): number {
+  const d = Math.hypot(x1 - x0, y1 - y0);
+  return d < 1e-6 ? 0 : (bedZ(world, x1, y1) - bedZ(world, x0, y0)) / d;
+}
+
 /** Soft rim where map-edge steering ramps up. */
 export const MAP_EDGE_MARGIN = 280;
 /** Hard pad ground units cannot cross. */
@@ -35,9 +46,13 @@ export function terrainSteer(world: WorldData,
 ): { x: number; y: number } {
   let wx = wantX;
   let wy = wantY;
+  // Land units: water and cliffs ahead are both bad (cliff = steep average grade over the probe's last stretch).
   const ok = (px: number, py: number) => {
-    const wet = isWater(world, px, py);
-    return preferWater ? wet : !wet;
+    if (preferWater) return isWater(world, px, py);
+    if (isWater(world, px, py)) return false;
+    const bx = x + (px - x) * 0.7;
+    const by = y + (py - y) * 0.7;
+    return Math.abs(groundGrade(world, bx, by, px, py)) < CLIFF_GRADE * 0.85;
   };
   const bad = (px: number, py: number) => !ok(px, py);
 
@@ -269,9 +284,23 @@ export function pickBoatWaypoint(world: WorldData, u: Unit): void {
   u.aiTy = Phaser.Math.Clamp(u.y + Math.sin(u.angle) * 80, lo, hi);
 }
 
-/** Step on preferred terrain only; slide on axes or brake if blocked. Land units can wade shallows (not depths). */
+/**
+ * Step on preferred terrain only; slide on axes or brake if blocked. Land units wade shallows (not depths), slow
+ * down climbing, and can't cross cliffs (up or down).
+ */
 export function stepOnTerrain(world: WorldData, u: Unit, dx: number, dy: number, preferWater: boolean): void {
-  const ok = (px: number, py: number) => (preferWater ? isWater(world, px, py) : !isDeepWater(world, px, py));
+  if (!preferWater) {
+    const g = groundGrade(world, u.x, u.y, u.x + dx, u.y + dy);
+    if (g > 0) {
+      const k = 1 - (1 - UPHILL_MIN_SPEED) * Math.min(1, g / CLIFF_GRADE);
+      dx *= k;
+      dy *= k;
+    }
+  }
+  const ok = (px: number, py: number) =>
+    preferWater
+      ? isWater(world, px, py)
+      : !isDeepWater(world, px, py) && Math.abs(groundGrade(world, u.x, u.y, px, py)) < CLIFF_GRADE;
   const nx = u.x + dx;
   const ny = u.y + dy;
   if (ok(nx, ny)) {

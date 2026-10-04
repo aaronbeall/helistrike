@@ -5,6 +5,7 @@ import { craftSocketPoints } from "../../../sim/crafts";
 import { FX_SHEET_SIZE } from "../../../art/sprites";
 import { groundZ, worldToScreen } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
+import { hostileUnit } from "../../../sim/targetRules";
 
 export const TESLA_STREAMS = 3;
 
@@ -121,7 +122,7 @@ export class Tesla {
     const tipZ = tip.z ?? 0;
     const limited = Number.isFinite(range);
     for (const u of this.s.units) {
-      if (u.dead) continue;
+      if (!hostileUnit(u)) continue;
       const uz = u.z + heightOf(u.kind) * 0.45;
       if (limited && Math.hypot(u.x - tip.x, u.y - tip.y, uz - tipZ) > range) continue;
       const dPtr = Math.hypot(u.x - ptr.x, u.y - ptr.y);

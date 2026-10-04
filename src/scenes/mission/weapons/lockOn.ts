@@ -5,6 +5,7 @@ import { shotFacesHeading } from "../../../render/spritePose";
 import { targetingMode, heatCategoryOk, heatClassOf, heatSeekScore } from "../../../sim/weaponRuntime";
 import { Layer, worldDepth } from "../../../render/depth";
 import type { MissionScene } from "../../missionScene";
+import { hostileUnit } from "../../../sim/targetRules";
 
 export function boxHalf(u: Unit, scale: number): number {
   return (radius(u.kind) + 10) * scale * zScale(u.z, u.y);
@@ -102,7 +103,7 @@ export class LockOn {
     const h = this.s.player;
     const out: { u: Unit; score: number; heat: number }[] = [];
     for (const u of this.s.units) {
-      if (u.dead || u.health < acquire.minHealth) continue;
+      if (!hostileUnit(u) || u.health < acquire.minHealth) continue;
       if (!heatCategoryOk(u, acquire.categories)) continue;
       const d = Math.hypot(u.x - x, u.y - y);
       if (d > max) continue;

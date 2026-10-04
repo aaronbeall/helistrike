@@ -1,7 +1,7 @@
 import type { WorldGenProfile } from "../worldgen/world";
 import { MISSIONS } from "../catalog/missions";
 
-export type MissionKind = "river_run" | "coastal_strike" | "island_chain" | "highland_siege" | "desert_flats" | "autumn_lakes" | "custom";
+export type MissionKind = "river_run" | "coastal_strike" | "island_chain" | "highland_siege" | "desert_flats" | "autumn_lakes" | "golden_scar" | "blackwater" | "cauldron" | "starcoil" | "custom";
 
 export interface MissionSpec {
   kind: MissionKind;

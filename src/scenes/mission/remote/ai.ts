@@ -4,7 +4,8 @@ import { remoteAiStickAim } from "../../../sim/remoteRules";
 import { GUN_STATION_TURN_RATE } from "../weapons/fireControl";
 import { PLAYER_WPNS, type Unit } from "../../../sim/combat";
 import { remoteSpecOf, type EscortNav, type EscortNavState, type RemoteCraft } from "../../../sim/remote";
-import { isGroundVehicle, specOf } from "../../../sim/roster";
+import { isGroundVehicle, isNeutral, specOf } from "../../../sim/roster";
+import { hostileUnit } from "../../../sim/targetRules";
 import { circumRadiusOf, closestOnFootprint, distToFootprint, footprintInto } from "../../../render/footprint";
 import { craftAimsWithTurret, craftGunId, craftSocketBarrelCount, craftSocketFireCd } from "../../../sim/crafts";
 import type { MissionScene } from "../../missionScene";
@@ -43,7 +44,7 @@ export class RemoteAi {
       let best: Unit | undefined;
       let bestD = 520;
       for (const u of this.s.units) {
-        if (u.dead) continue;
+        if (!hostileUnit(u)) continue;
         const d = Math.hypot(u.x - drone.x, u.y - drone.y);
         if (d < bestD) {
           bestD = d;
@@ -110,6 +111,7 @@ export class RemoteAi {
 
   /** True when any friendly is within `awareRange` of the unit. */
   unitKnownToFriendlies(u: Unit, awareRange: number): boolean {
+    if (isNeutral(u.kind)) return false;
     for (const f of this.remoteFriendlySensors()) {
       if (Math.hypot(u.x - f.x, u.y - f.y) <= awareRange) return true;
     }
@@ -337,7 +339,7 @@ export class RemoteAi {
       let best: Unit | undefined;
       let bestD = engage;
       for (const u of this.s.units) {
-        if (u.dead) continue;
+        if (!hostileUnit(u)) continue;
         const d = Math.hypot(u.x - drone.x, u.y - drone.y);
         if (d < bestD) {
           bestD = d;

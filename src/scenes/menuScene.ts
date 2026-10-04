@@ -918,6 +918,24 @@ export class MenuScene extends Phaser.Scene {
         },
       },
       {
+        label: "SETTLEMENT",
+        group: "WORLD",
+        description: "Towns, plus a port, airfield and dam where the terrain suits. 0 is wilderness; higher builds up more.",
+        value: (p: typeof customProfile) => p.settlement.toFixed(2),
+        adjust: (dir: number) => {
+          customProfile.settlement = Phaser.Math.Clamp(Math.round((customProfile.settlement + dir * 0.25) * 100) / 100, 0, 2);
+        },
+      },
+      {
+        label: "WATER SITES",
+        group: "WORLD",
+        description: "Ports, dams and offshore oil fields where the water suits. OFF keeps every settlement on dry land.",
+        value: (p: typeof customProfile) => (p.waterSites ? "ON" : "OFF"),
+        adjust: () => {
+          customProfile.waterSites = !customProfile.waterSites;
+        },
+      },
+      {
         label: "OBJECTIVES",
         group: "FORCES",
         description: "Number of high-value targets you must destroy to win.",
@@ -957,10 +975,10 @@ export class MenuScene extends Phaser.Scene {
       {
         label: "NAVAL",
         group: "FORCES",
-        description: "Weights patrols toward the water: higher spawns more boats and fewer land patrols.",
+        description: "Weights patrols toward the water: higher spawns more boats and fewer land patrols. 0 is no boats.",
         value: (p: typeof customProfile) => p.waterPatrolBias.toFixed(2),
         adjust: (dir: number) => {
-          customProfile.waterPatrolBias = Phaser.Math.Clamp(customProfile.waterPatrolBias + dir * 0.25, 0.25, 3);
+          customProfile.waterPatrolBias = Phaser.Math.Clamp(customProfile.waterPatrolBias + dir * 0.25, 0, 3);
         },
       },
       {
@@ -1006,12 +1024,57 @@ export class MenuScene extends Phaser.Scene {
       this.tweens.add({ targets: customizeBtn, scale: 1, duration: 140, ease: "Sine.Out" });
     });
     customizeBtn.on("pointerdown", () => customizePreset());
+    // Custom map only (same slot as CUSTOMIZE): roll every parameter.
+    const randomizeBtn = this.add
+      .text(moreInfoX1, mapHeaderY + 6, "RANDOMIZE  ›", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "10px",
+        color: "#1c1812",
+        backgroundColor: "#e8b84a",
+        padding: { x: 8, y: 3 },
+      })
+      .setOrigin(1, 0.5)
+      .setDepth(4)
+      .setVisible(false)
+      .setInteractive({ useHandCursor: true });
+    randomizeBtn.on("pointerover", () => {
+      randomizeBtn.setStyle({ backgroundColor: "#f2d579" });
+      this.tweens.add({ targets: randomizeBtn, scale: 1.06, duration: 120, ease: "Back.Out" });
+    });
+    randomizeBtn.on("pointerout", () => {
+      randomizeBtn.setStyle({ backgroundColor: "#e8b84a" });
+      this.tweens.add({ targets: randomizeBtn, scale: 1, duration: 140, ease: "Sine.Out" });
+    });
+    randomizeBtn.on("pointerdown", () => randomizeCustom());
+    // Steps back through RANDOMIZE rolls; history clears when leaving the custom map.
+    const randomBackBtn = this.add
+      .text(moreInfoX1 - randomizeBtn.width - 6, mapHeaderY + 6, "‹  BACK", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "10px",
+        color: "#1c1812",
+        backgroundColor: "#e8b84a",
+        padding: { x: 8, y: 3 },
+      })
+      .setOrigin(1, 0.5)
+      .setDepth(4)
+      .setVisible(false)
+      .setInteractive({ useHandCursor: true });
+    randomBackBtn.on("pointerover", () => {
+      randomBackBtn.setStyle({ backgroundColor: "#f2d579" });
+      this.tweens.add({ targets: randomBackBtn, scale: 1.06, duration: 120, ease: "Back.Out" });
+    });
+    randomBackBtn.on("pointerout", () => {
+      randomBackBtn.setStyle({ backgroundColor: "#e8b84a" });
+      this.tweens.add({ targets: randomBackBtn, scale: 1, duration: 140, ease: "Sine.Out" });
+    });
+    randomBackBtn.on("pointerdown", () => undoRandomize());
     // Rigs share keys (roster rig uses C); only customize from the bare menu.
     this.input.keyboard?.on("keydown-C", () => {
       if (!fieldManual.isOpen && !rigsAnyOpen(this)) customizePreset();
     });
     // Grouped grid: a small sub-header per group, two columns of cards under it.
     const customParamCol = 85;
+    const PARAM_ROW = 23;
     const groupLabel = (text: string, y: number, x: number) =>
       this.add
         .text(x, y, text, {
@@ -1033,7 +1096,7 @@ export class MenuScene extends Phaser.Scene {
     const groupHeaders: Phaser.GameObjects.Text[] = [];
     const cardPos: { x: number; y: number }[] = [];
     let gy = mapHeaderY + 24;
-    let iy = mapHeaderY + 102;
+    let iy = mapHeaderY + 92;
     for (const group of paramGroups) {
       const info = group.x0 === infoX0;
       let y = info ? iy : gy;
@@ -1042,9 +1105,9 @@ export class MenuScene extends Phaser.Scene {
       members.forEach(({ i }, k) => {
         const col = k % 2;
         const line = (k / 2) | 0;
-        cardPos[i] = { x: group.cx + (col === 0 ? -customParamCol : customParamCol), y: y + 18 + line * 25 };
+        cardPos[i] = { x: group.cx + (col === 0 ? -customParamCol : customParamCol), y: y + 18 + line * PARAM_ROW };
       });
-      y += 18 + Math.ceil(members.length / 2) * 25 + 6;
+      y += 18 + Math.ceil(members.length / 2) * PARAM_ROW + 6;
       if (info) iy = y;
       else gy = y;
     }
@@ -1119,6 +1182,8 @@ export class MenuScene extends Phaser.Scene {
       const focused = editable ? row - 3 : -1;
       customParamsHeader.setVisible(true);
       customizeBtn.setVisible(!editable);
+      randomizeBtn.setVisible(editable);
+      randomBackBtn.setVisible(editable && randomHistory.length > 0);
       for (const h of groupHeaders) h.setVisible(true);
       customParamCards.forEach((card, i) => {
         const isFocused = i === focused;
@@ -1151,6 +1216,51 @@ export class MenuScene extends Phaser.Scene {
       refreshSelection();
     }
 
+    /**
+     * Random value for one param, using only its `adjust`/`value`: walk to the low end (or around, if it cycles),
+     * record each distinct value stepping up, then land on a random one.
+     */
+    function randomizeParam(p: (typeof customParams)[number]): void {
+      const read = () => p.value(customProfile);
+      for (let k = 0; k < 64; k++) {
+        const before = read();
+        p.adjust(-1);
+        if (read() === before) break;
+      }
+      const seen = [read()];
+      for (let k = 0; k < 64; k++) {
+        p.adjust(1);
+        const v = read();
+        if (v === seen[seen.length - 1] || v === seen[0]) break;
+        seen.push(v);
+      }
+      for (let k = 0; k < 64 && read() !== seen[0]; k++) p.adjust(-1);
+      const steps = Math.floor(Math.random() * seen.length);
+      for (let k = 0; k < steps; k++) p.adjust(1);
+    }
+
+    /** Custom profiles from before each RANDOMIZE, newest last. */
+    const randomHistory: (typeof customProfile)[] = [];
+    const snapshotCustom = (): typeof customProfile => ({ ...customProfile, landforms: { ...customProfile.landforms } });
+
+    function undoRandomize(): void {
+      const prev = randomHistory.pop();
+      if (!prev || missions[missionIndex]!.kind !== "custom") return;
+      Object.assign(customProfile, prev);
+      redrawCustomPreview();
+      refreshSelection();
+    }
+
+    /** Roll every custom parameter (FORCES first: it resets NAVAL). */
+    function randomizeCustom(): void {
+      if (missions[missionIndex]!.kind !== "custom") return;
+      randomHistory.push(snapshotCustom());
+      const ordered = [...customParams].sort((a, b) => Number(b.label === "FORCES") - Number(a.label === "FORCES"));
+      for (const p of ordered) randomizeParam(p);
+      redrawCustomPreview();
+      refreshSelection();
+    }
+
     /** Copy the selected preset's profile into CUSTOM and switch to it. */
     function customizePreset(): void {
       const preset = missions[missionIndex]!;
@@ -1170,6 +1280,7 @@ export class MenuScene extends Phaser.Scene {
       const craft = crafts[craftIndex]!;
       const mission = missions[missionIndex]!;
       if (row >= 3 && mission.kind !== "custom") row = 1;
+      if (mission.kind !== "custom") randomHistory.length = 0;
       selectCraft(craft.kind);
       selectMission(mission.kind);
       craftHeader.setColor(row === 0 ? "#e8b84a" : "#8f8774");

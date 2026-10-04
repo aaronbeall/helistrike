@@ -19,6 +19,7 @@ import { lookupSpriteMuzzles } from "../../../art/spriteOrigin";
 import { craftBombDrop, craftCrewHudTag, craftGunId, craftGunMount, craftGunMounts, craftGunPreferDegrees, craftGunPreferOffset, craftHardpointMounts, craftControlScheme, craftOf, craftOrigin, craftSocketBarrelCount, craftSocketFireCd, craftSocketIsPrimary, craftSocketPoints, socketHullPlacement, craftSocketStartingAmmo, type CraftSpec } from "../../../sim/crafts";
 import { groundZ, worldToScreen, cameraPointVisible, screenToWorldAtZ, screenToWorldOnGround, castZ } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
+import { hostileUnit } from "../../../sim/targetRules";
 
 /** Auto fire once the barrel is within this angle of the track (radians). */
 const AUTO_GUN_ALIGN_TOL = 0.14;
@@ -1800,7 +1801,7 @@ specIsShellGun(spec)
     let best: Unit | undefined;
     let bestScore = -1e9;
     for (const u of this.s.units) {
-      if (u.dead || (groundOnly && isAerial(u.kind))) continue;
+      if (!hostileUnit(u) || (groundOnly && isAerial(u.kind))) continue;
       const d = Math.hypot(u.x - fromX, u.y - fromY);
       if (d > maxR || d < 35) continue;
       const aimCraft = Math.atan2(u.y - craftY, u.x - craftX);
@@ -1867,7 +1868,7 @@ specIsShellGun(spec)
     let best: Unit | undefined;
     let bestScore = Infinity;
     for (const u of this.s.units) {
-      if (u.dead) continue;
+      if (!hostileUnit(u)) continue;
       if (categories && !heatCategoryOk(u, categories)) continue;
       const d = Math.hypot(u.x - x, u.y - y);
       if (d > max) continue;
@@ -1892,7 +1893,7 @@ specIsShellGun(spec)
     let best: Unit | undefined;
     let bd = max;
     for (const u of this.s.units) {
-      if (u.dead) continue;
+      if (!hostileUnit(u)) continue;
       const d = Math.hypot(u.x - x, u.y - y);
       if (d < bd) {
         bd = d;

@@ -4,7 +4,7 @@ import { shotDrawRotation, shotTipNudge, shotIsGunOrBeam } from "../../../render
 import { simulateHelixRibbon } from "../../../render/ribbons";
 import { rollSoldierMood } from "../../../sim/units";
 import { softCapBlastCraterScale } from "../../../render/fxCurves";
-import { remoteTargetable } from "../../../sim/targetRules";
+import { hostileUnit, remoteTargetable } from "../../../sim/targetRules";
 import { starstreakBombletArc, steerDir, motorizedSpeed, flyMissile } from "../../../sim/ballistics";
 import { BLAST_RING_FRAMES } from "../../../render/blastRing";
 import { shotTrailScale, troopMissileTrail, projectileFxScale, scaledProjectileFxCount } from "../../../render/fxScale";
@@ -63,12 +63,43 @@ function shotWantsEmberCrater(shot: Shot | undefined, kind: ShotKind): boolean {
 const PHOTON_FX_LAYERS = 8;
 
 /** Projectiles: shot spawn + per-frame sim (player flight, homing, ignite, deadfall), bomblets, tow wires, explosions + blast damage, shot + photon sprites. */
+/** Blast shock front speed (world units / s): edge-of-blast damage lands radius / speed after the center. */
+const BLAST_WAVE_SPEED = 650;
+/** Hits closer than this (s) to the blast apply at once. */
+const BLAST_WAVE_MIN_DELAY = 1 / 120;
+
 export class Projectiles {
   shotG!: Phaser.GameObjects.Group;
   /** Additive Photon lens-flare layers (glow / streams / core). */
   photonFxG!: Phaser.GameObjects.Group;
+  /** Blast damage still travelling out on the shock front (sim seconds left). */
+  private pendingBlast: { t: number; run: () => void }[] = [];
 
   constructor(readonly s: MissionScene) {}
+
+  reset(): void {
+    this.pendingBlast = [];
+  }
+
+  /** Apply now, or once the shock front reaches `dist` from the blast center. */
+  private onShockFront(dist: number, run: () => void): void {
+    const t = dist / BLAST_WAVE_SPEED;
+    if (t < BLAST_WAVE_MIN_DELAY) run();
+    else this.pendingBlast.push({ t, run });
+  }
+
+  private tickShockFronts(dt: number): void {
+    const q = this.pendingBlast;
+    let w = 0;
+    // Length re-read each pass: hits that queue more (chain deaths) are kept in the same sweep.
+    for (let i = 0; i < q.length; i++) {
+      const p = q[i]!;
+      p.t -= dt;
+      if (p.t <= 0) p.run();
+      else q[w++] = p;
+    }
+    q.length = w;
+  }
 
   spawnShot(s: Shot): void {
     const look = shotLookOf(s);
@@ -151,6 +182,7 @@ export class Projectiles {
   }
 
   updateShots(dt: number): void {
+    this.tickShockFronts(dt);
     const ptr = this.s.worldPointer();
     const focusSpec = this.s.targeting.combatFocus().spec;
     // Seekers read jet exhaust easily (big boost) but struggle against ground-hugging hulls (nerf).
@@ -765,7 +797,7 @@ export class Projectiles {
             let best: Unit | undefined;
             let bd = lockRadius;
             for (const u of this.s.units) {
-              if (u.dead) continue;
+              if (!hostileUnit(u)) continue;
               const d = Math.hypot(u.x - ptr.x, u.y - ptr.y);
               if (d < bd) {
                 bd = d;
@@ -981,7 +1013,7 @@ export class Projectiles {
 
     const candidates: { u: Unit; score: number }[] = [];
     for (const u of this.s.units) {
-      if (u.dead) continue;
+      if (!hostileUnit(u)) continue;
       const dx = u.x - ox;
       const dy = u.y - oy;
       const d = Math.hypot(dx, dy);
@@ -1173,10 +1205,6 @@ export class Projectiles {
       const { fire, smoke } = this.s.fx.pair(s.z, s.y, this.s.fx.burn, this.s.fx.shortTrailSmoke, ZOff.fire, ZOff.smoke);
       this.s.fx.emitBudgeted("fire", fire, tail.x, tail.y, n);
       this.s.fx.emitBudgeted("smoke", smoke, tail.x, tail.y, Math.max(1, Math.round((small ? 3 : 6) * sc)));
-      if (!small) {
-        this.s.fx.blastFire.setDepth(worldDepth(s.z, ZOff.fire + 0.2, s.y));
-        this.s.fx.emitBudgeted("fire", this.s.fx.blastFire, tail.x, tail.y, Math.max(1, Math.round(4 * sc)));
-      }
     });
     this.s.fx.emitVisualBurst(s.x, s.y, s.z, {
       n: Math.max(4, Math.round(10 * sc)),
@@ -1468,7 +1496,6 @@ export class Projectiles {
               flash: photonic ? 0xe8c0ff : 0xc4ffff,
               flashMin: bomblet ? 22 : photonic ? 160 : 110,
               visMul: bomblet ? 0.32 : photonic ? 1.45 : 1,
-              noFire: photonic,
               noTrails: photonic,
             }
           : he
@@ -1543,18 +1570,21 @@ export class Projectiles {
     shot?: Shot
   ): void {
     this.pushBlastRing(x, y, z, blast);
+    const stunDur = shot?.beh?.payload.stun;
     for (const u of this.s.units) {
       if (u.dead) continue;
       const d = distToFootprint(x, y, footprintInto(u, 0, 0));
-      if (u === direct || d < blast) {
+      if (u !== direct && d >= blast) continue;
+      const fall = u === direct ? dmg : dmg * (1 - d / blast);
+      const dealt = this.weaponDamageMul(shot, u, fall);
+      // Damage rides the shock front: the center now, the edge a moment later.
+      this.onShockFront(u === direct ? 0 : d, () => {
+        if (u.dead) return;
         u.killDx = dx;
         u.killDy = dy;
         u.killDz = dz;
-        const fall = u === direct ? dmg : dmg * (1 - d / blast);
-        const dealt = this.weaponDamageMul(shot, u, fall);
         u.killDmg = dealt;
         this.hurt(u, dealt, skipDeathSplash);
-        const stunDur = shot?.beh?.payload.stun;
         if (stunDur && !u.dead) {
           const cls = heatClassOf(u);
           if (cls === "vehicle" || cls === "building") {
@@ -1562,24 +1592,27 @@ export class Projectiles {
             this.s.unitSim.spawnStunZaps(u);
           }
         }
-      }
+      });
     }
     const focus = this.s.targeting.combatFocus();
     const hd = Math.hypot(focus.x - x, focus.y - y);
     if (hd < blast * 0.55) {
-      if (focus === this.s.player) {
-        const agl = castZ(this.s.world, this.s.player.x, this.s.player.y, this.s.player.z);
-        if (this.s.countermeasures.cloakT <= 0 && agl < 30) this.s.player.damage(dmg * 0.25, dx, dy);
-      } else {
-        this.s.targeting.damageCombatFocus(dmg * 0.25, dx, dy);
-      }
+      this.onShockFront(hd, () => {
+        if (focus === this.s.player) {
+          const agl = castZ(this.s.world, this.s.player.x, this.s.player.y, this.s.player.z);
+          if (this.s.countermeasures.cloakT <= 0 && agl < 30) this.s.player.damage(dmg * 0.25, dx, dy);
+        } else {
+          this.s.targeting.damageCombatFocus(dmg * 0.25, dx, dy);
+        }
+      });
     }
     // Enemy blasts also catch autonomous remotes.
     if (shot?.from === "enemy") {
       const focusRem = this.s.targeting.combatFocusRemote();
       for (const r of this.s.remotes) {
         if (r === focusRem || !remoteTargetable(r)) continue;
-        if (Math.hypot(r.x - x, r.y - y) < blast * 0.55) this.s.targeting.damageRemote(r, dmg * 0.25, dx, dy);
+        const rd = Math.hypot(r.x - x, r.y - y);
+        if (rd < blast * 0.55) this.onShockFront(rd, () => this.s.targeting.damageRemote(r, dmg * 0.25, dx, dy));
       }
     }
   }

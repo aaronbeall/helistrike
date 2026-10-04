@@ -32,7 +32,24 @@ export type UnitKind =
   | "lookout"
   | "drone"
   | "heli_small"
-  | "heli_heavy";
+  | "heli_heavy"
+  | "house"
+  | "warehouse"
+  | "hangar"
+  | "control_tower"
+  | "dock_shed"
+  | "pylon"
+  | "power_station"
+  | "bridge"
+  | "bridge_steel"
+  | "pier"
+  | "silo"
+  | "silo_single"
+  | "oil_rig"
+  | "sea_platform"
+  | "dock_building"
+  | "fishing_boat"
+  | "yacht";
 
 export type DebrisCat = "mech" | "struct" | "organic";
 
@@ -204,6 +221,10 @@ export interface UnitSpec {
   boatSpeed?: number;
   /** Rotor spin rad/s (drone 42; heli default 28). */
   rotorSpinRate?: number;
+  /** Bake broken-apart variants of the wreck at load (`hulkBreak`); each death picks one at random. */
+  breakApart?: boolean;
+  /** Random wreck rotation (± radians), e.g. bridge segments landing askew so a span reads as broken apart. */
+  wreckJitter?: number;
   /** Death blast scale mul (tank 1.25). */
   wreckScale?: number;
   /** Wheel debris draw scale range [lo, hi]. */
@@ -220,6 +241,19 @@ export interface UnitSpec {
   rotors: PartMount[];
   dish?: PartMount;
   building?: boolean;
+  /** Civilian: destructible, but no health bar, gray on the map, never auto-targeted or run by AI. */
+  neutral?: boolean;
+  /**
+   * Roof sprite drawn at the top of the building (`z + height`), above the body; the shadow is cast from it.
+   * `noBody` = roof-only structure. `hulk` = the roof part thrown clear on death (like a gun turret).
+   */
+  roof?: { tex: string; hulk?: string; noBody?: boolean };
+  /**
+   * Death spectacle: `inferno` = chained fireballs (fuel); `sparks` = normal blast + electrical short;
+   * `zap` = no HE fireball — a metal structure shorting out (zaps, sparks, dirt kick, a little fire).
+   * `collapse` = light structure coming down: modest fire, heavy dust, slow low debris, no fireball or spark shower.
+   */
+  deathFx?: "inferno" | "sparks" | "zap" | "collapse";
   aerial?: boolean;
   water?: boolean;
   organic?: boolean;
@@ -272,6 +306,8 @@ export type GunRollSpec = {
   w: WeaponSpec;
   /** Short id for rigs / used-by (defaults to option key). */
   label?: string;
+  /** Part draw scale (turret art borrowed from a larger host). */
+  scale?: number;
 };
 
 /** Weighted pick: one option chosen at spawn via `rollParts`. */
@@ -322,7 +358,8 @@ function pickWeighted(weights: [GunRollId, number][], rand = Math.random): GunRo
 }
 
 function partFromOption(opt: GunRollSpec, mount: { x: number; y: number }): PartMount {
-  return gun(opt.tex, opt.originY, mount, undefined, opt.w);
+  const part = gun(opt.tex, opt.originY, mount, undefined, opt.w);
+  return opt.scale != null ? { ...part, scale: opt.scale } : part;
 }
 
 function gunsFromPartsRoll(roll: PartsRoll): PartMount[] {
@@ -497,6 +534,10 @@ export function isAerial(kind: UnitKind): boolean {
 
 export function isBuilding(kind: UnitKind): boolean {
   return !!UNIT_SPECS[kind].building;
+}
+
+export function isNeutral(kind: UnitKind): boolean {
+  return !!UNIT_SPECS[kind].neutral;
 }
 
 export function isOrganic(kind: UnitKind): boolean {

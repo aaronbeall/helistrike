@@ -72,13 +72,13 @@ export class PostFxTest {
 
   pulseBarrel(amount: number): void {
     if (!this.barrel || !this.on) return;
-    this.barrelPulse = Math.max(this.barrelPulse, Phaser.Math.Clamp(amount, 0, 0.28));
+    this.barrelPulse = Math.max(this.barrelPulse, Phaser.Math.Clamp(amount, 0, 0.7));
   }
 
   tick(dt: number): void {
     if (!this.on || !this.barrel) return;
     if (this.barrelPulse > 0.002) {
-      this.barrel.amount = 1 + this.barrelPulse * 0.55;
+      this.barrel.amount = 1 + this.barrelPulse;
       this.barrelPulse *= Math.pow(0.04, dt);
     } else {
       this.barrel.amount = 1;

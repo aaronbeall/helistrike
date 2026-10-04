@@ -1,9 +1,7 @@
 import Phaser from "phaser";
 import { craftControlScheme, craftOf, type CraftSpec } from "../sim/crafts";
 import { allMissions } from "../sim/mission";
-import { fbm } from "../worldgen/noise";
-import { baseHeight, makeShape } from "../worldgen/shape";
-import { lookColor, themeOf } from "../worldgen/theme";
+import { paintTerrainPreview } from "../worldgen/world";
 
 /**
  * Blackbody-style heat gradient for segmented stat bars: deep red (t=0, left) through the
@@ -157,28 +155,7 @@ export function ensureMissionPreviews(textures: Phaser.Textures.TextureManager):
     canvas.width = width;
     canvas.height = height;
     const g = canvas.getContext("2d", { willReadFrequently: true })!;
-    const img = g.createImageData(width, height);
-    const p = mission.profile;
-    const seed = 8101 + m * 977;
-    const field = makeShape(p.shape, seed);
-    const looks = themeOf(p.theme).looks;
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const nx = x / width;
-        const ny = y / height;
-        const h = baseHeight(nx, ny, seed, p, field, 0);
-        // Slots: water 0, sand 2, grass 3, rock 5, peak 6.
-        const l = looks[h < 0.34 ? 0 : h < 0.4 ? 2 : h > 0.72 ? 6 : h > 0.62 ? 5 : 3]!;
-        const t = l === looks[3] ? h : l === looks[6] ? 0.6 : 0.3;
-        const color = [lookColor(l, t, 0), lookColor(l, t, 1), lookColor(l, t, 2)];
-        const shade = 0.76 + fbm(nx * 18, ny * 18, seed + 41, 2) * 0.38;
-        const i = (y * width + x) * 4;
-        img.data[i] = color[0] * shade;
-        img.data[i + 1] = color[1] * shade;
-        img.data[i + 2] = color[2] * shade;
-        img.data[i + 3] = 255;
-      }
-    }
+    const img = paintTerrainPreview(8101 + m * 977, mission.profile, width);
     g.putImageData(img, 0, 0);
     const vignette = g.createLinearGradient(0, 0, 0, height);
     vignette.addColorStop(0, "rgba(0,0,0,0.08)");

@@ -27,7 +27,11 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
   * [x] Islands
   * [x] Highland / rugged-ish
   * [ ] Coastal theater pack
-  * [ ] Urban (roads + buildings heavy)
+  * [x] Urban (roads + buildings heavy): towns, ports, airfields, dams, farms, oil fields, power lines
+    * [x] Civilian buildings + boats are destructible neutral units (no HP bar, gray on minimap, never auto-targeted)
+    * [x] Oil rigs: chained inferno deaths; pylons: electrical short (tesla zaps) + live wires
+    * [ ] Building roof height: draw building art at its roof (`z + height`) so tall buildings sit up in 2.5D, not flat on the ground
+    * [x] Building cast shadows: buildings cast shadows from their height across the terrain (simple: footprint shadow offset from roof height, not an extruded silhouette)
 * [x] Multiple helicopters / craft (playable roster in `craft.ts`; menu select)
   * [x] Apache
   * [x] Little Bird
@@ -45,6 +49,8 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
   * [x] Murder Hornet (extra)
   * [x] (Secret) Prometheus (cloak)
   * [x] Steamship (steampunk airship — Leviathan)
+  * [ ] Destroyer (water ship with heli remote)
+  * [ ] Carrier (big water ship with lots of remotes)
 * [ ] Single player progress, mission/vehicle unlocks, weapon/upgrade purchases
   * [ ] Campaign: multiple theater hand crafted missions with a light story, craft/weapon unlocks, between mission resource management, and progress pathing
   * [ ] Rogue Operation: a roguelike mode that uses procedural generated series of increasingly difficult missions, unlocks (craft and weapons) stick across playthroughs
@@ -83,7 +89,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
   * [ ] Turtle (drone)
 * [ ] Last stand / base defense game mode
 * [ ] Moving patrols: ground/boat/air groups that travel routes around the map (roads, rivers, between objectives) instead of holding their spawn
-* [ ] Enemy line-of-sight behavior (hide behind terrain, etc)
+* [x] Enemy line-of-sight behavior (hide behind terrain, etc) (staggered terrain-occlusion LOS gates awareness; debug: Line of sight)
   * [ ] TOWs and Hellfire collide on launch making fire behind cover ineffective
 * [ ] Sound effects
 * [x] Night vision / thermal vision (thermal; dedicated NV still open)
@@ -97,7 +103,9 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [ ] Lava: glowing volcano summit crater, lava flows down the flanks (damaging / impassable)
 * [x] Laser sight ray should collide with terrain
 * [x] Landform stamps (mesas + buttes, craters, volcanoes, dunes) and trunk rivers with carved valleys
-  * [ ] Escarpments, canyons, lakes/dams
+  * [x] Lakes/dams
+  * [ ] Escarpments, canyons (removed: smooth faces, seams at bends, biome banding — rebuild with a continuous signed distance, rough strata faces, post-biome stamping)
+* [ ] Settlement structures as real buildings (volumetric, destructible, collision) + final art
 * [ ] Designed maps (seed + brush + placements)
 * More enemy targets:
   * [ ] HV: missile silo
@@ -112,6 +120,10 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
   * [ ] Ammo depot (with cookoff)
   * [ ] Explosive tanks
   * [ ] Explosive trucks
+  * [ ] Destroyer
+  * [ ] Carrier
+  * [ ] APC
+  * [ ] Trains
 * More doodads:
   * [ ] destroyed buildings
   * [ ] Pre-baked crashed vehicles
@@ -146,8 +158,9 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
   * [ ] Docks -> boats
 * [ ] Rotors push smoke
 * [x] Roadkill organic units with rotors (rotor blades + crushing hulls)
-* [ ] Units affected by cliffs/slope -- slow travel uphill, slope limit; AI paths around cliffs or is blocked by them instead of driving through
-* [ ] Player craft blocked by cliffs while holding Shift
+* [x] Units affected by cliffs/slope -- slow travel uphill, slope limit; AI paths around cliffs or is blocked by them instead of driving through
+* [x] Player craft blocked by cliffs while holding Shift
+* [ ] Pathfinding units: route around terrain/water instead of local steering; prefer roads when available
 * [ ] Tail rotor (with tilt)
 * [ ] Pseudo 3d tilt graphic (jets/gunship props partial)
 * [x] Clouds
@@ -217,3 +230,5 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
   * Flying Circus -- beat a mission with the biplane
   * Red Baron -- beat a mission with the biplane without taking any damage
   * Buzzcut -- rotor kill a troop with the Murder Hornet
+  * Surgical -- beat a mission with 0% collateral damage
+  * Oopsie Daisy -- beat a mission with 100% collateral damage

@@ -5,7 +5,7 @@ import { troopSoftTurret } from "../../../sim/roster";
 import { gunWorldRot, lookupSpriteOrigin } from "../../../art/spriteOrigin";
 import { thermalSignalTint, applyThermalHeat } from "../../../render/thermal";
 import { resolveSkin } from "../../../render/camo";
-import { radius, textureOf, type Unit } from "../../../sim/combat";
+import { heightOf, radius, textureOf, type Unit } from "../../../sim/combat";
 import { ZOff, worldDepth } from "../../../render/depth";
 import { range } from "../../../util/rng";
 import { isGroundVehicle, specOf, gunsOf, crewOf } from "../../../sim/roster";
@@ -14,6 +14,11 @@ import { applyEdgeLight, clearEdgeLight } from "../../../render/edgeLight";
 import { spritePivot } from "../../../art/sprites";
 import { groundSlope, worldToScreen, cameraPointVisible, screenVelX, screenVelY, projectHeading } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
+
+/** Buildings cast their shadow from this fraction of their height. */
+const BUILDING_SHADOW_HEIGHT = 0.25;
+/** Ground vehicles cast their shadow from this fraction of their height. */
+const VEHICLE_SHADOW_HEIGHT = 0.5;
 
 type TextureAlphaBounds = {
   width: number;
@@ -238,7 +243,7 @@ export class UnitSprites {
   }
 
   sync(): void {
-    const SLOTS = 9;
+    const SLOTS = 10;
     let liveN = 0;
     for (const u of this.s.units) if (!u.dead) liveN++;
     while (this.unitG.getLength() < liveN * SLOTS) {
@@ -248,6 +253,7 @@ export class UnitSprites {
       const mz = this.s.add.image(0, 0, "fx_muzzle");
       mz.setBlendMode(Phaser.BlendModes.ADD);
       this.unitG.add(mz);
+      this.unitG.add(this.s.add.image(0, 0, "fx_shadow"));
     }
     const kids = this.unitG.getChildren() as Phaser.GameObjects.Image[];
     for (let i = 0; i < kids.length; i++) {
@@ -260,19 +266,22 @@ export class UnitSprites {
     for (const u of this.s.units) {
       if (u.dead) continue;
       const i = slot++;
-      if (!cameraPointVisible(u.z, u.y)) continue;
       const sp = specOf(u.kind);
+      const roofZ = u.z + heightOf(u.kind);
+      if (!cameraPointVisible(u.z, u.y) && !(sp.roof && cameraPointVisible(roofZ, u.y))) continue;
       const guns = gunsOf(u);
       const sh = kids[i * SLOTS]!;
       const im = kids[i * SLOTS + 1]!;
       const partBase = i * SLOTS + 2;
       const flash = kids[i * SLOTS + 8]!;
+      const roofIm = kids[i * SLOTS + 9]!;
       const tex = resolveSkin(this.s.textures, textureOf(u.kind), u.camo);
       const rot = troopDrawAng(u) + sp.rotOff;
       const scr = worldToScreen(u.x, u.y, u.z);
       const scrX = scr.x;
       const scrY = scr.y;
-      if (!this.s.camera.projectedInView(scrX, scrY, 220)) continue;
+      const roofScr = sp.roof ? worldToScreen(u.x, u.y, roofZ) : undefined;
+      if (!this.s.camera.projectedInView(scrX, scrY, 220) && !(roofScr && this.s.camera.projectedInView(roofScr.x, roofScr.y, 220))) continue;
       const drawRot = this.unitDrawRot(u, rot);
       const zs = scr.scale;
       const pivot = spritePivot(textureOf(u.kind));
@@ -297,19 +306,27 @@ export class UnitSprites {
         1
       );
       sh.setVisible(true).setOrigin(ox, oy);
+      // Roofed structures cast from the roof; buildings and ground vehicles from a fraction of their height
+      // (a short shadow peeking out, instead of one hidden exactly underneath).
       this.s.hostCraft.applyCastShadow(
         sh,
         u.x,
         u.y,
-        u.z,
-        tex,
+        sp.roof
+          ? roofZ
+          : sp.building
+            ? u.z + heightOf(u.kind) * BUILDING_SHADOW_HEIGHT
+            : isGroundVehicle(u.kind)
+              ? u.z + heightOf(u.kind) * VEHICLE_SHADOW_HEIGHT
+              : u.z,
+        sp.roof?.tex ?? tex,
         rot,
         sp.aerial ? 1 : 0.92,
         sp.aerial ? 2 : sp.building ? 8 : 1,
         u,
         drawRot
       );
-      im.setVisible(true);
+      im.setVisible(!sp.roof?.noBody);
       if (im.texture.key !== tex) im.setTexture(tex);
       im.setOrigin(ox, oy)
         .setPosition(scrX, scrY)
@@ -324,6 +341,18 @@ export class UnitSprites {
       if (sp.building) clearEdgeLight(im);
       else applyEdgeLight(im, drawRot);
       applyThermalHeat(im, this.s.thermal.on, bodyHeat);
+      if (sp.roof && roofScr) {
+        roofIm.setVisible(true);
+        if (roofIm.texture.key !== sp.roof.tex) roofIm.setTexture(sp.roof.tex);
+        roofIm
+          .setOrigin(ox, oy)
+          .setPosition(roofScr.x, roofScr.y)
+          .setRotation(drawRot)
+          .setScale(roofScr.scale)
+          .setDepth(worldDepth(roofZ, ZOff.body + zBias, u.y));
+        clearEdgeLight(roofIm);
+        applyThermalHeat(roofIm, this.s.thermal.on, bodyHeat);
+      }
       let pi = 0;
       const gunDepth = (sp.behavior === "orbit_attack_heli" || sp.behavior === "kite_attack_heli") ? ZOff.gun : ZOff.turret;
       const place = (

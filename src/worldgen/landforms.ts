@@ -1,16 +1,17 @@
-/** Landform stamps: mesas + buttes, impact craters, volcanoes, dune fields. */
+/** Landform stamps: mesas + buttes, impact craters, volcanoes, pyramids, dune fields. */
 import { fbm } from "./noise";
 import { Rng } from "../util/rng";
 
-export type LandformKind = "mesa" | "crater" | "volcano" | "dunes";
+export type LandformKind = "mesa" | "crater" | "volcano" | "pyramid" | "dunes";
 export type Landforms = Record<LandformKind, number>;
 
-export const NO_LANDFORMS: Landforms = { mesa: 0, crater: 0, volcano: 0, dunes: 0 };
+export const NO_LANDFORMS: Landforms = { mesa: 0, crater: 0, volcano: 0, pyramid: 0, dunes: 0 };
 
 export const LANDFORM_KINDS: { id: LandformKind; label: string; max: number; description: string }[] = [
   { id: "mesa", label: "MESAS", max: 10, description: "Flat-topped rock mesas with sheer cliff walls, often flanked by smaller eroded buttes." },
   { id: "crater", label: "CRATERS", max: 8, description: "Impact craters: a raised rim around a sunken bowl that often holds a small lake." },
   { id: "volcano", label: "VOLCANOES", max: 3, description: "Volcanic cones with gullied flanks; in open sea each rises as its own island." },
+  { id: "pyramid", label: "PYRAMIDS", max: 12, description: "Ancient pyramids, smooth-sided or stepped, some with a long ramp climbing one face, rising square and sharp from open ground." },
   { id: "dunes", label: "DUNES", max: 5, description: "Fields of wind-driven sand dunes: long rippling crests with steep slip faces." },
 ];
 
@@ -98,6 +99,51 @@ function stampMesa(height: Float32Array, n: number, s: Stamp, seed: number, rise
   });
 }
 
+/** Ramp reach past the pyramid's base (in half-widths), and its half-width. */
+const PYRAMID_RAMP_OUT = 0.6;
+const PYRAMID_RAMP_W = 0.26;
+
+/**
+ * Pyramid: square footprint at a random heading; `steps` > 0 terraces it into a stepped pyramid.
+ * `ramp`: a smooth ramp climbs one face from past the base to the top.
+ */
+function stampPyramid(height: Float32Array, n: number, s: Stamp, rot: number, rise: number, steps: number, ramp: boolean): void {
+  const base = height[Math.round(s.y) * n + Math.round(s.x)]!;
+  // Ramp ends at the top platform's edge (stepped) or just under the apex (smooth), at that height.
+  const top = steps > 0 ? 1 / steps : 0.08;
+  const topLevel = steps > 0 ? 1 : 1 - top;
+  const out = 1 + PYRAMID_RAMP_OUT;
+  forBox(n, s, ramp ? out + 0.05 : Math.SQRT2 + 0.05, (i, d, ang) => {
+    // Pyramid-local coords in half-widths; the ramp runs up the +u face.
+    const pu = (Math.cos(ang - rot) * d) / s.r;
+    const pv = (Math.sin(ang - rot) * d) / s.r;
+    const m = Math.max(Math.abs(pu), Math.abs(pv));
+    let p = 0;
+    let w = 0;
+    if (m < 1) {
+      p = 1 - m;
+      if (steps > 0) {
+        // Flat treads with short steep risers, up to a flat top platform at full height.
+        const k = p * steps;
+        const f = k - Math.floor(k);
+        p = (Math.min(steps - 1, Math.floor(k) + smooth(0.82, 1, f)) + 1) / steps;
+      }
+      w = smooth(0, 0.06, 1 - m);
+    }
+    if (ramp && pu > 0 && pu < out) {
+      const across = 1 - smooth(PYRAMID_RAMP_W * 0.75, PYRAMID_RAMP_W, Math.abs(pv));
+      if (across > 0) {
+        const r = topLevel * Math.min(1, (out - pu) / (out - top));
+        p += Math.max(0, r - p) * across;
+        w = Math.max(w, across);
+      }
+    }
+    if (w <= 0) return;
+    const h = height[i]!;
+    height[i] = h + (base + rise * p - h) * w;
+  });
+}
+
 function stampCrater(height: Float32Array, n: number, s: Stamp, seed: number): void {
   const rim = (s.r / n) * 2.1;
   const bowl = rim * 1.7;
@@ -160,6 +206,15 @@ export function applyLandforms(
       if (Math.hypot(bs.x - avoid.x, bs.y - avoid.y) < bs.r + n * 0.06) continue;
       stampMesa(height, n, bs, seed + 17 * k + 5 + b, rng.range(0.08, 0.13));
     }
+  }
+  for (let k = 0; k < lf.pyramid; k++) {
+    const s = place(rng, n, n * rng.range(0.018, 0.032), placed, avoid, dry);
+    if (!s) continue;
+    placed.push(s);
+    const stepped = rng.next() < 0.6;
+    const ramp = rng.next() < 0.4;
+    // Any heading: with a ramp, which face it climbs matters.
+    stampPyramid(height, n, s, rng.range(0, Math.PI * 2), rng.range(0.1, 0.16), stepped ? rng.int(4, 6) : 0, ramp);
   }
   for (let k = 0; k < lf.crater; k++) {
     const s = place(rng, n, n * rng.range(0.018, 0.045), placed, avoid, dry);

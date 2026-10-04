@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { Layer } from "../../../render/depth";
 import { FieldManual } from "../../../ui/fieldManual";
 import type { MissionScene } from "../../missionScene";
+import { isNeutral } from "../../../sim/roster";
 
 /** In-mission help (H): Field Manual overlay + its button. */
 export class HelpPanel {
@@ -20,7 +21,7 @@ export class HelpPanel {
   setup(): void {
     this.fieldManual = new FieldManual(this.s, {
       getEnemies: () =>
-        this.s.units.length ? [...new Set(this.s.units.filter((u) => !u.dead).map((u) => u.kind))] : undefined,
+        this.s.units.length ? [...new Set(this.s.units.filter((u) => !u.dead && !isNeutral(u.kind)).map((u) => u.kind))] : undefined,
       onToggle: (open) => {
         this.open = open;
       },

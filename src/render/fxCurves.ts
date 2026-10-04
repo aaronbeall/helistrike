@@ -18,6 +18,16 @@ export function debrisStampOrigin(key: string): { x: number; y: number } {
 
 
 
+/** Flame particle size multiplier: unchanged up to the knee, compressed above (big flames stop becoming blobs). */
+export function flameSizeCap(v: number, knee = 0.55, slope = 0.15, hard = 0.8): number {
+  return v <= knee ? v : Math.min(hard, knee + (v - knee) * slope);
+}
+
+/** Emit-rate boost for a capped flame: the size it lost comes back as more (area-spread) particles. */
+export function flameDensityMul(v: number): number {
+  return v > 0 ? Math.max(1, v / flameSizeCap(v)) : 1;
+}
+
 /** Particle life multiplier — mid (~1) unchanged; large debris leave a long tail. */
 export function debrisTrailLifeMul(size: number): number {
   const over = Math.max(0, size - 1.05);

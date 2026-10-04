@@ -15,8 +15,9 @@ const DEBUG_MENU_ITEMS = [
   { action: "performance", label: "Performance", shortcut: "P" },
   { action: "height", label: "Height + colliders", shortcut: "K" },
   { action: "ai", label: "AI" },
+  { action: "los", label: "Line of sight" },
   { action: "blast", label: "Blast radii" },
-  { action: "sideView", label: "Side view" },
+  { action: "sideView", label: "Side view", shortcut: "J" },
   { section: "RENDERING" },
   { action: "terrainMesh", label: "Terrain mesh" },
   { action: "fx", label: "Post FX", shortcut: "O" },
@@ -274,6 +275,8 @@ export class DebugMenu {
                 ? this.s.overlays.showHeightMap
                 : item.action === "ai"
                   ? this.s.overlays.aiOn
+                  : item.action === "los"
+                    ? this.s.lineOfSight.debugOn
                   : item.action === "blast"
                     ? this.s.overlays.blastOn
                     : item.action === "sideView"
@@ -314,6 +317,7 @@ export class DebugMenu {
     else if (item.action === "performance") this.s.perf.toggle();
     else if (item.action === "height") this.s.overlays.toggleHeightMap();
     else if (item.action === "ai") this.s.overlays.setAi(!this.s.overlays.aiOn);
+    else if (item.action === "los") this.s.lineOfSight.setDebug(!this.s.lineOfSight.debugOn);
     else if (item.action === "blast") this.s.overlays.setBlast(!this.s.overlays.blastOn);
     else if (item.action === "sideView") this.s.sideView.setOn(!this.s.sideView.on);
     else if (item.action === "terrainMesh") this.s.toggleTerrainMesh();

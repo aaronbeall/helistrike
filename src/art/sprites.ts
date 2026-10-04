@@ -1,6 +1,13 @@
 import type Phaser from "phaser";
 import { allCrafts, craftOf, craftPivot, EXHAUST_TRAIL_FLAME_HUES, socketGunTex } from "../sim/crafts";
 import { lookupSpriteOrigin, setSpriteOrigin } from "./spriteOrigin";
+import { ROAD_ART, setRoadImage, type RoadArtKind } from "./roadArt";
+import { bakeHulkBreakVariants } from "./hulkBreak";
+import { setStructureImage, STRUCTURE_ART, structureImage, structureTexKey } from "./structureArt";
+import type { StructureKind } from "../worldgen/settlements";
+import type { RGB } from "../worldgen/theme";
+import { UNIT_SPECS } from "../catalog/units";
+import type { UnitKind } from "../sim/roster";
 
 const SRC = {
   enemyHeli: "sprites/units/enemy_heli.png",
@@ -211,6 +218,23 @@ export const DOODAD_ART: { key: string; size: number }[] = [
   { key: "snowrock", size: 34 },
 ];
 
+/** Theme foliage baked from the green doodads by hue shift (hue °, saturation ×, value ×). */
+const FOLIAGE_TINTS: { key: string; from: string; hue: number; sat: number; val: number }[] = [
+  { key: "tree_amber", from: "tree", hue: 28, sat: 1.25, val: 1.05 },
+  { key: "tree_red", from: "tree", hue: 8, sat: 1.3, val: 0.92 },
+  { key: "tree_gold", from: "tree", hue: 46, sat: 1.2, val: 1.1 },
+  { key: "bush_rust", from: "bush", hue: 20, sat: 1.2, val: 0.98 },
+  { key: "tree_olive", from: "tree", hue: 64, sat: 0.75, val: 0.95 },
+  { key: "bush_dry", from: "bush", hue: 50, sat: 0.7, val: 1.02 },
+  { key: "tree_swamp", from: "tree", hue: 88, sat: 0.7, val: 0.72 },
+  { key: "bush_swamp", from: "bush", hue: 80, sat: 0.65, val: 0.78 },
+  { key: "tree_ash", from: "tree", hue: 60, sat: 0.15, val: 0.7 },
+  { key: "tree_teal", from: "tree", hue: 176, sat: 1.2, val: 1.0 },
+  { key: "tree_violet", from: "tree", hue: 280, sat: 1.2, val: 0.95 },
+  { key: "tree_magenta", from: "palm", hue: 318, sat: 1.25, val: 1.05 },
+  { key: "bush_magenta", from: "bush", hue: 312, sat: 1.25, val: 1.0 },
+];
+
 export const FX_KINDS = ["spark", "flame", "smoke", "muzzle", "exhaust", "dirt", "splash", "zap", "ember"] as const;
 export type FxKind = (typeof FX_KINDS)[number];
 export const FX_VARIANTS = 4;
@@ -294,6 +318,14 @@ export function preloadArt(scene: Phaser.Scene): void {
   for (const d of DOODAD_ART) {
     scene.load.image(`src_doodad_${d.key}`, `sprites/doodads/${d.key}.png`);
   }
+  // Settlement structures: only kinds with real art listed load a file; the rest use generated stubs.
+  for (const [kind, spec] of Object.entries(STRUCTURE_ART)) {
+    if (spec.file) scene.load.image(`src_${structureTexKey(kind as StructureKind)}`, spec.file);
+    if (spec.hulk) scene.load.image(`src_${structureTexKey(kind as StructureKind)}_hulk`, spec.hulk);
+    if (spec.base) scene.load.image(`src_${structureTexKey(kind as StructureKind)}_base`, spec.base.file);
+    if (spec.base?.hulk) scene.load.image(`src_${structureTexKey(kind as StructureKind)}_base_hulk`, spec.base.hulk);
+  }
+  for (const [kind, file] of Object.entries(ROAD_ART)) scene.load.image(`src_road_${kind}`, file);
   for (const kind of FX_KINDS) {
     scene.load.image(`src_fx_${kind}_0`, `sprites/fx/${kind}.png`);
     for (let i = 1; i < FX_VARIANTS; i++) {
@@ -827,8 +859,9 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     ["enemy_troop_rpg", 26],
     ["enemy_troop_gunner", 26],
     ["enemy_troop_stinger", 26],
-    ["enemy_troop_mechanic", 26],
-    ["enemy_troop_officer", 26],
+    // Unarmed: no gun barrel in the crop, so a smaller fit keeps their bodies the same size as armed troops.
+    ["enemy_troop_mechanic", 18],
+    ["enemy_troop_officer", 19],
     ["enemy_troop_soldier", 26],
   ]);
   putGrid(textures, "src_building_structures", 2, 2, [
@@ -865,7 +898,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   for (const key of ["enemy_boat_hulk", "enemy_ptboat_hulk"] as const) {
     if (!textures.exists(key)) continue;
     const img = textures.get(key).getSourceImage() as HTMLCanvasElement;
-    put(textures, `${key}_sink`, submergeBlue(img), "generated");
+    put(textures, `${key}_sink`, submergeTint(img), "generated");
   }
   putHulkGrid(textures, "src_enemy_moto_mg_hulk", 2, 1, [
     ["_moto", 46],
@@ -928,6 +961,12 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     const srcKey = `src_doodad_${d.key}`;
     if (!textures.exists(srcKey)) continue;
     put(textures, `doodad_${d.key}`, fit(keyDoodad(src(textures, srcKey)), d.size));
+  }
+  for (const f of FOLIAGE_TINTS) {
+    const from = `doodad_${f.from}`;
+    if (!textures.exists(from)) continue;
+    const img = textures.get(from).getSourceImage() as HTMLCanvasElement;
+    put(textures, `doodad_${f.key}`, shiftFoliageHue(copyCanvas(img), f.hue, f.sat, f.val), "generated");
   }
 
   putHulkGrid(textures, "src_building_bunker_hulk", 2, 1, [
@@ -1062,6 +1101,62 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
       copy.getContext("2d")!.drawImage(img, 0, 0);
       put(textures, sock.gunHulk, darkenWreck(copy), "generated");
     }
+  }
+  // Settlement structures: real art when loaded (replaces the stub in terrain painting), else the stub; both
+  // registered so they show in the sprite rig.
+  for (const kind of Object.keys(STRUCTURE_ART) as StructureKind[]) {
+    const crop = STRUCTURE_ART[kind].crop;
+    if (crop) {
+      // Variants sliced from another kind's art (e.g. one silo of the pair).
+      const from = `src_${structureTexKey(crop.from)}`;
+      for (const suf of ["", "_hulk"]) {
+        if (!textures.exists(from + suf)) continue;
+        const img = src(textures, from + suf);
+        const c = document.createElement("canvas");
+        const sx = Math.round(img.width * crop.x0);
+        c.width = Math.round(img.width * crop.x1) - sx;
+        c.height = img.height;
+        c.getContext("2d")!.drawImage(img, sx, 0, c.width, c.height, 0, 0, c.width, c.height);
+        textures.addCanvas(`src_${structureTexKey(kind)}${suf}`, c);
+      }
+    }
+    const srcKey = `src_${structureTexKey(kind)}`;
+    if (textures.exists(srcKey)) setStructureImage(kind, src(textures, srcKey));
+    const img = structureImage(kind);
+    const unit = UNIT_SPECS[kind as UnitKind];
+    if (unit?.box) {
+      // Unit-backed: long axis up (rotOff π/2), sized to the footprint box.
+      put(textures, structureTexKey(kind), boxArt(img, unit.box), textures.exists(srcKey) ? "image" : "generated");
+      bakeShadows(textures, structureTexKey(kind));
+      // No authored wreck: darkened copy of the live art.
+      const hulkSrc = textures.exists(`${srcKey}_hulk`) ? src(textures, `${srcKey}_hulk`) : img;
+      put(textures, `${structureTexKey(kind)}_hulk`, darkenWreck(boxArt(hulkSrc, unit.box)));
+      const base = STRUCTURE_ART[kind].base;
+      if (base && textures.exists(`${srcKey}_base`)) {
+        const half = base.size / 2;
+        put(textures, `${structureTexKey(kind)}_base`, boxArt(src(textures, `${srcKey}_base`), { halfW: half, halfL: half }));
+        bakeShadows(textures, `${structureTexKey(kind)}_base`);
+        if (textures.exists(`${srcKey}_base_hulk`)) {
+          put(textures, `${structureTexKey(kind)}_base_hulk`, darkenWreck(boxArt(src(textures, `${srcKey}_base_hulk`), { halfW: half, halfL: half })));
+        }
+      }
+      // Roof part thrown on death: darkened copy of the roof.
+      const roof = unit.roof;
+      if (roof?.hulk && textures.exists(roof.tex) && !textures.exists(roof.hulk)) {
+        put(textures, roof.hulk, darkenWreck(copyCanvas(textures.get(roof.tex).getSourceImage() as HTMLCanvasElement)), "generated");
+      }
+      continue;
+    }
+    const c = document.createElement("canvas");
+    c.width = (img as HTMLImageElement).width;
+    c.height = (img as HTMLImageElement).height;
+    c.getContext("2d")!.drawImage(img, 0, 0);
+    put(textures, structureTexKey(kind), c, textures.exists(srcKey) ? "image" : "generated");
+  }
+  // Broken-apart wreck variants (needs the structure hulks above).
+  bakeHulkBreakVariants(textures);
+  for (const kind of Object.keys(ROAD_ART) as RoadArtKind[]) {
+    if (textures.exists(`src_road_${kind}`)) setRoadImage(kind, src(textures, `src_road_${kind}`));
   }
   // Sunk-debris art: every hulk + debris piece gets the boat-hulk `_sink` look up front (no first-sink hitch).
   for (const key of textures.getTextureKeys()) {
@@ -2361,6 +2456,20 @@ function trim(src: HTMLCanvasElement, pad = 4): HTMLCanvasElement {
   return c;
 }
 
+/** +X-long structure art → nose-up canvas filling a unit footprint box (1 px = 1 world unit). */
+function boxArt(img: CanvasImageSource, box: { halfW: number; halfL: number }): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = Math.round(box.halfW * 2);
+  c.height = Math.round(box.halfL * 2);
+  const g = c.getContext("2d")!;
+  g.imageSmoothingEnabled = true;
+  g.imageSmoothingQuality = "high";
+  g.translate(c.width / 2, c.height / 2);
+  g.rotate(-Math.PI / 2);
+  g.drawImage(img, -c.height / 2, -c.width / 2, c.height, c.width);
+  return c;
+}
+
 function fit(src: HTMLCanvasElement, max: number): HTMLCanvasElement {
   const s = max / Math.max(src.width, src.height);
   const c = document.createElement("canvas");
@@ -2414,6 +2523,38 @@ function toNavalGray(src: HTMLCanvasElement): HTMLCanvasElement {
   return src;
 }
 
+/** Recolor green leaves (hue 40–170°) toward `hue`, keeping their relative variation; trunks and shadows untouched. */
+function shiftFoliageHue(c: HTMLCanvasElement, hue: number, satMul: number, valMul: number): HTMLCanvasElement {
+  const g = c.getContext("2d", { willReadFrequently: true })!;
+  const pix = g.getImageData(0, 0, c.width, c.height);
+  const d = pix.data;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3]! < 8) continue;
+    const r = d[i]! / 255;
+    const gr = d[i + 1]! / 255;
+    const b = d[i + 2]! / 255;
+    const mx = Math.max(r, gr, b);
+    const delta = mx - Math.min(r, gr, b);
+    if (delta < 1e-4) continue;
+    let h = mx === r ? ((gr - b) / delta) % 6 : mx === gr ? (b - r) / delta + 2 : (r - gr) / delta + 4;
+    h = (h * 60 + 360) % 360;
+    if (h <= 40 || h >= 170) continue;
+    const nh = (hue + (h - 95) * 0.35 + 360) % 360;
+    const v = Math.min(1, mx * valMul);
+    const sat = Math.min(1, (delta / mx) * satMul);
+    const ch = v * sat;
+    const x = ch * (1 - Math.abs(((nh / 60) % 2) - 1));
+    const m = v - ch;
+    const k = Math.floor(nh / 60) % 6;
+    const [R, G, B] = k === 0 ? [ch, x, 0] : k === 1 ? [x, ch, 0] : k === 2 ? [0, ch, x] : k === 3 ? [0, x, ch] : k === 4 ? [x, 0, ch] : [ch, 0, x];
+    d[i] = (R + m) * 255;
+    d[i + 1] = (G + m) * 255;
+    d[i + 2] = (B + m) * 255;
+  }
+  g.putImageData(pix, 0, 0);
+  return c;
+}
+
 function darkenWreck(src: HTMLCanvasElement, mul = 0.55): HTMLCanvasElement {
   const g = src.getContext("2d", { willReadFrequently: true })!;
   const pix = g.getImageData(0, 0, src.width, src.height);
@@ -2439,22 +2580,46 @@ export function ensureSinkTexture(textures: Phaser.Textures.TextureManager, key:
   c.width = img.width;
   c.height = img.height;
   c.getContext("2d")!.drawImage(img, 0, 0);
-  put(textures, sink, submergeBlue(c), "generated");
+  put(textures, sink, submergeTint(c), "generated");
   return sink;
 }
 
-function submergeBlue(src: HTMLCanvasElement): HTMLCanvasElement {
+/** Water colour `_sink` art is tinted toward: the current mission theme's (temperate by default). */
+let sinkWater: RGB = [28, 61, 87];
+/** Submerged look: luminance scaled toward the water colour, plus a lift of it. */
+const SINK_GAIN = 1.275;
+const SINK_LIFT = 0.25;
+
+/** Point `_sink` art at a theme's water colour; re-bakes every existing `_sink` texture when it changes. */
+export function setSinkWater(textures: Phaser.Textures.TextureManager, water: RGB): void {
+  if (water.every((v, i) => Math.abs(v - sinkWater[i]!) < 0.5)) return;
+  sinkWater = water;
+  for (const key of textures.getTextureKeys()) {
+    if (!key.endsWith("_sink")) continue;
+    const base = key.slice(0, -"_sink".length);
+    if (!textures.exists(base)) continue;
+    const img = textures.get(base).getSourceImage() as HTMLImageElement | HTMLCanvasElement;
+    const c = document.createElement("canvas");
+    c.width = img.width;
+    c.height = img.height;
+    c.getContext("2d")!.drawImage(img, 0, 0);
+    put(textures, key, submergeTint(c), "generated");
+  }
+}
+
+function submergeTint(src: HTMLCanvasElement): HTMLCanvasElement {
   const c = copyCanvas(src);
   const g = c.getContext("2d", { willReadFrequently: true })!;
   const pix = g.getImageData(0, 0, c.width, c.height);
   const d = pix.data;
+  const [wr, wg, wb] = sinkWater;
   for (let i = 0; i < d.length; i += 4) {
     const a = d[i + 3]!;
     if (a < 8) continue;
     const lum = d[i]! * 0.28 + d[i + 1]! * 0.48 + d[i + 2]! * 0.24;
-    d[i] = Math.min(255, lum * 0.14 + 6);
-    d[i + 1] = Math.min(255, lum * 0.28 + 14);
-    d[i + 2] = Math.min(255, lum * 0.48 + 28);
+    d[i] = Math.min(255, lum * SINK_GAIN * (wr / 255) + wr * SINK_LIFT);
+    d[i + 1] = Math.min(255, lum * SINK_GAIN * (wg / 255) + wg * SINK_LIFT);
+    d[i + 2] = Math.min(255, lum * SINK_GAIN * (wb / 255) + wb * SINK_LIFT);
     d[i + 3] = Math.min(255, Math.round(a * 0.9));
   }
   g.putImageData(pix, 0, 0);

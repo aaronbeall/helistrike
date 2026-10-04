@@ -46,6 +46,10 @@ export function craftCameraEdgeLocked(spec: CraftSpec): boolean {
   return !craftHasForcedUTurn(spec);
 }
 
+/** Holding Shift (ground hug): look this far ahead (world units) for a rise steeper than HUG_MAX_GRADE. */
+const HUG_PROBE = 20;
+const HUG_MAX_GRADE = 0.35;
+
 /** Nape / cruise / pop-up ceilings are AGL (added to local groundZ), not world Z. */
 export const LOW_AGL = 4;
 export const CRUISE_AGL = 46;
@@ -425,6 +429,26 @@ export class Craft {
     if (spd > max) {
       this.vx *= max / spd;
       this.vy *= max / spd;
+    }
+    // Hugging the ground (Shift): a steep rise just ahead (ravine / river-bank wall) blocks like a wall instead
+    // of the floor clamp lifting the craft up it — slide along it, so the craft stays down in cover.
+    if (shiftDown && controllable && !groundDrive && !planeScheme && this.phase === "flight") {
+      const here = groundZ(world, this.x, this.y);
+      // Probe a fixed distance along a direction: blocked if the ground there rises steeper than the limit.
+      const wall = (dx: number, dy: number) => {
+        const l = Math.hypot(dx, dy);
+        if (l < 1e-4) return false;
+        const ahead = groundZ(world, this.x + (dx / l) * HUG_PROBE, this.y + (dy / l) * HUG_PROBE);
+        return ahead - here > HUG_PROBE * HUG_MAX_GRADE && ahead + LOW_AGL > this.z;
+      };
+      if (wall(this.vx, this.vy)) {
+        if (!wall(this.vx, 0)) this.vy = 0;
+        else if (!wall(0, this.vy)) this.vx = 0;
+        else {
+          this.vx = 0;
+          this.vy = 0;
+        }
+      }
     }
     this.x += this.vx * dt;
     this.y += this.vy * dt;

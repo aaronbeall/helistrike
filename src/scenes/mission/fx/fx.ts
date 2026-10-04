@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { mountAt, shellGirth } from "../../../render/spritePose";
 import { coneDir, biasedDir, expBiasDir } from "../../../util/vec";
-import { jitterDisk, range } from "../../../util/rng";
+import { range } from "../../../util/rng";
 import { simParticleTexKey, simParticleLook } from "../../../render/simParticleLook";
 import { applyThermalHeat } from "../../../render/thermal";
 import { resolveSkin } from "../../../render/camo";
@@ -15,6 +15,18 @@ import { craftGunSocketSlots } from "../../../sim/crafts";
 import { spriteUvPos, FX_VARIANTS, spritePivot, ensureImpactGlow } from "../../../art/sprites";
 import { groundSlope, groundZ, worldToScreen, cameraPointVisible, screenToWorldAtZ, screenVelX, screenVelY, projectHeading, sampleBiome } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
+import { flameDensityMul } from "../../../render/fxCurves";
+
+/** Damaged-unit fire: spawn disc radius (screen px) per unit of flame scale. */
+const DMG_FIRE_AREA = 2.4;
+
+/** Ejected shell casings: minimum tumble (rad/s) at ejection; bounces keep at least 60% of it. */
+const CASING_SPIN_MIN = 16;
+/** Airborne casings: sideways and upward eject speeds (before girth / fire-rate and debris loft multipliers). */
+const CASING_AIR_SIDE_MIN = 55;
+const CASING_AIR_SIDE_MAX = 100;
+const CASING_AIR_UP_MIN = 70;
+const CASING_AIR_UP_MAX = 115;
 
 export type BurstParticle = Phaser.GameObjects.Particles.Particle & {
   burstVx?: number;
@@ -48,7 +60,6 @@ export class Fx {
   playerHurtSmoke!: Phaser.GameObjects.Particles.ParticleEmitter;
   burn!: Phaser.GameObjects.Particles.ParticleEmitter;
   blastBurn!: Phaser.GameObjects.Particles.ParticleEmitter;
-  blastFire!: Phaser.GameObjects.Particles.ParticleEmitter;
   shortBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
   /** Long, fast, high-drag streaks for HE / death bursts. */
   streakBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
@@ -82,7 +93,6 @@ export class Fx {
   signalFlareSpark!: Phaser.GameObjects.Particles.ParticleEmitter;
   muzzleBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
   splashBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
-  explosionPuff!: Phaser.GameObjects.Particles.ParticleEmitter;
   ember!: Phaser.GameObjects.Particles.ParticleEmitter;
   shortTrailSmoke!: Phaser.GameObjects.Particles.ParticleEmitter;
   lingerSmoke!: Phaser.GameObjects.Particles.ParticleEmitter;
@@ -166,6 +176,8 @@ export class Fx {
   }[] = [];
   muzzleCursor = 0;
   dmgFlameScale = 1;
+  /** Mean start scale (fx_flame units) of the fire in the current fire/smoke pair — paired smoke starts at that size (0 = none). */
+  smokeMatchFire = 0;
   trailFxScale = 1;
   /** Multiplier for trail particle lifespan (mid ≈ 1; large debris > 1). */
   trailFxLife = 1;
@@ -212,7 +224,11 @@ export class Fx {
     size01: number,
     dx: number,
     dy: number,
-    dz: number
+    dz: number,
+    /** Particle size × (smaller sparks). */
+    scaleMul = 1,
+    /** Throw speed × (shorter reach). */
+    speedMul = 1
   ): void {
     const len = Math.max(1e-3, Math.hypot(dx, dy, dz));
     const ix = dx / len;
@@ -232,20 +248,66 @@ export class Fx {
       z,
       {
         n,
-        spdMin: Phaser.Math.Linear(220, 320, s01),
-        spdMax: Phaser.Math.Linear(860, 1200, s01),
+        spdMin: Phaser.Math.Linear(220, 320, s01) * speedMul,
+        spdMax: Phaser.Math.Linear(860, 1200, s01) * speedMul,
         bx,
         by,
         bz,
         tight: 0,
-        scaleMul: Phaser.Math.Linear(1.05, 1.65, s01),
-        stretchMul: Phaser.Math.Linear(1.5, 2.1, s01),
+        scaleMul: Phaser.Math.Linear(1.05, 1.65, s01) * scaleMul,
+        stretchMul: Phaser.Math.Linear(1.5, 2.1, s01) * scaleMul,
         coneHalf: Phaser.Math.Linear(1.05, 1.25, s01),
         // Above dirt streaks; boomBits draw higher still.
         depthOff: ZOff.fire + 0.55,
       },
       this.bigBoomSparkBurst
     );
+  }
+
+  /** Electrical short: flickering zap arcs and falling tesla sparks along a pylon's cross-arms for ~2s. */
+  electricShort(x: number, y: number, z: number, heading: number, armR: number, pulses = 12): void {
+    const ax = Math.cos(heading);
+    const ay = Math.sin(heading);
+    let t = 0;
+    for (let i = 0; i < pulses; i++) {
+      t += Phaser.Math.Between(70, 210);
+      this.s.time.delayedCall(t, () => {
+        const along = range(-1, 1) * armR;
+        const px = x + ax * along;
+        const py = y + ay * along;
+        const pz = z + range(-8, 6);
+        for (let k = 0, n = Phaser.Math.Between(2, 4); k < n; k++) {
+          this.s.tesla.spawnZap(px + range(-14, 14), py + range(-14, 14), pz + range(-10, 10), range(0.7, 1.4), range(0.8, 1.6));
+        }
+        this.s.tesla.emitSparks(px, py, pz, 10, 0.9);
+        this.emitVisualBurst(
+          px,
+          py,
+          pz,
+          { n: 14, spdMin: 60, spdMax: 260, bx: 0, by: 0, bz: -1, tight: 0, gravity: 700, coneHalf: Math.PI, scaleMul: 0.9 },
+          this.teslaSparkBurst
+        );
+        const at = worldToScreen(px, py, pz);
+        this.spawnImpactFlash(at.x, at.y, pz, 0xc8f0ff, range(40, 80) * at.scale, 0.85, 140);
+      });
+    }
+  }
+
+  /** Fuel / grain detonation: a chain of fireballs across a footprint over about a second. */
+  infernoChain(x: number, y: number, z: number, spread: number, blasts = 5): void {
+    for (let i = 0; i < blasts; i++) {
+      this.s.time.delayedCall(120 + i * Phaser.Math.Between(110, 240), () => {
+        const a = Math.random() * Math.PI * 2;
+        const r = Math.random() * spread;
+        const bx = x + Math.cos(a) * r;
+        const by = y + Math.sin(a) * r;
+        const bz = z + Math.random() * 20;
+        this.heFireBurst(bx, by, bz, 0, 0, 1, spread * 1.6, false, 2.4, 1);
+        this.spawnToonBlast(bx, by, bz, { building: true, size01: 1, waveMul: 1.5 });
+        this.emitBigBoomSparks(bx, by, bz + 10, 1, 0, 0, 1);
+        this.s.camera.shake = Math.min(14, this.s.camera.shake + 4);
+      });
+    }
   }
 
   /**
@@ -259,7 +321,9 @@ export class Fx {
     size01: number,
     dx: number,
     dy: number,
-    dz: number
+    dz: number,
+    /** Throw speed × for dirt and bits (shorter reach). */
+    speedMul = 1
   ): void {
     const len = Math.max(1e-3, Math.hypot(dx, dy, dz));
     const ix = dx / len;
@@ -281,8 +345,8 @@ export class Fx {
       z,
       {
         n: dirtN,
-        spdMin: Phaser.Math.Linear(160, 240, s01),
-        spdMax: Phaser.Math.Linear(620, 920, s01),
+        spdMin: Phaser.Math.Linear(160, 240, s01) * speedMul,
+        spdMax: Phaser.Math.Linear(620, 920, s01) * speedMul,
         bx,
         by,
         bz,
@@ -317,10 +381,10 @@ export class Fx {
           Phaser.Math.Linear(140, 200, s01),
           Phaser.Math.Linear(480, 720, s01),
           Phaser.Math.Clamp(t, 0, 1)
-        ) * range(0.88, 1.08);
+        ) * range(0.88, 1.08) * speedMul;
       const scale = range(0.14, 0.26) * Phaser.Math.Linear(0.95, 1.2, s01);
       // Strong loft so flecks arc in XY before ground contact.
-      const loft = range(160, 340) * Phaser.Math.Linear(0.9, 1.2, s01);
+      const loft = range(160, 340) * Phaser.Math.Linear(0.9, 1.2, s01) * Math.sqrt(speedMul);
       this.s.destruction.admitDebris({
         x: x + range(-6, 6),
         y: y + range(-6, 6),
@@ -641,12 +705,14 @@ export class Fx {
     const cd = Phaser.Math.Clamp(opts.fireCd ?? 0.45, 0.05, 3.2);
     const rateMul = Phaser.Math.Linear(1.2, 0.82, Phaser.Math.Clamp((cd - 0.06) / 1.6, 0, 1));
     const girthMul = Phaser.Math.Linear(1.05, 0.78, Phaser.Math.Clamp((girth - 0.28) / 0.72, 0, 1));
-    const spd = range(22, 48) * girthMul * rateMul;
+    // Aircraft fling casings well out to the side; ground guns drop them nearby.
+    const spd = (opts.aerial ? range(CASING_AIR_SIDE_MIN, CASING_AIR_SIDE_MAX) : range(22, 48)) * girthMul * rateMul;
     const shellKeys = ["fx_shell", "fx_shell_1", "fx_shell_2", "fx_shell_3", "fx_shell_4"];
     const available = shellKeys.filter((k) => this.s.textures.exists(k));
     if (!available.length) return;
     const key = available[(Math.random() * available.length) | 0]!;
-    const vzBase = opts.aerial ? range(-8, 14) : range(28, 58);
+    // Gentle upward toss so casings hang a moment under constant gravity before falling.
+    const vzBase = opts.aerial ? range(CASING_AIR_UP_MIN, CASING_AIR_UP_MAX) : range(28, 58);
     this.s.destruction.admitDebris({
       x: opts.x + range(-1.2, 1.2),
       y: opts.y + range(-1.2, 1.2),
@@ -655,7 +721,8 @@ export class Fx {
       vy: Math.sin(ejectAng) * spd + range(-6, 6),
       vz: vzBase * Phaser.Math.Linear(0.92, 1.08, (rateMul - 0.82) / 0.38),
       angle: ejectAng + range(-0.6, 0.6),
-      spin: (Math.random() < 0.5 ? -1 : 1) * range(8, 42) * Phaser.Math.Linear(0.9, 1.12, (rateMul - 0.82) / 0.38),
+      spin: (Math.random() < 0.5 ? -1 : 1) * range(CASING_SPIN_MIN, 42) * Phaser.Math.Linear(0.9, 1.12, (rateMul - 0.82) / 0.38),
+      minSpin: CASING_SPIN_MIN * 0.6,
       life: 4,
       key,
       settled: false,
@@ -1132,8 +1199,6 @@ export class Fx {
       flashMin?: number;
       /** Scales fireball / streak density. */
       visMul?: number;
-      /** Skip explosion puff + blastFire (energy-only look). */
-      noFire?: boolean;
       /** Skip invisible HE blast-trail frags. */
       noTrails?: boolean;
     }
@@ -1143,7 +1208,6 @@ export class Fx {
     const blastY = at.y;
     const blastScale = at.scale;
     const vis = look?.visMul ?? 1;
-    const mul = (soft ? 0.32 : 1) * Phaser.Math.Linear(0.45, 1.15, size01) * vis;
     const p = Phaser.Math.Clamp(power, 0.5, 2.4);
     const t = Math.min(1, (p - 0.5) / 1.9);
     const spdBoost = Phaser.Math.Linear(0.95, 1.35, t);
@@ -1157,43 +1221,6 @@ export class Fx {
           : Math.hypot(body.halfL, body.halfW);
     // Keep particle origins inside the body; small inset vs debris chunks.
     const particleInset = body ? Math.min(bodyR * 0.22, 10) : 0;
-    if (!look?.noFire) {
-      const puffN = Math.max(4, Math.round(22 * mul));
-      const puffOpt = {
-        spdMin: 140 * spdBoost,
-        spdMax: 480 * spdBoost,
-        bx: dx,
-        by: dy,
-        bz: dz,
-        tight: Phaser.Math.Linear(0.48, 0.72, t),
-        scaleMul: (soft ? 0.42 : 1) * Phaser.Math.Linear(0.4, 1.35, size01),
-        expBias: expK,
-      };
-      this.emitScatteredBurst(body, particleInset, x, y, z + 10, puffN, puffOpt, this.explosionPuff, "fire");
-      // Mid boom stack — above dirt streaks, below boomBit flecks.
-      this.blastFire.setDepth(worldDepth(z, ZOff.fire + 1.2, y));
-      // Aim a cone along impact; stronger kills tighten.
-      const horiz = Math.hypot(dx, dy);
-      if (!soft && horiz > 8) {
-        const deg = Phaser.Math.RadToDeg(Math.atan2(dy, dx));
-        const cone = Phaser.Math.Linear(88, 42, t);
-        this.blastFire.particleAngle = { min: deg - cone, max: deg + cone };
-        this.blastFire.speed = { min: 170 * spdBoost, max: 500 * spdBoost };
-      } else {
-        this.blastFire.particleAngle = { min: 0, max: 360 };
-        this.blastFire.speed = { min: 180, max: 480 };
-      }
-      const fireN = Math.max(3, Math.round(26 * mul));
-      if (body) {
-        for (let i = 0; i < fireN; i++) {
-          const o = randomInFootprint(body, particleInset);
-          const s = worldToScreen(o.x, o.y, z);
-          this.emitBudgeted("fire", this.blastFire, s.x, s.y, 1, true);
-        }
-      } else {
-        this.emitBudgeted("fire", this.blastFire, blastX, blastY, fireN, true);
-      }
-    }
     // Soft gradient bloom — sized to read through the fireball (Hydra blast 140 → ~170px+).
     this.spawnImpactFlash(
       blastX,
@@ -1382,6 +1409,7 @@ export class Fx {
     proto: Phaser.GameObjects.Particles.ParticleEmitter,
     off: number
   ): Phaser.GameObjects.Particles.ParticleEmitter {
+    this.smokeMatchFire = 0;
     const slot = this.slot(proto, z, y);
     const em = slot.emitter;
     const d = this.bandDepth(slot.band, off);
@@ -1396,6 +1424,7 @@ export class Fx {
     proto: Phaser.GameObjects.Particles.ParticleEmitter,
     off: number
   ): Phaser.GameObjects.Particles.ParticleEmitter {
+    this.smokeMatchFire = 0;
     const em = this.slot(proto, z, y).emitter;
     const d = worldDepth(z, off, y);
     if (em.depth !== d) em.setDepth(d);
@@ -1413,10 +1442,21 @@ export class Fx {
     smokeProto: Phaser.GameObjects.Particles.ParticleEmitter,
     zBias = 0
   ): { fire: Phaser.GameObjects.Particles.ParticleEmitter; smoke: Phaser.GameObjects.Particles.ParticleEmitter } {
-    return {
+    const pair = {
       fire: this.atWorld(z, y, fireProto, ZOff.dmg + zBias),
       smoke: this.atWorld(z, y, smokeProto, ZOff.hurtSmoke + zBias),
     };
+    this.smokeMatchFire = this.fireMeanScale(fireProto);
+    return pair;
+  }
+
+  /** Mean emit scale of a fire emitter's base size range (fx_flame units). */
+  private fireMeanScale(proto: Phaser.GameObjects.Particles.ParticleEmitter): number {
+    if (proto === this.burn) return 1.12;
+    if (proto === this.blastBurn) return 0.45;
+    if (proto === this.ember) return 0.2;
+    if (proto === this.flame || proto === this.hotFlame) return 0.46;
+    return 0;
   }
 
   /**
@@ -1442,6 +1482,7 @@ export class Fx {
     const fd = this.bandDepth(fireSlot.band, fOff) + this.bandH;
     if (smoke.depth !== sd) smoke.setDepth(sd);
     if (fire.depth !== fd) fire.setDepth(fd);
+    this.smokeMatchFire = this.fireMeanScale(fireProto);
     return { fire, smoke };
   }
 
@@ -1459,7 +1500,9 @@ export class Fx {
     y: number,
     n: number,
     /** Impact bursts: don't let lingering trail particles starve the new fireball. */
-    prefer = false
+    prefer = false,
+    /** Spawn across a disc of this radius (screen px) instead of one point — gives flames width. */
+    area = 0
   ): number {
     const policy = this.policies[kind];
     if (n <= 0 || policy.emitted >= policy.frameCap) return 0;
@@ -1473,7 +1516,13 @@ export class Fx {
     if (em.timeScale !== (Number.isFinite(scale) ? scale : 1)) {
       em.timeScale = Number.isFinite(scale) ? scale : 1;
     }
-    em.emitParticleAt(x, y, take);
+    if (area > 0) {
+      for (let i = 0; i < take; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const r = Math.sqrt(Math.random()) * area;
+        em.emitParticleAt(x + Math.cos(a) * r, y + Math.sin(a) * r, 1);
+      }
+    } else em.emitParticleAt(x, y, take);
     return take;
   }
 
@@ -1538,13 +1587,13 @@ export class Fx {
         const { fire, smoke } = this.pairHurt(h.z, h.y, this.hotFlame, this.playerHurtSmoke);
         for (const s of h.dmgSites) {
           const base = spriteUvPos(this.s.hostCraft.bodyDrawPose(), s.u, s.v);
-          // Keep sparks on the damage pin — wide jitter reads as loose trail spray.
-          const p = jitterDisk(base.x, base.y, 0.55 + s.scale * 0.4);
+          // Small disc on the damage pin: width without loose spray.
+          const area = DMG_FIRE_AREA * s.scale * 1.65;
           this.withDmgFlameScale(s.scale * 1.65, () => {
-            const nFire = this.emitCount(0.48);
-            const nSmoke = this.emitCount(0.28);
-            if (nFire) this.emitBudgeted("fire", fire, p.x, p.y, nFire);
-            if (nSmoke) this.emitBudgeted("smoke", smoke, p.x, p.y, nSmoke);
+            const nFire = this.emitCount(0.48 * flameDensityMul(s.scale * 1.65));
+            const nSmoke = this.emitCount(0.42);
+            if (nFire) this.emitBudgeted("fire", fire, base.x, base.y, nFire, false, area);
+            if (nSmoke) this.emitBudgeted("smoke", smoke, base.x, base.y, nSmoke, false, area);
           });
         }
       }
@@ -1587,12 +1636,12 @@ export class Fx {
       for (const s of u.dmgSites) {
         const mount = mountAt(this.s.textures, u, tex, { x: s.u, y: s.v });
         const base = worldToScreen(mount.x, mount.y, u.z);
-        const p = jitterDisk(base.x, base.y, 0.5 + s.scale * 0.4);
+        const area = DMG_FIRE_AREA * s.scale * sizeMul;
         this.withDmgFlameScale(s.scale * sizeMul, () => {
-          const nFire = this.emitCount(0.45);
-          const nSmoke = this.emitCount(0.26);
-          if (nFire) this.emitBudgeted("fire", fire, p.x, p.y, nFire);
-          if (nSmoke) this.emitBudgeted("smoke", smoke, p.x, p.y, nSmoke);
+          const nFire = this.emitCount(0.45 * flameDensityMul(s.scale * sizeMul));
+          const nSmoke = this.emitCount(0.4);
+          if (nFire) this.emitBudgeted("fire", fire, base.x, base.y, nFire, false, area);
+          if (nSmoke) this.emitBudgeted("smoke", smoke, base.x, base.y, nSmoke, false, area);
         });
       }
     }

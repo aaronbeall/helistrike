@@ -1,7 +1,17 @@
 /** Terrain themes: per-biome palette, tile texture + tint, and decor swaps. Visual only; biome rules are unchanged. */
 import type { DecorKind } from "./world";
 
-export type TerrainTheme = "temperate" | "autumn" | "arctic" | "desert" | "tropic" | "coastal";
+export type TerrainTheme =
+  | "temperate"
+  | "autumn"
+  | "arctic"
+  | "desert"
+  | "tropic"
+  | "coastal"
+  | "savanna"
+  | "swamp"
+  | "volcanic"
+  | "alien";
 export type RGB = [number, number, number];
 
 /** Biome slot order matches world BIOME_ID: water, river, sand, grass, forest, rock, peak. */
@@ -49,7 +59,7 @@ export const TERRAIN_THEMES: Record<TerrainTheme, ThemeSpec> = {
   autumn: {
     id: "autumn",
     label: "AUTUMN",
-    description: "Golden grass, rust and amber woods, bare trees and evergreens under cool grey water.",
+    description: "Golden grass, rust and amber woods, bare trees and evergreens, cool grey water and rugged bare peaks.",
     looks: [
       look([34, 64, 78], [24, 46, 66], [0.3, 0.1, 0], 0),
       look([52, 50, 40], [52, 50, 40], [0.25, 0.2, 0], 1),
@@ -57,14 +67,15 @@ export const TERRAIN_THEMES: Record<TerrainTheme, ThemeSpec> = {
       look([132, 118, 66], [160, 136, 72], [1, 0.6, 0.2], 3, [146, 128, 72]),
       look([146, 70, 34], [180, 100, 40], [0.6, 0.4, 0], 4, [164, 84, 38]),
       look([104, 92, 82], [104, 92, 82], N1, 5),
-      look([150, 144, 138], [214, 210, 206], N1, 6),
+      look([86, 80, 74], [128, 118, 106], N1, 5, [100, 92, 84]),
     ],
     decor: {
-      tree: ["dead", "pine", "dead"],
-      bush: ["shrub", "dead"],
+      tree: ["tree_amber", "tree_red", "tree_gold", "tree_amber", "pine", "dead"],
+      bush: ["bush_rust", "shrub", "bush_rust"],
       palm: ["pine"],
       cactus: ["shrub"],
       cactus2: ["dead"],
+      snowrock: ["boulder"],
     },
   },
   arctic: {
@@ -154,6 +165,106 @@ export const TERRAIN_THEMES: Record<TerrainTheme, ThemeSpec> = {
       snowrock: ["boulder"],
     },
   },
+  savanna: {
+    id: "savanna",
+    label: "SAVANNA",
+    description: "Golden grassland, red earth, lone olive-green trees, dry scrub and rust-red rock.",
+    looks: [
+      look([52, 92, 88], [36, 66, 70], [0.3, 0.2, 0], 0),
+      look([70, 78, 56], [70, 78, 56], [0.25, 0.2, 0], 1),
+      look([184, 120, 76], [140, 96, 66], [1, 0.6, 0.3], 2, [180, 118, 78]),
+      look([178, 150, 82], [204, 176, 98], [1, 0.7, 0.2], 3, [190, 160, 88]),
+      look([112, 112, 58], [132, 128, 66], [0.6, 0.5, 0], 4, [120, 116, 62]),
+      look([138, 92, 64], [138, 92, 64], [1, 0.7, 0.4], 5, [142, 94, 66]),
+      look([160, 116, 82], [186, 146, 108], [1, 0.7, 0.4], 5, [170, 128, 92]),
+    ],
+    decor: {
+      tree: ["tree_olive", "tree_olive", "dead", "shrub"],
+      pine: ["tree_olive", "dead"],
+      palm: ["tree_olive"],
+      bush: ["bush_dry", "shrub"],
+      cactus: ["shrub"],
+      cactus2: ["bush_dry"],
+      reed: ["shrub"],
+      snowrock: ["boulder"],
+    },
+  },
+  swamp: {
+    id: "swamp",
+    label: "SWAMP",
+    description: "Murky green water, mudflats and reed beds, drooping dark woods and mossy stone.",
+    looks: [
+      look([56, 72, 50], [34, 48, 36], [0.2, 0.3, 0], 0, [60, 76, 52]),
+      look([56, 64, 44], [56, 64, 44], [0.25, 0.2, 0], 1, [62, 70, 48]),
+      look([98, 90, 62], [72, 68, 50], [0.6, 0.5, 0.2], 2, [96, 88, 62]),
+      look([86, 104, 56], [104, 118, 62], [0.8, 0.6, 0], 3, [92, 108, 58]),
+      look([34, 58, 34], [40, 70, 40], [0.4, 0.3, 0], 4, [38, 62, 36]),
+      look([80, 84, 68], [80, 84, 68], N1, 5, [84, 88, 70]),
+      look([96, 100, 84], [120, 122, 104], N1, 5, [104, 108, 90]),
+    ],
+    decor: {
+      tree: ["tree_swamp", "tree_swamp", "dead", "tree"],
+      pine: ["tree_swamp", "dead"],
+      palm: ["tree_swamp"],
+      bush: ["bush_swamp", "reed"],
+      shrub: ["reed", "bush_swamp"],
+      cactus: ["reed"],
+      cactus2: ["reed"],
+      snowrock: ["boulder"],
+    },
+  },
+  volcanic: {
+    id: "volcanic",
+    label: "VOLCANIC",
+    description: "Molten seas, black sand, ash plains, dead and scorched woods, basalt ridges and smouldering summits.",
+    looks: [
+      // Lava-coloured water: looks only, still behaves as water.
+      look([148, 50, 12], [96, 22, 8], [0.4, 0.2, 0], 0, [170, 64, 18]),
+      look([150, 60, 20], [150, 60, 20], [0.4, 0.2, 0], 1, [160, 64, 20]),
+      look([62, 58, 56], [44, 42, 42], [0.5, 0.5, 0.5], 2, [64, 60, 58]),
+      look([92, 90, 80], [112, 108, 96], [0.6, 0.6, 0.5], 3, [98, 96, 86]),
+      look([58, 64, 46], [66, 72, 52], [0.4, 0.3, 0], 4, [60, 66, 48]),
+      look([46, 44, 44], [46, 44, 44], N1, 5, [52, 50, 50]),
+      look([40, 36, 36], [96, 56, 40], [0.8, 0.5, 0.3], 5, [46, 42, 42]),
+    ],
+    decor: {
+      tree: ["dead", "tree_ash", "dead"],
+      pine: ["dead", "tree_ash"],
+      palm: ["dead"],
+      bush: ["shrub", "rock"],
+      shrub: ["shrub", "dead"],
+      cactus: ["rock"],
+      cactus2: ["dead"],
+      reed: ["dead"],
+      snowrock: ["boulder"],
+    },
+  },
+  alien: {
+    id: "alien",
+    label: "ALIEN",
+    description: "Glowing teal seas, violet plains, magenta fronds, indigo rock and crystal peaks.",
+    looks: [
+      look([24, 110, 120], [18, 50, 90], [0.3, 0.3, 0.3], 0, [40, 120, 130]),
+      look([40, 60, 80], [40, 60, 80], [0.25, 0.25, 0.25], 1, [52, 72, 96]),
+      look([176, 156, 190], [124, 108, 140], [0.7, 0.6, 0.8], 2, [172, 152, 188]),
+      look([118, 72, 138], [146, 92, 160], [0.8, 0.5, 0.8], 3, [128, 80, 148]),
+      look([26, 96, 96], [30, 120, 116], [0.3, 0.6, 0.6], 4, [30, 104, 104]),
+      look([70, 64, 96], [70, 64, 96], [0.6, 0.6, 0.8], 5, [76, 70, 104]),
+      look([120, 170, 190], [200, 236, 240], [0.5, 0.7, 0.7], 6, [170, 214, 224]),
+    ],
+    decor: {
+      tree: ["tree_teal", "tree_violet", "tree_violet"],
+      pine: ["tree_teal"],
+      palm: ["tree_magenta"],
+      dead: ["tree_violet"],
+      bush: ["bush_magenta", "tree_teal"],
+      shrub: ["bush_magenta"],
+      cactus: ["tree_magenta"],
+      cactus2: ["bush_magenta"],
+      reed: ["bush_magenta"],
+      snowrock: ["boulder"],
+    },
+  },
 };
 
 export const TERRAIN_THEME_IDS = Object.keys(TERRAIN_THEMES) as TerrainTheme[];
@@ -180,6 +291,19 @@ export function waterBandLooks(water: BiomeLook): { shallow: BiomeLook; deep: Bi
     bandCache.set(water, out);
   }
   return out;
+}
+
+/** Mean colour of a theme's open water (what sunk wrecks take on). */
+export function waterColor(theme: ThemeSpec): RGB {
+  const w = theme.looks[0]!;
+  return [(w.lo[0] + w.hi[0]) / 2, (w.lo[1] + w.hi[1]) / 2, (w.lo[2] + w.hi[2]) / 2];
+}
+
+/** Multiply tint for things lying in a theme's shallows: white, `t` of the way to the shallow-water colour. */
+export function shallowTint(theme: ThemeSpec, t: number): number {
+  const c = waterBandLooks(theme.looks[0]!).shallow.lo;
+  const ch = (v: number) => Math.round(255 + (Math.min(255, v) - 255) * t);
+  return (ch(c[0]) << 16) | (ch(c[1]) << 8) | ch(c[2]);
 }
 
 /** Look color at t (extrapolates, like the original per-biome ramps). */

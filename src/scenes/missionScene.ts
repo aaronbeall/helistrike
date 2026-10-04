@@ -1,5 +1,5 @@
 import { heightOf, radius, playerLoadoutFromSockets, type Unit, type Debris, type Shot, type PlayerWpnSpec } from "../sim/combat";
-import { makeUnit, spawnCrewFor } from "../sim/units";
+import { makeSettlementUnits, makeUnit, spawnCrewFor } from "../sim/units";
 import { stampDecor, GroundMarks } from "./mission/fx/groundMarks";
 import { Ripples } from "./mission/fx/ripples";
 import Phaser from "phaser";
@@ -30,6 +30,8 @@ import { PromptsHud } from "./mission/hud/prompts";
 import { UnitSim } from "./mission/enemy/unitSim";
 import { EnemyFire } from "./mission/enemy/enemyFire";
 import { EnemyTargeting } from "./mission/enemy/targeting";
+import { LineOfSight } from "./mission/enemy/lineOfSight";
+import { PowerLines } from "./mission/world/powerLines";
 import { RemoteAi } from "./mission/remote/ai";
 import { ReticleHud } from "./mission/hud/reticleHud";
 import { Minimap } from "./mission/hud/minimap";
@@ -51,10 +53,12 @@ import { missionOf } from "../sim/mission";
 import { rigsAnyOpen, installRigHotkeys } from "../rigs/rigs";
 import { ensureEdgeLightPipeline } from "../render/edgeLight";
 import { setGlitchPipeline } from "../render/glitch";
+import { setShockPipeline } from "../render/shockFx";
 import { setWarpDistortPipeline } from "../render/warpDistort";
 import { setCloakFxPipeline } from "../render/cloakFx";
 import { createTerrain25D, type Terrain25D } from "../render/terrain25d";
-import { extractBiomeTiles, bakeHeliHudWireTexture, registerArt, nameGameTexture, muzzleGlowKey, ensureExhaustGlow, ensureImpactGlow } from "../art/sprites";
+import { extractBiomeTiles, bakeHeliHudWireTexture, registerArt, nameGameTexture, muzzleGlowKey, ensureExhaustGlow, ensureImpactGlow, setSinkWater } from "../art/sprites";
+import { themeOf, waterColor } from "../worldgen/theme";
 import { generateWorld, worldFromGen, groundZ, worldToScreen, setCamera25DFocus, screenToWorldOnGround, castZ, paintHeightMap, WORLD, WRECK_TEX, type WorldData } from "../worldgen/world";
 
 /** How far aircraft may overshoot before a soft cap (jets / enemy air) — see craft.MAP_AIR_SOFT. */
@@ -63,6 +67,8 @@ export class MissionScene extends Phaser.Scene {
   // Subsystems — each owns its state + methods, holds the scene as `s`.
   // enemy
   targeting = new EnemyTargeting(this);
+  lineOfSight = new LineOfSight(this);
+  powerLines = new PowerLines(this);
   unitSim = new UnitSim(this);
   enemyFire = new EnemyFire(this);
   // remote
@@ -187,6 +193,9 @@ export class MissionScene extends Phaser.Scene {
     this.thermal.reset();
     this.warpLingerScale = null;
     this.overlays.reset();
+    this.lineOfSight.reset();
+    this.powerLines.reset();
+    this.statusHud.reset();
     this.sideView.reset();
     this.callStrike.reset();
     this.refractor.reset();
@@ -200,6 +209,7 @@ export class MissionScene extends Phaser.Scene {
     this.remoteBody.reset();
     this.relief.reset();
     this.shots = [];
+    this.projectiles.reset();
     this.trails.reset();
     this.debris = [];
     this.lockOn.reset();
@@ -246,6 +256,8 @@ export class MissionScene extends Phaser.Scene {
   /** Textures, pipelines and art bakes the rest of create() draws from. */
   createAssets(): void {
     ensureEdgeLightPipeline(this.game);
+    // Sunk wrecks take on this theme's water colour.
+    setSinkWater(this.textures, waterColor(themeOf(this.world.theme)));
     stampDecor(this.world, this.textures);
     if (this.textures.exists("map_terrain")) this.textures.remove("map_terrain");
     this.textures.addCanvas("map_terrain", this.world.canvas);
@@ -528,6 +540,7 @@ export class MissionScene extends Phaser.Scene {
       u.hv = s.hv;
       this.units.push(u);
     }
+    this.units.push(...makeSettlementUnits(this.world));
     const posted: Unit[] = [];
     for (const host of this.units) {
       posted.push(...spawnCrewFor(this.world, this.textures, host));
@@ -626,6 +639,10 @@ export class MissionScene extends Phaser.Scene {
       else if (this.relief.open) this.relief.nudgeOff(0, 1);
     });
     this.input.keyboard!.addKey("K").on("down", () => this.overlays.toggleHeightMap());
+    this.input.keyboard!.addKey("J").on("down", () => {
+      this.sideView.setOn(!this.sideView.on);
+      this.debugMenu.sync();
+    });
     this.input.keyboard!.addKey("P").on("down", () => this.perf.handleKey());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.FORWARD_SLASH).on("down", () => this.debugMenu.toggle());
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ESC).on("down", () => {
@@ -670,6 +687,7 @@ export class MissionScene extends Phaser.Scene {
       setGlitchPipeline(this.cameras?.main, false);
       setWarpDistortPipeline(this.cameras?.main, false);
       setCloakFxPipeline(this.cameras?.main, false);
+      setShockPipeline(this.cameras?.main, false);
       this.terrain25d = undefined;
       this.fx.slots.clear();
       this.fx.thermalSaved.clear();
@@ -1021,6 +1039,8 @@ export class MissionScene extends Phaser.Scene {
     this.overlays.debugGfx = this.add.graphics().setDepth(Layer.FIELD).setVisible(false);
     this.overlays.blastGfx = this.add.graphics().setDepth(Layer.FIELD + 20);
     this.overlays.aiGfx = this.add.graphics().setDepth(Layer.FIELD + 8);
+    this.lineOfSight.create();
+    this.powerLines.create();
     const cx = 18 + 88;
     const cy = this.scale.height - 18 - 88;
     this.minimap.mask = this.add.graphics().setScrollFactor(0);
@@ -1208,11 +1228,15 @@ export class MissionScene extends Phaser.Scene {
     }
     this.groundMarks.updateThermalWreckMarks(dt);
     this.groundMarks.updateEmberGlows(dt);
+    this.groundMarks.updateSurfaceWrecks();
     this.ripples.update(dt);
     this.overlays.tickBlast(wallDt);
 
     if (this.relief.open) this.relief.tick(wallDt);
     this.overlays.drawAi();
+    this.lineOfSight.drawDebug();
+    this.powerLines.update();
+    this.statusHud.tickJolt();
     // Apply suppression after draw/debug updates so nothing can re-enable
     // itself over the theater map later in this frame.
     this.camera.setTheaterWorldHidden(this.camera.mapBlend > 0.5);
@@ -1229,6 +1253,7 @@ export class MissionScene extends Phaser.Scene {
       this.trails.energyTrailGfx.clear();
       this.refractor.gfx.clear();
       this.countermeasures.gfx.clear();
+      this.countermeasures.hideFlareVisuals();
     } else {
       this.camera.mapGfx.clear();
       this.camera.hideMapHvLabels();
@@ -1580,7 +1605,7 @@ export class MissionScene extends Phaser.Scene {
     for (const policy of Object.values(this.fx.policies)) {
       for (const em of policy.emitters) em.timeScale = s;
     }
-    for (const em of [this.fx.smoke, this.fx.blastFire, this.fx.heliDust]) {
+    for (const em of [this.fx.smoke, this.fx.heliDust]) {
       if (em) em.timeScale = s;
     }
   }

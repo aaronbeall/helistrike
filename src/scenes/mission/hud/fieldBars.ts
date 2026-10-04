@@ -3,7 +3,7 @@ import Phaser from "phaser";
 
 import { heightOf } from "../../../sim/combat";
 import { Layer, ZOff, worldDepth } from "../../../render/depth";
-import { isOrganic } from "../../../sim/roster";
+import { isNeutral, isOrganic } from "../../../sim/roster";
 import { worldToScreen, cameraPointVisible } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
 
@@ -53,7 +53,7 @@ export class FieldBars {
     g.clear();
     g.setDepth(Layer.FIELD);
     for (const u of this.s.units) {
-      if (u.dead || u.health >= u.max - 0.5) continue;
+      if (u.dead || u.health >= u.max - 0.5 || isNeutral(u.kind)) continue;
       if (!cameraPointVisible(u.z, u.y)) continue;
       const at = worldToScreen(u.x, u.y, u.z);
       const zs = at.scale;

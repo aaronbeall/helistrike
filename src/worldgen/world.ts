@@ -5,7 +5,10 @@ import { lookColor, themedTiles, themeOf, waterBandLooks, type TerrainTheme, typ
 import { Rng } from "../util/rng";
 import { pickTroop, type UnitKind } from "../sim/roster";
 import { UNIT_SPECS } from "../catalog/units";
-import { drawBridgeStamp, drawRoadStamp } from "../art/artGen";
+import { drawRoadStamp } from "../art/artGen";
+import { roadImage } from "../art/roadArt";
+import { structureImage } from "../art/structureArt";
+import { isGroundPrint, isUnitStructure, placeSettlements, type Settlement, type Structure } from "./settlements";
 
 export const WORLD = 5600;
 export const TEX = 1800;
@@ -43,7 +46,20 @@ export type DecorKind =
   | "boulder"
   | "reed"
   | "dead"
-  | "snowrock";
+  | "snowrock"
+  | "tree_amber"
+  | "tree_red"
+  | "tree_gold"
+  | "bush_rust"
+  | "tree_olive"
+  | "bush_dry"
+  | "tree_swamp"
+  | "bush_swamp"
+  | "tree_ash"
+  | "tree_teal"
+  | "tree_violet"
+  | "tree_magenta"
+  | "bush_magenta";
 
 export function doodadTex(kind: DecorKind): string {
   return `doodad_${kind}`;
@@ -72,6 +88,8 @@ export interface Road {
   toHv: string;
   /** Narrower spur linking a trunk road to a secondary building. */
   spur?: boolean;
+  /** Two-lane asphalt (steel bridges over water); otherwise a dirt road (plank bridges). Nothing sets it yet. */
+  paved?: boolean;
 }
 
 export interface WorldData {
@@ -83,6 +101,8 @@ export interface WorldData {
   /** Water surface height per texel, -1 where dry. Sea, lakes and rivers each sit at their own level. */
   water: Float32Array;
   biome: Uint8Array;
+  /** Towns, ports, airfields, dams (structure footprints painted into the terrain). */
+  settlements: Settlement[];
   spawnX: number;
   spawnY: number;
   hv: HvSpec[];
@@ -129,10 +149,15 @@ export interface WorldGenProfile {
   siting: ObjectiveSiting;
   garrisonScale: number;
   patrolCount: number;
+  /** Patrols weighted toward water (0 = no boats at all). */
   waterPatrolBias: number;
   forceMix: "mixed" | "naval" | "heavy";
   /** Roads: 0 = none; otherwise trunks between objectives + spurs to lookouts/towers within roadDensity × ROAD_SPUR_MAX. */
   roadDensity: number;
+  /** Settlement density (0 = none … 2 = dense): towns, plus a port / airfield / dam where the terrain suits. */
+  settlement: number;
+  /** Water settlements: ports, dams and offshore oil fields (off for e.g. lava seas). */
+  waterSites: boolean;
   /** Cloud cover multiplier (visual only; 0 = clear, 1 = standard, 2 = heavy). Not used by world gen. */
   clouds: number;
 }
@@ -147,7 +172,7 @@ export const DEFAULT_WORLD_PROFILE: WorldGenProfile = {
   theme: "temperate",
   riverTarget: 50,
   mainRivers: 0,
-  landforms: { mesa: 0, crater: 0, volcano: 0, dunes: 0 },
+  landforms: { mesa: 0, crater: 0, volcano: 0, pyramid: 0, dunes: 0 },
   objectiveCount: 4,
   siting: "tactical",
   garrisonScale: 1,
@@ -155,6 +180,8 @@ export const DEFAULT_WORLD_PROFILE: WorldGenProfile = {
   waterPatrolBias: 1,
   forceMix: "mixed",
   roadDensity: 1,
+  settlement: 1,
+  waterSites: true,
   clouds: 1,
 };
 
@@ -522,6 +549,58 @@ export function buildRelief(seed: number, profile: WorldGenProfile, onProgress?:
   return { height, moisture, biome, riverRad, field, hint };
 }
 
+/** Menu preview light: thumbnail slopes are averaged out, so exaggerate them a bit. */
+const PREVIEW_RELIEF = 1.6;
+
+/**
+ * Cheap map thumbnail (n × n): real shape + landforms + biomes + theme colours + terrace + hillshade.
+ * No rivers, lakes, settlements or tiles.
+ */
+export function paintTerrainPreview(seed: number, profile: WorldGenProfile, n: number): ImageData {
+  const height = new Float32Array(n * n);
+  const biome = new Uint8Array(n * n);
+  const field = makeShape(profile.shape, seed);
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) height[y * n + x] = baseHeight(x / n, y / n, seed, profile, field, 0);
+  }
+  const hint = { x: field.spawnX * n, y: field.spawnY * n };
+  applyLandforms(height, n, profile.landforms, seed, hint, H_WATER);
+  const raw = new Float32Array(height);
+  for (let i = 0; i < n * n; i++) {
+    biome[i] = classifyBiome(raw[i]!, moistureAt((i % n) / n, ((i / n) | 0) / n, seed));
+    height[i] = remapBand(raw[i]!);
+  }
+  applyDunes(height, n, profile.landforms.dunes, seed, hint, (i) => biome[i] === BIOME_ID.sand || biome[i] === BIOME_ID.grass);
+  const theme = themeOf(profile.theme);
+  const img = new ImageData(n, n);
+  const d = img.data;
+  // Gradients in full-res texel units, so terrainLight reads them like the game does.
+  const k = (n / TEX) * PREVIEW_RELIEF;
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const i = y * n + x;
+      const fine = (fbm((x / n) * 40, (y / n) * 40, seed + 41, 2) - 0.5) * 24;
+      const c = baseTerrainColor(theme, biome[i]!, raw[i]!, 0, fine);
+      if (biome[i] === BIOME_ID.water) {
+        LIGHT.lit = 1;
+        LIGHT.spec = 0;
+      } else {
+        const xl = height[y * n + Math.max(0, x - 1)]!;
+        const xr = height[y * n + Math.min(n - 1, x + 1)]!;
+        const yu = height[Math.max(0, y - 1) * n + x]!;
+        const yd = height[Math.min(n - 1, y + 1) * n + x]!;
+        terrainLight((xr - xl) * k, (yd - yu) * k, LIGHT);
+      }
+      const o = i * 4;
+      d[o] = clamp(c[0] * LIGHT.lit + LIGHT.spec, 0, 255);
+      d[o + 1] = clamp(c[1] * LIGHT.lit + LIGHT.spec * 0.92, 0, 255);
+      d[o + 2] = clamp(c[2] * LIGHT.lit + LIGHT.spec * 0.78, 0, 255);
+      d[o + 3] = 255;
+    }
+  }
+  return img;
+}
+
 /** carveDrainage internals on its coarse grid (n × n, DRAIN_STEP texels per cell), for the terrain rig. */
 export interface DrainageTrace {
   n: number;
@@ -749,15 +828,35 @@ export function generateWorld(
   onProgress?.(0.96, "force laydown");
   const { spawnX, spawnY } = findSpawn(height, biome, rng, field.spawnX, field.spawnY);
   const { hv, spawns } = placeForces(height, biome, rng, spawnX, spawnY, profile, field.keep);
-  const roads = makeRoads(hv, spawns, height, biome, rng, profile.roadDensity);
-  applyRoadBridgeHeights(height, water, roads);
+  const settlements = placeSettlements({
+    tex: TEX,
+    scale: SCALE,
+    height,
+    water,
+    seaLevel: H_WATER,
+    buildable: (i) => water[i]! < 0 && (biome[i] === BIOME_ID.grass || biome[i] === BIOME_ID.sand || biome[i] === BIOME_ID.forest),
+    fertile: (i) => water[i]! < 0 && biome[i] === BIOME_ID.grass,
+    river: (i) => biome[i] === BIOME_ID.river,
+    riverRad,
+    rng,
+    avoid: [{ x: spawnX, y: spawnY }, ...hv],
+    density: profile.settlement,
+    dryOnly: !profile.waterSites,
+    occupied: spawns.filter((sp) => !UNIT_SPECS[sp.kind].aerial).map((sp) => ({ x: sp.x, y: sp.y, r: footprintR(sp.kind) + 8 })),
+  });
+  const roads = makeRoads(hv, spawns, height, biome, rng, profile.roadDensity, settlements);
+  roads.push(...townStreets(settlements, water));
+  settlements.push(...placeBridges(roads, height, water));
   // Road sprites stamp on the main-thread canvas (worker has no document canvas).
-  const decor = placeDecor(biome, rng, theme);
-  const trees = decor.filter((d) => d.kind === "tree" || d.kind === "pine" || d.kind === "palm").map((d) => ({ x: d.x, y: d.y }));
+  // Keep trees / rocks off settlement footprints.
+  const decor = placeDecor(biome, rng, theme).filter(
+    (d) => !settlements.some((st) => st.parts.some((p) => Math.hypot(d.x - p.x, d.y - p.y) < Math.max(p.w, p.l) * 0.6 + 6))
+  );
+  const trees = decor.filter((d) => d.kind === "tree" || d.kind.startsWith("tree_") || d.kind === "pine" || d.kind === "palm").map((d) => ({ x: d.x, y: d.y }));
   const rocks = decor.filter((d) => d.kind === "rock" || d.kind === "boulder" || d.kind === "snowrock").map((d) => ({ x: d.x, y: d.y }));
 
   onProgress?.(0.97, "laydown");
-  return { seed, missionId: profile.id, theme: theme.id, height, water, biome, spawnX, spawnY, hv, spawns, trees, rocks, decor, roads, terrain };
+  return { seed, missionId: profile.id, theme: theme.id, height, water, biome, settlements, spawnX, spawnY, hv, spawns, trees, rocks, decor, roads, terrain };
 }
 
 export function imageDataToCanvas(img: ImageData): HTMLCanvasElement {
@@ -771,7 +870,9 @@ export function imageDataToCanvas(img: ImageData): HTMLCanvasElement {
 export function worldFromGen(g: WorldGen): WorldData {
   const { terrain, ...rest } = g;
   const canvas = imageDataToCanvas(terrain);
+  paintSettlementsOntoCanvas(canvas, rest.settlements, true);
   paintRoadsOntoCanvas(canvas, rest.roads);
+  paintSettlementsOntoCanvas(canvas, rest.settlements, false);
   return { ...rest, canvas };
 }
 
@@ -1796,29 +1897,6 @@ function heapPop(heap: HeapItem[]): HeapItem | undefined {
   return top;
 }
 
-function slopeAccel(height: Float32Array, fx: number, fy: number): { ax: number; ay: number } {
-  const e = 2.4;
-  const ax = (sampleH(height, fx - e, fy) - sampleH(height, fx + e, fy)) / (2 * e);
-  const ay = (sampleH(height, fx, fy - e) - sampleH(height, fx, fy + e)) / (2 * e);
-  return { ax, ay };
-}
-
-function sampleH(height: Float32Array, x: number, y: number): number {
-  const tx = clamp(x, 0, TEX - 1.001);
-  const ty = clamp(y, 0, TEX - 1.001);
-  const x0 = Math.floor(tx);
-  const y0 = Math.floor(ty);
-  const x1 = Math.min(x0 + 1, TEX - 1);
-  const y1 = Math.min(y0 + 1, TEX - 1);
-  const fx = tx - x0;
-  const fy = ty - y0;
-  const h00 = height[y0 * TEX + x0]!;
-  const h10 = height[y0 * TEX + x1]!;
-  const h01 = height[y1 * TEX + x0]!;
-  const h11 = height[y1 * TEX + x1]!;
-  return lerp(lerp(h00, h10, fx), lerp(h01, h11, fx), fy);
-}
-
 function stampRiver(biome: Uint8Array, riverRad: Float32Array, x: number, y: number, rad: number): void {
   const r = Math.max(rad, 0.5);
   const ir = Math.ceil(r);
@@ -2091,6 +2169,35 @@ function pickBiomeTexel(biome: Uint8Array, rng: Rng, id: number): { tx: number; 
   return null;
 }
 
+/** Spatial hash over placed decor (texel space) so clumps keep a little room from each other. */
+class DecorSpacing {
+  private cells = new Map<number, { x: number; y: number }[]>();
+  constructor(private readonly cell: number) {}
+  private key(cx: number, cy: number): number {
+    return cy * 4096 + cx;
+  }
+  tooClose(x: number, y: number, minD: number): boolean {
+    const r = Math.ceil(minD / this.cell);
+    const cx = Math.floor(x / this.cell);
+    const cy = Math.floor(y / this.cell);
+    for (let oy = -r; oy <= r; oy++) {
+      for (let ox = -r; ox <= r; ox++) {
+        const list = this.cells.get(this.key(cx + ox, cy + oy));
+        if (!list) continue;
+        for (const q of list) if (Math.hypot(q.x - x, q.y - y) < minD) return true;
+      }
+    }
+    return false;
+  }
+  add(x: number, y: number): void {
+    const k = this.key(Math.floor(x / this.cell), Math.floor(y / this.cell));
+    const list = this.cells.get(k);
+    if (list) list.push({ x, y });
+    else this.cells.set(k, [{ x, y }]);
+  }
+}
+
+/** Decor clump grown by accretion: each item lands beside a random earlier member, never too close to any decor. */
 function pushGroup(
   out: Decor[],
   biome: Uint8Array,
@@ -2101,53 +2208,67 @@ function pushGroup(
   spacing: number,
   sizeMin: number,
   sizeMax: number,
-  at?: { tx: number; ty: number },
-  swap?: ThemeSpec["decor"]
+  at: { tx: number; ty: number } | undefined,
+  swap: ThemeSpec["decor"] | undefined,
+  room: DecorSpacing
 ): void {
   const c = at ?? pickBiomeTexel(biome, rng, id);
   if (!c) return;
-  const cols = Math.max(2, Math.ceil(Math.sqrt(count)));
-  const origin = -((cols - 1) * spacing) / 2;
-  for (let i = 0; i < count; i++) {
-    const gx = i % cols;
-    const gy = (i / cols) | 0;
-    const jit = spacing * 0.22;
-    const tx = Math.round(c.tx + origin + gx * spacing + rng.range(-jit, jit));
-    const ty = Math.round(c.ty + origin + gy * spacing + rng.range(-jit, jit));
+  const minD = spacing * DECOR_MIN_GAP;
+  const pts: { x: number; y: number }[] = [];
+  for (let tries = 0; pts.length < count && tries < count * 14; tries++) {
+    let x = c.tx;
+    let y = c.ty;
+    if (pts.length) {
+      const p = pts[rng.int(0, pts.length - 1)]!;
+      const a = rng.range(0, Math.PI * 2);
+      const d = spacing * rng.range(0.75, 1.3);
+      x = p.x + Math.cos(a) * d;
+      y = p.y + Math.sin(a) * d;
+    }
+    if (room.tooClose(x, y, minD)) continue;
+    const tx = Math.round(x);
+    const ty = Math.round(y);
     if (!texelInBiome(biome, tx, ty, id)) continue;
+    pts.push({ x, y });
+    room.add(x, y);
     const kind = rng.pick(kinds);
     const alt = swap?.[kind];
     out.push({
       kind: alt ? rng.pick(alt) : kind,
-      x: (tx + 0.5) * SCALE,
-      y: (ty + 0.5) * SCALE,
+      x: (x + 0.5) * SCALE,
+      y: (y + 0.5) * SCALE,
       size: rng.range(sizeMin, sizeMax),
       rot: rng.range(0, Math.PI * 2),
     });
   }
 }
 
+/** Closest two decor may sit, as a fraction of their clump spacing (a little overlap is fine). */
+const DECOR_MIN_GAP = 0.65;
+
 function placeDecor(biome: Uint8Array, rng: Rng, theme: ThemeSpec): Decor[] {
   const out: Decor[] = [];
   const u = TEX / 1400;
+  const room = new DecorSpacing(8 * u);
   for (let i = 0; i < 52; i++)
-    pushGroup(out, biome, rng, BIOME_ID.forest, ["tree", "tree", "pine", "bush"], 6 + rng.int(0, 5), 7 * u, 5.5 * u, 13 * u, undefined, theme.decor);
+    pushGroup(out, biome, rng, BIOME_ID.forest, ["tree", "tree", "pine", "bush"], 6 + rng.int(0, 5), 7 * u, 5.5 * u, 13 * u, undefined, theme.decor, room);
   for (let i = 0; i < 22; i++)
-    pushGroup(out, biome, rng, BIOME_ID.grass, ["tree", "bush", "shrub"], 4 + rng.int(0, 4), 9 * u, 4.5 * u, 10 * u, undefined, theme.decor);
+    pushGroup(out, biome, rng, BIOME_ID.grass, ["tree", "bush", "shrub"], 4 + rng.int(0, 4), 9 * u, 4.5 * u, 10 * u, undefined, theme.decor, room);
   for (let i = 0; i < 18; i++)
-    pushGroup(out, biome, rng, BIOME_ID.grass, ["shrub", "bush", "rock"], 5 + rng.int(0, 3), 6 * u, 3.5 * u, 7 * u, undefined, theme.decor);
+    pushGroup(out, biome, rng, BIOME_ID.grass, ["shrub", "bush", "rock"], 5 + rng.int(0, 3), 6 * u, 3.5 * u, 7 * u, undefined, theme.decor, room);
   for (let i = 0; i < 24; i++)
-    pushGroup(out, biome, rng, BIOME_ID.sand, ["cactus", "cactus2", "shrub"], 3 + rng.int(0, 4), 8 * u, 4 * u, 9.5 * u, undefined, theme.decor);
+    pushGroup(out, biome, rng, BIOME_ID.sand, ["cactus", "cactus2", "shrub"], 3 + rng.int(0, 4), 8 * u, 4 * u, 9.5 * u, undefined, theme.decor, room);
   for (let i = 0; i < 10; i++)
-    pushGroup(out, biome, rng, BIOME_ID.sand, ["rock", "boulder"], 3 + rng.int(0, 2), 7 * u, 4 * u, 8 * u, undefined, theme.decor);
+    pushGroup(out, biome, rng, BIOME_ID.sand, ["rock", "boulder"], 3 + rng.int(0, 2), 7 * u, 4 * u, 8 * u, undefined, theme.decor, room);
   for (let i = 0; i < 8; i++)
-    pushGroup(out, biome, rng, BIOME_ID.sand, ["palm"], 3 + rng.int(0, 2), 11 * u, 6 * u, 12 * u, undefined, theme.decor);
+    pushGroup(out, biome, rng, BIOME_ID.sand, ["palm"], 3 + rng.int(0, 2), 11 * u, 6 * u, 12 * u, undefined, theme.decor, room);
   for (let i = 0; i < 26; i++)
-    pushGroup(out, biome, rng, BIOME_ID.rock, ["boulder", "rock", "rock"], 3 + rng.int(0, 3), 6 * u, 4.5 * u, 9 * u, undefined, theme.decor);
+    pushGroup(out, biome, rng, BIOME_ID.rock, ["boulder", "rock", "rock"], 3 + rng.int(0, 3), 6 * u, 4.5 * u, 9 * u, undefined, theme.decor, room);
   for (let i = 0; i < 8; i++)
-    pushGroup(out, biome, rng, BIOME_ID.rock, ["pine", "dead"], 3 + rng.int(0, 2), 10 * u, 5 * u, 11 * u, undefined, theme.decor);
+    pushGroup(out, biome, rng, BIOME_ID.rock, ["pine", "dead"], 3 + rng.int(0, 2), 10 * u, 5 * u, 11 * u, undefined, theme.decor, room);
   for (let i = 0; i < 16; i++)
-    pushGroup(out, biome, rng, BIOME_ID.peak, ["snowrock", "boulder"], 3 + rng.int(0, 3), 7 * u, 4 * u, 8.5 * u, undefined, theme.decor);
+    pushGroup(out, biome, rng, BIOME_ID.peak, ["snowrock", "boulder"], 3 + rng.int(0, 3), 7 * u, 4 * u, 8.5 * u, undefined, theme.decor, room);
   for (let i = 0; i < 14; i++) {
     const c = pickBiomeTexel(biome, rng, BIOME_ID.sand);
     if (!c) continue;
@@ -2159,7 +2280,7 @@ function placeDecor(biome: Uint8Array, rng: Rng, theme: ThemeSpec): Decor[] {
       }
     }
     if (!shore) continue;
-    pushGroup(out, biome, rng, BIOME_ID.sand, ["reed", "shrub"], 5 + rng.int(0, 4), 5 * u, 3.2 * u, 6.5 * u, c, theme.decor);
+    pushGroup(out, biome, rng, BIOME_ID.sand, ["reed", "shrub"], 5 + rng.int(0, 4), 5 * u, 3.2 * u, 6.5 * u, c, theme.decor, room);
   }
   return out;
 }
@@ -2406,12 +2527,12 @@ function findSpawn(
   return { spawnX: WORLD * 0.22, spawnY: WORLD * 0.22 };
 }
 
-/** Raise water crossings just above the waterline for bridge decks. */
-const ROAD_BRIDGE_CLEAR = 0.018;
 /** Min spacing between stored road nodes (texels). */
 const ROAD_NODE_STEP = 4.5;
 /** Secondary buildings farther than this from a trunk are skipped. */
 const ROAD_SPUR_MAX = 420;
+/** Max route cost (≈ world units over easy ground) for a settlement's road to the network. */
+const ROAD_SETTLEMENT_REACH = 4200;
 /** Spur only to permanent satellite hard-sites near the network (not tents). */
 const ROAD_SPUR_KINDS = new Set<UnitKind>(["lookout", "tower"]);
 
@@ -2425,10 +2546,15 @@ function makeRoads(
   height: Float32Array,
   biome: Uint8Array,
   rng: Rng,
-  density = 1
+  density = 1,
+  settlements: Settlement[] = []
 ): Road[] {
   const roads: Road[] = [];
   if (density <= 0) return roads;
+  const grid = new RoadGrid(height, biome, Math.floor(rng.next() * 1e6));
+  for (const st of settlements) {
+    for (const p of st.parts) if (isUnitStructure(p.kind)) grid.block(p.x, p.y, Math.min(p.w, p.l) * 0.5);
+  }
   if (hv.length >= 2) {
     const connected = new Set<number>([0]);
     const remaining = new Set<number>();
@@ -2453,7 +2579,7 @@ function makeRoads(
       if (bestFrom < 0 || bestTo < 0) break;
       const from = hv[bestFrom]!;
       const to = hv[bestTo]!;
-      const nodes = traceFlowRoad(from.x, from.y, to.x, to.y, height, biome, rng);
+      const nodes = grid.route(from.x, from.y, to.x, to.y);
       roads.push({
         nodes,
         width: rng.range(11, 15),
@@ -2465,6 +2591,18 @@ function makeRoads(
     }
   }
 
+  // Settlements join the network (or the first objective when there's no network yet).
+  for (const st of settlements) {
+    if (st.kind === "powerline" || st.kind === "oil_field") continue;
+    const nodes = roads.length
+      ? grid.routeToNetwork(st.x, st.y, ROAD_SETTLEMENT_REACH)?.reverse()
+      : hv.length
+        ? grid.route(hv[0]!.x, hv[0]!.y, st.x, st.y)
+        : null;
+    if (!nodes) continue;
+    roads.push({ nodes, width: rng.range(9, 12), fromHv: hv[0]?.id ?? "none", toHv: `${st.kind}-${roads.length}` });
+  }
+
   // Spur roads to garrison lookouts / AA towers near the trunk (permanent sites).
   const spurMax = ROAD_SPUR_MAX * density;
   let siteN = 0;
@@ -2473,10 +2611,10 @@ function makeRoads(
     const hitch = nearestTrunkAttach(roads, hv, s.x, s.y);
     if (!hitch || hitch.dist > spurMax) continue;
     if (hitch.dist < 28) continue;
-    const nodes = traceFlowRoad(hitch.x, hitch.y, s.x, s.y, height, biome, rng, {
-      stiff: 1.15,
-      meander: 0.55,
-    });
+    // From the site to wherever the network is cheapest to reach (not just the nearest point).
+    const nodes = grid.routeToNetwork(s.x, s.y, spurMax * 1.6);
+    if (!nodes) continue;
+    nodes.reverse();
     roads.push({
       nodes,
       width: rng.range(6.5, 9.5),
@@ -2524,209 +2662,378 @@ function nearestTrunkAttach(
   return best;
 }
 
-type FlowRoadOpts = { stiff?: number; meander?: number };
+/** Road pathfinding grid: texels per cell, and the cost knobs. */
+const ROAD_CELL = 6;
+/** Grade penalty: + (rise per world unit × ROAD_GRADE)² per step — steep climbs switchback or route around. */
+const ROAD_GRADE = 9;
+/** Extra cost per cell under a building. */
+const ROAD_BUILDING = 30;
+/** Extra cost per water cell (bridges): short crossings are cheap, open water effectively impassable. */
+const ROAD_WATER = 18;
+/** Cost multiplier on cells already used by a road (later roads merge into the network). */
+const ROAD_REUSE = 0.35;
+/** Cost noise strength on flat ground (0 = ruler-straight routes). */
+const ROAD_WOBBLE = 1.2;
 
 /**
- * River-style momentum marble steered toward a goal, with stiff contour bias
- * (prefer level travel) and light meander — smoother than coarse A* cells.
+ * Coarse cost grid for road A*: distance × (1 + grade² + high-ground penalty) + per-cell water cost, with a
+ * discount on cells existing roads use. Routes are smoothed, and water crossings are straightened into bridges.
  */
-function traceFlowRoad(
-  ax: number,
-  ay: number,
-  bx: number,
-  by: number,
-  height: Float32Array,
-  biome: Uint8Array,
-  rng: Rng,
-  opts: FlowRoadOpts = {}
-): RoadNode[] {
-  const stiff = opts.stiff ?? 1;
-  const meanderMul = opts.meander ?? 1;
-  let fx = ax / SCALE;
-  let fy = ay / SCALE;
-  const gx = bx / SCALE;
-  const gy = by / SCALE;
-  let dx = gx - fx;
-  let dy = gy - fy;
-  let dist0 = Math.hypot(dx, dy) || 1;
-  let vx = (dx / dist0) * 0.55;
-  let vy = (dy / dist0) * 0.55;
-  const meanderSeed = rng.next() * 1000;
+class RoadGrid {
+  readonly n: number;
+  private readonly h: Float32Array;
+  private readonly wet: Uint8Array;
+  /** Low-frequency cost noise so routes over flat ground meander instead of ruling straight lines. */
+  private readonly wobble: Float32Array;
+  private readonly used: Uint8Array;
+  /** Under a building footprint (roads go round). */
+  private readonly built: Uint8Array;
+  private readonly g: Float32Array;
+  private readonly from: Int32Array;
+  private readonly seen: Uint32Array;
+  private stamp = 0;
 
-  // Stiffer than rivers: stronger goal pull, higher drag, weaker wander.
-  const GOAL_G = 0.16 * stiff;
-  const CONTOUR = 0.48;
-  const PEAK_REPEL = 0.04;
-  const drag = 0.94;
-  const maxSpd = 1.05;
-  const meanderAmp = 0.022 * meanderMul;
-
-  const samples: { x: number; y: number }[] = [{ x: fx, y: fy }];
-  let still = 0;
-  let bestRem = dist0;
-  let noProgress = 0;
-  // Budget scales with distance but stays well below the old 16k×fbm freeze.
-  const maxSteps = Math.min(2800, Math.ceil(dist0 * 3.2) + 120);
-
-  for (let step = 0; step < maxSteps; step++) {
-    const toX = gx - fx;
-    const toY = gy - fy;
-    const rem = Math.hypot(toX, toY);
-    if (rem < 2.5) break;
-
-    if (rem < bestRem - 0.35) {
-      bestRem = rem;
-      noProgress = 0;
-    } else if (++noProgress > 90) {
-      // Stuck in a contour bowl — abandon flow and finish with a short chord.
-      break;
-    }
-
-    const ux = toX / rem;
-    const uy = toY / rem;
-    const near = rem < 40 ? 1.45 : 1;
-    // Escalate goal pull when stalled so we don't burn the step budget.
-    const stuckBoost = noProgress > 35 ? 1.8 : 1;
-    vx += ux * GOAL_G * near * stuckBoost;
-    vy += uy * GOAL_G * near * stuckBoost;
-
-    const { ax: sax, ay: say } = slopeAccel(height, fx, fy);
-    const slen = Math.hypot(sax, say);
-    const contourAmt = noProgress > 35 ? CONTOUR * 0.35 : CONTOUR;
-    if (slen > 1e-6) {
-      const nx = sax / slen;
-      const ny = say / slen;
-      const along = vx * nx + vy * ny;
-      vx -= nx * along * contourAmt;
-      vy -= ny * along * contourAmt;
-      const h = sampleH(height, fx, fy);
-      if (h > 0.64) {
-        vx -= nx * (h - 0.64) * PEAK_REPEL * 40;
-        vy -= ny * (h - 0.64) * PEAK_REPEL * 40;
+  constructor(
+    height: Float32Array,
+    private readonly biome: Uint8Array,
+    seed: number
+  ) {
+    const n = Math.floor(TEX / ROAD_CELL);
+    this.n = n;
+    this.h = new Float32Array(n * n);
+    this.wet = new Uint8Array(n * n);
+    this.used = new Uint8Array(n * n);
+    this.built = new Uint8Array(n * n);
+    this.wobble = new Float32Array(n * n);
+    this.g = new Float32Array(n * n);
+    this.from = new Int32Array(n * n);
+    this.seen = new Uint32Array(n * n);
+    const half = ROAD_CELL >> 1;
+    for (let cy = 0; cy < n; cy++) {
+      for (let cx = 0; cx < n; cx++) {
+        const i = (cy * ROAD_CELL + half) * TEX + cx * ROAD_CELL + half;
+        this.h[cy * n + cx] = height[i]!;
+        const b = biome[i]!;
+        this.wet[cy * n + cx] = b === BIOME_ID.water || b === BIOME_ID.river ? 1 : 0;
+        this.wobble[cy * n + cx] = 1 + fbm(cx * 0.16, cy * 0.16, seed + 701, 3) * ROAD_WOBBLE;
       }
     }
+  }
 
-    // Cheap meander (hash noise every few steps) — full fbm each tick froze load.
-    if ((step & 3) === 0) {
-      const n = fbm(fx * 0.038 + meanderSeed, fy * 0.038, meanderSeed, 2) - 0.5;
-      vx += -uy * n * meanderAmp;
-      vy += ux * n * meanderAmp;
-    }
+  private cell(x: number, y: number): number {
+    const cx = clamp(Math.floor(x / SCALE / ROAD_CELL), 0, this.n - 1);
+    const cy = clamp(Math.floor(y / SCALE / ROAD_CELL), 0, this.n - 1);
+    return cy * this.n + cx;
+  }
 
-    vx *= drag;
-    vy *= drag;
-    let spd = Math.hypot(vx, vy);
-    if (spd > maxSpd) {
-      vx = (vx / spd) * maxSpd;
-      vy = (vy / spd) * maxSpd;
-      spd = maxSpd;
-    }
-    if (spd < 0.08) {
-      still++;
-      vx += ux * 0.28;
-      vy += uy * 0.28;
-      if (still > 10) {
-        vx += ux * 0.4;
-        vy += uy * 0.4;
+  /** Mark cells under a world-space disc as built over. */
+  block(x: number, y: number, r: number): void {
+    const step = ROAD_CELL * SCALE;
+    for (let oy = -r; oy <= r; oy += step * 0.5) {
+      for (let ox = -r; ox <= r; ox += step * 0.5) {
+        if (ox * ox + oy * oy <= r * r) this.built[this.cell(x + ox, y + oy)] = 1;
       }
-    } else still = 0;
-
-    fx += vx;
-    fy += vy;
-    fx = clamp(fx, 2, TEX - 3);
-    fy = clamp(fy, 2, TEX - 3);
-
-    const last = samples[samples.length - 1]!;
-    if (Math.hypot(fx - last.x, fy - last.y) >= 1.4) {
-      samples.push({ x: fx, y: fy });
     }
   }
-  // If flow bailed early, don't leave a single huge chord — paint/AI both hate that.
-  {
-    const last = samples[samples.length - 1]!;
-    const rem = Math.hypot(gx - last.x, gy - last.y);
-    if (rem > 1.4) {
-      const steps = Math.min(48, Math.ceil(rem / 6));
-      for (let i = 1; i <= steps; i++) {
-        const t = i / steps;
-        samples.push({ x: last.x + (gx - last.x) * t, y: last.y + (gy - last.y) * t });
+
+  private stepCost(a: number, b: number, diag: boolean): number {
+    const len = (diag ? Math.SQRT2 : 1) * ROAD_CELL * SCALE;
+    const grade = (Math.abs(this.h[b]! - this.h[a]!) * GROUND_Z_SCALE) / len;
+    const hb = this.h[b]!;
+    let c = len * (this.wobble[b]! + (grade * ROAD_GRADE) ** 2 + (hb > H_ROCK ? (hb - H_ROCK) * 40 : 0));
+    if (this.wet[b]) c += ROAD_WATER * len;
+    if (this.built[b]) c += ROAD_BUILDING * len;
+    return this.used[b] ? c * ROAD_REUSE : c;
+  }
+
+  /** A* from a to b (world coords) → smoothed road nodes; marks the cells as used. */
+  route(ax: number, ay: number, bx: number, by: number): RoadNode[] {
+    const goal = this.cell(bx, by);
+    const gx = goal % this.n;
+    const gy = (goal / this.n) | 0;
+    const minStep = ROAD_CELL * SCALE * ROAD_REUSE;
+    const cells = this.search(this.cell(ax, ay), (c) => c === goal, (c) => Math.hypot((c % this.n) - gx, ((c / this.n) | 0) - gy) * minStep, Infinity);
+    return this.toNodes(cells ?? [this.cell(ax, ay), goal], ax, ay, bx, by);
+  }
+
+  /** Dijkstra from a point to the nearest road cell (by cost), within `maxCost`; null if none. */
+  routeToNetwork(ax: number, ay: number, maxCost: number): RoadNode[] | null {
+    const start = this.cell(ax, ay);
+    const cells = this.search(start, (c) => c !== start && this.used[c] === 1, () => 0, maxCost);
+    if (!cells) return null;
+    const end = cells[cells.length - 1]!;
+    const ex = ((end % this.n) + 0.5) * ROAD_CELL * SCALE;
+    const ey = (((end / this.n) | 0) + 0.5) * ROAD_CELL * SCALE;
+    return this.toNodes(cells, ax, ay, ex, ey);
+  }
+
+  private search(start: number, done: (c: number) => boolean, heur: (c: number) => number, maxCost: number): number[] | null {
+    const n = this.n;
+    const stamp = ++this.stamp;
+    const heap: HeapItem[] = [];
+    this.g[start] = 0;
+    this.from[start] = -1;
+    this.seen[start] = stamp;
+    heapPush(heap, { h: heur(start), i: start });
+    for (let it = heapPop(heap); it; it = heapPop(heap)) {
+      const c = it.i;
+      const gc = this.g[c]!;
+      if (it.h - heur(c) > gc + 1e-3) continue;
+      if (done(c)) {
+        const out: number[] = [];
+        for (let k = c; k >= 0; k = this.from[k]!) out.push(k);
+        out.reverse();
+        for (const k of out) this.used[k] = 1;
+        return out;
       }
-    } else {
-      samples.push({ x: gx, y: gy });
+      if (gc > maxCost) continue;
+      const cx = c % n;
+      const cy = (c / n) | 0;
+      for (let k = 0; k < 8; k++) {
+        const x = cx + DRAIN_NB[k * 2]!;
+        const y = cy + DRAIN_NB[k * 2 + 1]!;
+        if (x < 1 || y < 1 || x >= n - 1 || y >= n - 1) continue;
+        const j = y * n + x;
+        const ng = gc + this.stepCost(c, j, k >= 4);
+        if (this.seen[j] === stamp && ng >= this.g[j]!) continue;
+        this.seen[j] = stamp;
+        this.g[j] = ng;
+        this.from[j] = c;
+        heapPush(heap, { h: ng + heur(j), i: j });
+      }
     }
+    return null;
   }
 
-  // Light neighbor smooth (stiffer than river jitter — just round corners).
-  for (let pass = 0; pass < 2; pass++) {
-    for (let i = 1; i < samples.length - 1; i++) {
-      const a = samples[i - 1]!;
-      const b = samples[i]!;
-      const c = samples[i + 1]!;
-      b.x = b.x * 0.55 + (a.x + c.x) * 0.225;
-      b.y = b.y * 0.55 + (a.y + c.y) * 0.225;
+  /** Cell path → world polyline: bridges straightened bank to bank, land curves smoothed, resampled. */
+  private toNodes(cells: number[], ax: number, ay: number, bx: number, by: number): RoadNode[] {
+    const n = this.n;
+    const c2w = (c: number) => ({ x: ((c % n) + 0.5) * ROAD_CELL * SCALE, y: (((c / n) | 0) + 0.5) * ROAD_CELL * SCALE, wet: this.wet[c] === 1 });
+    let pts = [{ x: ax, y: ay, wet: false }, ...cells.slice(1, -1).map(c2w), { x: bx, y: by, wet: false }];
+    // Bridges: drop the cells of each water run so the span is a straight line between its two banks.
+    pts = pts.filter((p, i) => !p.wet || i === 0 || i === pts.length - 1 || !pts[i - 1]!.wet || !pts[i + 1]?.wet);
+    // Remove the grid staircase: simplify each land run (bridge ends kept), then smooth.
+    pts = simplifyRoad(pts, ROAD_CELL * SCALE * 1.1);
+    // Chaikin-smooth land stretches; keep bridge endpoints fixed so spans stay straight.
+    for (let it = 0; it < 3; it++) {
+      const sm = [pts[0]!];
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i]!;
+        const b = pts[i + 1]!;
+        if (a.wet || b.wet) {
+          sm.push(b);
+          continue;
+        }
+        sm.push({ x: a.x * 0.75 + b.x * 0.25, y: a.y * 0.75 + b.y * 0.25, wet: false }, { x: a.x * 0.25 + b.x * 0.75, y: a.y * 0.25 + b.y * 0.75, wet: false });
+      }
+      sm.push(pts[pts.length - 1]!);
+      pts = sm;
     }
+    const nodes: RoadNode[] = [];
+    const step = ROAD_NODE_STEP * SCALE;
+    const push = (x: number, y: number) => nodes.push({ x, y, water: waterAtTex(this.biome, x / SCALE, y / SCALE) });
+    push(pts[0]!.x, pts[0]!.y);
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1]!;
+      const b = pts[i]!;
+      const d = Math.hypot(b.x - a.x, b.y - a.y);
+      const k = Math.max(1, Math.ceil(d / step));
+      for (let s = 1; s <= k; s++) push(a.x + ((b.x - a.x) * s) / k, a.y + ((b.y - a.y) * s) / k);
+    }
+    return nodes;
   }
-
-  const nodes: RoadNode[] = [];
-  const pushNode = (tx: number, ty: number) => {
-    nodes.push({
-      x: tx * SCALE,
-      y: ty * SCALE,
-      water: waterAtTex(biome, tx, ty),
-    });
-  };
-  pushNode(ax / SCALE, ay / SCALE);
-  for (const s of samples) {
-    const last = nodes[nodes.length - 1]!;
-    if (Math.hypot(s.x * SCALE - last.x, s.y * SCALE - last.y) < ROAD_NODE_STEP * SCALE) continue;
-    pushNode(s.x, s.y);
-  }
-  const end = nodes[nodes.length - 1]!;
-  if (Math.hypot(end.x - bx, end.y - by) > 3) pushNode(bx / SCALE, by / SCALE);
-  else {
-    end.x = bx;
-    end.y = by;
-    end.water = waterAtTex(biome, bx / SCALE, by / SCALE);
-  }
-  return nodes;
 }
 
-/** Raise bridge decks slightly above water on the heightfield. */
-function applyRoadBridgeHeights(height: Float32Array, water: Float32Array, roads: Road[]): void {
-  const rad = 2.2;
+/** Douglas–Peucker within each land run (wet points + endpoints always kept), tolerance in world units. */
+function simplifyRoad<T extends { x: number; y: number; wet: boolean }>(pts: T[], eps: number): T[] {
+  const keep = new Uint8Array(pts.length);
+  keep[0] = 1;
+  keep[pts.length - 1] = 1;
+  pts.forEach((p, i) => p.wet && (keep[i] = 1));
+  const dp = (a: number, b: number) => {
+    if (b - a < 2) return;
+    const pa = pts[a]!;
+    const pb = pts[b]!;
+    const vx = pb.x - pa.x;
+    const vy = pb.y - pa.y;
+    const l = Math.hypot(vx, vy) || 1;
+    let best = -1;
+    let bestD = eps;
+    for (let i = a + 1; i < b; i++) {
+      const d = Math.abs((pts[i]!.x - pa.x) * vy - (pts[i]!.y - pa.y) * vx) / l;
+      if (d > bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    if (best < 0) return;
+    keep[best] = 1;
+    dp(a, best);
+    dp(best, b);
+  };
+  let start = 0;
+  for (let i = 1; i < pts.length; i++) {
+    if (!keep[i]) continue;
+    dp(start, i);
+    start = i;
+  }
+  return pts.filter((_, i) => keep[i]);
+}
+
+/** Bridge decks: the water crossings of each road as chains of destructible deck segments at bank height. */
+function placeBridges(roads: Road[], height: Float32Array, water: Float32Array): Settlement[] {
+  const topZ = (x: number, y: number) => {
+    const i = clamp(Math.round(y / SCALE), 0, TEX - 1) * TEX + clamp(Math.round(x / SCALE), 0, TEX - 1);
+    return Math.max(0, (Math.max(height[i]!, water[i]!) - GROUND_H_ZERO) * GROUND_Z_SCALE);
+  };
+  const out: Settlement[] = [];
   for (const road of roads) {
-    for (let i = 0; i < road.nodes.length; i++) {
-      const n = road.nodes[i]!;
-      const next = road.nodes[i + 1];
-      const span = n.water || next?.water;
-      if (!span) continue;
-      const stamps = next
-        ? Math.max(1, Math.ceil(Math.hypot(next.x - n.x, next.y - n.y) / (SCALE * 2)))
-        : 1;
-      for (let s = 0; s <= stamps; s++) {
-        const t = stamps === 0 ? 0 : s / stamps;
-        const wx = next ? lerp(n.x, next.x, t) : n.x;
-        const wy = next ? lerp(n.y, next.y, t) : n.y;
-        const cx = wx / SCALE;
-        const cy = wy / SCALE;
-        const x0 = Math.max(0, Math.floor(cx - rad));
-        const x1 = Math.min(TEX - 1, Math.ceil(cx + rad));
-        const y0 = Math.max(0, Math.floor(cy - rad));
-        const y1 = Math.min(TEX - 1, Math.ceil(cy + rad));
-        for (let y = y0; y <= y1; y++) {
-          for (let x = x0; x <= x1; x++) {
-            if (Math.hypot(x - cx, y - cy) > rad) continue;
-            const i = y * TEX + x;
-            // Deck just above whatever water it spans.
-            if (water[i]! >= 0) height[i] = Math.max(height[i]!, water[i]! + ROAD_BRIDGE_CLEAR);
-          }
+    const n = road.nodes;
+    const kind = road.paved ? "bridge_steel" : "bridge";
+    const spec = UNIT_SPECS[kind];
+    const box = spec.box!;
+    const segL = box.halfL * 2;
+    for (let i = 0; i < n.length; i++) {
+      if (!n[i]!.water || (i > 0 && n[i - 1]!.water)) continue;
+      let j = i;
+      while (j + 1 < n.length && n[j + 1]!.water) j++;
+      // Bank to bank: the land nodes either side of the water run.
+      const a = n[Math.max(0, i - 1)]!;
+      const b = n[Math.min(n.length - 1, j + 1)]!;
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      if (len < 4) continue;
+      const rot = Math.atan2(b.y - a.y, b.x - a.x);
+      const za = topZ(a.x, a.y);
+      const zb = topZ(b.x, b.y);
+      const count = Math.max(1, Math.ceil(len / segL));
+      const parts: Structure[] = [];
+      for (let k = 0; k < count; k++) {
+        const t = (k + 0.5) / count;
+        const x = a.x + (b.x - a.x) * t;
+        const y = a.y + (b.y - a.y) * t;
+        const deck = Math.max(za + (zb - za) * t, topZ(x, y) + BRIDGE_CLEAR);
+        parts.push({ kind, x, y, rot, w: box.halfW * 2, l: segL, z: deck - spec.height });
+      }
+      out.push({ kind: "bridge", x: a.x, y: a.y, parts });
+      i = j;
+    }
+  }
+  return out;
+}
+
+/** Bridge deck clearance over the water (z). */
+const BRIDGE_CLEAR = 6;
+/** Town street width (world). */
+const STREET_WIDTH = 8;
+
+/** Town streets: grid lines through the gaps between building rows, clipped to the town circle and dry land. */
+function townStreets(settlements: Settlement[], water: Float32Array): Road[] {
+  const out: Road[] = [];
+  const wet = (x: number, y: number) =>
+    water[clamp(Math.round(y / SCALE), 0, TEX - 1) * TEX + clamp(Math.round(x / SCALE), 0, TEX - 1)]! >= 0;
+  for (const st of settlements) {
+    const gd = st.grid;
+    if (!gd) continue;
+    const c = Math.cos(gd.a);
+    const s = Math.sin(gd.a);
+    const r = gd.radius * 0.95;
+    const lines = Math.ceil(r / gd.spacing);
+    for (const axis of [0, 1]) {
+      for (let k = -lines; k < lines; k++) {
+        const off = (k + 0.5) * gd.spacing;
+        if (Math.abs(off) >= r) continue;
+        const half = Math.sqrt(r * r - off * off);
+        // Walk the chord; break the street wherever it hits water.
+        let run: RoadNode[] = [];
+        const flush = () => {
+          if (run.length >= 2) out.push({ nodes: run, width: STREET_WIDTH, fromHv: "town", toHv: "town", spur: true });
+          run = [];
+        };
+        const steps = Math.max(2, Math.ceil((half * 2) / (gd.spacing / 3)));
+        for (let q = 0; q <= steps; q++) {
+          const v = -half + (half * 2 * q) / steps;
+          const u = axis ? v : off;
+          const w = axis ? off : v;
+          const x = gd.x + u * c - w * s;
+          const y = gd.y + u * s + w * c;
+          if (wet(x, y)) flush();
+          else run.push({ x, y, water: false });
         }
+        flush();
       }
     }
   }
+  return out;
 }
 
 /** Warp road / bridge sprites along stored nodes onto the terrain color canvas. */
+/** Printed structures: each part's art stretched into its footprint; `ground` = the under-road pass (fields). */
+export function paintSettlementsOntoCanvas(canvas: HTMLCanvasElement, settlements: Settlement[], ground: boolean): void {
+  const g = canvas.getContext("2d", { willReadFrequently: true })!;
+  g.imageSmoothingEnabled = true;
+  for (const st of settlements) {
+    for (const p of st.parts) {
+      if (isUnitStructure(p.kind) || isGroundPrint(p.kind) !== ground) continue;
+      g.save();
+      g.translate(p.x / SCALE, p.y / SCALE);
+      g.rotate(p.rot);
+      const x0 = -p.l / SCALE / 2;
+      const y0 = -p.w / SCALE / 2;
+      if (ground) {
+        // Blend into the land: crop colour over the terrain's own shading, then a lighter pass for the rows.
+        const print = printArt(structureImage(p.kind), p.l / SCALE, p.w / SCALE);
+        g.globalCompositeOperation = "color";
+        g.globalAlpha = PRINT_COLOR_ALPHA;
+        g.drawImage(print, x0, y0, p.l / SCALE, p.w / SCALE);
+        g.globalCompositeOperation = "soft-light";
+        g.globalAlpha = PRINT_DETAIL_ALPHA;
+        g.drawImage(print, x0, y0, p.l / SCALE, p.w / SCALE);
+        g.globalCompositeOperation = "source-over";
+        g.globalAlpha = PRINT_PAINT_ALPHA;
+        g.drawImage(print, x0, y0, p.l / SCALE, p.w / SCALE);
+      } else {
+        g.drawImage(structureImage(p.kind), x0, y0, p.l / SCALE, p.w / SCALE);
+      }
+      g.restore();
+    }
+  }
+}
+
+/** Ground print blend: colour pass, texture (soft-light) pass, and a light plain paint pass for presence. */
+const PRINT_COLOR_ALPHA = 0.6;
+const PRINT_DETAIL_ALPHA = 0.9;
+const PRINT_PAINT_ALPHA = 0.25;
+/** Supersample for the print art. */
+const PRINT_SS = 2;
+
+/** Shrink in halving steps (no mipmaps on canvas): fine detail like crop rows averages instead of aliasing. */
+function halveTo(img: CanvasImageSource, w: number, h: number): CanvasImageSource {
+  let src = img;
+  let sw = (img as HTMLImageElement).width;
+  let sh = (img as HTMLImageElement).height;
+  while (sw > w * 2 || sh > h * 2) {
+    sw = Math.max(w, Math.ceil(sw / 2));
+    sh = Math.max(h, Math.ceil(sh / 2));
+    const c = document.createElement("canvas");
+    c.width = sw;
+    c.height = sh;
+    const g = c.getContext("2d")!;
+    g.imageSmoothingQuality = "high";
+    g.drawImage(src, 0, 0, sw, sh);
+    src = c;
+  }
+  return src;
+}
+
+/** Print art stretched to `w × h` texels (supersampled, smoothly downsized). */
+function printArt(img: CanvasImageSource, w: number, h: number): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = Math.max(2, Math.round(w * PRINT_SS));
+  c.height = Math.max(2, Math.round(h * PRINT_SS));
+  c.getContext("2d")!.drawImage(halveTo(img, c.width, c.height), 0, 0, c.width, c.height);
+  return c;
+}
+
 export function paintRoadsOntoCanvas(
   canvas: HTMLCanvasElement,
   roads: Road[],
@@ -2740,11 +3047,12 @@ export function paintRoadsOntoCanvas(
     g.rect(clip.x0, clip.y0, clip.x1 - clip.x0 + 1, clip.y1 - clip.y0 + 1);
     g.clip();
   }
-  const roadSpr = drawRoadStamp();
-  const bridgeSpr = drawBridgeStamp();
+  const dirtSpr = roadImage("road") ?? drawRoadStamp();
+  const pavedSpr = roadImage("paved") ?? dirtSpr;
 
-  // Trunk first, then spurs so junctions read cleanly.
-  const ordered = [...roads].sort((a, b) => Number(!!a.spur) - Number(!!b.spur));
+  // Dirt under paved, trunk before spurs, so junctions read cleanly.
+  const rank = (r: Road) => Number(!!r.paved) * 2 + Number(!!r.spur);
+  const ordered = [...roads].sort((a, b) => rank(a) - rank(b));
   for (const road of ordered) {
     const halfW = road.width / SCALE;
     let u = 0; // distance along polyline (texels) for continuous texture U
@@ -2771,15 +3079,20 @@ export function paintRoadsOntoCanvas(
       }
       const ang = Math.atan2(dy, dx);
       const waterSeg = a.water || b.water;
-      const spr = waterSeg ? bridgeSpr : roadSpr;
-      const h = halfW * (waterSeg ? 1.15 : 1) * 2;
+      // Water crossings are bridge-deck units now, not paint.
+      if (waterSeg) {
+        u += len;
+        continue;
+      }
+      const spr = road.paved ? pavedSpr : dirtSpr;
+      const h = halfW * 2;
       // World length that matches one stamp at this road width (preserve aspect).
       const tile = Math.max(6, (spr.width / Math.max(1, spr.height)) * h);
       const drawLen = len + (p < road.nodes.length - 1 ? 0.45 : 0);
       g.save();
       g.translate(ax, ay);
       g.rotate(ang);
-      g.globalAlpha = waterSeg ? 0.92 : road.spur ? 0.72 : 0.8;
+      g.globalAlpha = road.spur ? 0.72 : 0.8;
       // Warp the stamp as a continuous ribbon along the polyline (no radial stamps).
       // At a tile seam, leftover room can be ~0 so piece never advances — that froze
       // the load bar at 100% on long chords. Always consume at least half a texel.

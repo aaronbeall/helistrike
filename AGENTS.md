@@ -47,12 +47,13 @@ New gameplay/rendering logic does **not** go in the scene; it goes in the owning
 ### Subsystem modules (`src/scenes/mission/<domain>/`)
 
 ```
-enemy/        targeting · unitSim · enemyFire
+enemy/        targeting · unitSim · enemyFire · lineOfSight
 remote/       fleet · ai · body
 weapons/      fireControl · projectiles · lockOn · countermeasures · tesla · refractor · callStrike
 fx/           fx · trails · groundMarks · ripples · emitters (function: createFxEmitters)
 destruction/  destruction
 render/       hostCraft · unitSprites · thermalMode
+world/        powerLines
 camera/       camera
 flow/         missionFlow
 hud/          weaponHud · statusHud · threatHud · reticleHud · minimap · cornerHud · prompts · help · fieldBars
@@ -97,10 +98,12 @@ export class RemoteFleet {
 | A new special weapon with its own state | new `weapons/<name>.ts` module |
 | Enemy movement / AI | `enemy/unitSim` (+ pure steering in `sim/navigation`) |
 | Who enemies target | `enemy/targeting` (+ rules in `sim/targetRules`) |
+| Enemy line of sight (terrain occlusion) | `enemy/lineOfSight` |
 | Remote launch/dock/pilot | `remote/fleet`; autonomous behaviour `remote/ai`; visuals + guns `remote/body` |
 | Particles / impacts / muzzle flash | `fx/fx` (emitter configs in `fx/emitters`) |
 | Trails / ribbons | `fx/trails` |
 | Craters, scorch, wreck stamps | `fx/groundMarks` |
+| Power line wires (draw, shorting, rotor strikes) | `world/powerLines` |
 | Water ripples (splashes, wakes) | `fx/ripples` (`s.ripples.spawn` / `.splash`) |
 | Deaths, crashes, debris | `destruction/destruction` |
 | HUD element | the matching `hud/…` module, or a new one |
@@ -109,6 +112,8 @@ export class RemoteFleet {
 | Map silhouette / domain warp | `src/worldgen/shape.ts` |
 | Terrain palette, tiles, decor per theme | `src/worldgen/theme.ts` |
 | Landform stamps (mesas, craters, volcanoes, dunes) | `src/worldgen/landforms.ts` |
+| Towns (+ street grid), ports, airfields, dams, farms, oil fields, power lines, bridges | `src/worldgen/settlements.ts` (art: `src/art/structureArt.ts`; buildings in `UNIT_STRUCTURES` spawn as neutral units, the rest are printed into the terrain) |
+| Neutral (civilian) units | `neutral: true` on the `UnitSpec`; player-side auto-picks filter with `hostileUnit` (`sim/targetRules`) |
 
 ## Gotchas (learned the hard way)
 

@@ -1,3 +1,4 @@
+import { themeOf, shallowTint } from "../../../worldgen/theme";
 import { applyTerrainLight, sampleBiome, SCALE, doodadTex, groundZ, worldToScreen, cameraPointVisible, projectHeading, isWater, WORLD, WRECK_TEX, type WorldData } from "../../../worldgen/world";
 import { softCapBlastCraterScale } from "../../../render/fxCurves";
 import Phaser from "phaser";
@@ -8,6 +9,33 @@ import { ZOff, worldDepth } from "../../../render/depth";
 import { range } from "../../../util/rng";
 import { FX_VARIANTS, FX_BLAST_CELLS } from "../../../art/sprites";
 import type { MissionScene } from "../../missionScene";
+
+/** Wreck resting at a water surface (sea structures): drawn like a hull, not stamped on the seabed. */
+type SurfaceWreck = { image: Phaser.GameObjects.Image; x: number; y: number; z: number; rotation: number };
+
+/** Crater embers: seconds at full glow, then seconds to fade out. */
+const EMBER_HOLD_MIN = 1.6;
+const EMBER_HOLD_MAX = 3.2;
+const EMBER_FADE_MIN = 4.8;
+const EMBER_FADE_MAX = 8.4;
+
+/** Craters in shallow water: how far their tint leans to the theme's shallow-water colour. */
+const SHALLOW_CRATER_MIX = 0.45;
+/** Ember heat on thermal (0–1 signal), before fading out. */
+const EMBER_THERMAL_HEAT = 0.75;
+/** Coal tint: hot orange → deep red as embers cool (multiplies the source art). */
+const EMBER_HOT = 0xff7a26;
+const EMBER_COOL = 0xc81a0e;
+/** Bloom sits redder than the coals. */
+const EMBER_BLOOM_HOT = 0xff4a14;
+const EMBER_BLOOM_COOL = 0x9a0c06;
+
+function lerpRgb(a: number, b: number, t: number): number {
+  const r = ((a >> 16) & 255) + ((((b >> 16) & 255) - ((a >> 16) & 255)) * t);
+  const g = ((a >> 8) & 255) + ((((b >> 8) & 255) - ((a >> 8) & 255)) * t);
+  const bl = (a & 255) + (((b & 255) - (a & 255)) * t);
+  return (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(bl);
+}
 
 /** Additive ember patch over a crater / hulk — fades to nothing with flicker. */
 type EmberGlow = {
@@ -27,9 +55,11 @@ type EmberGlow = {
   fadeDur: number;
   flickerPhase: number;
   flickerRate: number;
+  /** Per-coal colour bias, 0 = orange … 1 = red. */
+  hue: number;
 };
 
-type ThermalWreckKind = "blast" | "blood" | "scar" | "shell";
+type ThermalWreckKind = "blast" | "blood" | "scar" | "shell" | "hulk";
 
 type ThermalWreckMark = {
   image: Phaser.GameObjects.Image;
@@ -77,6 +107,10 @@ function thermalWreckTiming(kind: ThermalWreckKind, scaleX: number, scaleY: numb
     // Spent brass stays hot on the ground longer than a speed-tied in-flight glow.
     return { hold: 1.6, fadeDur: 9 + Math.min(8, span * 4) };
   }
+  if (kind === "hulk") {
+    // Burnt-out hulls hold their heat well past the fire.
+    return { hold: 4, fadeDur: 22 + Math.min(14, span * 6) };
+  }
   return { hold: 0.35, fadeDur: 6 + Math.min(7, span * 2.4) };
 }
 
@@ -117,6 +151,7 @@ export class GroundMarks {
   thermalWreckMarks: ThermalWreckMark[] = [];
   /** Warm ember patches over fresh craters / hulks (ADD, flicker-fade). */
   emberGlows: EmberGlow[] = [];
+  private surfaceWrecks: SurfaceWreck[] = [];
 
   constructor(readonly s: MissionScene) {}
 
@@ -124,6 +159,32 @@ export class GroundMarks {
   reset(): void {
     this.thermalWreckMarks = [];
     this.emberGlows = [];
+    this.surfaceWrecks = [];
+  }
+
+  addSurfaceWreck(key: string, x: number, y: number, z: number, rotation: number, ox = 0.5, oy = 0.5): void {
+    const w: SurfaceWreck = { image: this.s.add.image(0, 0, key).setOrigin(ox, oy), x, y, z, rotation };
+    this.surfaceWrecks.push(w);
+    this.syncSurfaceWreck(w);
+  }
+
+  updateSurfaceWrecks(): void {
+    for (const w of this.surfaceWrecks) this.syncSurfaceWreck(w);
+  }
+
+  private syncSurfaceWreck(w: SurfaceWreck): void {
+    if (!cameraPointVisible(w.z, w.y)) {
+      w.image.setVisible(false);
+      return;
+    }
+    const at = worldToScreen(w.x, w.y, w.z);
+    w.image
+      .setVisible(true)
+      .setPosition(at.x, at.y)
+      .setRotation(projectHeading(w.rotation, w.x, w.y, w.z))
+      .setScale(at.scale)
+      .setDepth(worldDepth(w.z, ZOff.body, w.y));
+    applyThermalHeat(w.image, this.s.thermal.on, 0.3);
   }
 
   stampWreck(
@@ -252,7 +313,7 @@ export class GroundMarks {
         .setScale(mark.scaleX * at.scale, mark.scaleY * at.scale)
         .setDepth(worldDepth(mark.z, -7, mark.y));
     } else {
-      applyThermalHeat(mark.image, true, fade * (mark.kind === "shell" ? 0.72 : 0.55));
+      applyThermalHeat(mark.image, true, fade * (mark.kind === "shell" || mark.kind === "hulk" ? 0.72 : 0.55));
       mark.image
         .setAlpha(1)
         .setPosition(at.x, at.y)
@@ -295,7 +356,9 @@ export class GroundMarks {
   /** Stamp a blast crater using soft-capped scale (no large-tex swap). */
   stampBlastCrater(x: number, y: number, rawScale: number, alpha = 1): void {
     const pick = this.pickBlastCraterStamp(rawScale);
-    this.stampWreck(pick.key, x, y, Math.random() * Math.PI * 2, pick.scale, alpha);
+    // Shallows: a water-tinted crater on the bed.
+    const wet = isWater(this.s.world, x, y) ? shallowTint(themeOf(this.s.world.theme), SHALLOW_CRATER_MIX) : undefined;
+    this.stampWreck(pick.key, x, y, Math.random() * Math.PI * 2, pick.scale, alpha, 0.5, 0.5, undefined, undefined, undefined, true, wet);
   }
 
   /**
@@ -303,11 +366,13 @@ export class GroundMarks {
    * never debris, troops, or gun scars.
    */
   spawnCraterEmbers(x: number, y: number, scale: number): void {
+    if (isWater(this.s.world, x, y)) return;
     // Scatter individual baked particles — each crater gets a unique layout.
     const n = Math.max(4, Math.min(14, Math.round(5 + scale * 6 + range(-2, 3))));
+    // Long enough to outlast the smoke that drifts over a fresh crater.
     this.spawnEmberGlow(x, y, scale, {
-      hold: range(0.35, 0.85),
-      fade: range(1.1, 2.2),
+      hold: range(EMBER_HOLD_MIN, EMBER_HOLD_MAX),
+      fade: range(EMBER_FADE_MIN, EMBER_FADE_MAX),
       particles: n,
     });
   }
@@ -381,7 +446,8 @@ export class GroundMarks {
       hold: hold ?? range(0.3, 0.75),
       fadeDur: fade ?? range(1.0, 2.0),
       flickerPhase: Math.random() * Math.PI * 2,
-      flickerRate: range(11, 22),
+      flickerRate: range(7, 14),
+      hue: Math.random(),
     };
     this.emberGlows.push(glow);
     this.syncEmberGlow(glow);
@@ -414,8 +480,8 @@ export class GroundMarks {
     const flicker = 0.38 + 0.62 * pulse * (0.65 + 0.35 * crackle);
     const sputter = Phaser.Math.Linear(flicker, 0.2 + 0.8 * flicker * flicker, 1 - base);
     const thermal = this.s.thermal.on;
-    const crispA = base * sputter * (thermal ? 0.5 : 0.98);
-    const bloomA = base * sputter * (thermal ? 0.28 : 0.58);
+    const crispA = base * sputter * (thermal ? 0.85 : 0.98);
+    const bloomA = base * sputter * (thermal ? 0.45 : 0.58);
     const at = worldToScreen(g.x, g.y, g.z);
     const depth = worldDepth(g.z, ZOff.fire * 0.15, g.y);
     const rot = projectHeading(g.rotation, g.x, g.y, g.z);
@@ -436,13 +502,15 @@ export class GroundMarks {
     if (thermal) {
       g.image.setBlendMode(Phaser.BlendModes.NORMAL);
       g.bloom.setBlendMode(Phaser.BlendModes.NORMAL);
-      applyThermalHeat(g.image, true, 0.85 * base);
-      applyThermalHeat(g.bloom, true, 0.55 * base);
+      applyThermalHeat(g.image, true, EMBER_THERMAL_HEAT * base);
+      applyThermalHeat(g.bloom, true, EMBER_THERMAL_HEAT * base);
     } else {
       g.image.setBlendMode(Phaser.BlendModes.ADD);
       g.bloom.setBlendMode(Phaser.BlendModes.ADD);
-      applyThermalHeat(g.image, false, 0);
-      applyThermalHeat(g.bloom, false, 0);
+      // Redder as they cool, and on flicker dips.
+      const cool = Phaser.Math.Clamp(g.hue * 0.55 + (1 - base) * 0.6 + (1 - sputter) * 0.25, 0, 1);
+      g.image.setTint(lerpRgb(EMBER_HOT, EMBER_COOL, cool));
+      g.bloom.setTint(lerpRgb(EMBER_BLOOM_HOT, EMBER_BLOOM_COOL, cool));
     }
   }
 

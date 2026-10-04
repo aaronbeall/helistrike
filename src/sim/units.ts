@@ -4,6 +4,7 @@ import { camoForBiome, resolveSkin } from "../render/camo";
 import { nextId, stats, textureOf, type Unit } from "./combat";
 import { specOf, spawnAngle, pickTroop, gunsOf, rollParts, crewOf } from "./roster";
 import { groundZ, sampleBiome, type WorldData } from "../worldgen/world";
+import { isUnitStructure } from "../worldgen/settlements";
 import { CRUISE_AGL } from "./craft";
 
 export function makeUnit(world: WorldData, kind: Unit["kind"], x: number, y: number, pinId?: number, pinMount?: number): Unit {
@@ -39,6 +40,22 @@ export function makeUnit(world: WorldData, kind: Unit["kind"], x: number, y: num
     parts,
     camo: specOf(kind).forcedCamo ?? camoForBiome(sampleBiome(world, x, y)),
   };
+}
+
+/** Neutral civilian buildings from the world's settlements, facing their layout. */
+export function makeSettlementUnits(world: WorldData): Unit[] {
+  const out: Unit[] = [];
+  for (const st of world.settlements) {
+    for (const p of st.parts) {
+      if (!isUnitStructure(p.kind)) continue;
+      const u = makeUnit(world, p.kind, p.x, p.y);
+      u.angle = u.turret = p.rot;
+      if (p.z != null) u.z = p.z;
+      u.camo = undefined;
+      out.push(u);
+    }
+  }
+  return out;
 }
 
 /** Spawn pinned crew from host UnitSpec.crew (any kind with seats). */

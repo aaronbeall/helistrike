@@ -1,10 +1,15 @@
 import { type Unit } from "./combat";
 import { type RemoteCraft } from "./remote";
-import { specOf, gunsOf, weaponIsAa } from "./roster";
+import { specOf, gunsOf, isNeutral, weaponIsAa } from "./roster";
 
 /** AA burst / seeker / AAM — blind to ground HOUND. */
 export function enemyWeaponIsAa(wpn: { kind?: string; look?: string } | undefined): boolean {
   return weaponIsAa(wpn);
+}
+
+/** Live enemy unit — a valid pick for auto-aim, locks and friendly AI (not dead, not civilian). */
+export function hostileUnit(u: Unit): boolean {
+  return !u.dead && !isNeutral(u.kind);
 }
 
 /** Remote can be engaged by enemies (out in the world, alive, has a hull). */

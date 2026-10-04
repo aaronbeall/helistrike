@@ -19,6 +19,7 @@ import {
 } from "../render/toonBlast";
 import { bakeThermalHeatFromAlpha, registerArt } from "./sprites";
 import { drawTracerShape, type TracerShapeOpts } from "../render/tracerArt";
+import { bakeHulkBreakVariants, breakApart, HULK_BREAK_DEFAULTS, hulkBreakParams } from "./hulkBreak";
 
 // ─── Registry ───────────────────────────────────────────────────────────────
 
@@ -694,6 +695,78 @@ registerArtGen({
     return dest;
   },
   bake: ({ textures }) => putCanvas(textures, FX_BRIDGE, drawBridgeStamp(bridgeParams)),
+});
+
+// ─── Hulk break (runtime broken-apart wreck variants) ───────────────────────
+
+/** Wrecks offered for preview (any loaded texture works). */
+const HULK_BREAK_SOURCES = [
+  "struct_bridge_hulk",
+  "struct_pier_hulk",
+  "struct_house_hulk",
+  "struct_warehouse_hulk",
+  "struct_hangar_hulk",
+  "struct_dock_shed_hulk",
+  "building_barn_hulk",
+  "enemy_tank_hulk",
+  "enemy_boat_hulk",
+] as const;
+/** Rig params share the live object, so B bakes exactly what is previewed. */
+const hulkBreakRigParams = hulkBreakParams as unknown as ArtGenParamMap;
+hulkBreakRigParams.source = HULK_BREAK_SOURCES[0];
+const frac = (desc: string, max = 0.4) => ({ step: 0.005, stepFast: 0.02, min: 0, max, decimals: 3, desc });
+
+registerArtGen({
+  id: "hulk_break",
+  label: "HULK BREAK",
+  blurb: "Runtime broken-apart wreck variants (units with `breakApart`): source, then three variants. B re-bakes.",
+  animated: false,
+  defaultZoom: 3,
+  params: hulkBreakRigParams,
+  defaults: { ...HULK_BREAK_DEFAULTS, source: HULK_BREAK_SOURCES[0] },
+  meta: {
+    source: { step: 1, stepFast: 1, min: 0, max: 0, choices: HULK_BREAK_SOURCES, desc: "Wreck texture to preview." },
+    variants: { step: 1, stepFast: 2, min: 1, max: 8, desc: "Variants baked per breakable wreck." },
+    cuts: { step: 1, stepFast: 1, min: 1, max: 4, desc: "Most breaks across the long axis (1…this)." },
+    gapMin: frac("Smallest gap, fraction of the long axis."),
+    gapMax: frac("Largest gap, fraction of the long axis."),
+    jag: frac("Ragged break edge (low frequency), fraction of the long axis."),
+    splinter: frac("Splinter spikes (high frequency), fraction of the long axis."),
+    endBreak: { step: 0.05, stepFast: 0.2, min: 0, max: 1, decimals: 2, desc: "Chance each end snaps off." },
+    endDepth: frac("Snapped end depth, fraction of the long axis."),
+    char: { step: 0.05, stepFast: 0.2, min: 0, max: 1, decimals: 2, desc: "Charring strength along breaks." },
+    charWidth: frac("Charring reach, fraction of the long axis."),
+    drift: frac("Pieces drift apart, fraction of the long axis.", 0.15),
+    tilt: { step: 0.01, stepFast: 0.05, min: 0, max: 0.5, decimals: 2, desc: "Piece tilt (radians)." },
+  },
+  prepare: (_seed, params, textures) => {
+    const key = String(params.source);
+    return textures?.exists(key) ? textures.get(key).getSourceImage() : undefined;
+  },
+  render: (_t, seed, params, dest, _g, prepared) => {
+    const src = prepared as (CanvasImageSource & { width: number; height: number }) | undefined;
+    const g = dest.getContext("2d")!;
+    if (!src) {
+      dest.width = 160;
+      dest.height = 40;
+      g.clearRect(0, 0, dest.width, dest.height);
+      return dest;
+    }
+    // Source, then three variants side by side.
+    const pad = 6;
+    const vertical = src.height >= src.width;
+    const n = 4;
+    dest.width = vertical ? (src.width + pad) * n : src.width;
+    dest.height = vertical ? src.height : (src.height + pad) * n;
+    g.clearRect(0, 0, dest.width, dest.height);
+    const p = params as unknown as typeof hulkBreakParams;
+    for (let k = 0; k < n; k++) {
+      const art = k === 0 ? src : breakApart(src, seed + k, p);
+      g.drawImage(art, vertical ? k * (src.width + pad) : 0, vertical ? 0 : k * (src.height + pad));
+    }
+    return dest;
+  },
+  bake: ({ textures }) => bakeHulkBreakVariants(textures),
 });
 
 // ─── Cannon tracers ─────────────────────────────────────────────────────────

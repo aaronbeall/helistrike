@@ -2,6 +2,7 @@
 import Phaser from "phaser";
 import { heliHudWireUv, type HeliHudWireBake } from "../../../art/sprites";
 import type { MissionScene } from "../../missionScene";
+import { setShockPipeline } from "../../../render/shockFx";
 
 export function healthHudColor(hp: number): number {
   const t = Phaser.Math.Clamp(hp, 0, 1);
@@ -26,7 +27,10 @@ export function healthHudColor(hp: number): number {
   return stops[stops.length - 1]![1];
 }
 
-/** Lower-left status panel: HP bar, hull wireframe with damage pins, hurt vignette. */
+/** Electric jolt (shock post-FX): length (ms). */
+const JOLT_MS = 560;
+
+/** Lower-left status panel: HP bar, hull wireframe with damage pins, hurt vignette, electric jolt shock. */
 export class StatusHud {
   playerHud!: Phaser.GameObjects.Graphics;
   heliHudWire!: Phaser.GameObjects.Image;
@@ -37,8 +41,19 @@ export class StatusHud {
   hurtVignette!: Phaser.GameObjects.Image;
   /** Static window cracks (over). */
   hurtVignettePulse!: Phaser.GameObjects.Image;
+  private joltAt = -Infinity;
+  private jolting = false;
 
   constructor(readonly s: MissionScene) {}
+
+  reset(): void {
+    this.joltAt = -Infinity;
+  }
+
+  /** Electric shock on the main camera (wire strike). */
+  jolt(): void {
+    this.joltAt = this.s.time.now;
+  }
 
   draw(): void {
     const g = this.playerHud;
@@ -115,6 +130,16 @@ export class StatusHud {
     }
 
     this.drawHurtVignette(hp);
+  }
+
+  /** Per frame (HUD shown or not): drive the shock post-FX envelope, removing it when done. */
+  tickJolt(): void {
+    const t = (this.s.time.now - this.joltAt) / JOLT_MS;
+    const on = t >= 0 && t < 1 && this.s.player.phase !== "dead";
+    if (!on && !this.jolting) return;
+    this.jolting = on;
+    // Hits hard, then sputters out.
+    setShockPipeline(this.s.cameras.main, on, on ? Math.pow(1 - t, 1.6) : 0);
   }
 
   drawHurtVignette(hp: number): void {

@@ -9,6 +9,10 @@ import { range } from "../../../util/rng";
 import { randomInFootprint, type Footprint } from "../../../render/footprint";
 import { worldToScreen, cameraPointVisible, screenVelX, screenVelY, projectHeading } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
+import { flameDensityMul } from "../../../render/fxCurves";
+
+/** Missile exhaust spawn disc radius (screen px) per unit of trail scale. */
+const EXHAUST_AREA = 4.5;
 
 /** Trails: shot / warp / flare / blast trails, energy + helix ribbons, tow-wire drawing. */
 export class Trails {
@@ -97,13 +101,16 @@ export class Trails {
     ) => {
       // Smoke under fire — pairFx pins band depths; emit smoke first.
       const { fire, smoke } = this.s.fx.pair(z, y, fireProto, smokeProto);
+      // Flame trails keep their original smoke size (no fire-size match).
+      this.s.fx.smokeMatchFire = 0;
       const ns = this.s.fx.emitCount(nsMul * dens);
-      const nf = this.s.fx.emitCount(nfMul * dens);
+      const nf = this.s.fx.emitCount(nfMul * dens * flameDensityMul(fireSc));
+      // Small spawn discs scaled to the trail: flames start with some width instead of a pinpoint.
       if (ns) {
-        this.s.fx.withTrail(smokeSc, () => this.s.fx.emitBudgeted("smoke", smoke, tx, ty, ns));
+        this.s.fx.withTrail(smokeSc, () => this.s.fx.emitBudgeted("smoke", smoke, tx, ty, ns, false, EXHAUST_AREA * smokeSc));
       }
       if (nf) {
-        this.s.fx.withTrail(fireSc, () => this.s.fx.emitBudgeted("fire", fire, tx, ty, nf));
+        this.s.fx.withTrail(fireSc, () => this.s.fx.emitBudgeted("fire", fire, tx, ty, nf, false, EXHAUST_AREA * fireSc));
       }
     };
     if (exhaust.align === "heading") {
@@ -397,6 +404,12 @@ export class Trails {
     }
     s.energyTrail = undefined;
     s.energyTrails = undefined;
+    while (this.energyLinger.length > 28) this.energyLinger.shift();
+  }
+
+  /** Free-standing energy ribbon (e.g. a shorting power line) that fades out with the shot trails. */
+  lingerEnergy(trail: EnergyTrailNode[]): void {
+    this.energyLinger.push(trail);
     while (this.energyLinger.length > 28) this.energyLinger.shift();
   }
 

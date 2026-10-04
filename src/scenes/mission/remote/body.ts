@@ -20,6 +20,7 @@ import { groundZ, worldToScreen, screenToWorldAtZ, cameraPointVisible, projectHe
 import type { MissionScene } from "../../missionScene";
 import { simParticleTexKey, simParticleLook } from "../../../render/simParticleLook";
 import { applyThermalHeat } from "../../../render/thermal";
+import { hostileUnit } from "../../../sim/targetRules";
 
 /** Remote body: sprites + gun pose, remote weapon fire, plane/exhaust FX, tread prints, landing thud, damage FX, whip antennas. */
 export class RemoteBody {
@@ -782,7 +783,7 @@ export class RemoteBody {
       let best: Unit | undefined;
       let bestD = spider.engageRange;
       for (const u of this.s.units) {
-        if (u.dead) continue;
+        if (!hostileUnit(u)) continue;
         const d = Math.hypot(u.x - s.x, u.y - s.y);
         if (d < bestD) {
           bestD = d;

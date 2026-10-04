@@ -2,6 +2,12 @@ import Phaser from "phaser";
 import type { Shot } from "../../../sim/combat";
 import { WORLD } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
+import { isNeutral } from "../../../sim/roster";
+
+/** Civilian structures: gray, not hostile red. */
+const NEUTRAL_MARK = 0x9a9890;
+/** Power pylons: tiny dots so a line reads as a dotted trace, not a row of buildings. */
+const PYLON_DOT_R = 1;
 
 /** Minimap: missiles / rockets / seekers — not gun tracers or beams. */
 function shotShowsOnRadar(s: Shot): boolean {
@@ -55,8 +61,8 @@ export class Minimap {
       if (u.dead) continue;
       const p = toMap(u.x, u.y);
       if (!inRing(p)) continue;
-      this.gfx.fillStyle(u.hv ? 0xff5a3a : 0xc45c28, 1);
-      this.gfx.fillCircle(p.x, p.y, u.hv ? 3.5 : 2);
+      this.gfx.fillStyle(u.hv ? 0xff5a3a : isNeutral(u.kind) ? NEUTRAL_MARK : 0xc45c28, 1);
+      this.gfx.fillCircle(p.x, p.y, u.hv ? 3.5 : u.kind === "pylon" ? PYLON_DOT_R : 2);
     }
     for (const r of this.s.remotes) {
       if (r.detonate || r.dock) continue;

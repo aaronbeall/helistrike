@@ -128,6 +128,8 @@ export class RosterRig {
   private zoom = 2;
   /** Mount / muzzle / traverse overlays (O). Footprint / radius / height always draw. */
   private showMarks = true;
+  /** Preview wreck textures (hull, guns, rotors, dish, roof) instead of live art. */
+  private showHulks = false;
   /** Assembled (mounted) vs parts laid out separately. */
   private composition: Composition = "assembled";
   /** Index into `partsRollPickIds` for the current unit (pick-mode only). */
@@ -283,6 +285,11 @@ export class RosterRig {
         this.showMarks = !this.showMarks;
         this.refreshPreview();
       });
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.U).on("down", () => {
+        if (!this.open) return;
+        this.showHulks = !this.showHulks;
+        this.refreshPreview();
+      });
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.C).on("down", () => {
         if (!this.open) return;
         this.composition = this.composition === "assembled" ? "separated" : "assembled";
@@ -422,7 +429,7 @@ export class RosterRig {
     const compositionLabel = this.composition === "assembled" ? "ASSEMBLED" : "UNASSEMBLED";
     const zoomShown = this.zoom;
     this.hintTxt.setText(
-      `ROSTER RIG   ↑ ↓ select   , . page   - + zoom ${fmtZoom(zoomShown)}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   C composition ${compositionLabel}${rollHint}${craftHint}`
+      `ROSTER RIG   ↑ ↓ select   , . page   - + zoom ${fmtZoom(zoomShown)}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   U hulks ${this.showHulks ? "ON" : "OFF"}   C composition ${compositionLabel}${rollHint}${craftHint}`
     );
 
     const size = this.pageSize();
@@ -565,6 +572,7 @@ export class RosterRig {
     }
 
     this.hull.setVisible(true).setTexture(tex);
+    this.hull.setAlpha(1);
     this.hull.setOrigin(pivot.x, pivot.y);
     this.hull.setScale(s);
     this.hull.setRotation(0);
@@ -668,6 +676,7 @@ export class RosterRig {
     }
 
     this.hull.setVisible(true).setTexture(tex);
+    this.hull.setAlpha(1);
     this.hull.setOrigin(pivot.x, pivot.y);
     this.hull.setScale(s);
     this.hull.setRotation(0);
@@ -708,7 +717,9 @@ export class RosterRig {
   private layoutPreview(kind: UnitKind, sp: UnitSpec): void {
     const w = this.scene.scale.width;
     const h = this.scene.scale.height;
-    const tex = sp.texture;
+    // Hulk view: wreck art where it exists, live art otherwise.
+    const pick = (live: string, hulk?: string) => (this.showHulks && hulk && this.scene.textures.exists(hulk) ? hulk : live);
+    const tex = pick(sp.texture, sp.hulk);
     const listRight = LIST_X + LIST_W + 20;
     const gap = 28;
 
@@ -738,7 +749,7 @@ export class RosterRig {
     const parts: PreviewPart[] = [];
     for (const g of guns) {
       parts.push({
-        tex: g.tex,
+        tex: pick(g.tex, g.hulk),
         origin: g.origin,
         mount: g.mount,
         // Limited turrets preview at their arc center (nose-up art, barrel-up guns).
@@ -752,7 +763,7 @@ export class RosterRig {
       const rotorKey =
         r.tex !== "enemy_drone_rotor" && this.scene.textures.exists(spinKey) ? spinKey : r.tex;
       parts.push({
-        tex: rotorKey,
+        tex: pick(rotorKey, r.hulk),
         origin: r.origin,
         mount: r.mount,
         rot: 0,
@@ -763,13 +774,25 @@ export class RosterRig {
     if (sp.dish) {
       const d = sp.dish;
       parts.push({
-        tex: d.tex,
+        tex: pick(d.tex, d.hulk),
         origin: d.origin,
         mount: d.mount,
         rot: 0,
         scale: (d.scale ?? 1) * 1.04,
         layer: "above",
         squashY: 0.76,
+      });
+    }
+    // Roof: full-footprint overlay drawn over the body (in game it sits `height` up).
+    if (sp.roof) {
+      const roofTex = pick(sp.roof.tex, sp.roof.hulk);
+      parts.push({
+        tex: roofTex,
+        origin: spritePivot(roofTex),
+        mount: spritePivot(tex),
+        rot: 0,
+        scale: 1,
+        layer: "above",
       });
     }
 
@@ -829,6 +852,8 @@ export class RosterRig {
     }
 
     this.hull.setVisible(true).setTexture(tex);
+    // Roof-only structures draw nothing at ground level in game.
+    this.hull.setAlpha(sp.roof?.noBody ? 0 : 1);
     this.hull.setOrigin(pivot.x, pivot.y);
     this.hull.setScale(s);
     this.hull.setRotation(0);
