@@ -56,12 +56,15 @@ export class Countermeasures {
    * particles — they are never emitBudgeted / frame-capped / recycled mid-life.
    */
   smokePuffs: (SmokePuff & { spr: Phaser.GameObjects.Image })[] = [];
+  /** One glowing head sprite per live flare (pooled). */
+  private flareHeads: Phaser.GameObjects.Image[] = [];
 
   constructor(readonly s: MissionScene) {}
 
   /** Per-mission state reset (called from the scene's init). */
   reset(): void {
     this.flares = [];
+    this.flareHeads = [];
     this.cd = 0;
     this.timewarpT = 0;
     this.timewarpCharge = 1;
@@ -531,6 +534,8 @@ export class Countermeasures {
         vz: h.vz * 0.2 + d.z * spd,
         life: duration * (0.88 + Math.random() * 0.22),
         max: duration,
+        hist: [],
+        histT: 0,
       });
     }
   }
@@ -551,6 +556,14 @@ export class Countermeasures {
       f.x += f.vx * dt;
       f.y += f.vy * dt;
       f.z += f.vz * dt;
+      // Streak history (drawn, not particles).
+      f.histT = (f.histT ?? 0) + dt;
+      if (f.histT >= FLARE_HIST_DT) {
+        f.histT = 0;
+        const hist = (f.hist ??= []);
+        hist.push({ x: f.x, y: f.y, z: f.z });
+        if (hist.length > FLARE_HIST_N) hist.shift();
+      }
       this.emitFlareTrail(f, x0, y0, z0);
       this.flares[w++] = f;
     }
@@ -567,11 +580,12 @@ export class Countermeasures {
     const spd = Math.hypot(f.vx, f.vy, f.vz);
     const burn = 0.55 + 0.45 * Phaser.Math.Clamp(f.life / Math.max(0.2, f.max), 0, 1);
     this.s.fx.withTrail(1, () => {
-      const nTrail = this.s.fx.emitCount((0.7 + Math.min(1.1, spd / 240)) * burn);
+      // Sparse burning drips only — the streak and head sprite carry the look.
+      const nTrail = this.s.fx.emitCount((0.7 + Math.min(1.1, spd / 240)) * burn * FLARE_DRIP);
       if (nTrail) {
         this.s.fx.emitBudgeted("fire", this.s.fx.at(z, y, this.s.fx.flareTrail, ZOff.fire), at.x, at.y, nTrail);
       }
-      const nCore = this.s.fx.emitCount(0.95 * burn);
+      const nCore = this.s.fx.emitCount(0.95 * burn * FLARE_DRIP);
       if (nCore) {
         this.s.fx.emitBudgeted("short", this.s.fx.at(z, y, this.s.fx.flareSpark, ZOff.fire + 0.45), at.x, at.y, nCore);
       }
@@ -681,8 +695,66 @@ export class Countermeasures {
 
   drawFx(): void {
     this.gfx.clear();
+    this.drawFlares();
+  }
+
+  /** Flares: tapering white-hot → orange streak through recent positions, plus a flickering glow head. */
+  private drawFlares(): void {
+    const g = this.gfx;
+    let used = 0;
+    let zSum = 0;
+    const now = this.s.time.now;
+    for (let i = 0; i < this.flares.length; i++) {
+      const f = this.flares[i]!;
+      if (!cameraPointVisible(f.z, f.y)) continue;
+      const burn = 0.55 + 0.45 * Phaser.Math.Clamp(f.life / Math.max(0.2, f.max), 0, 1);
+      const head = worldToScreen(f.x, f.y, f.z);
+      zSum += f.z;
+      // Streak: newest segment brightest and widest.
+      const hist = f.hist ?? [];
+      let px = head.x;
+      let py = head.y;
+      for (let k = hist.length - 1; k >= 0; k--) {
+        const p = hist[k]!;
+        const at = worldToScreen(p.x, p.y, p.z);
+        const u = (hist.length - 1 - k) / FLARE_HIST_N;
+        const fade = (1 - u) * (1 - u) * burn;
+        g.lineStyle(Math.max(0.6, (2.6 - 2 * u) * at.scale), u < 0.25 ? 0xfff2c0 : u < 0.55 ? 0xffb347 : 0xff6a1c, 0.85 * fade);
+        g.lineBetween(px, py, at.x, at.y);
+        px = at.x;
+        py = at.y;
+      }
+      // Head: one glow sprite, flickering.
+      let im = this.flareHeads[used];
+      if (!im) {
+        im = this.s.add.image(0, 0, "fx_glow").setBlendMode(Phaser.BlendModes.ADD).setTint(0xfff0c0);
+        this.flareHeads.push(im);
+      }
+      used++;
+      const flicker = 0.75 + 0.25 * Math.sin(now * 0.05 + i * 2.1) * Math.sin(now * 0.031 + i);
+      im.setVisible(true)
+        .setPosition(head.x, head.y)
+        .setScale(FLARE_HEAD_SCALE * head.scale * burn * (0.85 + 0.3 * flicker))
+        .setAlpha(0.7 + 0.3 * flicker)
+        .setDepth(worldDepth(f.z, ZOff.fire + 0.6, f.y));
+    }
+    for (let i = used; i < this.flareHeads.length; i++) this.flareHeads[i]!.setVisible(false);
+    if (used) g.setDepth(worldDepth(zSum / used, ZOff.fire, this.flares[0]!.y));
+  }
+
+  /** Hide flare heads (theater map). */
+  hideFlareVisuals(): void {
+    for (const im of this.flareHeads) im.setVisible(false);
   }
 }
+
+/** Flare streak: history sample interval (s) and length (points). */
+const FLARE_HIST_DT = 0.035;
+const FLARE_HIST_N = 16;
+/** Flare particle rate × (the drawn streak + head replace the dense trail). */
+const FLARE_DRIP = 0.2;
+/** Flare head glow sprite scale (fx_glow is 96 px). */
+const FLARE_HEAD_SCALE = 0.22;
 
 export const BULLET_TIME_SCALE = 0.25;
 

@@ -1961,30 +1961,93 @@ export class FieldManual {
     }
   }
 
-  /** Two fanning bursts of hot sparks, same fx_spark/tint as missionScene's flareTrail/flareSpark. */
+  /**
+   * Mission flare look in miniature (countermeasures.drawFlares): salvos fanning out both sides, each flare a
+   * flickering glow head with a tapering white-hot → orange streak and a sparse drip of sparks.
+   */
   private buildFlarePreview(cx: number, cy: number): void {
     const scene = this.scene;
-    const tint = [0xfff8d0, 0xffee66, 0xffaa40, 0xff6a18];
-    const spawn = (angle: number) => {
-      this.addDetail(
-        scene.add.particles(cx, cy, "fx_spark", {
-          frequency: 220,
-          lifespan: { min: 420, max: 620 },
-          speed: { min: 36, max: 80 },
-          angle: { min: angle - 22, max: angle + 22 },
-          scale: { start: 0.4, end: 0 },
-          alpha: { start: 1, end: 0 },
-          blendMode: "ADD",
-          tint,
-          gravityY: 40,
-          frame: FieldManual.FX_FRAMES,
-          rotate: { min: 0, max: 360 },
-        })
-      );
+    ensureImpactGlow(scene.textures);
+    const g = scene.add.graphics().setBlendMode(Phaser.BlendModes.ADD);
+    this.addDetail(g);
+    const drip = scene.add.particles(0, 0, "fx_spark", {
+      lifespan: { min: 380, max: 620 },
+      speed: { min: 4, max: 18 },
+      scale: { start: 0.32, end: 0 },
+      alpha: { start: 0.95, end: 0 },
+      blendMode: "ADD",
+      tint: [0xfff8d0, 0xffee66, 0xffaa40, 0xff6a18],
+      gravityY: 30,
+      frame: FieldManual.FX_FRAMES,
+      rotate: { min: 0, max: 360 },
+      emitting: false,
+    });
+    this.addDetail(drip);
+    type PFlare = { x: number; y: number; vx: number; vy: number; age: number; life: number; hist: { x: number; y: number }[]; head: Phaser.GameObjects.Image };
+    const flares: PFlare[] = [];
+    const LIFE = 1.5;
+    const HIST = 14;
+    let last = -Infinity;
+    let prev = -1;
+    const launch = () => {
+      for (let i = 0; i < 6; i++) {
+        const side = i < 3 ? -1 : 1;
+        const ang = (side < 0 ? Math.PI : 0) + (Math.random() - 0.5) * 0.9 - 0.35;
+        const spd = 70 + Math.random() * 50;
+        const head = scene.add.image(cx, cy, "fx_glow").setBlendMode(Phaser.BlendModes.ADD).setTint(0xfff0c0);
+        this.addDetail(head);
+        flares.push({ x: cx, y: cy, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd, age: 0, life: LIFE * (0.85 + Math.random() * 0.3), hist: [], head });
+      }
     };
-    spawn(-135);
-    spawn(-45);
+    const tick = (time: number) => {
+      if (!g.scene) {
+        scene.events.off(Phaser.Scenes.Events.UPDATE, tick);
+        return;
+      }
+      const dt = prev < 0 ? 0 : Math.min(0.05, (time - prev) / 1000);
+      prev = time;
+      if (time - last >= 1700) {
+        last = time;
+        launch();
+      }
+      g.clear();
+      let w = 0;
+      for (let k = 0; k < flares.length; k++) {
+        const f = flares[k]!;
+        f.age += dt;
+        if (f.age >= f.life) {
+          f.head.destroy();
+          continue;
+        }
+        f.vx *= Math.pow(0.4, dt);
+        f.vy = f.vy * Math.pow(0.4, dt) + 22 * dt;
+        f.x += f.vx * dt;
+        f.y += f.vy * dt;
+        f.hist.push({ x: f.x, y: f.y });
+        if (f.hist.length > HIST) f.hist.shift();
+        const burn = 1 - f.age / f.life;
+        // Streak: newest segment brightest and widest.
+        let px = f.x;
+        let py = f.y;
+        for (let h = f.hist.length - 1; h >= 0; h--) {
+          const p = f.hist[h]!;
+          const u = (f.hist.length - 1 - h) / HIST;
+          const fade = (1 - u) * (1 - u) * burn;
+          g.lineStyle(Math.max(0.6, 2.2 - 1.6 * u), u < 0.25 ? 0xfff2c0 : u < 0.55 ? 0xffb347 : 0xff6a1c, 0.85 * fade);
+          g.lineBetween(px, py, p.x, p.y);
+          px = p.x;
+          py = p.y;
+        }
+        const flicker = 0.75 + 0.25 * Math.sin(time * 0.05 + k * 2.1) * Math.sin(time * 0.031 + k);
+        f.head.setPosition(f.x, f.y).setDisplaySize(16 * (0.6 + 0.4 * burn) * (0.85 + 0.3 * flicker), 16 * (0.6 + 0.4 * burn) * (0.85 + 0.3 * flicker)).setAlpha((0.7 + 0.3 * flicker) * (0.4 + 0.6 * burn));
+        if (Math.random() < 0.18 * burn) drip.emitParticleAt(f.x, f.y, 1);
+        flares[w++] = f;
+      }
+      flares.length = w;
+    };
+    scene.events.on(Phaser.Scenes.Events.UPDATE, tick);
   }
+
 
   /**
    * The real phase-cloak screen distortion (same shader as the in-mission camera FX) over a

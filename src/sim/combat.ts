@@ -913,6 +913,9 @@ export interface Flare {
   vz: number;
   life: number;
   max: number;
+  /** Recent positions (newest last) for the drawn streak. */
+  hist?: { x: number; y: number; z: number }[];
+  histT?: number;
 }
 
 export interface CountermeasureSpec {
@@ -1071,6 +1074,10 @@ export interface Debris {
   heliCrash?: boolean;
   playerCrash?: boolean;
   spinAccel?: number;
+  /** Gravity × for this piece (crashing helis: rotor drag slows the fall). */
+  gravityMul?: number;
+  /** Spin floor (rad/s) that bounce damping can't drop below while airborne — tumbling parts and casings. */
+  minSpin?: number;
   impactDust?: number;
   dmgFlames?: { u: number; v: number; scale: number }[];
   simmer?: number;
