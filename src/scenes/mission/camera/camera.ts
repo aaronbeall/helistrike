@@ -501,10 +501,11 @@ export class MissionCamera {
       depth: number;
     }[] = [
       {
-        n: 8,
+        // Far banks: largest and faintest — kept modest so they don't wash the view.
+        n: 6,
         scroll: scrollOf(0.22),
-        alpha: [0.34 * look.alphaMul, 0.55 * look.alphaMul],
-        scale: [0.85 * look.sizeMul, 1.45 * look.sizeMul],
+        alpha: [0.22 * look.alphaMul, 0.38 * look.alphaMul],
+        scale: [0.7 * look.sizeMul, 1.1 * look.sizeMul],
         depth: cloudDepth - 2,
       },
       {
