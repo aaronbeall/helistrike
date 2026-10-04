@@ -633,7 +633,8 @@ const PLAYER_WPNS_DEFS: Record<WpnId, Omit<PlayerWpnSpec, "id">> = {
     art: ordArt("laserGuided", 0.98, "heading"),
     exhaust: particleTrail(0.55, { fire: "burn", smoke: "linger", density: 1.3 }),
     cam: CAM_LOCK, control: { mode: "lock_then_click" },
-    launch: motor(260, 520, 2.2, 1, { pitch: 1.05 }),
+    // No pop-up: ignites nose slightly down and glides onto the lock.
+    launch: motor(260, 520, 2.2, 1, { pitch: -0.08 }),
     guidance: lockGuidance(lockOn(0.62, 225, RETICLE_AG, 0.28), 6.8),
     payload: HE_FIRE,
     fits: FIT_HARDPOINT,
