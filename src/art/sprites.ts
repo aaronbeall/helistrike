@@ -275,7 +275,6 @@ export const MOUNTAIN_PEAK_ART: readonly { key: string; file: string; size: numb
 ];
 
 export function preloadArt(scene: Phaser.Scene): void {
-  scene.load.image("menu_splash", "menu-splash.png");
   scene.load.image("hud_hurt_static", "sprites/hud/hurt_static.png");
   scene.load.image("hud_hurt_pulse", "sprites/hud/hurt_pulse.png");
   scene.load.image("src_enemy_heli", SRC.enemyHeli);
@@ -648,7 +647,7 @@ export type ArtSource = "image" | "generated";
  *    `"generated"` (drawn or synthesized in engine).
  * 2. Do **not** register UI (Text, menus, buttons, rig chrome). Leave those as
  *    Phaser UUID canvases — the catalog omits UUIDs.
- * 3. Do **not** register menu-only chrome (`menu_splash`, mission preview thumbs)
+ * 3. Do **not** register menu-only chrome (menu backdrops, mission preview thumbs)
  *    or authoring intermediates (`src_*` load sheets, relief `brush_*`).
  * 4. Derived keys:
  *    - **Art variants (catalog):** alternate appearances of the subject —

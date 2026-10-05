@@ -57,9 +57,39 @@ function ringBand(ad: number): number {
   return (RING_MAX + 1 - Math.min(ad, RING_MAX + 1)) * RING_BAND_SPAN;
 }
 
+/** Main menu backdrops (paths under public/); one is picked at random each time the menu opens. */
+const MENU_BACKDROPS = [
+  "menu-splash.png",
+  "artwork/crafts/blackhawk-cinematic-v3.png",
+  "artwork/crafts/chinook-cinematic-v4.png",
+  "artwork/crafts/cobra-cinematic-v2.png",
+  "artwork/crafts/cyberhawk-cinematic-v4.png",
+  "artwork/crafts/gunship-cinematic-v3.png",
+  "artwork/crafts/lightning-ii-cinematic-v4.png",
+  "artwork/crafts/littlebird-cinematic-v3.png",
+  "artwork/crafts/marauder-cinematic.png",
+  "artwork/crafts/murder-hornet-cinematic.png",
+  "artwork/crafts/osprey-cinematic.png",
+  "artwork/crafts/prometheus-cinematic-v4.png",
+  "artwork/crafts/reaper-cinematic.png",
+  "artwork/crafts/stealthhawk-cinematic-night.png",
+  "artwork/crafts/stealthhawk-cinematic-v3.png",
+  "artwork/crafts/viper-cinematic-v2.png",
+  "artwork/crafts/warthog-cinematic-v2.png",
+];
+
 export class MenuScene extends Phaser.Scene {
+  /** Texture key of this visit's backdrop (loaded on first use, then cached). */
+  private backdropKey = "";
+
   constructor() {
     super("menu");
+  }
+
+  preload(): void {
+    const file = MENU_BACKDROPS[Math.floor(Math.random() * MENU_BACKDROPS.length)]!;
+    this.backdropKey = `menu_backdrop:${file}`;
+    if (!this.textures.exists(this.backdropKey)) this.load.image(this.backdropKey, file);
   }
 
   create(): void {
@@ -68,8 +98,8 @@ export class MenuScene extends Phaser.Scene {
     this.input.setDefaultCursor("default");
     ensureMissionPreviews(this.textures);
     ensureExhaustGlow(this.textures);
-    if (this.textures.exists("menu_splash")) {
-      const bg = this.add.image(w / 2, h / 2, "menu_splash").setDepth(0);
+    if (this.textures.exists(this.backdropKey)) {
+      const bg = this.add.image(w / 2, h / 2, this.backdropKey).setDepth(0);
       const sx = w / bg.width;
       const sy = h / bg.height;
       // Overscan so mouse parallax + the slow zoom never reveal an edge.
