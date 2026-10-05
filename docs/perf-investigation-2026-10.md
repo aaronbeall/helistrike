@@ -199,6 +199,16 @@ Headless world generation, average of 2 seeds per preset. "HEAD" means the last 
 
 Items 1–3 are small and fix correctness. Item 4 is mainly about accuracy and allowing a larger budget.
 
+### Resolution (2026-10-05)
+Measured on generated maps (River Run, Highland Siege, Desert Flats, Cauldron): under 1 µs per trace, about 35–45 samples, about 20 µs a frame at the full budget. Speed is not a reason to change anything here.
+
+| Item | Decision |
+|---|---|
+| Problem 1 (stealth fire-through) | **Fixed.** Sight is a state: false by default and outside max sight range (aware units included); line-of-sight checks set it inside. Pursuit, aim and fire (secondary missiles included) need it. |
+| Problem 2 / optimisation 1 (starvation, unknown → visible) | **Fixed.** Unknown is now "can't see"; a check more than 700 ms overdue skips the budget, so no unit starves. |
+| Problem 3 (long-ray ridge misses) | **Won't do.** Long-range accuracy isn't important. Sampling is already a fixed 28-unit step; the 80-sample cap only applies past about 2,240 units. |
+| Problem 4 / optimisations 2–7 | **Won't do.** Each saves microseconds a frame. |
+
 ---
 
 ## 5. Going further: making it smooth under chaos

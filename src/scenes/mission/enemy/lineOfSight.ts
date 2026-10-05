@@ -7,8 +7,10 @@ import type { MissionScene } from "../../missionScene";
 
 /** Re-check each unit's sight line about this often (ms), jittered per unit so checks spread across frames. */
 const LOS_REFRESH_MS = 350;
-/** Most sight lines recomputed per frame (the rest reuse their cached result). */
+/** Most sight checks per frame (the rest keep their current state). */
 const LOS_BUDGET = 24;
+/** A check this late (ms past due) skips the budget, so no unit starves. */
+const LOS_OVERDUE_MS = 700;
 /** Terrain sample spacing along a sight line (world units). */
 const LOS_STEP = 28;
 /** Don't test near either end (a unit's own hillside / the target's own pad). */
@@ -21,6 +23,8 @@ const LOS_DEBUG_RANGE = 1800;
 interface Sight {
   target: object;
   ok: boolean;
+  /** Target was inside sight range at the last check (debug draws traced lines only). */
+  inReach: boolean;
   /** Next recheck time (ms). */
   due: number;
   /** World point where terrain blocked the line (debug). */
@@ -51,36 +55,38 @@ export class LineOfSight {
   }
 
   /**
-   * Can `u` see `target`? Cached; rechecked when stale and this frame's budget allows (unknown → visible).
-   * Beyond `reach` (the unit's awareness range) there's nothing to occlude: no trace, no budget.
+   * Has `u` sight of `target`? Out of `reach` (max sight range): never. Entering range or switching target starts
+   * unsighted; budgeted terrain checks then set it and keep it current. A check overdue this long skips the budget.
    */
   sees(u: Unit, target: Craft, reach: number): boolean {
+    let sight = this.sights.get(u);
+    if (!sight) this.sights.set(u, (sight = { target, ok: false, inReach: false, due: 0, bx: 0, by: 0 }));
     if (Math.hypot(target.x - u.x, target.y - u.y) > reach) {
-      this.sights.delete(u);
-      return true;
+      sight.ok = false;
+      sight.inReach = false;
+      return false;
     }
     const now = this.s.time.now;
+    if (!sight.inReach || sight.target !== target) {
+      sight.inReach = true;
+      sight.target = target;
+      sight.ok = false;
+      sight.due = now;
+    }
     const frame = this.s.game.loop.frame;
     if (frame !== this.frame) {
       this.frame = frame;
       this.spent = 0;
     }
-    let sight = this.sights.get(u);
-    const stale = !sight || sight.target !== target || now >= sight.due;
-    if (stale && this.spent < LOS_BUDGET) {
+    if (now >= sight.due && (this.spent < LOS_BUDGET || now >= sight.due + LOS_OVERDUE_MS)) {
       this.spent++;
-      if (!sight) {
-        sight = { target, ok: true, due: 0, bx: 0, by: 0 };
-        this.sights.set(u, sight);
-      }
-      sight.target = target;
       this.trace(u, target, sight);
       sight.due = now + LOS_REFRESH_MS * (0.75 + Math.random() * 0.5);
     }
-    return sight?.ok ?? true;
+    return sight.ok;
   }
 
-  /** Cached result only (no trace): false when `u`'s last check found terrain blocking its target; true otherwise / unknown. */
+  /** Cached result only (no trace): false when `u`'s last check was out of sight range or blocked by terrain; true otherwise / unknown. */
   lastSaw(u: Unit): boolean {
     return this.sights.get(u)?.ok ?? true;
   }
@@ -125,7 +131,7 @@ export class LineOfSight {
     for (const u of this.s.units) {
       if (u.dead) continue;
       const sight = this.sights.get(u);
-      if (!sight) continue;
+      if (!sight?.inReach) continue;
       const t = sight.target as Craft;
       if (Math.hypot(t.x - u.x, t.y - u.y) > LOS_DEBUG_RANGE) continue;
       const a = worldToScreen(u.x, u.y, u.z + heightOf(u.kind) * 0.8);

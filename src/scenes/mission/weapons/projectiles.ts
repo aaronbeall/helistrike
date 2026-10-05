@@ -1750,7 +1750,7 @@ export class Projectiles {
       return;
     }
     if (isOrganic(u.kind) && specOf(u.kind).weapon && u.health > 1) {
-      u.aware = true;
+      u.reacting = true;
       rollSoldierMood(u, true);
     }
   }

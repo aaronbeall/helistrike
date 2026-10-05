@@ -23,13 +23,13 @@ import { CRUSH_KILL, enemyWeaponKey, ROTOR_KILL } from "../../../sim/stats";
 import type { StatBy } from "../flow/missionStats";
 import type { MissionScene } from "../../missionScene";
 
-/** Base awareness radii by role (scaled by `targeting.enemyAwareReach`). */
-const AWARE_DRONE = 1400;
-const AWARE_SCOUT = 1600;
-const AWARE_ORBIT = 1500;
-const AWARE_VEHICLE = 980;
-const AWARE_FLEE = 520;
-const AWARE_INFANTRY = 400;
+/** Base react radii by role: how close a sighted target must be to be pursued / fled (scaled by `targeting.enemyScaledReach`). */
+const REACT_DRONE = 1400;
+const REACT_SCOUT = 1600;
+const REACT_ORBIT = 1500;
+const REACT_VEHICLE = 980;
+const REACT_FLEE = 520;
+const REACT_INFANTRY = 400;
 
 
 
@@ -78,7 +78,7 @@ export class UnitSim {
   }
 
   driveDrone(u: Unit, dt: number, h: Craft, dist: number, _dx: number, _dy: number, vision = 1): void {
-    if (vision > 0 && dist < this.s.targeting.enemyAwareReach(AWARE_DRONE, vision, h) && h.phase === "flight") {
+    if (vision > 0 && dist < this.s.targeting.enemyScaledReach(REACT_DRONE, vision, h) && h.phase === "flight") {
       const playerAgl = Math.max(LOW_AGL + 8, h.z - h.gndSmooth);
       const inAltReach = playerAgl <= DRONE_KAMIKAZE_AGL;
       // Lead the intercept — Lightning / jets outrun pure pursuit easily.
@@ -153,7 +153,7 @@ export class UnitSim {
     const side = (u.id & 1) === 0 ? 1 : -1;
     const prefDist = 380;
 
-    if (vision > 0 && dist < this.s.targeting.enemyAwareReach(AWARE_SCOUT, vision, h) && h.phase === "flight") {
+    if (vision > 0 && dist < this.s.targeting.enemyScaledReach(REACT_SCOUT, vision, h) && h.phase === "flight") {
       const fwdX = dx / (dist || 1);
       const fwdY = dy / (dist || 1);
       const latX = -fwdY * side;
@@ -198,7 +198,7 @@ export class UnitSim {
     const heavy = !specOf(u.kind).combatMood;
     if (heavy) {
       // Heavy: always orbit and shoot, no kiting
-      if (vision > 0 && dist < this.s.targeting.enemyAwareReach(AWARE_ORBIT, vision, h) && h.phase === "flight") {
+      if (vision > 0 && dist < this.s.targeting.enemyScaledReach(REACT_ORBIT, vision, h) && h.phase === "flight") {
         u.orbit += 0.2 * dt;
         const ring = 430;
         const ox = h.x + Math.cos(u.orbit) * ring;
@@ -228,7 +228,7 @@ export class UnitSim {
       const closeDist = 280;
       const orbitRing = 380;
 
-      if (vision > 0 && dist < this.s.targeting.enemyAwareReach(AWARE_ORBIT, vision, h) && h.phase === "flight") {
+      if (vision > 0 && dist < this.s.targeting.enemyScaledReach(REACT_ORBIT, vision, h) && h.phase === "flight") {
         const fwdX = dx / (dist || 1);
         const fwdY = dy / (dist || 1);
         const latX = -fwdY * side;
@@ -439,7 +439,7 @@ export class UnitSim {
     let wantX = u.x;
     let wantY = u.y;
     if (combat) {
-      if (vision > 0 && dist < this.s.targeting.enemyAwareReach(AWARE_VEHICLE, vision, h) && h.phase === "flight") {
+      if (vision > 0 && dist < this.s.targeting.enemyScaledReach(REACT_VEHICLE, vision, h) && h.phase === "flight") {
         u.orbit += 0.24 * dt;
         const ring = 350 + (u.id % 5) * 28;
         // Chase a lead point on the ring so we rarely sit on the waypoint
@@ -457,11 +457,11 @@ export class UnitSim {
         u.aiTy = undefined;
       }
     } else if (
-      dist < this.s.targeting.enemyAwareReach(sp.fleeAwareRange ?? AWARE_FLEE, vision, h) &&
+      dist < this.s.targeting.enemyScaledReach(sp.fleeReactRange ?? REACT_FLEE, vision, h) &&
       h.phase === "flight"
     ) {
       if (vision > 0) {
-        u.aware = true;
+        u.reacting = true;
         const away = Math.atan2(u.y - h.y, u.x - h.x);
         wantX = u.x + Math.cos(away) * 240;
         wantY = u.y + Math.sin(away) * 240;
@@ -470,13 +470,13 @@ export class UnitSim {
         u.aiTx = wantX;
         u.aiTy = wantY;
       } else {
-        u.aware = false;
+        u.reacting = false;
         u.aiState = Math.hypot(u.vx, u.vy) > 8 ? "COAST" : "IDLE";
         u.aiTx = undefined;
         u.aiTy = undefined;
       }
     } else {
-      u.aware = false;
+      u.reacting = false;
       u.aiState = Math.hypot(u.vx, u.vy) > 8 ? "COAST" : "IDLE";
       u.aiTx = undefined;
       u.aiTy = undefined;
@@ -746,16 +746,17 @@ export class UnitSim {
     this.s.projectiles.hurt(u, u.health + 1, false, by);
   }
 
-  /** Widest base range at which `u` can notice or engage anything (role radius, weapons). */
-  private awareBase(u: Unit): number {
+  /** Base max sight range: `sightRange`, else the widest weapon or role react range. */
+  private sightBase(u: Unit): number {
     const sp = specOf(u.kind);
+    if (sp.sightRange != null) return sp.sightRange;
     let r = Math.max(sp.weapon?.range ?? 0, sp.secondary?.wpn.range ?? 0);
     for (const g of gunsOf(u)) r = Math.max(r, g.weapon?.range ?? 0);
-    if (sp.behavior === "suicide_attack_heli") r = Math.max(r, AWARE_DRONE);
-    else if (sp.behavior === "kite_attack_heli") r = Math.max(r, AWARE_SCOUT);
-    else if (sp.behavior === "orbit_attack_heli") r = Math.max(r, AWARE_ORBIT);
-    if (isGroundVehicle(u.kind)) r = Math.max(r, AWARE_VEHICLE, sp.fleeAwareRange ?? AWARE_FLEE);
-    if (sp.behavior === "attack_infantry" || sp.behavior === "flee_infantry") r = Math.max(r, AWARE_INFANTRY);
+    if (sp.behavior === "suicide_attack_heli") r = Math.max(r, REACT_DRONE);
+    else if (sp.behavior === "kite_attack_heli") r = Math.max(r, REACT_SCOUT);
+    else if (sp.behavior === "orbit_attack_heli") r = Math.max(r, REACT_ORBIT);
+    if (isGroundVehicle(u.kind)) r = Math.max(r, REACT_VEHICLE, sp.fleeReactRange ?? REACT_FLEE);
+    if (sp.behavior === "attack_infantry" || sp.behavior === "flee_infantry") r = Math.max(r, REACT_INFANTRY);
     return r;
   }
 
@@ -780,15 +781,14 @@ export class UnitSim {
       const dy = h.y - u.y;
       const dist = Math.hypot(dx, dy);
       // Cloak: complete sensor blackout. Smoke: blinds all enemies when the player is covered.
-      // Line of sight (terrain-occluded, staggered) gates vision entirely.
-      // Traced only within the unit's widest notice/engage reach (or while already aware).
-      const losReach = u.aware ? Infinity : this.s.targeting.enemyAwareReach(this.awareBase(u), 1, h);
+      // Max sight range, then terrain line of sight, gate vision entirely: no sight, no pursuit / aim / fire.
+      const sightReach = this.s.targeting.enemyScaledReach(this.sightBase(u), 1, h);
       const vision =
-        (this.s.countermeasures.cloakT > 0 && h === this.s.player) || !this.s.lineOfSight.sees(u, h, losReach)
+        (this.s.countermeasures.cloakT > 0 && h === this.s.player) || !this.s.lineOfSight.sees(u, h, sightReach)
           ? 0
           : this.s.targeting.enemySmokeVision(u, h);
-      if (this.s.countermeasures.cloakT > 0 && h === this.s.player && (u.aware || u.aiMood || u.aiTx != null)) {
-        u.aware = false;
+      if (this.s.countermeasures.cloakT > 0 && h === this.s.player && (u.reacting || u.aiMood || u.aiTx != null)) {
+        u.reacting = false;
         u.aiMood = undefined;
         u.moodT = 0;
         u.aiTx = undefined;
@@ -877,39 +877,39 @@ export class UnitSim {
         if ((sp.behavior === "attack_infantry" || sp.behavior === "flee_infantry") && !this.s.unitSprites.snapHost(u)) {
           const canShoot = !!sp.weapon;
           if (sp.organic && u.health < u.max && this.tickBleedOut(u, dt)) continue;
-          const seeR = this.s.targeting.enemyAwareReach(AWARE_INFANTRY, vision, h);
+          const reactR = this.s.targeting.enemyScaledReach(REACT_INFANTRY, vision, h);
           const screenR = this.s.scale.width / Math.max(this.s.cameras.main.zoom, 0.001);
           const wounded = u.health < u.max;
           const downed = sp.organic && wounded && u.health <= 1;
           if (downed) u.aiMood = undefined;
           else if (wounded && u.aiMood !== "flee") rollSoldierMood(u, true);
-          else if (sp.behavior === "flee_infantry" && !u.aware && dist < seeR && h.phase === "flight") {
+          else if (sp.behavior === "flee_infantry" && !u.reacting && dist < reactR && h.phase === "flight") {
             if (vision > 0) {
-              u.aware = true;
+              u.reacting = true;
               u.aiMood = "flee";
               u.moodT = 4;
             }
           }
-          if (!u.aware && dist < seeR && dist > 36 && h.phase === "flight") {
+          if (!u.reacting && dist < reactR && dist > 36 && h.phase === "flight") {
             if (vision > 0) {
-              u.aware = true;
+              u.reacting = true;
               rollSoldierMood(u, wounded || !canShoot || Math.random() < 0.4);
             }
           }
           if (u.aiMood) {
             u.moodT = (u.moodT ?? 0) - dt;
             if ((u.moodT ?? 0) <= 0) {
-              if (wounded || (dist < seeR && dist > 36)) rollSoldierMood(u, wounded || !canShoot || u.aiMood === "kite");
+              if (wounded || (dist < reactR && dist > 36)) rollSoldierMood(u, wounded || !canShoot || u.aiMood === "kite");
               else {
-                u.aware = false;
+                u.reacting = false;
                 u.aiMood = undefined;
               }
             }
-          } else if (!wounded && (dist >= seeR || dist <= 36)) {
-            u.aware = false;
+          } else if (!wounded && (dist >= reactR || dist <= 36)) {
+            u.reacting = false;
           }
           const fleeing = !downed && u.aiMood === "flee";
-          const kiting = canShoot && !downed && u.aiMood === "kite" && dist < seeR && dist > 36;
+          const kiting = canShoot && !downed && u.aiMood === "kite" && dist < reactR && dist > 36;
           if (downed) {
             u.vx = 0;
             u.vy = 0;
@@ -1044,7 +1044,7 @@ export class UnitSim {
       if (softTurret) {
         // Aim like a turret: track player when engaging, otherwise point where the base is going.
         const aimTo =
-          !hullFlee && (inRange || (u.burstLeft ?? 0) > 0 || (sp.organic && u.health <= 1 && u.health < u.max))
+          vision > 0 && !hullFlee && (inRange || (u.burstLeft ?? 0) > 0 || (sp.organic && u.health <= 1 && u.health < u.max))
             ? aim
             : u.angle;
         u.turret = steerUnitAngle(u.turret, aimTo, 2.4 * aimMul * Math.max(0.12, vision), dt);
@@ -1058,8 +1058,8 @@ export class UnitSim {
         inf && (u.burstLeft ?? 0) > 0 && aimTgt.phase === "flight" && (soldierDown || u.aiMood !== "flee");
       const soldierFlee = inf && u.aiMood === "flee" && !soldierDown && !this.s.unitSprites.snapHost(u);
       const scoutFlee = sp.behavior === "kite_attack_heli" && u.aiMood === "flee";
-      if (vision <= 0 && u.aware) {
-        u.aware = false;
+      if (vision <= 0 && u.reacting) {
+        u.reacting = false;
         if (u.aiMood === "kite") u.aiMood = undefined;
       }
       // Target actually engaged this frame — drives static units' ENGAGE state / lead aim.
@@ -1141,7 +1141,7 @@ export class UnitSim {
         const pw = sec.wpn;
         const minR = sec.minRange ?? 80;
         const aimCone = sec.aimCone ?? Math.PI / 2;
-        if (secDist < pw.range && secDist > minR) {
+        if (vision > 0 && secDist < pw.range * vision && secDist > minR) {
           const aimErr = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(secDy, secDx) - u.angle));
           const secTracking = aimErr < aimCone;
           u.secLockT = secTracking ? (u.secLockT ?? 0) + dt : 0;

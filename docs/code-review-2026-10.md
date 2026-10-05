@@ -102,6 +102,7 @@ So: per-frame micro-optimisations are **deprioritised** until a combat capture s
 ### High
 1. ✅ **Enemies fire through terrain when the player flies low.** `unitSim.ts:777` traces LOS only out to `enemyAwareReach(awareBase(u), 1, h)`, which shrinks with the target's awareness multiplier (×0.82 at nap-of-earth, less for stealthy craft). Past that reach, `lineOfSight.sees()` returns `true` without tracing (`lineOfSight.ts:58`). Firing is gated on the unshrunk `wpn.range * vision` (`enemyFire.ts:79/86`). So in the band between the shrunk reach and the weapon range, turrets shoot through hills, exactly when the player is using terrain cover.
    *Fix:* `losReach = max(enemyAwareReach(...), awareBase(u) * 1.15)`, so the trace never covers less than the fire and slew envelope.
+   **Resolved (2026-10-05):** fixed the other way round. Beyond sight range a unit can't see, so it neither aims nor fires (`lineOfSight.sees()` returns false).
 2. ✅ **Floating wrecks show through the theater/map view.** `groundMarks.ts:172` `syncSurfaceWreck` calls `setVisible(true)` every frame and ignores the map overlay, whose hide only applies once (`camera.setTheaterWorldHidden`). The same pattern needed `hideFlareVisuals` before.
    *Fix:* return early on `s.camera.mapWorldHidden` (or `mapBlend > 0.12`).
 3. ✅ **FIXED: seams inside Shards tiles.** The edge distance used only the second-nearest centre's bisector, so it jumped where that switched. It now uses the exact nearest bisector over every neighbour, culled with a precomputed centre-gap table. Shards has since been reworked into cracked-mud plates with sharp gaps, so its tiles no longer have peaks that could crease.
@@ -129,6 +130,7 @@ So: per-frame micro-optimisations are **deprioritised** until a combat capture s
     *Fix:* gate the jolt to once per frame.
 13. 🔎 **Inferno and crash splash damage can cascade.** `applyBlastDamage(..., skipDeathSplash=false)` runs inside death handling, so a cluster of rigs or tanks can chain-kill recursively. Confirm that's intended.
 14. 🔎 **Stale LOS when switching targets.** When the target switches and the per-frame trace budget is already spent, `sees()` returns the previous target's cached result. Units re-entering reach also read as "visible" until budget frees up.
+    **Resolved (2026-10-05):** entering range or switching target starts unsighted until a check sets it.
 15. 🔎 **Phantom pylon reservations.** `placePowerLines` reserves pylon discs in `occupied` before it knows whether the line will be kept.
 16. 🔎 **Duplicate break variants.** `breakApart` seeds use `i*7919 + hulk.length`, so hulks with the same key length get identical breaks.
     *Fix:* hash the key.

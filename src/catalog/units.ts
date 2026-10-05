@@ -310,7 +310,7 @@ export const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     softBlood: true,
     wheels: 2,
     crashPop: true,
-    fleeAwareRange: 1200,
+    fleeReactRange: 1200,
     minTurnSpd: 24,
     wheelDebrisScale: [0.48, 0.58],
     guns: [],

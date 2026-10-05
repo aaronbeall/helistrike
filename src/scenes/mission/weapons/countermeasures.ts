@@ -387,7 +387,7 @@ export class Countermeasures {
   breakEnemyPlayerContact(): void {
     for (const u of this.s.units) {
       if (u.dead) continue;
-      u.aware = false;
+      u.reacting = false;
       u.aiMood = undefined;
       u.moodT = 0;
       u.aiTx = undefined;

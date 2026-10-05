@@ -209,8 +209,10 @@ export interface UnitSpec {
   combatMood?: CombatMood;
   /** Strafe-turn hull while engaging (false for heavy heli). Default true for heli behaviors. */
   strafeAim?: boolean;
-  /** Flee-vehicle awareness radius (motorcycle 1200; default 520). */
-  fleeAwareRange?: number;
+  /** Flee-vehicle react radius (motorcycle 1200; default 520). */
+  fleeReactRange?: number;
+  /** Max sight range before stealth / low-flight scaling; default: widest weapon or role react range. */
+  sightRange?: number;
   /** Min forward speed required to yaw (motorcycle 24; wheeled default 14). */
   minTurnSpd?: number;
   /** Flee infantry run speed override (officer 36; non-organic default 90). */

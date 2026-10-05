@@ -517,7 +517,8 @@ export interface Unit {
   /** Fixed-mount burst rounds left; turret units: busiest turret's burst (summary). */
   burstLeft?: number;
   orbit: number;
-  aware?: boolean;
+  /** Has sighted the target inside its react range and is pursuing / fleeing it. */
+  reacting?: boolean;
   aiMood?: "kite" | "flee";
   moodT?: number;
   aiState?: string;

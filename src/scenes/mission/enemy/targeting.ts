@@ -209,10 +209,10 @@ export class EnemyTargeting {
   }
 
   /**
-   * Spotting / chase-engage reach. Cloak zeros it; combat-focus `enemyAwareMul` scales it.
+   * A sight or react range scaled for the target: cloak zeros it; combat-focus `enemyAwareMul` scales it.
    * Helis (not VTOL / plane) get a slight further cut when flying low AGL.
    */
-  enemyAwareReach(base: number, vision = 1, focus: Craft = this.combatFocus()): number {
+  enemyScaledReach(base: number, vision = 1, focus: Craft = this.combatFocus()): number {
     if (this.s.countermeasures.cloakT > 0 && focus === this.s.player) return 0;
     const craft = focus.spec;
     let mul = this.targetAwareMul(focus);
