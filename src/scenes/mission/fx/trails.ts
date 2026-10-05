@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { ageEnergyTrail } from "../../../render/ribbons";
-import { smoothPolyline, biasedDir } from "../../../util/vec";
+import { smoothPolylineInto, biasedDir } from "../../../util/vec";
 import { shotTailWorldPos, shotIsGunOrBeam } from "../../../render/spritePose";
 import { shotTrailScale, troopMissileTrail } from "../../../render/fxScale";
 import { SHOT_TAIL, guidanceIsLockOn, exhaustIsEnergy, exhaustIsGunSpark, exhaustHue, exhaustIsSignalFlare, ENERGY_TRAIL_NODE_LIFE, type Shot, type EnergyTrailNode } from "../../../sim/combat";
@@ -10,9 +10,54 @@ import { randomInFootprint, type Footprint } from "../../../render/footprint";
 import { worldToScreen, cameraPointVisible, screenVelX, screenVelY, projectHeading } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
 import { flameDensityMul } from "../../../render/fxCurves";
+import { lineQuadFast } from "../../../render/fastShapes";
 
 /** Missile exhaust spawn disc radius (screen px) per unit of trail scale. */
 const EXHAUST_AREA = 4.5;
+
+/** Ribbon layers per hue: width multiplier, color, alpha (outer glow → core). */
+type RibbonLayer = readonly [base: number, color: number, alpha: number];
+const CYAN_LAYERS: readonly RibbonLayer[] = [[3.6, 0x1a58ff, 0.2], [1.7, 0x3ad8ff, 0.48], [0.85, 0xffffff, 0.92]];
+const GREEN_LAYERS: readonly RibbonLayer[] = [[3.1, 0x1a6a22, 0.22], [1.55, 0x55ee44, 0.52], [0.72, 0xeaffc8, 0.95]];
+const MAGENTA_LAYERS: readonly RibbonLayer[] = [[3.6, 0x6a18ff, 0.22], [1.7, 0xc86cff, 0.52], [0.85, 0xf8e8ff, 0.95]];
+/** Max smoothing samples per ribbon segment, and the on-screen length (px) that earns each one. */
+const RIBBON_SMOOTH = 4;
+const RIBBON_SUBSEG_PX = 6;
+/** Ribbon layer alpha resolution (style changes) and the linger below which nothing shows. */
+const RIBBON_ALPHA_STEPS = 64;
+const RIBBON_MIN_ALPHA = 0.02;
+const RIBBON_AT = { x: 0, y: 0, scale: 1 };
+let ribbonBuf = makeRibbonBuffers(64);
+
+function makeRibbonBuffers(nodes: number) {
+  const smooth = (nodes - 1) * RIBBON_SMOOTH + 1;
+  return {
+    nodes,
+    rawX: new Float32Array(nodes),
+    rawY: new Float32Array(nodes),
+    ages: new Float32Array(nodes),
+    sx: new Float32Array(smooth),
+    sy: new Float32Array(smooth),
+    segThick: new Float32Array(smooth),
+    segFade: new Float32Array(smooth),
+  };
+}
+
+/** Node age at smoothed sample `si` (of `sn`), interpolated between the `n` trail nodes. */
+function ribbonAgeAt(ages: Float32Array, n: number, sn: number, si: number): number {
+  const nn = Math.max(1, n - 1);
+  const u = Phaser.Math.Clamp((si / Math.max(1, sn - 1)) * nn, 0, nn);
+  const i0 = Math.min(n - 1, u | 0);
+  const i1 = Math.min(n - 1, i0 + 1);
+  const f = u - i0;
+  return ages[i0]! * (1 - f) + ages[i1]! * f;
+}
+
+/** Shared scratch for ribbon drawing, grown on demand (one ribbon draws at a time). */
+function ribbonBuffers(nodes: number): ReturnType<typeof makeRibbonBuffers> {
+  if (nodes > ribbonBuf.nodes) ribbonBuf = makeRibbonBuffers(Math.max(nodes, ribbonBuf.nodes * 2));
+  return ribbonBuf;
+}
 
 /** Trails: shot / warp / flare / blast trails, energy + helix ribbons, tow-wire drawing. */
 export class Trails {
@@ -425,54 +470,47 @@ export class Trails {
   drawEnergyRibbon(g: Phaser.GameObjects.Graphics, pts: EnergyTrailNode[], widthMul = 1): number {
     const n = pts.length;
     if (n < 2) return Number.NEGATIVE_INFINITY;
+    const buf = ribbonBuffers(n);
     let depth = Number.NEGATIVE_INFINITY;
     let maxLife = 0;
-    const raw: { x: number; y: number }[] = [];
-    const ages: number[] = [];
     const hue = pts[0]?.hue ?? "cyan";
     for (let i = 0; i < n; i++) {
       const p = pts[i]!;
       const ref = p.max ?? ENERGY_TRAIL_NODE_LIFE;
       maxLife = Math.max(maxLife, p.life / ref);
       depth = Math.max(depth, worldDepth(p.z, ZOff.shot - 0.6, p.y));
-      const at = worldToScreen(p.x, p.y, p.z);
-      raw.push({ x: at.x, y: at.y });
-      ages.push(Phaser.Math.Clamp(1 - p.life / ref, 0, 1));
+      worldToScreen(p.x, p.y, p.z, RIBBON_AT);
+      buf.rawX[i] = RIBBON_AT.x;
+      buf.rawY[i] = RIBBON_AT.y;
+      buf.ages[i] = Phaser.Math.Clamp(1 - p.life / ref, 0, 1);
     }
-    const screen = smoothPolyline(raw);
     const linger = Phaser.Math.Clamp(maxLife, 0, 1);
-    const sn = screen.length;
-    const nn = Math.max(1, n - 1);
-    const ageAt = (si: number) => {
-      const u = Phaser.Math.Clamp((si / Math.max(1, sn - 1)) * nn, 0, nn);
-      const i0 = Math.min(n - 1, u | 0);
-      const i1 = Math.min(n - 1, i0 + 1);
-      const f = u - i0;
-      return ages[i0]! * (1 - f) + ages[i1]! * f;
-    };
-    const strokeLayer = (base: number, color: number, alpha: number) => {
+    // Faded-out lingering ribbon: every layer is below visible alpha.
+    if (linger < RIBBON_MIN_ALPHA) return depth;
+    const sn = smoothPolylineInto(buf.rawX, buf.rawY, n, buf.sx, buf.sy, RIBBON_SMOOTH, RIBBON_SUBSEG_PX);
+    // Per-segment age (shared by the three layers): node ages interpolated along the smoothed line.
+    let prev = ribbonAgeAt(buf.ages, n, sn, 0);
+    for (let i = 0; i < sn - 1; i++) {
+      const next = ribbonAgeAt(buf.ages, n, sn, i + 1);
+      const age = (prev + next) * 0.5;
+      buf.segThick[i] = Phaser.Math.Linear(2.55, 0.35, Math.pow(age, 0.85)) * widthMul;
+      buf.segFade[i] = linger * Phaser.Math.Linear(1, 0.15, age);
+      prev = next;
+    }
+    const layers = hue === "green" ? GREEN_LAYERS : hue === "magenta" ? MAGENTA_LAYERS : CYAN_LAYERS;
+    for (let l = 0; l < layers.length; l++) {
+      const [base, color, alpha] = layers[l]!;
+      let styled = -1;
       for (let i = 0; i < sn - 1; i++) {
-        const age = (ageAt(i) + ageAt(i + 1)) * 0.5;
-        const thick = Phaser.Math.Linear(2.55, 0.35, Math.pow(age, 0.85)) * widthMul;
-        g.lineStyle(base * thick, color, alpha * linger * Phaser.Math.Linear(1, 0.15, age));
-        g.beginPath();
-        g.moveTo(screen[i]!.x, screen[i]!.y);
-        g.lineTo(screen[i + 1]!.x, screen[i + 1]!.y);
-        g.strokePath();
+        // Alpha quantized so the style is re-set only when it visibly changes.
+        const a = Math.round(alpha * buf.segFade[i]! * RIBBON_ALPHA_STEPS) / RIBBON_ALPHA_STEPS;
+        if (a <= 0) continue;
+        if (a !== styled) {
+          g.fillStyle(color, a);
+          styled = a;
+        }
+        lineQuadFast(g, buf.sx[i]!, buf.sy[i]!, buf.sx[i + 1]!, buf.sy[i + 1]!, base * buf.segThick[i]!);
       }
-    };
-    if (hue === "green") {
-      strokeLayer(3.1, 0x1a6a22, 0.22);
-      strokeLayer(1.55, 0x55ee44, 0.52);
-      strokeLayer(0.72, 0xeaffc8, 0.95);
-    } else if (hue === "magenta") {
-      strokeLayer(3.6, 0x6a18ff, 0.22);
-      strokeLayer(1.7, 0xc86cff, 0.52);
-      strokeLayer(0.85, 0xf8e8ff, 0.95);
-    } else {
-      strokeLayer(3.6, 0x1a58ff, 0.2);
-      strokeLayer(1.7, 0x3ad8ff, 0.48);
-      strokeLayer(0.85, 0xffffff, 0.92);
     }
     return depth;
   }
@@ -484,14 +522,16 @@ export class Trails {
     let depth = worldDepth(this.s.player.z, ZOff.shot - 0.6, this.s.player.y);
     for (const s of this.s.shots) {
       if (s.from !== "player") continue;
-      const trails = s.energyTrails ?? (s.energyTrail ? [s.energyTrail] : null);
-      if (!trails) continue;
-      const n = trails.length;
-      for (let i = 0; i < n; i++) {
-        const pts = trails[i]!;
-        if (pts.length < 2) continue;
-        const widthMul = n <= 1 ? 1 : Phaser.Math.Linear(1.35, 0.55, i / Math.max(1, n - 1));
-        depth = Math.max(depth, this.drawEnergyRibbon(g, pts, widthMul));
+      if (s.energyTrails) {
+        const n = s.energyTrails.length;
+        for (let i = 0; i < n; i++) {
+          const pts = s.energyTrails[i]!;
+          if (pts.length < 2) continue;
+          const widthMul = n <= 1 ? 1 : Phaser.Math.Linear(1.35, 0.55, i / Math.max(1, n - 1));
+          depth = Math.max(depth, this.drawEnergyRibbon(g, pts, widthMul));
+        }
+      } else if (s.energyTrail && s.energyTrail.length >= 2) {
+        depth = Math.max(depth, this.drawEnergyRibbon(g, s.energyTrail));
       }
     }
     for (const pts of this.energyLinger) {

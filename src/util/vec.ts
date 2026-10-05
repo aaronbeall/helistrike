@@ -130,28 +130,46 @@ export function projectAlong(x: number, y: number, ang: number, tx: number, ty: 
   return Math.max(0, dx * Math.cos(ang) + dy * Math.sin(ang));
 }
 
-/** Catmull-Rom samples so energy ribbons read as a TOW-like curve, not a dotted polyline. */
-export function smoothPolyline(pts: { x: number; y: number }[], steps = 4): { x: number; y: number }[] {
-  const n = pts.length;
-  if (n < 3) return pts;
-  const out: { x: number; y: number }[] = [{ x: pts[0]!.x, y: pts[0]!.y }];
-  const catmull = (p0: number, p1: number, p2: number, p3: number, t: number) => {
-    const t2 = t * t;
-    const t3 = t2 * t;
-    return 0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
-  };
+/**
+ * Catmull-Rom smoothing of `n` points into `outX` / `outY` (no allocation); returns the count. Each segment gets
+ * up to `steps` samples, fewer when shorter than `steps * minSegLen`.
+ */
+export function smoothPolylineInto(
+  xs: ArrayLike<number>,
+  ys: ArrayLike<number>,
+  n: number,
+  outX: Float32Array,
+  outY: Float32Array,
+  steps = 4,
+  minSegLen = 0
+): number {
+  if (n < 3) {
+    for (let i = 0; i < n; i++) {
+      outX[i] = xs[i]!;
+      outY[i] = ys[i]!;
+    }
+    return n;
+  }
+  outX[0] = xs[0]!;
+  outY[0] = ys[0]!;
+  let m = 1;
   for (let i = 0; i < n - 1; i++) {
-    const a = pts[i - 1] ?? pts[i]!;
-    const b = pts[i]!;
-    const c = pts[i + 1]!;
-    const d = pts[i + 2] ?? c;
-    for (let s = 1; s <= steps; s++) {
-      const t = s / steps;
-      out.push({
-        x: catmull(a.x, b.x, c.x, d.x, t),
-        y: catmull(a.y, b.y, c.y, d.y, t),
-      });
+    const a = i > 0 ? i - 1 : i;
+    const d = i + 2 < n ? i + 2 : i + 1;
+    const len = minSegLen > 0 ? Math.hypot(xs[i + 1]! - xs[i]!, ys[i + 1]! - ys[i]!) : 0;
+    const k = minSegLen > 0 ? Math.max(1, Math.min(steps, Math.ceil(len / minSegLen))) : steps;
+    for (let s = 1; s <= k; s++) {
+      const t = s / k;
+      outX[m] = catmull(xs[a]!, xs[i]!, xs[i + 1]!, xs[d]!, t);
+      outY[m] = catmull(ys[a]!, ys[i]!, ys[i + 1]!, ys[d]!, t);
+      m++;
     }
   }
-  return out;
+  return m;
+}
+
+function catmull(p0: number, p1: number, p2: number, p3: number, t: number): number {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return 0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
 }

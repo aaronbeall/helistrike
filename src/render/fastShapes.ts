@@ -87,11 +87,17 @@ export function strokeCircleFast(g: Gfx, x: number, y: number, r: number, width:
 
 /** Straight line as a quad (`width` across, flat ends). */
 export function lineFast(g: Gfx, x1: number, y1: number, x2: number, y2: number, width: number, color: number, alpha = 1): void {
+  if (width <= 0 || (x1 === x2 && y1 === y2)) return;
+  g.fillStyle(color, alpha);
+  lineQuadFast(g, x1, y1, x2, y2, width);
+}
+
+/** `lineFast` in the current fill style (callers batching many segments of one style). */
+export function lineQuadFast(g: Gfx, x1: number, y1: number, x2: number, y2: number, width: number): void {
   const dx = x2 - x1;
   const dy = y2 - y1;
   const len = Math.hypot(dx, dy);
   if (len <= 0 || width <= 0) return;
-  g.fillStyle(color, alpha);
   const nx = (-dy / len) * (width / 2);
   const ny = (dx / len) * (width / 2);
   g.fillTriangle(x1 + nx, y1 + ny, x2 + nx, y2 + ny, x2 - nx, y2 - ny);
