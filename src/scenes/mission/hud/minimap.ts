@@ -3,6 +3,7 @@ import type { Shot } from "../../../sim/combat";
 import { WORLD } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
 import { isNeutral } from "../../../sim/roster";
+import { fillCircleFast, lineFast, strokeCircleFast } from "../../../render/fastShapes";
 
 /** Civilian structures: gray, not hostile red. */
 const NEUTRAL_MARK = 0x9a9890;
@@ -47,50 +48,41 @@ export class Minimap {
     this.wrecks.setPosition(this.terrain.x, this.terrain.y);
     this.gfx.clear();
     const rimR = 90;
-    this.gfx.lineStyle(2, 0xe8b84a, 0.85);
-    this.gfx.strokeCircle(cx, cy, rimR);
-    this.gfx.lineStyle(1, 0xe8b84a, 0.2);
-    this.gfx.strokeCircle(cx, cy, 45);
-    const toMap = (x: number, y: number) => ({
-      x: cx + (x - this.s.player.x) * s,
-      y: cy + (y - this.s.player.y) * s,
-    });
-    const inRing = (p: { x: number; y: number }) => Math.hypot(p.x - cx, p.y - cy) <= mapR;
+    const g = this.gfx;
+    strokeCircleFast(g, cx, cy, rimR, 2, 0xe8b84a, 0.85);
+    strokeCircleFast(g, cx, cy, 45, 1, 0xe8b84a, 0.2);
+    const px = this.s.player.x;
+    const py = this.s.player.y;
     const mark = 0xe8b84a;
     for (const u of this.s.units) {
       if (u.dead) continue;
-      const p = toMap(u.x, u.y);
-      if (!inRing(p)) continue;
-      this.gfx.fillStyle(u.hv ? 0xff5a3a : isNeutral(u.kind) ? NEUTRAL_MARK : 0xc45c28, 1);
-      this.gfx.fillCircle(p.x, p.y, u.hv ? 3.5 : u.kind === "pylon" ? PYLON_DOT_R : 2);
+      const mx = cx + (u.x - px) * s;
+      const my = cy + (u.y - py) * s;
+      if (Math.hypot(mx - cx, my - cy) > mapR) continue;
+      g.fillStyle(u.hv ? 0xff5a3a : isNeutral(u.kind) ? NEUTRAL_MARK : 0xc45c28, 1);
+      fillCircleFast(g, mx, my, u.hv ? 3.5 : u.kind === "pylon" ? PYLON_DOT_R : 2);
     }
     for (const r of this.s.remotes) {
       if (r.detonate || r.dock) continue;
-      const p = toMap(r.x, r.y);
       // Yellow diamond — player drones / remotes only. Clamped onto the rim line when
       // off-radar (continuous with the in-ring position, no shrink).
-      const dx = p.x - cx;
-      const dy = p.y - cy;
+      const dx = (r.x - px) * s;
+      const dy = (r.y - py) * s;
       const d = Math.hypot(dx, dy);
       const k = d > rimR ? rimR / d : 1;
       this.s.drawMiniDiamond(cx + dx * k, cy + dy * k, 4.5, mark);
     }
     for (const shot of this.s.shots) {
       if (!shotShowsOnRadar(shot)) continue;
-      const p = toMap(shot.x, shot.y);
-      if (!inRing(p)) continue;
+      const mx = cx + (shot.x - px) * s;
+      const my = cy + (shot.y - py) * s;
+      if (Math.hypot(mx - cx, my - cy) > mapR) continue;
       // Player/friendly yellow; enemy red.
       const shotMark = shot.from === "enemy" ? 0xff5a3a : mark;
-      this.s.drawMiniMissileTick(p.x, p.y, shot.angle, shotMark);
+      this.s.drawMiniMissileTick(mx, my, shot.angle, shotMark);
     }
-    this.gfx.fillStyle(0xe8b84a, 1);
-    this.gfx.fillCircle(cx, cy, 3);
-    this.gfx.lineStyle(1.5, 0xe8b84a, 1);
-    this.gfx.lineBetween(
-      cx,
-      cy,
-      cx + Math.cos(this.s.player.angle) * 12,
-      cy + Math.sin(this.s.player.angle) * 12
-    );
+    g.fillStyle(0xe8b84a, 1);
+    fillCircleFast(g, cx, cy, 3);
+    lineFast(g, cx, cy, cx + Math.cos(this.s.player.angle) * 12, cy + Math.sin(this.s.player.angle) * 12, 1.5, 0xe8b84a, 1);
   }
 }

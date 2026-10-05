@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { loadPersistence } from "../persist";
-import { benchIdsFromUrl, startBench } from "./mission/debug/bench";
+import { devLaunchFromUrl, startDevLaunch } from "./devLaunch";
 import { bakeAll, bakeRosterArt } from "../art/bake";
 import { bakeCamo } from "../render/camo";
 import { preloadArt, prepareArt } from "../art/sprites";
@@ -85,9 +85,9 @@ export class BootScene extends Phaser.Scene {
 
     this.drawBootBar(0.995, "SERVICE RECORD  ·  99%");
     await loadPersistence();
-    const bench = benchIdsFromUrl();
-    if (bench) {
-      startBench(this, bench);
+    const dev = devLaunchFromUrl();
+    if (dev) {
+      startDevLaunch(this, dev);
       return;
     }
     this.drawBootBar(1, "READY  ·  100%");

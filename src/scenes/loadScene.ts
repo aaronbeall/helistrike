@@ -18,7 +18,7 @@ import { pickTip, tipKnownFromSelection, tipText } from "../sim/tips";
 import { markTipShown, tipShownCounts } from "../persist/tipHistory";
 import { ensureExhaustGlow, extractBiomeTiles, FX_VARIANTS, spriteUvPos } from "../art/sprites";
 import { missionOf } from "../sim/mission";
-import { applyBenchForces, benchScenario } from "./mission/debug/bench";
+import { applyDevForces, type DevLaunch } from "./devLaunch";
 import { generateWorldAsync, type WorldData } from "../worldgen/world";
 
 export class LoadScene extends Phaser.Scene {
@@ -39,14 +39,14 @@ export class LoadScene extends Phaser.Scene {
   private rotorFlight = 32;
   private loadU = 0.02;
 
-  /** Hidden perf scenario to load instead of a normal mission. */
-  private benchId: string | undefined;
+  /** Dev URL launch (fixed seed / profile / forces). */
+  private dev: DevLaunch | undefined;
 
   constructor() {
     super("load");
   }
-  init(data: { bench?: string }): void {
-    this.benchId = data?.bench;
+  init(data: { dev?: DevLaunch }): void {
+    this.dev = data?.dev;
   }
   create(): void {
     // Craft preview reuses craft_* textures; chrome Text/Graphics get load_* names.
@@ -181,8 +181,8 @@ export class LoadScene extends Phaser.Scene {
     const bar = this.add.graphics();
     const known = tipKnownFromSelection();
     const picked = pickTip(known, tipShownCounts());
-    const bench = benchScenario(this.benchId);
-    if (!bench) markTipShown(picked.id);
+    const dev = this.dev;
+    if (!dev) markTipShown(picked.id);
     const tip = tipText(picked, known);
     this.add
       .text(w / 2, h * 0.72, `TIP  ·  ${tip}`, {
@@ -214,7 +214,7 @@ export class LoadScene extends Phaser.Scene {
     };
     drawBar(0.02, "relief");
     this.time.delayedCall(16, () => {
-      const seed = bench?.seed ?? (Date.now() ^ (Math.random() * 1e9)) >>> 0;
+      const seed = dev?.seed ?? (Date.now() ^ (Math.random() * 1e9)) >>> 0;
       const tiles = extractBiomeTiles(this.textures);
       const mission = missionOf();
       sub.setText(`${mission.label}  ·  RELIEF  ·  2%`);
@@ -223,10 +223,10 @@ export class LoadScene extends Phaser.Scene {
         await waitFrame();
         await waitFrame();
         if (!this.scene.isActive()) return;
-        if (bench) applyBenchForces(world, bench);
-        this.scene.start("mission", { world, bench: bench?.id });
+        if (dev) applyDevForces(world, dev);
+        this.scene.start("mission", { world, cheats: dev?.cheats });
       };
-      const profile = bench?.profile ? { ...mission.profile, ...bench.profile } : mission.profile;
+      const profile = dev?.profile ? { ...mission.profile, ...dev.profile } : mission.profile;
       generateWorldAsync(seed, tiles, (t, label) => drawBar(t, label), profile)
         .then(go)
         .catch((err) => {

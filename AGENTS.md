@@ -8,7 +8,7 @@ Shared instructions for AI coding agents (Codex, Cursor, Claude Code, …). For 
 npm run dev               # Vite dev server
 npx tsc --noEmit -p .     # type check (run after every change; must be clean)
 npm run build             # tsc + production build
-npm run bench             # perf scenarios in Chrome via Playwright (--compare <json>, --profile); see docs/perf-plan-2026-10.md
+npm run bench             # perf scenarios in Chrome via Playwright, real input (--compare <json>, --profile); see docs/perf-plan-2026-10.md
 ```
 
 There is no test suite. Verify with the type check + build, then a short in-game play-test of whatever you touched.
@@ -111,7 +111,9 @@ export class RemoteFleet {
 | HUD element | the matching `hud/…` module, or a new one |
 | Player stats | record in `flow/missionStats` (`s.stats.*`); fact tables + `query`/`total` rollups in `sim/stats` (add a dim or measure there, never a new fixed bucket); saved by `persist/statsStore` at mission end as a history record (one key per mission) + lifetime totals rebuilt from the history when out of step |
 | Debug tool / overlay | `debug/…` |
-| Perf test scenario | `src/catalog/benchmarks.ts` (driver: `debug/bench`, runner: `scripts/bench.mjs`) |
+| Dev test map (`?test=<id>`, main-menu `/` panel) | `src/catalog/testMaps.ts` (URL launch: `scenes/devLaunch.ts`) |
+| Perf scenario (input script + timing) | `scripts/bench-scenarios.mjs` (runner: `scripts/bench.mjs`; reads the dev-only `window.__heli` handle) |
+| Debug text overlay | `ui/domText` (DOM, not Phaser `Text`: no canvas raster / texture upload) |
 | Dev rig (overlay tool, cycled with `` ` ``) | `src/rigs/…`, registered in `rigs.ts` |
 | Map silhouette / domain warp | `src/worldgen/shape.ts` |
 | Terrain palette, tiles, decor per theme | `src/worldgen/theme.ts` |

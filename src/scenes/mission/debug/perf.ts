@@ -1,4 +1,4 @@
-import Phaser from "phaser";
+import { DomText } from "../../../ui/domText";
 import type { MissionScene } from "../../missionScene";
 
 export const PERF_LABELS = [
@@ -22,7 +22,8 @@ const PERF_WINDOW = 300;
 
 /** Opt-in per-stage CPU timings + overlay (P). */
 export class PerfMonitor {
-  hud!: Phaser.GameObjects.Text;
+  /** DOM overlay, created on first enable (debug text shouldn't cost canvas work). */
+  hud!: DomText;
   /** Opt-in CPU timings; buffers are allocated only when profiling is enabled. */
   enabled = false;
   samples?: Float32Array[];
@@ -38,6 +39,7 @@ export class PerfMonitor {
 
   toggle(): void {
     this.enabled = !this.enabled;
+    this.hud ??= new DomText(this.s.game, 16, 72, 12, "#8ee6ff");
     if (!this.enabled) {
       this.hud.setVisible(false);
       this.copyKeyAt = -Infinity;
@@ -48,7 +50,14 @@ export class PerfMonitor {
     this.s.debugMenu.sync();
   }
 
+  /** Scene shutdown: drop the DOM overlay. */
+  dispose(): void {
+    this.hud?.destroy();
+    this.hud = undefined!;
+  }
+
   resetMeasurements(): void {
+    this.hud ??= new DomText(this.s.game, 16, 72, 12, "#8ee6ff");
     this.samples ??= PERF_LABELS.map(() => new Float32Array(PERF_WINDOW));
     this.current ??= new Float64Array(PERF_LABELS.length);
     this.sortBuf ??= new Float32Array(PERF_WINDOW);

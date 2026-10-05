@@ -6,7 +6,6 @@ import Phaser from "phaser";
 import { FieldBars } from "./mission/hud/fieldBars";
 import { MissionFlow } from "./mission/flow/missionFlow";
 import { MissionStats } from "./mission/flow/missionStats";
-import { Bench } from "./mission/debug/bench";
 import { MissionCamera } from "./mission/camera/camera";
 import { ThermalMode } from "./mission/render/thermalMode";
 import { UnitSprites } from "./mission/render/unitSprites";
@@ -44,11 +43,12 @@ import { ThreatHud } from "./mission/hud/threatHud";
 import { DebugMenu } from "./mission/debug/menu";
 import { ReliefEditor } from "./mission/debug/relief";
 import { SideView } from "./mission/debug/sideView";
-import { PerfMonitor } from "./mission/debug/perf";
+import { PERF_LABELS, PerfMonitor } from "./mission/debug/perf";
 import { createFxEmitters } from "./mission/fx/emitters";
 
 import { type RemoteCraft } from "../sim/remote";
 import { Layer } from "../render/depth";
+import { fillCircleFast, lineFast } from "../render/fastShapes";
 import { Craft, craftCameraEdgeLocked } from "../sim/craft";
 import { ensureAllArtGenAnims } from "../art/artGen";
 import { craftComposite, craftExhaustFlameHue, craftExhaustMounts, craftGunOrigin, craftOf, craftPreviewExhaustTint } from "../sim/crafts";
@@ -65,6 +65,13 @@ import { themeOf, waterColor } from "../worldgen/theme";
 import { generateWorld, worldFromGen, groundZ, worldToScreen, setCamera25DFocus, screenToWorldOnGround, castZ, paintHeightMap, WORLD, WRECK_TEX, type WorldData } from "../worldgen/world";
 
 /** How far aircraft may overshoot before a soft cap (jets / enemy air) — see craft.MAP_AIR_SOFT. */
+
+declare global {
+  interface Window {
+    /** Dev builds: the live mission, for the perf runner and console poking. */
+    __heli?: { scene: MissionScene; game: Phaser.Game; perfLabels: readonly string[] };
+  }
+}
 
 export class MissionScene extends Phaser.Scene {
   // Subsystems — each owns its state + methods, holds the scene as `s`.
@@ -102,7 +109,8 @@ export class MissionScene extends Phaser.Scene {
   // flow
   flow = new MissionFlow(this);
   stats = new MissionStats(this);
-  bench = new Bench(this);
+  /** Cheats requested by a dev URL launch. */
+  private launchCheats: { ammo: boolean; god: boolean } | undefined;
   // hud
   weaponHud = new WeaponHud(this);
   statusHud = new StatusHud(this);
@@ -180,8 +188,8 @@ export class MissionScene extends Phaser.Scene {
     super("mission");
   }
 
-  init(data: { world?: WorldData; bench?: string }): void {
-    this.bench.reset(data.bench);
+  init(data: { world?: WorldData; cheats?: { ammo: boolean; god: boolean } }): void {
+    this.launchCheats = data.cheats;
     this.over = false;
     this.flow.reset();
     this.stats.reset();
@@ -260,7 +268,10 @@ export class MissionScene extends Phaser.Scene {
     this.help.setup();
     this.flow.setupExitMenu();
     this.setupHudCam();
-    this.bench.start();
+    if (this.launchCheats?.ammo) this.debugMenu.setInfAmmo(true);
+    if (this.launchCheats?.god) this.debugMenu.setNoDamage(true);
+    // Dev builds: read-only handle for the perf runner / console.
+    if (import.meta.env.DEV) window.__heli = { scene: this, game: this.game, perfLabels: PERF_LABELS };
   }
 
   /** Textures, pipelines and art bakes the rest of create() draws from. */
@@ -687,8 +698,8 @@ export class MissionScene extends Phaser.Scene {
     kb.on("keydown-NUMPAD_SUBTRACT", onTimeMinus);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       // Left before the end screen (menu / restart): save the run with an inferred outcome.
-      if (!this.bench.holdsMission()) this.stats.finish();
-      this.bench.stop();
+      this.stats.finish();
+      this.perf.dispose();
       kb.off("keydown-PLUS", onTimePlus);
       kb.off("keydown-EQUALS", onTimePlus);
       kb.off("keydown-NUMPAD_ADD", onTimePlus);
@@ -881,18 +892,6 @@ export class MissionScene extends Phaser.Scene {
       .setOrigin(1, 0)
       .setScrollFactor(0)
       .setDepth(Layer.HUD + 5);
-    this.perf.hud = this.add
-      .text(16, 72, "", {
-        fontFamily: "Share Tech Mono, monospace",
-        fontSize: "12px",
-        color: "#8ee6ff",
-        align: "left",
-      })
-      .setOrigin(0, 0)
-      .setScrollFactor(0)
-      .setDepth(Layer.HUD + 6)
-      .setStroke("#101418", 4)
-      .setVisible(false);
     this.postFx.syncHud();
     this.cornerHud.hvHud = this.add
       .text(this.scale.width - 16, 12, "", {
@@ -1070,10 +1069,10 @@ export class MissionScene extends Phaser.Scene {
     const cy = this.scale.height - 18 - 88;
     this.minimap.mask = this.add.graphics().setScrollFactor(0);
     this.minimap.mask.fillStyle(0xffffff);
-    this.minimap.mask.fillCircle(cx, cy, 88);
+    fillCircleFast(this.minimap.mask, cx, cy, 88);
     this.minimap.bg = this.add.graphics().setScrollFactor(0).setDepth(Layer.HUD - 1);
     this.minimap.bg.fillStyle(minimapTerrainBgColor(this.world.canvas), 1);
-    this.minimap.bg.fillCircle(cx, cy, 90);
+    fillCircleFast(this.minimap.bg, cx, cy, 90);
     this.minimap.terrain = this.add.image(cx, cy, "map_terrain").setScrollFactor(0).setDepth(Layer.HUD);
     this.minimap.terrain.setMask(this.minimap.mask.createGeometryMask());
     if (this.textures.exists("map_wrecks")) this.textures.remove("map_wrecks");
@@ -1117,7 +1116,6 @@ export class MissionScene extends Phaser.Scene {
       this.reticleHud.hideAimChrome();
       return;
     }
-    this.bench.drive();
     const wallDt = Math.min(dms / 1000, 0.05);
     this.frameWallDt = wallDt;
     const mapPause = this.camera.mapWant || this.camera.mapBlend > 0.02;
@@ -1346,7 +1344,7 @@ export class MissionScene extends Phaser.Scene {
         }
       }
     }
-    if (!hvAlive && this.player.phase !== "dead" && !this.missionEndQueued && !this.bench.holdsMission()) {
+    if (!hvAlive && this.player.phase !== "dead" && !this.missionEndQueued) {
       this.missionEndQueued = true;
       // Keep flight controls through the victory stinger; lock only when end() runs.
       this.flow.showStinger(
@@ -1458,8 +1456,7 @@ export class MissionScene extends Phaser.Scene {
     const len = 5.5;
     const ca = Math.cos(angle);
     const sa = Math.sin(angle);
-    this.minimap.gfx.lineStyle(2, color, 1);
-    this.minimap.gfx.lineBetween(x - ca * len * 0.35, y - sa * len * 0.35, x + ca * len * 0.65, y + sa * len * 0.65);
+    lineFast(this.minimap.gfx, x - ca * len * 0.35, y - sa * len * 0.35, x + ca * len * 0.65, y + sa * len * 0.65, 2, color, 1);
   }
 
   drawHvArrows(): void {
@@ -1663,7 +1660,6 @@ export class MissionScene extends Phaser.Scene {
       this.cornerHud.hud,
       this.postFx.hud,
       this.cornerHud.fpsHud,
-      this.perf.hud,
       this.runStatsHud.txt,
       this.threatHud.paintTxt,
       this.threatHud.missileTxt,
@@ -1836,7 +1832,7 @@ export class MissionScene extends Phaser.Scene {
     this.minimap.mask.setPosition(0, 0);
     this.minimap.mask.clear();
     this.minimap.mask.fillStyle(0xffffff, 1);
-    this.minimap.mask.fillCircle(this.hudRoot.x + clip.x * hs, this.hudRoot.y + clip.y * hs, 88 * hs);
+    fillCircleFast(this.minimap.mask, this.hudRoot.x + clip.x * hs, this.hudRoot.y + clip.y * hs, 88 * hs);
   }
 
   /** Any cursor-owning overlay open (help, exit, editor, debug menus) — rig cursor sync reads this. */

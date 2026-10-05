@@ -3,6 +3,7 @@ import Phaser from "phaser";
 import { heliHudWireUv, type HeliHudWireBake } from "../../../art/sprites";
 import type { MissionScene } from "../../missionScene";
 import { setShockPipeline } from "../../../render/shockFx";
+import { fillCircleFast, strokeCircleFast, strokeRoundedRectFast } from "../../../render/fastShapes";
 
 export function healthHudColor(hp: number): number {
   const t = Phaser.Math.Clamp(hp, 0, 1);
@@ -108,9 +109,9 @@ export class StatusHud {
       g.fillRect(barX, sy + (segH - fh), barW, fh);
     }
     g.lineStyle(1.5, 0x080808, 0.92);
-    g.strokeRoundedRect(boxX, boxY, boxW, boxH, 2);
+    strokeRoundedRectFast(g, boxX, boxY, boxW, boxH, 2, 1.5, 0x080808, 0.92);
     g.lineStyle(1, 0x444438, 0.5);
-    g.strokeRoundedRect(boxX + 0.5, boxY + 0.5, boxW - 1, boxH - 1, 2);
+    strokeRoundedRectFast(g, boxX + 0.5, boxY + 0.5, boxW - 1, boxH - 1, 2, 1, 0x444438, 0.5);
 
     const pulse = hp < 0.3 ? 0.55 + 0.45 * Math.sin(this.s.time.now * 0.018) : 1;
     const wirePos = this.s.hudLocal(wireX, wireY);
@@ -124,9 +125,9 @@ export class StatusHud {
       const my = wireY + (mapped.v - oy) * drawH;
       const hmPulse = 0.65 + 0.35 * Math.sin(this.s.time.now * 0.022 + siteI * 1.7);
       g.fillStyle(0xff2020, 0.9 * hmPulse);
-      g.fillCircle(mx, my, 9.5);
+      fillCircleFast(g, mx, my, 9.5);
       g.lineStyle(2.2, 0xff6644, 0.75 * hmPulse);
-      g.strokeCircle(mx, my, 15);
+      strokeCircleFast(g, mx, my, 15, 2.2, 0xff6644, 0.75 * hmPulse);
     }
 
     this.drawHurtVignette(hp);

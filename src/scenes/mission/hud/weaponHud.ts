@@ -8,6 +8,7 @@ import { PLAYER_WPNS, COUNTERMEASURES, type WpnId } from "../../../sim/combat";
 import { Layer } from "../../../render/depth";
 import { craftCrewHudTag, craftSocketMultiplicity, craftSocketStartingAmmo } from "../../../sim/crafts";
 import type { MissionScene } from "../../missionScene";
+import { fillRoundedRectFast, strokeRoundedRectFast } from "../../../render/fastShapes";
 
 /** Truncate a HUD label so `text` width stays within `maxW` (ellipsis). */
 export function fitHudLabel(text: Phaser.GameObjects.Text, label: string, maxW: number): string {
@@ -147,37 +148,37 @@ export class WeaponHud {
       // Slot chrome — disabled is a shared visual (cloak today; other gates later).
       if (disabled) {
         g.fillStyle(sel ? 0x1a1a1c : 0x0e0e10, sel ? 0.88 : 0.62);
-        g.fillRoundedRect(x, y, slotW, slotH, 3);
+        fillRoundedRectFast(g, x, y, slotW, slotH, 3);
         g.lineStyle(1.4, sel ? 0x5a5a62 : 0x3a3a42, sel ? 0.85 : 0.55);
-        g.strokeRoundedRect(x, y, slotW, slotH, 3);
+        strokeRoundedRectFast(g, x, y, slotW, slotH, 3, 1.4, sel ? 0x5a5a62 : 0x3a3a42, sel ? 0.85 : 0.55);
       } else if (sel) {
         g.fillStyle(empty ? 0xff3a2a : low ? 0xe89a3a : 0xe8b84a, 1);
-        g.fillRoundedRect(x, y, slotW, slotH, 3);
+        fillRoundedRectFast(g, x, y, slotW, slotH, 3);
       } else if (empty) {
         g.fillStyle(0x3a1410, 0.92);
-        g.fillRoundedRect(x, y, slotW, slotH, 3);
+        fillRoundedRectFast(g, x, y, slotW, slotH, 3);
         g.lineStyle(1.5, 0xff3a2a, 0.95);
-        g.strokeRoundedRect(x, y, slotW, slotH, 3);
+        strokeRoundedRectFast(g, x, y, slotW, slotH, 3, 1.5, 0xff3a2a, 0.95);
       } else if (gunner && low) {
         g.fillStyle(0x142028, 0.82);
-        g.fillRoundedRect(x, y, slotW, slotH, 3);
+        fillRoundedRectFast(g, x, y, slotW, slotH, 3);
         g.lineStyle(1.5, 0xe89a3a, 0.9);
-        g.strokeRoundedRect(x, y, slotW, slotH, 3);
+        strokeRoundedRectFast(g, x, y, slotW, slotH, 3, 1.5, 0xe89a3a, 0.9);
       } else if (gunner) {
         g.fillStyle(0x101820, 0.72);
-        g.fillRoundedRect(x, y, slotW, slotH, 3);
+        fillRoundedRectFast(g, x, y, slotW, slotH, 3);
         g.lineStyle(1.5, 0x4aa8e8, 0.9);
-        g.strokeRoundedRect(x, y, slotW, slotH, 3);
+        strokeRoundedRectFast(g, x, y, slotW, slotH, 3, 1.5, 0x4aa8e8, 0.9);
       } else if (low) {
         g.fillStyle(0x2a1a0c, 0.78);
-        g.fillRoundedRect(x, y, slotW, slotH, 3);
+        fillRoundedRectFast(g, x, y, slotW, slotH, 3);
         g.lineStyle(1.4, 0xe89a3a, 0.9);
-        g.strokeRoundedRect(x, y, slotW, slotH, 3);
+        strokeRoundedRectFast(g, x, y, slotW, slotH, 3, 1.4, 0xe89a3a, 0.9);
       } else {
         g.fillStyle(0x12100c, 0.55);
-        g.fillRoundedRect(x, y, slotW, slotH, 3);
+        fillRoundedRectFast(g, x, y, slotW, slotH, 3);
         g.lineStyle(1.2, 0xc4a24a, 0.55);
-        g.strokeRoundedRect(x, y, slotW, slotH, 3);
+        strokeRoundedRectFast(g, x, y, slotW, slotH, 3, 1.2, 0xc4a24a, 0.55);
       }
 
       // Ammo fraction bar
@@ -340,9 +341,9 @@ export class WeaponHud {
       const x = x0 + n * (slotW + gap);
       const follow = this.s.remoteFleet.hostEscortMode === "follow";
       g.fillStyle(follow ? 0x142028 : 0x12100c, follow ? 0.82 : 0.62);
-      g.fillRoundedRect(x, y, escortW, slotH, 3);
+      fillRoundedRectFast(g, x, y, escortW, slotH, 3);
       g.lineStyle(1.3, follow ? 0x4aa8e8 : 0x8a8470, follow ? 0.9 : 0.75);
-      g.strokeRoundedRect(x, y, escortW, slotH, 3);
+      strokeRoundedRectFast(g, x, y, escortW, slotH, 3, 1.3, follow ? 0x4aa8e8 : 0x8a8470, follow ? 0.9 : 0.75);
       const midY = y + slotH / 2;
       const keyLp = this.s.hudLocal(x + padX, midY);
       this.escortHudSlot.key
@@ -379,9 +380,9 @@ export class WeaponHud {
     if (pov) {
       const x = x0 + n * (slotW + gap) + escortGap + escortW;
       g.fillStyle(0x12100c, 0.62);
-      g.fillRoundedRect(x, y, exitW, slotH, 3);
+      fillRoundedRectFast(g, x, y, exitW, slotH, 3);
       g.lineStyle(1.3, 0x8a8470, 0.75);
-      g.strokeRoundedRect(x, y, exitW, slotH, 3);
+      strokeRoundedRectFast(g, x, y, exitW, slotH, 3, 1.3, 0x8a8470, 0.75);
       const midY = y + slotH / 2;
       const keyLp = this.s.hudLocal(x + padX, midY);
       this.exitHudSlot.key
@@ -487,12 +488,12 @@ export class WeaponHud {
     const barX = cx - rowW / 2;
     const barY = y + 13;
     g.fillStyle(0x000000, 0.4);
-    g.fillRoundedRect(barX - 2, barY - 2, barW + 4, barH + 4, 2);
+    fillRoundedRectFast(g, barX - 2, barY - 2, barW + 4, barH + 4, 2);
     g.fillStyle(activeT > 0 ? 0x163048 : 0x1c1812, 0.88);
-    g.fillRoundedRect(barX, barY, barW, barH, 2);
+    fillRoundedRectFast(g, barX, barY, barW, barH, 2);
     if (frac > 0) {
       g.fillStyle(cooling ? 0xa07030 : barCol, 0.95);
-      g.fillRoundedRect(barX, barY, Math.max(2, barW * frac), barH, 2);
+      fillRoundedRectFast(g, barX, barY, Math.max(2, barW * frac), barH, 2);
     }
     const midY = barY + barH / 2;
     const labelLp = this.s.hudLocal(barX - labelGap, midY);
@@ -529,12 +530,12 @@ export class WeaponHud {
     const barX = this.s.scale.width / 2 - rowW / 2;
     const barY = y + 13;
     g.fillStyle(0x000000, 0.4);
-    g.fillRoundedRect(barX - 2, barY - 2, barW + 4, barH + 4, 2);
+    fillRoundedRectFast(g, barX - 2, barY - 2, barW + 4, barH + 4, 2);
     g.fillStyle(on ? 0x221638 : 0x1c1812, 0.88);
-    g.fillRoundedRect(barX, barY, barW, barH, 2);
+    fillRoundedRectFast(g, barX, barY, barW, barH, 2);
     if (this.s.countermeasures.bulletMeter > 0) {
       g.fillStyle(on ? 0xb48cff : 0x7a6cc8, 0.95);
-      g.fillRoundedRect(barX, barY, Math.max(2, barW * this.s.countermeasures.bulletMeter), barH, 2);
+      fillRoundedRectFast(g, barX, barY, Math.max(2, barW * this.s.countermeasures.bulletMeter), barH, 2);
     }
     const midY = barY + barH / 2;
     const labelLp = this.s.hudLocal(barX - labelGap, midY);

@@ -33,6 +33,7 @@ import { FieldManual } from "../ui/fieldManual";
 import { buildCraftPreviewOverlay, type CraftPreviewOverlay } from "../ui/craftPreview";
 import { applyEdgeLight, clearEdgeLight } from "../render/edgeLight";
 import { setGlitchPipeline } from "../render/glitch";
+import { MenuDebugMenu } from "./menuDebugMenu";
 
 // —— Ring carousel tuning: shared by both the craft strip and the map strip. ——
 const RING_SPACING = 85;
@@ -589,14 +590,19 @@ export class MenuScene extends Phaser.Scene {
         );
       });
     };
-    this.input.keyboard?.on("keydown-FORWARD_SLASH", () => {
-      if (fieldManual.isOpen) return;
+    const toggleStatScales = () => {
       vizVisible = !vizVisible;
       vizBg.setVisible(vizVisible);
       vizTitle.setVisible(vizVisible);
       vizGfx.setVisible(vizVisible);
       vizLabels.forEach((l) => l.setVisible(vizVisible));
       refreshSelection();
+    };
+    const debugMenu = new MenuDebugMenu(this, { toggle: toggleStatScales, on: () => vizVisible });
+    debugMenu.setup();
+    this.input.keyboard?.on("keydown-FORWARD_SLASH", () => {
+      if (fieldManual.isOpen) return;
+      debugMenu.toggle();
     });
 
     this.add
@@ -735,9 +741,12 @@ export class MenuScene extends Phaser.Scene {
     });
     const openFieldManual = () => fieldManual.toggle(true);
     infoBtn.on("pointerdown", openFieldManual);
-    this.input.keyboard?.on("keydown-H", () => fieldManual.toggle());
+    this.input.keyboard?.on("keydown-H", () => {
+      if (!debugMenu.open) fieldManual.toggle();
+    });
     this.input.keyboard?.on("keydown-ESC", () => {
-      if (fieldManual.isOpen) fieldManual.close();
+      if (debugMenu.open) debugMenu.toggle(false);
+      else if (fieldManual.isOpen) fieldManual.close();
     });
 
     const weaponX = moreInfoX0 + boxPadX;
@@ -1455,6 +1464,10 @@ export class MenuScene extends Phaser.Scene {
     // ENTER/SPACE activate whatever currently has focus: help, or deploy from anywhere else.
     // While the field manual modal is open, it owns all of these — the menu underneath freezes.
     const activate = () => {
+      if (debugMenu.open) {
+        debugMenu.activate();
+        return;
+      }
       if (fieldManual.isOpen) {
         fieldManual.activateFocus();
         return;
@@ -1466,6 +1479,10 @@ export class MenuScene extends Phaser.Scene {
     this.input.keyboard?.on("keydown-SPACE", activate);
 
     const selectUp = () => {
+      if (debugMenu.open) {
+        debugMenu.nudge(-1);
+        return;
+      }
       if (fieldManual.isOpen) {
         fieldManual.nudgeFocus(-1);
         return;
@@ -1475,6 +1492,10 @@ export class MenuScene extends Phaser.Scene {
       refreshSelection();
     };
     const selectDown = () => {
+      if (debugMenu.open) {
+        debugMenu.nudge(1);
+        return;
+      }
       if (fieldManual.isOpen) {
         fieldManual.nudgeFocus(1);
         return;
@@ -1483,8 +1504,8 @@ export class MenuScene extends Phaser.Scene {
       row = (row + 1) % n;
       refreshSelection();
     };
-    const selectLeft = () => (fieldManual.isOpen ? fieldManual.nudgeTip(-1) : cycleSelection(-1));
-    const selectRight = () => (fieldManual.isOpen ? fieldManual.nudgeTip(1) : cycleSelection(1));
+    const selectLeft = () => (debugMenu.open ? undefined : fieldManual.isOpen ? fieldManual.nudgeTip(-1) : cycleSelection(-1));
+    const selectRight = () => (debugMenu.open ? undefined : fieldManual.isOpen ? fieldManual.nudgeTip(1) : cycleSelection(1));
     this.input.keyboard?.on("keydown-UP", selectUp);
     this.input.keyboard?.on("keydown-DOWN", selectDown);
     this.input.keyboard?.on("keydown-LEFT", selectLeft);

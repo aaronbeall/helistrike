@@ -413,7 +413,8 @@ export class GroundMarks {
   ): void {
     const sc = Math.max(0.04, scale * range(0.06, 0.52));
     if (sc < 0.06 && Math.random() > 0.55) return;
-    const frames = this.s.textures.get(sheet).frameTotal;
+    // frameTotal includes Phaser's __BASE frame.
+    const frames = this.s.textures.get(sheet).frameTotal - 1;
     const frame = frames > 1 ? (Math.random() * frames) | 0 : 0;
     const rot = Math.random() * Math.PI * 2;
     // Tight radial jitter around the crater center.

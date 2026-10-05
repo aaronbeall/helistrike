@@ -3,6 +3,7 @@ import Phaser from "phaser";
 import { Craft } from "../../../sim/craft";
 import { worldToScreen } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
+import { fillCircleFast, strokeArcFast } from "../../../render/fastShapes";
 
 /** Threat arc half-width (deg) at paint start — widest point of the paint → lock shape. */
 const THREAT_ARC_PAINT_HALF = 22.5;
@@ -24,13 +25,10 @@ export function strokeArc(
 ): void {
   if (half * 2 * r <= width) {
     g.fillStyle(color, alpha);
-    g.fillCircle(cx + Math.cos(dir) * r, cy + Math.sin(dir) * r, width / 2);
+    fillCircleFast(g, cx + Math.cos(dir) * r, cy + Math.sin(dir) * r, width / 2);
     return;
   }
-  g.lineStyle(width, color, alpha);
-  g.beginPath();
-  g.arc(cx, cy, r, dir - half, dir + half, false);
-  g.strokePath();
+  strokeArcFast(g, cx, cy, r, dir - half, dir + half, width, color, alpha);
 }
 
 /** Threat warnings: PAINTED / MISSILE LOCK text + per-threat arcs around the targeted craft. */

@@ -11,6 +11,7 @@ import { launchIsArcBeam, PLAYER_WPNS, type PlayerWpnSpec, type WpnId } from "..
 import { remoteHasPovHud } from "../../../sim/remote";
 import { Layer, ZOff, worldDepth } from "../../../render/depth";
 import type { MissionScene } from "../../missionScene";
+import { fillCircleFast, lineFast, strokeArcFast, strokeCircleFast } from "../../../render/fastShapes";
 
 /** Weapons with an authored cooldown at least this long (s) show the reticle cooldown radial. */
 const RETICLE_CD_MIN = 1.0;
@@ -294,7 +295,7 @@ export class ReticleHud {
         for (let d = 0; d < filled; d++) {
           const dc = d % cols;
           const dr = (d / cols) | 0;
-          g.fillCircle(x + dc * tickGap, y + dr * gapY, 1.15);
+          fillCircleFast(g, x + dc * tickGap, y + dr * gapY, 1.15);
         }
       } else {
         g.lineStyle(1.35, color, 0.92);
@@ -326,21 +327,12 @@ export class ReticleHud {
     const oy = cy - 34;
     const start = -Math.PI / 2;
     // Track
-    g.lineStyle(1.5, 0x000000, 0.4);
-    g.beginPath();
-    g.arc(ox, oy, r, 0, Math.PI * 2, false);
-    g.strokePath();
-    g.lineStyle(1.15, 0xe8b84a, 0.22);
-    g.beginPath();
-    g.arc(ox, oy, r, 0, Math.PI * 2, false);
-    g.strokePath();
+    strokeArcFast(g, ox, oy, r, 0, Math.PI * 2, 1.5, 0x000000, 0.4);
+    strokeArcFast(g, ox, oy, r, 0, Math.PI * 2, 1.15, 0xe8b84a, 0.22);
     // Remaining ammo arc (full ring → empty), clockwise from 12 o'clock.
     if (frac > 0.002) {
       const end = start + Math.PI * 2 * frac;
-      g.lineStyle(1.6, 0xe8b84a, 0.62);
-      g.beginPath();
-      g.arc(ox, oy, r, start, end, false);
-      g.strokePath();
+      strokeArcFast(g, ox, oy, r, start, end, 1.6, 0xe8b84a, 0.62);
     }
   }
 
@@ -355,19 +347,10 @@ export class ReticleHud {
     const ox = cx - 34;
     const oy = cy - 34;
     const start = -Math.PI / 2;
-    g.lineStyle(1.5, 0x000000, 0.4);
-    g.beginPath();
-    g.arc(ox, oy, r, 0, Math.PI * 2, false);
-    g.strokePath();
-    g.lineStyle(1.15, 0xe8b84a, 0.22);
-    g.beginPath();
-    g.arc(ox, oy, r, 0, Math.PI * 2, false);
-    g.strokePath();
+    strokeArcFast(g, ox, oy, r, 0, Math.PI * 2, 1.5, 0x000000, 0.4);
+    strokeArcFast(g, ox, oy, r, 0, Math.PI * 2, 1.15, 0xe8b84a, 0.22);
     if (frac > 0.002) {
-      g.lineStyle(1.6, 0xe8b84a, 0.85);
-      g.beginPath();
-      g.arc(ox, oy, r, start, start + Math.PI * 2 * frac, false);
-      g.strokePath();
+      strokeArcFast(g, ox, oy, r, start, start + Math.PI * 2 * frac, 1.6, 0xe8b84a, 0.85);
     }
   }
 
@@ -527,9 +510,9 @@ export class ReticleHud {
     const impact = pts[pts.length - 1];
     if (impact) {
       g.lineStyle(1.8, 0xf0d56a, 0.95);
-      g.strokeCircle(impact.x, impact.y, 9);
+      strokeCircleFast(g, impact.x, impact.y, 9, 1.8, 0xf0d56a, 0.95);
       g.lineStyle(1.2, 0xf0d56a, 0.55);
-      g.strokeCircle(impact.x, impact.y, 14);
+      strokeCircleFast(g, impact.x, impact.y, 14, 1.2, 0xf0d56a, 0.55);
     }
   }
 
@@ -565,20 +548,14 @@ export class ReticleHud {
         const t = thermal ? t1 : t1 * t1;
         if (thermal) {
           // Same stroke widths as missile, hotter alphas + faint halo.
-          g.lineStyle(4.6, glow, Math.min(1, t * 0.16 * aMul));
-          g.lineBetween(x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1);
-          g.lineStyle(2.4, glow, Math.min(1, t * 0.48 * aMul));
-          g.lineBetween(x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1);
-          g.lineStyle(1.15, line, Math.min(1, t * 0.82 * aMul));
-          g.lineBetween(x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1);
+          lineFast(g, x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1, 4.6, glow, Math.min(1, t * 0.16 * aMul));
+          lineFast(g, x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1, 2.4, glow, Math.min(1, t * 0.48 * aMul));
+          lineFast(g, x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1, 1.15, line, Math.min(1, t * 0.82 * aMul));
         } else if (missile) {
-          g.lineStyle(2.4, glow, Math.min(1, t * 0.32 * aMul));
-          g.lineBetween(x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1);
-          g.lineStyle(1.15, line, Math.min(1, t * 0.55 * aMul));
-          g.lineBetween(x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1);
+          lineFast(g, x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1, 2.4, glow, Math.min(1, t * 0.32 * aMul));
+          lineFast(g, x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1, 1.15, line, Math.min(1, t * 0.55 * aMul));
         } else {
-          g.lineStyle(1, line, t * 0.42);
-          g.lineBetween(x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1);
+          lineFast(g, x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1, 1, line, t * 0.42);
         }
       }
     }
@@ -635,17 +612,17 @@ export class ReticleHud {
     const a = opt.aMul;
     // Soft falloff rings (outer → core) instead of three hard discs.
     g.fillStyle(opt.glow, Math.min(1, 0.1 * a));
-    g.fillCircle(x, y, r * 2.55);
+    fillCircleFast(g, x, y, r * 2.55);
     g.fillStyle(opt.glow, Math.min(1, 0.18 * a));
-    g.fillCircle(x, y, r * 1.85);
+    fillCircleFast(g, x, y, r * 1.85);
     g.fillStyle(opt.halo, Math.min(1, 0.32 * a));
-    g.fillCircle(x, y, r * 1.28);
+    fillCircleFast(g, x, y, r * 1.28);
     g.fillStyle(opt.halo, Math.min(1, 0.58 * a));
-    g.fillCircle(x, y, r * 0.82);
+    fillCircleFast(g, x, y, r * 0.82);
     g.fillStyle(opt.core, Math.min(1, 0.92 * a));
-    g.fillCircle(x, y, r * 0.42);
+    fillCircleFast(g, x, y, r * 0.42);
     g.fillStyle(opt.core, 1);
-    g.fillCircle(x, y, r * 0.22);
+    fillCircleFast(g, x, y, r * 0.22);
   }
 
   /**

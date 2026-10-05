@@ -6,6 +6,7 @@ import { targetingMode, heatCategoryOk, heatClassOf, heatSeekScore } from "../..
 import { Layer, worldDepth } from "../../../render/depth";
 import type { MissionScene } from "../../missionScene";
 import { hostileUnit } from "../../../sim/targetRules";
+import { fillCircleFast, strokeCircleFast } from "../../../render/fastShapes";
 
 export function boxHalf(u: Unit, scale: number): number {
   return (radius(u.kind) + 10) * scale * zScale(u.z, u.y);
@@ -154,18 +155,18 @@ export class LockOn {
         cls === "air" ? 0x7ad8ff : cls === "vehicle" ? 0xffb060 : cls === "building" ? 0xd4a06a : 0xc88858;
       if (u.id === lockedId) {
         gfx.lineStyle(2, 0xff3a22, 0.9);
-        gfx.strokeCircle(at.x, at.y, r + 3);
+        strokeCircleFast(gfx, at.x, at.y, r + 3, 2, 0xff3a22, 0.9);
         gfx.fillStyle(0xff3a22, 0.12);
-        gfx.fillCircle(at.x, at.y, r + 3);
+        fillCircleFast(gfx, at.x, at.y, r + 3);
       } else if (u.id === acqId) {
         const t = Math.min(1, (this.s.player.lockAcquire?.t ?? 0) / g.lockTime);
         gfx.lineStyle(1.6, 0xff6622, 0.55 + t * 0.35);
-        gfx.strokeCircle(at.x, at.y, r + 1);
+        strokeCircleFast(gfx, at.x, at.y, r + 1, 1.6, 0xff6622, 0.55 + t * 0.35);
         gfx.fillStyle(0xff6622, 0.08 + t * 0.08);
-        gfx.fillCircle(at.x, at.y, r + 1);
+        fillCircleFast(gfx, at.x, at.y, r + 1);
       } else {
         gfx.lineStyle(1.15, tone, 0.42);
-        gfx.strokeCircle(at.x, at.y, r);
+        strokeCircleFast(gfx, at.x, at.y, r, 1.15, tone, 0.42);
       }
     }
   }
@@ -410,9 +411,9 @@ export class LockOn {
       const sc = zScale(gz, gy);
       const r = 9 * sc;
       g.lineStyle(1.35, 0xf0d56a, 0.55);
-      g.strokeCircle(at.x, at.y, r);
+      strokeCircleFast(g, at.x, at.y, r, 1.35, 0xf0d56a, 0.55);
       g.lineStyle(1, 0xf0d56a, 0.28);
-      g.strokeCircle(at.x, at.y, r * 1.45);
+      strokeCircleFast(g, at.x, at.y, r * 1.45, 1, 0xf0d56a, 0.28);
       g.lineStyle(1, 0xf0d56a, 0.38);
       g.lineBetween(at.x - r * 0.42, at.y, at.x + r * 0.42, at.y);
       g.lineBetween(at.x, at.y - r * 0.42, at.x, at.y + r * 0.42);

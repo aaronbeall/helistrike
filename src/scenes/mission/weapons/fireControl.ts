@@ -41,6 +41,8 @@ const AUTO_GUN_WIDE_MUL = 3;
 export class FireControl {
   /** Per-slot ammo (set from the loadout in the scene's init). */
   ammo: number[] = [];
+  /** Per-slot shots fired while ammo doesn't count down (infinite), so pylons still cycle. */
+  private pylonTicks: number[] = [];
   playerGunSide = 0;
   /** Per-weapon fire index for combat-mix HE rounds (Avenger 1-in-5). */
   cannonMixRound: Record<string, number> = {};
@@ -79,6 +81,7 @@ export class FireControl {
     this.ammo = this.s.loadout.map((weapon, i) =>
       craftSocketStartingAmmo(weapon.ammo, selectedCraft, i)
     );
+    this.pylonTicks = this.s.loadout.map(() => 0);
     this.stationFireCd = this.s.loadout.map((_, i) =>
       Array.from({ length: craftSocketBarrelCount(selectedCraft, i) }, () => 0)
     );
@@ -348,7 +351,9 @@ export class FireControl {
       socket && socket.class === "hardpoint"
         ? craftSocketPoints(h.spec, socket)
         : craftHardpointMounts(h.spec);
-    const ammo = this.ammo[slot] ?? 0;
+    const left = this.ammo[slot] ?? 0;
+    const counts = Number.isFinite(left) && !this.s.debugMenu.infAmmo;
+    const ammo = counts ? left : PYLON_TICK_BASE - (this.pylonTicks[slot] ?? 0);
     const index = hardpointAmmoIndex(ammo, mounts.length, afterSpend);
     const mount = mounts[index] ?? mounts[0]!;
     const side = mount.x < craftOrigin(h.spec).x ? -1 : 1;
@@ -1961,10 +1966,16 @@ specIsShellGun(spec)
   }
 
   spendAmmo(slot: number): void {
-    if (this.s.debugMenu.infAmmo) return;
+    if (this.s.debugMenu.infAmmo || !Number.isFinite(this.ammo[slot])) {
+      this.pylonTicks[slot] = (this.pylonTicks[slot] ?? 0) + 1;
+      return;
+    }
     this.ammo[slot]!--;
   }
 }
+
+/** Stand-in "ammo left" for pylon cycling when ammo is infinite (counts down from here). */
+const PYLON_TICK_BASE = 1 << 30;
 
 /** Player chin / cabin traverse rate (rad/s) — also used by crew-served auto stations. */
 export const GUN_STATION_TURN_RATE = 6.4;

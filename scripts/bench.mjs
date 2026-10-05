@@ -1,21 +1,23 @@
 #!/usr/bin/env node
 /**
- * Perf bench runner: drives the in-game harness (`?bench=…`, src/scenes/mission/debug/bench.ts) in your installed
- * Chrome via Playwright, saves results, and optionally compares or profiles.
+ * Perf runner: plays scenarios (scripts/bench-scenarios.mjs) in your installed Chrome with real keyboard + mouse
+ * input via Playwright, measures with an injected frame probe, saves results, and optionally compares or profiles.
  *
  *   npm run bench                              all scenarios
  *   npm run bench -- idle_cluster,gun_cluster  some scenarios
- *   npm run bench -- --compare docs/perf-baseline-2026-10.json
+ *   npm run bench -- --compare <results.json>
  *   npm run bench -- idle_empty --profile      CPU profile + allocation sample per scenario (timings skewed)
  *
  * Options: --compare <file>, --profile, --out <file>, --url <base> (default http://localhost:5174), --keep-open.
- * Starts the Vite dev server when nothing answers at --url.
+ * Starts the Vite dev server when nothing answers at --url. Game side: dev URL launch (?test=…&cheats=…) and the
+ * read-only `window.__heli` handle; everything else lives here.
  */
 import { spawn, execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import { SCENARIOS } from "./bench-scenarios.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -25,7 +27,8 @@ const opt = (name) => {
   return i >= 0 ? args[i + 1] : undefined;
 };
 const optValues = new Set(["compare", "out", "url"].map((n) => opt(n)).filter(Boolean));
-const ids = args.filter((a) => !a.startsWith("--") && !optValues.has(a)).join(",") || "all";
+const picked = args.filter((a) => !a.startsWith("--") && !optValues.has(a)).flatMap((a) => a.split(","));
+const scenarios = picked.length ? SCENARIOS.filter((s) => picked.includes(s.id)) : SCENARIOS;
 const base = opt("url") ?? "http://localhost:5174";
 const profile = flag("profile");
 /** Chrome flags: keep the frame loop running at full rate when the window isn't focused. */
@@ -36,11 +39,128 @@ const CHROME_ARGS = [
   "--enable-precise-memory-info",
 ];
 const VIEWPORT = { width: 1280, height: 720 };
-/** Retina, like real play: Playwright defaults to 1×, which composites a quarter of the pixels. */
+/** Retina, like real play. */
 const DEVICE_SCALE = 2;
-/** Generous: boot bakes art, each scenario generates a world. */
-const TIMEOUT_MS = 15 * 60 * 1000;
+/** Boot bakes art and each launch generates a world. */
+const LOAD_TIMEOUT_MS = 3 * 60 * 1000;
+/** Input loop tick: re-aim + fire schedule. */
+const TICK_MS = 100;
 const PROFILE_TOP = 25;
+
+/** Injected before the game loads: per-frame timing around Phaser's step, read through `window.__heli`. */
+function frameProbe() {
+  const P = { on: false, wrapped: null, last: 0, rows: [], longTasks: [] };
+  const sample = (time, cpu) => {
+    const gap = P.last ? time - P.last : 0;
+    P.last = time;
+    if (!P.on) return;
+    const s = window.__heli.scene;
+    const cur = s.perf.current;
+    let live = 0;
+    for (const u of s.units) if (!u.dead) live++;
+    P.rows.push({
+      cpu,
+      gap,
+      stages: cur ? Array.from(cur) : [],
+      heap: performance.memory?.usedJSHeapSize ?? 0,
+      counts: [s.units.length, live, s.shots.length, s.debris.length, s.fx.simParticles.length],
+    });
+  };
+  setInterval(() => {
+    const h = window.__heli;
+    if (!h || P.wrapped === h.game) return;
+    P.wrapped = h.game;
+    const loop = h.game.loop;
+    const step = loop.callback;
+    loop.callback = (time, delta) => {
+      const t0 = performance.now();
+      step(time, delta);
+      sample(time, performance.now() - t0);
+    };
+  }, 100);
+  try {
+    new PerformanceObserver((list) => {
+      if (P.on) for (const e of list.getEntries()) P.longTasks.push(e.duration);
+    }).observe({ type: "longtask", buffered: false });
+  } catch {}
+  P.start = () => {
+    P.rows = [];
+    P.longTasks = [];
+    P.on = true;
+  };
+  /** Stop and summarize (same report shape as earlier runs). */
+  P.stop = (id, label, measureS) => {
+    P.on = false;
+    const rows = P.rows.slice(1);
+    const n = rows.length;
+    const r2 = (x) => Math.round(x * 100) / 100;
+    const stat = (vals) => {
+      if (!vals.length) return { avg: 0, p50: 0, p95: 0, p99: 0, max: 0 };
+      const s = vals.slice().sort((a, b) => a - b);
+      const at = (p) => s[Math.min(s.length - 1, Math.ceil(s.length * p) - 1)];
+      return { avg: r2(s.reduce((a, b) => a + b, 0) / s.length), p50: r2(at(0.5)), p95: r2(at(0.95)), p99: r2(at(0.99)), max: r2(s[s.length - 1]) };
+    };
+    const over = (vals, ms) => vals.filter((v) => v > ms).length;
+    const labels = window.__heli.perfLabels;
+    const stages = {};
+    for (let k = 1; k <= 12; k++) stages[labels[k]] = stat(rows.map((r) => r.stages[k] ?? 0));
+    const cpu = rows.map((r) => r.cpu);
+    const gap = rows.map((r) => r.gap);
+    let grown = 0;
+    let gcs = 0;
+    let freed = 0;
+    for (let i = 1; i < n; i++) {
+      const d = rows[i].heap - rows[i - 1].heap;
+      if (d > 0) grown += d;
+      else if (-d > 0.5 * 1048576) {
+        gcs++;
+        freed -= d;
+      }
+    }
+    const countStat = (k) => {
+      const v = rows.map((r) => r.counts[k]);
+      return { avg: Math.round(v.reduce((a, b) => a + b, 0) / Math.max(1, n)), max: Math.max(0, ...v) };
+    };
+    const lt = P.longTasks;
+    return {
+      id,
+      label,
+      frames: n,
+      cpu: stat(cpu),
+      interval: stat(gap),
+      render: stat(rows.map((r) => Math.max(0, r.cpu - (r.stages[1] ?? 0)))),
+      stages,
+      cpuOver: { ms16: over(cpu, 1000 / 60), ms33: over(cpu, 33.3), ms50: over(cpu, 50) },
+      intervalOver: { ms33: over(gap, 33.3), ms50: over(gap, 50) },
+      longTasks: { count: lt.length, totalMs: Math.round(lt.reduce((a, b) => a + b, 0)), maxMs: Math.round(Math.max(0, ...lt)) },
+      heap: rows[0]?.heap ? { allocMBps: r2(grown / 1048576 / measureS), gcCount: gcs, freedMB: r2(freed / 1048576) } : undefined,
+      counts: { units: countStat(0), liveUnits: countStat(1), shots: countStat(2), debris: countStat(3), particles: countStat(4) },
+    };
+  };
+  window.__probe = P;
+}
+
+/** In-page: screen point (page CSS px) of the nearest live hostiles' centroid, else a point ahead of the craft. */
+function aimPoint() {
+  const s = window.__heli.scene;
+  const p = s.player;
+  let sx = 0;
+  let sy = 0;
+  let n = 0;
+  for (const u of s.units) {
+    if (u.dead || u.hv) continue;
+    if (Math.hypot(u.x - p.x, u.y - p.y) > 900) continue;
+    sx += u.x;
+    sy += u.y;
+    n++;
+  }
+  const x = n ? sx / n : p.x + Math.cos(p.angle) * 320;
+  const y = n ? sy / n : p.y + Math.sin(p.angle) * 320;
+  const at = s.worldToHudScreen(x, y, 0);
+  const r = s.game.canvas.getBoundingClientRect();
+  const k = r.width / s.scale.width;
+  return { x: r.left + at.sx * k, y: r.top + at.sy * k };
+}
 
 async function reachable(url) {
   try {
@@ -55,7 +175,7 @@ async function ensureServer() {
   if (await reachable(base)) return undefined;
   const port = new URL(base).port || "5174";
   console.log(`[bench] starting dev server on ${port}`);
-  const server = spawn("npx", ["vite", "--port", port, "--strictPort"], { cwd: root, stdio: "ignore", detached: false });
+  const server = spawn("npx", ["vite", "--port", port, "--strictPort"], { cwd: root, stdio: "ignore" });
   for (let i = 0; i < 60; i++) {
     if (await reachable(base)) return server;
     await new Promise((r) => setTimeout(r, 500));
@@ -72,6 +192,43 @@ function gitSha() {
   }
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Boot into the scenario's map, lift off, and select the weapon — all real input. */
+async function setUp(page, sc) {
+  await page.goto(`${base}/?test=${sc.map}&cheats=ammo,god`);
+  await page.waitForFunction(() => !!window.__heli?.scene?.player && !!window.__heli.scene.perf, null, { timeout: LOAD_TIMEOUT_MS, polling: 200 });
+  await sleep(300);
+  await page.keyboard.press("KeyP");
+  const phase = () => page.evaluate(() => window.__heli.scene.player.phase);
+  await page.waitForFunction(() => ["ready", "flight"].includes(window.__heli.scene.player.phase), null, { timeout: 30000, polling: 100 });
+  if ((await phase()) !== "flight") {
+    await page.keyboard.down("Space");
+    await page.waitForFunction(() => window.__heli.scene.player.phase === "flight", null, { timeout: 5000, polling: 50 });
+    await sleep(400);
+    await page.keyboard.up("Space");
+  }
+  if (sc.fire) await page.keyboard.press(`Digit${sc.fire.weapon}`);
+}
+
+/** Aim + fire schedule for `secs` real seconds. */
+async function play(page, sc, secs, t0) {
+  const end = Date.now() + secs * 1000;
+  let down = false;
+  while (Date.now() < end) {
+    const at = await page.evaluate(aimPoint);
+    await page.mouse.move(at.x, at.y);
+    const f = sc.fire;
+    const want = !!f && ((Date.now() - t0) / 1000) % (f.onS + f.offS) < f.onS;
+    if (want !== down) {
+      await (want ? page.mouse.down() : page.mouse.up());
+      down = want;
+    }
+    await sleep(TICK_MS);
+  }
+  return down;
+}
+
 function frameLabel(cf) {
   return `${cf.functionName || "(anon)"} ${cf.url.split("/").pop().split("?")[0]}:${cf.lineNumber + 1}`;
 }
@@ -83,31 +240,7 @@ function printTop(title, map, total, fmt) {
   }
 }
 
-/** Self time per function from a CPU profile. */
-function cpuSelf(cpu) {
-  const byId = new Map(cpu.nodes.map((n) => [n.id, n]));
-  const self = new Map();
-  cpu.samples.forEach((s, i) => {
-    const k = frameLabel(byId.get(s).callFrame);
-    self.set(k, (self.get(k) ?? 0) + (cpu.timeDeltas[i] ?? 0));
-  });
-  return self;
-}
-
-/** Allocated bytes per function from a sampling heap profile. */
-function allocSelf(heap) {
-  const out = new Map();
-  const walk = (n) => {
-    const k = frameLabel(n.callFrame);
-    out.set(k, (out.get(k) ?? 0) + n.selfSize);
-    n.children.forEach(walk);
-  };
-  walk(heap.head);
-  return out;
-}
-
-/** Profile one scenario's measure phase: CPU + allocations (collected objects included). */
-async function profileScenario(cdp, page, id, outDir) {
+async function startProfile(cdp) {
   await cdp.send("Profiler.enable");
   await cdp.send("Profiler.setSamplingInterval", { interval: 200 });
   await cdp.send("HeapProfiler.enable");
@@ -119,14 +252,26 @@ async function profileScenario(cdp, page, id, outDir) {
     includeObjectsCollectedByMajorGC: true,
     includeObjectsCollectedByMinorGC: true,
   });
-  const t0 = Date.now();
-  await page.waitForFunction((sid) => window.__benchResults?.some((r) => r.id === sid), id, { timeout: TIMEOUT_MS, polling: 250 });
-  const secs = (Date.now() - t0) / 1000;
+  return heapUsed;
+}
+
+async function stopProfile(cdp, id, secs, heapUsed, outDir) {
   const heap = (await cdp.send("HeapProfiler.stopSampling")).profile;
   const cpu = (await cdp.send("Profiler.stop")).profile;
   fs.writeFileSync(path.join(outDir, `${id}.cpuprofile`), JSON.stringify(cpu));
-  const self = cpuSelf(cpu);
-  const alloc = allocSelf(heap);
+  const byId = new Map(cpu.nodes.map((n) => [n.id, n]));
+  const self = new Map();
+  cpu.samples.forEach((s, i) => {
+    const k = frameLabel(byId.get(s).callFrame);
+    self.set(k, (self.get(k) ?? 0) + (cpu.timeDeltas[i] ?? 0));
+  });
+  const alloc = new Map();
+  const walk = (n) => {
+    const k = frameLabel(n.callFrame);
+    alloc.set(k, (alloc.get(k) ?? 0) + n.selfSize);
+    n.children.forEach(walk);
+  };
+  walk(heap.head);
   const totalC = [...self.values()].reduce((a, b) => a + b, 0);
   const totalA = [...alloc.values()].reduce((a, b) => a + b, 0);
   console.log(`\n[profile] ${id}: retained heap ${(heapUsed / 1048576).toFixed(0)} MB, allocating ${(totalA / 1048576 / secs).toFixed(1)} MB/s`);
@@ -139,22 +284,13 @@ function fmtRow(cols, widths) {
 }
 
 function printSummary(results) {
-  const w = [18, 20, 15, 15, 15, 6, 6, 9];
-  console.log("\n" + fmtRow(["scenario", "cpu avg/p99/max", "render avg/p99", "scene avg/p99", "unit sim avg/p99", ">16ms", ">33ms", "alloc MB/s"], w));
+  const w = [18, 20, 15, 15, 17, 14, 6, 9];
+  console.log("\n" + fmtRow(["scenario", "cpu avg/p99/max", "render avg/p99", "scene avg/p99", "unit sim avg/p99", "interval p99", ">16ms", "alloc MB/s"], w));
   for (const r of results) {
     const us = r.stages["unit sim"];
     console.log(
       fmtRow(
-        [
-          r.id,
-          `${r.cpu.avg}/${r.cpu.p99}/${r.cpu.max}`,
-          `${r.render.avg}/${r.render.p99}`,
-          `${r.stages.scene.avg}/${r.stages.scene.p99}`,
-          `${us.avg}/${us.p99}`,
-          r.cpuOver.ms16,
-          r.cpuOver.ms33,
-          r.heap?.allocMBps ?? "-",
-        ],
+        [r.id, `${r.cpu.avg}/${r.cpu.p99}/${r.cpu.max}`, `${r.render.avg}/${r.render.p99}`, `${r.stages.scene.avg}/${r.stages.scene.p99}`, `${us.avg}/${us.p99}`, r.interval.p99, r.cpuOver.ms16, r.heap?.allocMBps ?? "-"],
         w
       )
     );
@@ -164,23 +300,16 @@ function printSummary(results) {
 function printCompare(results, baselinePath) {
   const baseline = JSON.parse(fs.readFileSync(baselinePath, "utf8"));
   const pct = (now, was) => (was ? `${now >= was ? "+" : ""}${(((now - was) / was) * 100).toFixed(0)}%` : "n/a");
-  const w = [18, 22, 22, 22, 22, 14];
+  const cell = (now, was) => `${was} → ${now} (${pct(now, was)})`;
+  const w = [18, 22, 22, 22, 22, 22];
   console.log(`\nvs ${path.relative(root, baselinePath)}`);
-  console.log(fmtRow(["scenario", "cpu avg", "cpu p99", "render avg", "unit sim avg", ">16ms"], w));
+  console.log(fmtRow(["scenario", "cpu avg", "cpu p99", "render avg", "unit sim avg", "interval p99"], w));
   for (const r of results) {
     const b = baseline.find((x) => x.id === r.id);
     if (!b) continue;
-    const cell = (now, was) => `${was} → ${now} (${pct(now, was)})`;
     console.log(
       fmtRow(
-        [
-          r.id,
-          cell(r.cpu.avg, b.cpu.avg),
-          cell(r.cpu.p99, b.cpu.p99),
-          cell(r.render.avg, b.render.avg),
-          cell(r.stages["unit sim"].avg, b.stages["unit sim"].avg),
-          `${b.cpuOver.ms16} → ${r.cpuOver.ms16}`,
-        ],
+        [r.id, cell(r.cpu.avg, b.cpu.avg), cell(r.cpu.p99, b.cpu.p99), cell(r.render.avg, b.render.avg), cell(r.stages["unit sim"].avg, b.stages["unit sim"].avg), cell(r.interval.p99, b.interval.p99)],
         w
       )
     );
@@ -191,7 +320,9 @@ const server = await ensureServer();
 const browser = await chromium.launch({ channel: "chrome", headless: false, args: CHROME_ARGS });
 let failed = false;
 try {
-  const page = await browser.newPage({ viewport: VIEWPORT, deviceScaleFactor: DEVICE_SCALE });
+  const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: DEVICE_SCALE });
+  await context.addInitScript(frameProbe);
+  const page = await context.newPage();
   page.on("pageerror", (err) => {
     failed = true;
     console.error(`[page error] ${err.stack ?? err.message}`);
@@ -207,32 +338,23 @@ try {
   fs.mkdirSync(outDir, { recursive: true });
   const profileDir = path.join(outDir, `${stamp}-${gitSha()}-profiles`);
   if (profile) fs.mkdirSync(profileDir, { recursive: true });
+  const cdp = profile ? await context.newCDPSession(page) : undefined;
 
-  const cdp = profile ? await page.context().newCDPSession(page) : undefined;
-  console.log(`[bench] ${base}/?bench=${ids}`);
-  await page.goto(`${base}/?bench=${ids}`);
-  if (cdp) {
-    // Profile each scenario's measure phase as it comes up.
-    const seen = new Set();
-    for (;;) {
-      const state = await page.waitForFunction(
-        (done) => {
-          if (window.__benchDone) return { done: true };
-          const p = window.__benchProgress;
-          return p && p.phase === "measure" && !done.includes(p.id) ? { id: p.id } : null;
-        },
-        [...seen],
-        { timeout: TIMEOUT_MS, polling: 100 }
-      );
-      const v = await state.jsonValue();
-      if (v.done) break;
-      seen.add(v.id);
-      await profileScenario(cdp, page, v.id, profileDir);
-    }
-  } else {
-    await page.waitForFunction(() => window.__benchDone === true, null, { timeout: TIMEOUT_MS, polling: 500 });
+  const results = [];
+  for (const sc of scenarios) {
+    process.stdout.write(`[bench] ${sc.id} … `);
+    await setUp(page, sc);
+    const t0 = Date.now();
+    await play(page, sc, sc.warmupS, t0);
+    const heapUsed = cdp ? await startProfile(cdp) : 0;
+    await page.evaluate(() => window.__probe.start());
+    const down = await play(page, sc, sc.measureS, t0);
+    const report = await page.evaluate(([id, label, s]) => window.__probe.stop(id, label, s), [sc.id, sc.label, sc.measureS]);
+    if (cdp) await stopProfile(cdp, sc.id, sc.measureS, heapUsed, profileDir);
+    if (down) await page.mouse.up();
+    results.push(report);
+    console.log(`${report.frames} frames, cpu ${report.cpu.avg} ms avg`);
   }
-  const results = await page.evaluate(() => window.__benchResults);
   const out = opt("out") ?? path.join(outDir, `${stamp}-${gitSha()}${profile ? "-profiled" : ""}.json`);
   fs.writeFileSync(out, JSON.stringify(results, null, 1));
   printSummary(results);
