@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { AI } from "../../../sim/stats";
 import { remoteHostAmmoWeapon } from "../../../sim/remoteRules";
 import { bombReleaseFrom, estimateBombFallTime, sampleBallisticAltitude } from "../../../sim/ballistics";
 import { shellEjectSide } from "../../../render/spritePose";
@@ -1351,7 +1352,17 @@ specIsShellGun(spec)
     );
   }
 
-  tickAutomaticStations(dt: number, _ptr: { x: number; y: number }): void {
+  /** Unselected automatic stations fire on their own: credited to AI in stats. */
+  tickAutomaticStations(dt: number, ptr: { x: number; y: number }): void {
+    const prev = this.s.stats.setHostControl(AI);
+    try {
+      this.tickAutomaticStationsAi(dt, ptr);
+    } finally {
+      this.s.stats.setHostControl(prev);
+    }
+  }
+
+  private tickAutomaticStationsAi(dt: number, _ptr: { x: number; y: number }): void {
     const h = this.s.player;
     this.s.overlays.autoGunDbg = [];
     for (let slot = 0; slot < this.s.loadout.length; slot++) {

@@ -5,6 +5,7 @@ import { craftRotorDrawSpan } from "../../../sim/crafts";
 import { cameraPointVisible, worldToScreen, type ScreenPos } from "../../../worldgen/world";
 import { worldDepth, ZOff } from "../../../render/depth";
 import { range } from "../../../util/rng";
+import { ENVIRONMENT } from "../../../sim/stats";
 import type { MissionScene } from "../../missionScene";
 
 /** Wire sag at mid-span (world z). */
@@ -173,7 +174,7 @@ export class PowerLines {
   /** Wire strike on the player: small damage, zaps and sparks over the hull, electric screen flash. */
   private joltCraft(): void {
     const h = this.s.player;
-    h.damage(h.spec.health * WIRE_STRIKE_DMG);
+    this.s.stats.hostHit({ enemy: ENVIRONMENT, weapon: "power_line" }, () => h.damage(h.spec.health * WIRE_STRIKE_DMG));
     for (let k = 0; k < 4; k++) {
       this.s.time.delayedCall(k * 45, () => {
         const r = h.spec.radius;

@@ -588,6 +588,12 @@ export interface Unit {
   killDz?: number;
   /** Damage that finished the unit (direct or splash falloff). */
   killDmg?: number;
+  /** Stats: last player-side weapon / craft / controller that damaged this unit (kill credit). */
+  statBy?: { weapon: string; craft: string; control: "player" | "ai" };
+  /** Stats: where the credited damage was fired from (kill range). */
+  statOx?: number;
+  statOy?: number;
+  statOz?: number;
   /** Persistent solid-pixel damage locations on the hull texture. */
   dmgSites?: { u: number; v: number; scale: number }[];
 }
@@ -850,6 +856,21 @@ export interface Shot {
   id?: number;
   /** Loadout identity that fired this projectile. */
   wpnId?: WpnId;
+  /** Stats: this shot already counted as a hit. */
+  statHit?: boolean;
+  /** Stats: enemy shooter's unit kind and weapon key (who hurt the player). */
+  srcKind?: string;
+  srcWpn?: string;
+  /** Stats: player-side shooter (host craft or remote kind), who controlled it, and where it was fired from. */
+  statCraft?: string;
+  statCtl?: "player" | "ai";
+  statX?: number;
+  statY?: number;
+  statZ?: number;
+  /** Stats: this enemy shot landed damage on the player's side (a seeker that did isn't "dodged"). */
+  statHitPlayer?: boolean;
+  /** Stats: last shot-update pass this seeker survived (gone once it falls behind). */
+  statFrame?: number;
   /** Loadout slot index that fired this projectile. */
   slot?: number;
   /** Immutable behavior snapshot taken at launch. */

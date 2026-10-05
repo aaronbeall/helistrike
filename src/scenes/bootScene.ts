@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { loadPersistence } from "../persist";
 import { bakeAll, bakeRosterArt } from "../art/bake";
 import { bakeCamo } from "../render/camo";
 import { preloadArt, prepareArt } from "../art/sprites";
@@ -81,6 +82,8 @@ export class BootScene extends Phaser.Scene {
       await waitFrame();
     }
 
+    this.drawBootBar(0.995, "SERVICE RECORD  ·  99%");
+    await loadPersistence();
     this.drawBootBar(1, "READY  ·  100%");
     await waitFrame();
     this.scene.start("menu");

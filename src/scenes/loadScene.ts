@@ -14,7 +14,8 @@ import {
   type CraftComposite,
 } from "../sim/crafts";
 import { drawControlLegend } from "../ui/menuChrome";
-import { pickRandomTip, tipKnownFromSelection, tipText } from "../sim/tips";
+import { pickTip, tipKnownFromSelection, tipText } from "../sim/tips";
+import { markTipShown, tipShownCounts } from "../persist/tipHistory";
 import { ensureExhaustGlow, extractBiomeTiles, FX_VARIANTS, spriteUvPos } from "../art/sprites";
 import { missionOf } from "../sim/mission";
 import { generateWorldAsync, type WorldData } from "../worldgen/world";
@@ -172,7 +173,9 @@ export class LoadScene extends Phaser.Scene {
     const barY = h * 0.6;
     const bar = this.add.graphics();
     const known = tipKnownFromSelection();
-    const tip = tipText(pickRandomTip(known), known);
+    const picked = pickTip(known, tipShownCounts());
+    markTipShown(picked.id);
+    const tip = tipText(picked, known);
     this.add
       .text(w / 2, h * 0.72, `TIP  ·  ${tip}`, {
         fontFamily: "Share Tech Mono, monospace",

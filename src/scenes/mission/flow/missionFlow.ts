@@ -255,6 +255,7 @@ export class MissionFlow {
   }
 
   end(win: boolean): void {
+    this.s.stats.finish(win ? "succeeded" : "failed");
     if (win) {
       // May already be over from mission-success lockout during the stinger.
       if (this.endPromptRoot) return;

@@ -19,6 +19,8 @@ import { circumRadiusOf, footprintInto, footprintOverlap, pointInFootprint } fro
 import { lookupSpriteMuzzles } from "../../../art/spriteOrigin";
 import { craftRotorIsProp, craftRotorDrawSpan, type CraftSpec } from "../../../sim/crafts";
 import { spritePivot } from "../../../art/sprites";
+import { CRUSH_KILL, enemyWeaponKey, ROTOR_KILL } from "../../../sim/stats";
+import type { StatBy } from "../flow/missionStats";
 import type { MissionScene } from "../../missionScene";
 
 /** Base awareness radii by role (scaled by `targeting.enemyAwareReach`). */
@@ -33,6 +35,9 @@ const AWARE_INFANTRY = 400;
 
 /** Max AGL drones will climb/charge to — covers Lightning/Warthog, excludes Reaper (~620). */
 const DRONE_KAMIKAZE_AGL = 400;
+
+/** Stats weapon key for a kamikaze drone ramming the player. */
+const KAMIKAZE_RAM = "ram";
 
 /** Enemy unit simulation: per-frame update loop, air/ground/boat drive, terrain + map-edge steering, stun, bleed-out, roadkill. */
 export class UnitSim {
@@ -125,7 +130,7 @@ export class UnitSim {
       if (inAltReach) {
         const dist3 = Math.hypot(h.x - u.x, h.y - u.y, h.z - u.z);
         if (dist3 < h.spec.radius + radius(u.kind)) {
-          this.s.targeting.damageTarget(h, 38, u.vx, u.vy);
+          this.s.stats.craftHit({ enemy: u.kind, weapon: KAMIKAZE_RAM }, h, () => this.s.targeting.damageTarget(h, 38, u.vx, u.vy));
           // Kamikaze: explode in place — no falling crash hull.
           this.s.destruction.destroyUnit(u, false, false, true);
           return;
@@ -660,10 +665,10 @@ export class UnitSim {
   /** Roadkill (rotor strike / crush) is a player-side mechanic — the player's craft and its remotes, never enemies. */
   tickRoadkill(): void {
     const h = this.s.player;
-    if (h.phase === "flight") this.roadkillCraft(h.x, h.y, h.z, h.vx, h.vy, h.spec, 1);
+    if (h.phase === "flight") this.roadkillCraft(h.x, h.y, h.z, h.vx, h.vy, h.spec, 1, this.s.stats.hostCredit(ROTOR_KILL));
     for (const r of this.s.remotes) {
       if (r.detonate || r.dock || r.airborne || !r.spec.craftLook) continue;
-      this.roadkillCraft(r.x, r.y, r.z, r.vx, r.vy, r.spec, r.spec.scale);
+      this.roadkillCraft(r.x, r.y, r.z, r.vx, r.vy, r.spec, r.spec.scale, this.s.stats.remoteCredit(r, ROTOR_KILL));
     }
   }
 
@@ -674,7 +679,8 @@ export class UnitSim {
     vx: number,
     vy: number,
     spec: CraftSpec,
-    drawScale: number
+    drawScale: number,
+    by: StatBy
   ): void {
     const crush = !!spec.crushesInfantry;
     const blades =
@@ -682,10 +688,10 @@ export class UnitSim {
     if (crush) {
       const hullR = Math.max(spec.radius, spriteHalf(this.s.textures, spec.body) * drawScale * 0.72);
       const spd = Math.hypot(vx, vy);
-      if (spd > 32) this.roadkillSweep(x, y, z, vx, vy, hullR, spec.cruiseAgl + 8);
+      if (spd > 32) this.roadkillSweep(x, y, z, vx, vy, hullR, spec.cruiseAgl + 8, this.s.stats.credit(by.craft, by.control, CRUSH_KILL));
     }
     if (blades) {
-      this.roadkillBlades(x, y, z, vx, vy, spec.height, craftRotorDrawSpan(spec) * 0.5 * drawScale);
+      this.roadkillBlades(x, y, z, vx, vy, spec.height, craftRotorDrawSpan(spec) * 0.5 * drawScale, by);
     }
   }
 
@@ -697,7 +703,8 @@ export class UnitSim {
     vx: number,
     vy: number,
     hullHeight: number,
-    discR: number
+    discR: number,
+    by: StatBy
   ): void {
     const reachBelowHub = 20;
     for (const u of this.s.units) {
@@ -706,7 +713,7 @@ export class UnitSim {
       const agl = z - groundZ(this.s.world, u.x, u.y);
       if (agl + hullHeight > sp.height + reachBelowHub) continue;
       if (Math.hypot(u.x - x, u.y - y) > discR + sp.radius) continue;
-      this.roadkillTroop(u, vx, vy);
+      this.roadkillTroop(u, vx, vy, by);
     }
   }
 
@@ -718,7 +725,8 @@ export class UnitSim {
     vx: number,
     vy: number,
     hullR: number,
-    maxAgl: number
+    maxAgl: number,
+    by: StatBy
   ): void {
     for (const u of this.s.units) {
       if (u.dead || !isInfantry(u.kind)) continue;
@@ -726,16 +734,16 @@ export class UnitSim {
       const agl = z - groundZ(this.s.world, u.x, u.y);
       if (agl > maxAgl) continue;
       if (Math.hypot(u.x - x, u.y - y) > hullR + sp.radius) continue;
-      this.roadkillTroop(u, vx, vy);
+      this.roadkillTroop(u, vx, vy, by);
     }
   }
 
-  roadkillTroop(u: Unit, vx: number, vy: number): void {
+  roadkillTroop(u: Unit, vx: number, vy: number, by: StatBy): void {
     u.killDx = vx;
     u.killDy = vy;
     u.killDz = 80;
     u.killDmg = u.max;
-    this.s.projectiles.hurt(u, u.health + 1);
+    this.s.projectiles.hurt(u, u.health + 1, false, by);
   }
 
   /** Widest base range at which `u` can notice or engage anything (role radius, weapons). */
@@ -1185,6 +1193,8 @@ export class UnitSim {
               const home = sec.homePlayer !== false;
               this.s.projectiles.spawnShot({
                 from: "enemy",
+                srcKind: u.kind,
+                srcWpn: enemyWeaponKey(pw),
                 x: px,
                 y: py,
                 z: muzzleZ,

@@ -131,8 +131,12 @@ export class Destruction {
   destroyUnit(u: Unit, quiet = false, skipSplash = false, skipAirCrash = false, freefall = false): void {
     if (u.dead) return;
     u.dead = true;
+    this.s.stats.kill(u);
     for (const crew of this.s.units) {
-      if (!crew.dead && crew.pinId === u.id) this.destroyUnit(crew);
+      if (crew.dead || crew.pinId !== u.id) continue;
+      // Crew go down with their host: same kill credit.
+      crew.statBy ??= u.statBy;
+      this.destroyUnit(crew);
     }
     const sp = specOf(u.kind);
     const building = !!sp.building;

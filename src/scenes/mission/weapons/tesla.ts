@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { heightOf, launchIsArcBeam, stunUnit, type Unit, type PlayerWpnSpec } from "../../../sim/combat";
+import { heightOf, launchIsArcBeam, stunUnit, wpnIdOf, type Unit, type PlayerWpnSpec } from "../../../sim/combat";
 import { ZOff, worldDepth } from "../../../render/depth";
 import { craftSocketPoints } from "../../../sim/crafts";
 import { FX_SHEET_SIZE } from "../../../art/sprites";
@@ -200,7 +200,10 @@ export class Tesla {
         this.exposeT = 0;
       }
       this.exposeT += dt;
-      if (spend) this.s.projectiles.hurt(best, spec.dmg, false);
+      if (spend) {
+        const h = this.s.player;
+        this.s.projectiles.hurt(best, spec.dmg, false, this.s.stats.hostCredit(wpnIdOf(spec)), h.x, h.y, h.z);
+      }
       if (launchIsArcBeam(spec.launch) && spec.payload.stun) {
         const linger = Math.min(
           TESLA_STUN_MAX,

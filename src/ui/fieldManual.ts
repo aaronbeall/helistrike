@@ -1,4 +1,6 @@
 import Phaser from "phaser";
+import { formatDuration } from "../util/format";
+import { MISSIONS, type MissionKind } from "../sim/mission";
 import {
   COUNTERMEASURES,
   PLAYER_WPNS,
@@ -37,6 +39,7 @@ import {
 import {
   cmDescription,
   tipKnownFromSelection,
+  orderByLeastShown,
   tipsForKnown,
   tipsForWeapon,
   tipText,
@@ -68,6 +71,9 @@ import {
   type RemoteKind,
   type RemoteSpec,
 } from "../sim/remote";
+import { careerOf, isHostileEnemy, ratio, total, type Career, type CraftCareer, type MissionOutcome } from "../sim/stats";
+import { markTipShown, tipShownCounts } from "../persist/tipHistory";
+import { lifetimeStats, missionHistory } from "../persist/statsStore";
 import type { UnitKind } from "../sim/roster";
 
 export interface FieldManualOptions {
@@ -86,6 +92,10 @@ export interface FieldManualOptions {
 const MONO = "Share Tech Mono, monospace";
 const AMBER = "#e8b84a";
 const AMBER_N = 0xe8b84a;
+const RECENT_MISSIONS_SHOWN = 5;
+const FAVORITE_CRAFT = "★ FAVORITE CRAFT";
+const FAVORITE_WEAPON = "★ FAVORITE WEAPON";
+const OUTCOME_LABEL: Record<MissionOutcome, string> = { succeeded: "WON", failed: "LOST", abandoned: "LEFT" };
 const CREAM = "#d8d0ba";
 const BRIGHT = "#f0e6c8";
 const DIM = "#8a8470";
@@ -118,6 +128,9 @@ export class FieldManual {
   }
 
   private focus: Focus = { kind: "preview" };
+  /** Tip last counted as shown (so redraws of the same tip don't recount). */
+  private lastShownTipId: string | undefined;
+  private careerCache: { missions: number; career: Career } | undefined;
 
   /** The craft currently shown — usually craftOf(), but browsable away from it in menu context. */
   private previewCraft: CraftSpec & { kind: CraftKind } = craftOf();
@@ -296,6 +309,7 @@ export class FieldManual {
       this.previewCraft = craftOf();
       this.previewIndex = Math.max(0, allCrafts().findIndex((c) => c.kind === this.previewCraft.kind));
       this.focus = { kind: "preview" };
+      this.lastShownTipId = undefined;
       this.refreshTips();
       this.syncCraft();
       this.syncFocus();
@@ -464,10 +478,10 @@ export class FieldManual {
       weapons: playerLoadoutFromSockets(craft.sockets).map(wpnIdOf),
       cms: [craftCountermeasure(craft.countermeasure)],
     };
-    this.missionTips = tipsForKnown(this.missionTipsKnown);
-    if (!this.missionTips.length) this.missionTips = tipsForKnown({});
-    // Start on a random tip each time the manual opens.
-    this.tipPage = this.missionTips.length ? (Math.random() * this.missionTips.length) | 0 : 0;
+    const tips = tipsForKnown(this.missionTipsKnown);
+    // Least-shown first (ties shuffled), starting at the top.
+    this.missionTips = orderByLeastShown(tips.length ? tips : tipsForKnown({}), tipShownCounts());
+    this.tipPage = 0;
   }
 
   private syncTipContext(): void {
@@ -477,19 +491,28 @@ export class FieldManual {
       const weapon = weapons[this.focus.slot];
       const id = weapon ? wpnIdOf(weapon) : undefined;
       this.weaponTipsKnown = id ? { weapons: [id] } : {};
-      this.weaponTips = id ? tipsForWeapon(id) : [];
+      this.weaponTips = id ? orderByLeastShown(tipsForWeapon(id), tipShownCounts()) : [];
       this.weaponTipPage = 0;
     }
     this.syncTipDisplay();
   }
 
+  /** Count a tip once each time it comes on screen (not on every redraw of the same one). */
+  private countTipShown(tip: TacticalTip | undefined): void {
+    if (!tip || tip.id === this.lastShownTipId) return;
+    this.lastShownTipId = tip.id;
+    markTipShown(tip.id);
+  }
+
   private syncTipDisplay(): void {
     if (this.focus.kind === "weapon") {
       const tip = this.weaponTips[this.weaponTipPage];
+      this.countTipShown(tip);
       this.tipBody.setText(tip ? tipText(tip, this.weaponTipsKnown) : "No specific tips for this weapon yet.");
       this.tipCounter.setText(this.weaponTips.length ? `${this.weaponTipPage + 1} / ${this.weaponTips.length}   ← →` : "");
     } else {
       const tip = this.missionTips[this.tipPage];
+      this.countTipShown(tip);
       this.tipBody.setText(tip ? tipText(tip, this.missionTipsKnown) : "No tips for this loadout yet.");
       this.tipCounter.setText(`${Math.min(this.tipPage + 1, this.missionTips.length)} / ${Math.max(1, this.missionTips.length)}   ← →`);
     }
@@ -835,7 +858,7 @@ export class FieldManual {
     switch (this.focus.kind) {
       case "preview":
         this.detailHeader.setText("CAREER STATS");
-        bottom = this.buildCareerPlaceholder(y0);
+        bottom = this.buildCareerStats(y0);
         break;
       case "stats":
         this.detailHeader.setText("STAT COMPARISON");
@@ -859,20 +882,47 @@ export class FieldManual {
     this.positionTips(Math.max(this.detailY0 + FieldManual.DETAIL_MIN_H + 30, bottom + 24));
   }
 
-  private buildCareerPlaceholder(y0: number): number {
+  /** This craft's lifetime stats (saved at each mission's end). */
+  private buildCareerStats(y0: number): number {
     const scene = this.scene;
-    const rows = ["MISSIONS FLOWN", "TARGETS DESTROYED", "FLIGHT HOURS", "SURVIVAL RATE"];
-    rows.forEach((label, i) => {
-      const y = y0 + i * 22;
-      this.addDetail(scene.add.text(this.rightX0, y, label, { fontFamily: MONO, fontSize: "11px", color: CREAM }).setOrigin(0, 0.5));
-      this.addDetail(
-        scene.add.text(this.rightX0 + this.rightW, y, "—", { fontFamily: MONO, fontSize: "11px", color: DIM }).setOrigin(1, 0.5)
-      );
-    });
-    const noteY = y0 + rows.length * 22 + 14;
+    const craft = this.previewCraft.kind;
+    const career = this.career();
+    const c = career.crafts.get(craft);
+    if (c?.started) {
+      let y = y0;
+      if (career.favoriteCraft === craft) y = this.buildBadgeChips([FAVORITE_CRAFT], y, "left", [FAVORITE_CRAFT]) + 12;
+      const decided = c.succeeded + c.failed;
+      const pct = (v: number) => `${Math.round(v * 100)}%`;
+      const tiles: { label: string; value: string; note?: string }[] = [
+        { label: "MISSIONS", value: `${c.started}`, note: decided > 0 ? `${pct(ratio(c.succeeded, decided))} WON` : undefined },
+        { label: "KILLS", value: `${c.kills}` },
+        { label: "DEATHS", value: `${c.deaths}` },
+        { label: "OBJECTIVES", value: `${c.objectives}` },
+        { label: "ACCURACY", value: c.shots > 0 ? pct(ratio(c.hits, c.shots)) : "—" },
+        { label: "FLIGHT TIME", value: formatDuration(c.timeFlown) },
+      ];
+      const gap = 8;
+      const tileW = (this.rightW - gap) / 2;
+      const tileH = 42;
+      tiles.forEach((t, i) => {
+        const x = this.rightX0 + (i % 2) * (tileW + gap);
+        const ty = y - 6 + Math.floor(i / 2) * (tileH + gap);
+        this.addDetail(scene.add.rectangle(x, ty, tileW, tileH, 0x0c0b09, 0.85).setOrigin(0, 0).setStrokeStyle(1, 0x5d5544, 0.8));
+        this.addDetail(scene.add.text(x + 10, ty + 7, t.label, { fontFamily: MONO, fontSize: "9px", color: DIM }).setOrigin(0, 0));
+        const value = this.addDetail(scene.add.text(x + 10, ty + 19, t.value, { fontFamily: MONO, fontSize: "16px", color: AMBER }).setOrigin(0, 0));
+        if (t.note) {
+          this.addDetail(
+            scene.add.text(value.x + value.width + 8, ty + 24, t.note, { fontFamily: MONO, fontSize: "10px", color: CREAM }).setOrigin(0, 0)
+          );
+        }
+      });
+      y = y - 6 + Math.ceil(tiles.length / 2) * (tileH + gap) - gap + 10;
+      y = this.buildBonusStats(c, y);
+      return this.buildRecentMissions(craft, y + 4);
+    }
     const note = this.addDetail(
       scene.add
-        .text(this.rightX0, noteY, "Tracked automatically once available.", {
+        .text(this.rightX0, y0, "No missions flown in this craft yet.", {
           fontFamily: MONO,
           fontSize: "10px",
           color: DIM,
@@ -880,7 +930,57 @@ export class FieldManual {
         })
         .setOrigin(0, 0)
     );
-    return noteY + note.height;
+    return y0 + note.height;
+  }
+
+  /** Lifetime career summary (rebuilt only when a new mission has been recorded). */
+  private career(): Career {
+    const book = lifetimeStats();
+    if (!this.careerCache || this.careerCache.missions !== book.missions) {
+      this.careerCache = { missions: book.missions, career: careerOf(book) };
+    }
+    return this.careerCache.career;
+  }
+
+  /** Secondary stats, each shown only when non-zero: two compact label / value columns. */
+  private buildBonusStats(c: CraftCareer, y0: number): number {
+    const scene = this.scene;
+    const rows = [
+      { label: "STUNNED KILLS", n: c.stunnedKills },
+      { label: "BLINDED KILLS", n: c.blindedKills },
+      { label: "ROTOR KILLS", n: c.rotorKills },
+      { label: "ROAD KILLS", n: c.roadKills },
+    ].filter((r) => r.n > 0);
+    const gap = 8;
+    const colW = (this.rightW - gap) / 2;
+    const rowH = 15;
+    rows.forEach((r, i) => {
+      const x = this.rightX0 + (i % 2) * (colW + gap);
+      const y = y0 + Math.floor(i / 2) * rowH;
+      this.addDetail(scene.add.text(x + 10, y, r.label, { fontFamily: MONO, fontSize: "9px", color: DIM }).setOrigin(0, 0));
+      this.addDetail(scene.add.text(x + colW - 10, y - 1, `${r.n}`, { fontFamily: MONO, fontSize: "11px", color: CREAM }).setOrigin(1, 0));
+    });
+    return y0 + Math.ceil(rows.length / 2) * rowH;
+  }
+
+  /** This craft's last few missions: date, map, outcome, time, hostile kills. */
+  private buildRecentMissions(craft: string, y0: number): number {
+    const scene = this.scene;
+    const recent = missionHistory().filter((r) => r.result.craft === craft).slice(0, RECENT_MISSIONS_SHOWN);
+    if (!recent.length) return y0;
+    this.addDetail(scene.add.text(this.rightX0, y0, "RECENT MISSIONS", { fontFamily: MONO, fontSize: "9px", color: DIM }).setOrigin(0, 0));
+    let y = y0 + 15;
+    for (const r of recent) {
+      const res = r.result;
+      const date = new Date(res.at).toLocaleDateString(undefined, { month: "short", day: "2-digit" }).toUpperCase();
+      const map = (MISSIONS[res.map as MissionKind]?.label ?? res.map).toUpperCase();
+      const kills = total(r.offense, "kills", (at) => isHostileEnemy(at.enemy));
+      const line = `${date.padEnd(7)} ${map.slice(0, 18).padEnd(18)} ${OUTCOME_LABEL[res.outcome].padEnd(5)} ${formatDuration(res.time).padStart(6)}  ${kills} K`;
+      const color = res.outcome === "succeeded" ? AMBER : res.outcome === "failed" ? "#c8664a" : DIM;
+      this.addDetail(scene.add.text(this.rightX0, y, line, { fontFamily: MONO, fontSize: "10px", color }).setOrigin(0, 0));
+      y += 14;
+    }
+    return y;
   }
 
   /**
@@ -889,7 +989,7 @@ export class FieldManual {
    * neatly under a weapon's name). Returns the bottom of the last chip row, or y0 unchanged
    * when there are no labels.
    */
-  private buildBadgeChips(labels: string[], y0: number, align: "left" | "center" = "left"): number {
+  private buildBadgeChips(labels: string[], y0: number, align: "left" | "center" = "left", gold: readonly string[] = []): number {
     const scene = this.scene;
     type Chip = { label: string; w: number; h: number };
     const gap = 6;
@@ -919,12 +1019,14 @@ export class FieldManual {
       let x = align === "center" ? this.rightX0 + (this.rightW - lineW) / 2 : this.rightX0;
       const lineH = Math.max(...line.map((c) => c.h));
       for (const chip of line) {
+        const isGold = gold.includes(chip.label);
         const g = scene.add.graphics();
-        g.lineStyle(1, 0x4a7a94, 0.9).fillStyle(0x16222c, 0.65);
+        if (isGold) g.lineStyle(1, 0x9a7a2e, 0.95).fillStyle(0x2a2210, 0.75);
+        else g.lineStyle(1, 0x4a7a94, 0.9).fillStyle(0x16222c, 0.65);
         g.fillRoundedRect(x, y, chip.w, chip.h, 4);
         g.strokeRoundedRect(x, y, chip.w, chip.h, 4);
         const txt = scene.add
-          .text(x + 7, y + chip.h / 2, chip.label, { fontFamily: MONO, fontSize: "9px", color: "#a8d8f0" })
+          .text(x + 7, y + chip.h / 2, chip.label, { fontFamily: MONO, fontSize: "9px", color: isGold ? AMBER : "#a8d8f0" })
           .setOrigin(0, 0.5);
         this.addDetail(g);
         this.addDetail(txt);
@@ -1553,7 +1655,8 @@ export class FieldManual {
 
     // Classification tags as framed chips, centered right under the name.
     let y = y0 + nameText.height + 8;
-    y = this.buildBadgeChips(weaponBadges(id), y, "center") + 14;
+    const favorite = this.career().favoriteWeapon === id;
+    y = this.buildBadgeChips(favorite ? [FAVORITE_WEAPON, ...weaponBadges(id)] : weaponBadges(id), y, "center", [FAVORITE_WEAPON]) + 14;
 
     // A remote-deploy weapon launches a craft, not a shot — show that craft's hull, not the
     // launcher's (unrelated) projectile art.
@@ -2442,3 +2545,4 @@ function weaponStatCols(weapon: PlayerWpnSpec, craft: CraftSpec, slot: number): 
 
   return cols;
 }
+

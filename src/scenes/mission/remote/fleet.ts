@@ -388,6 +388,7 @@ export class RemoteFleet {
     const drop = !!remoteSpec.ground && h.z > pad + 8;
     const duration = spec.payload.remote!.duration;
     const bay = remoteSpec.dockable ? this.takeBayRemote(slot) : undefined;
+    this.s.stats.remoteLaunch(remoteSpec.craftLook ?? remoteSpec.kind);
     this.s.remotes.push({
       id: nextId(),
       spec: remoteSpec,

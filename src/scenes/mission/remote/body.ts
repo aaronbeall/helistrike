@@ -21,6 +21,7 @@ import type { MissionScene } from "../../missionScene";
 import { simParticleTexKey, simParticleLook } from "../../../render/simParticleLook";
 import { applyThermalHeat } from "../../../render/thermal";
 import { hostileUnit } from "../../../sim/targetRules";
+import { remoteCraftKey } from "../flow/missionStats";
 
 /** Remote body: sprites + gun pose, remote weapon fire, plane/exhaust FX, tread prints, landing thud, damage FX, whip antennas. */
 export class RemoteBody {
@@ -146,6 +147,8 @@ export class RemoteBody {
       });
       this.s.projectiles.spawnShot({
         from: "player",
+        statCraft: remoteCraftKey(drone),
+      statCtl: this.s.stats.controlOf(drone),
         id: nextId(),
         wpnId: gunId,
         beh,
@@ -444,6 +447,8 @@ export class RemoteBody {
       const fromHost = !!spec.payload.callStrike;
       this.s.projectiles.spawnShot({
         from: "player",
+        statCraft: remoteCraftKey(drone),
+      statCtl: this.s.stats.controlOf(drone),
         id: nextId(),
         wpnId: wpnIdOf(spec),
         slot,
@@ -503,6 +508,8 @@ export class RemoteBody {
     );
     this.s.projectiles.spawnShot({
       from: "player",
+      statCraft: remoteCraftKey(drone),
+      statCtl: this.s.stats.controlOf(drone),
       id: nextId(),
       wpnId: wpnIdOf(spec),
       slot,
@@ -551,6 +558,8 @@ export class RemoteBody {
     for (const muzzle of tips) {
       this.s.projectiles.spawnShot({
         from: "player",
+        statCraft: remoteCraftKey(drone),
+      statCtl: this.s.stats.controlOf(drone),
         id: nextId(),
         wpnId: wpnIdOf(spec),
         slot,
@@ -843,6 +852,7 @@ export class RemoteBody {
     const spec = COUNTERMEASURES.smoke_screen;
     r.cmCd = spec.cooldown;
     r.smokeT = spec.duration;
+    this.s.stats.countermeasure("smoke_screen", remoteCraftKey(r), this.s.stats.controlOf(r));
     this.s.countermeasures.fireSmokeScreen(3, r);
   }
 

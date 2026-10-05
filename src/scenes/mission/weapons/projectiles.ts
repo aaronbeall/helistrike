@@ -21,6 +21,8 @@ import { isAerial, isOrganic, hasSoftBlood, specOf, type ShotKind, type ShotLook
 import { circumRadiusOf, distToFootprint, footprintInto, pointInFootprint } from "../../../render/footprint";
 import { craftHardpointMounts } from "../../../sim/crafts";
 import { groundZ, worldToScreen, cameraPointVisible, castZ, isWater } from "../../../worldgen/world";
+import { ENVIRONMENT, UNKNOWN_WEAPON } from "../../../sim/stats";
+import type { DamageSource, StatBy } from "../flow/missionStats";
 import type { MissionScene } from "../../missionScene";
 
 function hitSimParticleFx(dmg: number): { n: number; spd: number; size: number } {
@@ -63,6 +65,8 @@ function shotWantsEmberCrater(shot: Shot | undefined, kind: ShotKind): boolean {
 const PHOTON_FX_LAYERS = 8;
 
 /** Projectiles: shot spawn + per-frame sim (player flight, homing, ignite, deadfall), bomblets, tow wires, explosions + blast damage, shot + photon sprites. */
+/** Stats "enemy" for the player caught in their own blast. */
+const SELF_DAMAGE = "self";
 /** Blast shock front speed (world units / s): edge-of-blast damage lands radius / speed after the center. */
 const BLAST_WAVE_SPEED = 650;
 /** Hits closer than this (s) to the blast apply at once. */
@@ -74,11 +78,14 @@ export class Projectiles {
   photonFxG!: Phaser.GameObjects.Group;
   /** Blast damage still travelling out on the shock front (sim seconds left). */
   private pendingBlast: { t: number; run: () => void }[] = [];
+  /** Shot passes run this mission; kept shots carry the latest in `statFrame`. */
+  shotFrame = 0;
 
   constructor(readonly s: MissionScene) {}
 
   reset(): void {
     this.pendingBlast = [];
+    this.shotFrame = 0;
   }
 
   /** Apply now, or once the shock front reaches `dist` from the blast center. */
@@ -101,13 +108,19 @@ export class Projectiles {
     q.length = w;
   }
 
-  spawnShot(s: Shot): void {
+  /** `countShot`: false for sub-munitions (bomblets, splits) so stats count the trigger pull, not the pieces. */
+  spawnShot(s: Shot, countShot = true): void {
+    if (s.from === "player") {
+      this.s.stats.stamp(s);
+      if (countShot) this.s.stats.shot(s);
+    }
     const look = shotLookOf(s);
     const nudge = shotTipNudge(this.s.textures, look, s.angle, s.x, s.y, s.z, s.scale ?? 1);
     s.x += nudge.x;
     s.y += nudge.y;
     if (!s.look) s.look = look;
     this.s.shots.push(s);
+    if (s.from === "enemy" && s.homePlayer) this.s.stats.seekerFired(s, this.shotFrame);
   }
 
   /** XY after tip-origin nudge — use for flight time so aim matches spawn. */
@@ -182,6 +195,7 @@ export class Projectiles {
   }
 
   updateShots(dt: number): void {
+    this.shotFrame++;
     this.tickShockFronts(dt);
     const ptr = this.s.worldPointer();
     const focusSpec = this.s.targeting.combatFocus().spec;
@@ -430,7 +444,7 @@ export class Projectiles {
           if (Math.hypot(s.x - tgt.x, s.y - tgt.y) >= hitR) return false;
           if (s.z > tgt.z + tgt.height || s.z < tgt.z) return false;
           const dmg = s.dmg * 0.65 * (this.s.countermeasures.reactiveArmorT > 0 && isHost ? 0.22 : 1);
-          this.s.targeting.damageTarget(tgt, dmg, s.vx, s.vy);
+          if (this.s.stats.craftHit(damageSourceOf(s), tgt, () => this.s.targeting.damageTarget(tgt, dmg, s.vx, s.vy)) > 0) s.statHitPlayer = true;
           if (this.s.countermeasures.reactiveArmorT > 0 && isHost) {
             this.s.fx.spawnImpactFlash(tgt.x, tgt.y, tgt.z + 8, 0xffcc66, 48, 0.9, 140);
             this.s.countermeasures.fireReactiveArmorImpactBurst(s.vx, s.vy);
@@ -470,7 +484,8 @@ export class Projectiles {
             st.pierce! -= 1;
             st.hitIds = st.hitIds ?? [];
             st.hitIds.push(u.id);
-            this.hurt(u, this.weaponDamageMul(s, u, s.dmg), false);
+            this.statHit(s, u);
+            this.hurt(u, this.weaponDamageMul(s, u, s.dmg), false, this.statBy(s), s.statX, s.statY, s.statZ);
             // Through-shot still sprays blood/sparks at the contact point.
             this.explode(
               s.x + helixDx,
@@ -634,6 +649,7 @@ export class Projectiles {
       if (!s.deadfall && exhaustIsSignalFlare(s.beh?.exhaust)) {
         this.s.trails.emitSignalFlareTrailFx(s, x0, y0, z0);
       }
+      if (s.statFrame !== undefined) s.statFrame = this.shotFrame;
       shots[w++] = s;
     }
     shots.length = w;
@@ -1048,6 +1064,8 @@ export class Projectiles {
           this.spawnShot({
             from: "player",
             wpnId: parent.wpnId,
+            statCraft: parent.statCraft,
+            statCtl: parent.statCtl,
             slot: parent.slot,
             beh: {
               ...beh,
@@ -1077,7 +1095,7 @@ export class Projectiles {
             scale: (parent.scale ?? 1) * 0.48,
             fxInterval: 0.2,
             energyTrail: [],
-          });
+          }, false);
           continue;
         }
       }
@@ -1088,6 +1106,8 @@ export class Projectiles {
       this.spawnShot({
         from: "player",
         wpnId: parent.wpnId,
+            statCraft: parent.statCraft,
+            statCtl: parent.statCtl,
         slot: parent.slot,
         beh: {
           ...beh,
@@ -1117,7 +1137,7 @@ export class Projectiles {
         scale: (parent.scale ?? 1) * 0.48,
         fxInterval: 0.2,
         energyTrail: [],
-      });
+      }, false);
     }
   }
 
@@ -1147,6 +1167,8 @@ export class Projectiles {
       this.spawnShot({
         from: "player",
         wpnId: parent.wpnId,
+            statCraft: parent.statCraft,
+            statCtl: parent.statCtl,
         slot: parent.slot,
         beh: {
           ...beh,
@@ -1173,7 +1195,7 @@ export class Projectiles {
         look: cluster?.look ?? parent.look,
         scale: (parent.scale ?? 1) * 0.42,
         fxInterval: 0.2,
-      });
+      }, false);
     }
   }
 
@@ -1571,12 +1593,14 @@ export class Projectiles {
   ): void {
     this.pushBlastRing(x, y, z, blast);
     const stunDur = shot?.beh?.payload.stun;
+    const by = this.statBy(shot);
     for (const u of this.s.units) {
       if (u.dead) continue;
       const d = distToFootprint(x, y, footprintInto(u, 0, 0));
       if (u !== direct && d >= blast) continue;
       const fall = u === direct ? dmg : dmg * (1 - d / blast);
       const dealt = this.weaponDamageMul(shot, u, fall);
+      this.statHit(shot, u);
       // Damage rides the shock front: the center now, the edge a moment later.
       this.onShockFront(u === direct ? 0 : d, () => {
         if (u.dead) return;
@@ -1584,7 +1608,7 @@ export class Projectiles {
         u.killDy = dy;
         u.killDz = dz;
         u.killDmg = dealt;
-        this.hurt(u, dealt, skipDeathSplash);
+        this.hurt(u, dealt, skipDeathSplash, by, shot?.statX, shot?.statY, shot?.statZ);
         if (stunDur && !u.dead) {
           const cls = heatClassOf(u);
           if (cls === "vehicle" || cls === "building") {
@@ -1600,9 +1624,13 @@ export class Projectiles {
       this.onShockFront(hd, () => {
         if (focus === this.s.player) {
           const agl = castZ(this.s.world, this.s.player.x, this.s.player.y, this.s.player.z);
-          if (this.s.countermeasures.cloakT <= 0 && agl < 30) this.s.player.damage(dmg * 0.25, dx, dy);
+          if (this.s.countermeasures.cloakT <= 0 && agl < 30)
+            this.markPlayerHit(shot, this.s.stats.hostHit(damageSourceOf(shot), () => this.s.player.damage(dmg * 0.25, dx, dy)));
         } else {
-          this.s.targeting.damageCombatFocus(dmg * 0.25, dx, dy);
+          const rem = this.s.targeting.combatFocusRemote();
+          const hitFocus = () => this.s.targeting.damageCombatFocus(dmg * 0.25, dx, dy);
+          if (rem) this.markPlayerHit(shot, this.s.stats.remoteHit(damageSourceOf(shot), rem, hitFocus));
+          else hitFocus();
         }
       });
     }
@@ -1612,9 +1640,29 @@ export class Projectiles {
       for (const r of this.s.remotes) {
         if (r === focusRem || !remoteTargetable(r)) continue;
         const rd = Math.hypot(r.x - x, r.y - y);
-        if (rd < blast * 0.55) this.onShockFront(rd, () => this.s.targeting.damageRemote(r, dmg * 0.25, dx, dy));
+        if (rd < blast * 0.55)
+          this.onShockFront(rd, () =>
+            this.markPlayerHit(shot, this.s.stats.remoteHit(damageSourceOf(shot), r, () => this.s.targeting.damageRemote(r, dmg * 0.25, dx, dy)))
+          );
       }
     }
+  }
+
+  /** First unit a player shot damages counts as its hit (once per shot). */
+  private statHit(shot: Shot | undefined, u: Unit): void {
+    if (shot?.from !== "player" || shot.statHit) return;
+    shot.statHit = true;
+    this.s.stats.hit(shot, u);
+  }
+
+  /** An enemy shot that landed damage on the player's side isn't a dodged seeker. */
+  private markPlayerHit(shot: Shot | undefined, dealt: number): void {
+    if (shot && dealt > 0) shot.statHitPlayer = true;
+  }
+
+  /** Damage credit for a player-side shot (undefined for enemy fire). */
+  private statBy(shot: Shot | undefined): StatBy | undefined {
+    return shot?.from === "player" ? this.s.stats.byShot(shot) : undefined;
   }
 
   /** Stunned (EMP/Tesla) or fully smoke-blinded (player in thick smoke). */
@@ -1693,7 +1741,9 @@ export class Projectiles {
     });
   }
 
-  hurt(u: Unit, dmg: number, fromBlast = false): void {
+  /** `by`: the player-side weapon / craft / controller responsible (stats + kill credit); omit for enemy / environmental damage. */
+  hurt(u: Unit, dmg: number, fromBlast = false, by?: StatBy, ox?: number, oy?: number, oz?: number): void {
+    if (by) this.s.stats.dealt(by, u, Math.min(dmg, Math.max(0, u.health)), ox, oy, oz);
     u.health -= dmg;
     if (u.health <= 0) {
       this.s.destruction.destroyUnit(u, false, fromBlast);
@@ -1935,4 +1985,12 @@ export class Projectiles {
       place(core, "shot_photon_core", 0, sc * (1.05 + 0.1 * flick), sc * (1.05 + 0.1 * flick2), 0.95 + 0.05 * flick, 0.04);
     });
   }
+}
+
+
+/** Who a shot's damage to the player is credited to: its enemy shooter, the player's own splash, or a blast with no shot. */
+function damageSourceOf(shot: Shot | undefined): DamageSource {
+  if (!shot) return { enemy: ENVIRONMENT, weapon: "explosion" };
+  if (shot.from === "player") return { enemy: SELF_DAMAGE, weapon: shot.wpnId ?? UNKNOWN_WEAPON };
+  return { enemy: shot.srcKind ?? UNKNOWN_WEAPON, weapon: shot.srcWpn ?? UNKNOWN_WEAPON };
 }

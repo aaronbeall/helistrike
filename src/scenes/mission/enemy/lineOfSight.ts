@@ -80,6 +80,11 @@ export class LineOfSight {
     return sight?.ok ?? true;
   }
 
+  /** Cached result only (no trace): false when `u`'s last check found terrain blocking its target; true otherwise / unknown. */
+  lastSaw(u: Unit): boolean {
+    return this.sights.get(u)?.ok ?? true;
+  }
+
   /** Ray from the unit's eye to the target; blocked where the ground rises above it. */
   private trace(u: Unit, target: Craft, out: Sight): void {
     const x0 = u.x;

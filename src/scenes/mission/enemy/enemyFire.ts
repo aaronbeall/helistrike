@@ -10,6 +10,7 @@ import { Craft } from "../../../sim/craft";
 import { specOf, gunsOf, type WeaponSpec } from "../../../sim/roster";
 import { FX_VARIANTS } from "../../../art/sprites";
 import { worldToScreen } from "../../../worldgen/world";
+import { enemyWeaponKey } from "../../../sim/stats";
 import type { MissionScene } from "../../missionScene";
 
 /** Combat mood: kite while firing; each finished volley is a strike, enough and it flees. */
@@ -201,6 +202,8 @@ export class EnemyFire {
     const flightT = Math.max(0.12, shotDist / (home ? wpn.speed * 0.72 : wpn.speed));
     this.s.projectiles.spawnShot({
       from: "enemy",
+      srcKind: u.kind,
+      srcWpn: enemyWeaponKey(wpn),
       x: muzzle.x,
       y: muzzle.y,
       z: muzzleZ,

@@ -5,6 +5,7 @@ import { Ripples } from "./mission/fx/ripples";
 import Phaser from "phaser";
 import { FieldBars } from "./mission/hud/fieldBars";
 import { MissionFlow } from "./mission/flow/missionFlow";
+import { MissionStats } from "./mission/flow/missionStats";
 import { MissionCamera } from "./mission/camera/camera";
 import { ThermalMode } from "./mission/render/thermalMode";
 import { UnitSprites } from "./mission/render/unitSprites";
@@ -26,6 +27,7 @@ import { PostFxTest } from "./mission/debug/postFx";
 import { DebugOverlays } from "./mission/debug/overlays";
 import { HelpPanel } from "./mission/hud/help";
 import { CornerHud } from "./mission/hud/cornerHud";
+import { RunStatsHud } from "./mission/hud/runStatsHud";
 import { PromptsHud } from "./mission/hud/prompts";
 import { UnitSim } from "./mission/enemy/unitSim";
 import { EnemyFire } from "./mission/enemy/enemyFire";
@@ -98,6 +100,7 @@ export class MissionScene extends Phaser.Scene {
   camera = new MissionCamera(this);
   // flow
   flow = new MissionFlow(this);
+  stats = new MissionStats(this);
   // hud
   weaponHud = new WeaponHud(this);
   statusHud = new StatusHud(this);
@@ -105,6 +108,7 @@ export class MissionScene extends Phaser.Scene {
   reticleHud = new ReticleHud(this);
   minimap = new Minimap(this);
   cornerHud = new CornerHud(this);
+  runStatsHud = new RunStatsHud(this);
   prompts = new PromptsHud(this);
   help = new HelpPanel(this);
   fieldBars = new FieldBars(this);
@@ -177,6 +181,7 @@ export class MissionScene extends Phaser.Scene {
   init(data: { world?: WorldData }): void {
     this.over = false;
     this.flow.reset();
+    this.stats.reset();
     this.completedHv.clear();
     this.missionEndQueued = false;
     this.destruction.reset();
@@ -196,6 +201,7 @@ export class MissionScene extends Phaser.Scene {
     this.lineOfSight.reset();
     this.powerLines.reset();
     this.statusHud.reset();
+    this.runStatsHud.reset();
     this.sideView.reset();
     this.callStrike.reset();
     this.refractor.reset();
@@ -676,6 +682,8 @@ export class MissionScene extends Phaser.Scene {
     kb.on("keydown-MINUS", onTimeMinus);
     kb.on("keydown-NUMPAD_SUBTRACT", onTimeMinus);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      // Left before the end screen (menu / restart): save the run with an inferred outcome.
+      this.stats.finish();
       kb.off("keydown-PLUS", onTimePlus);
       kb.off("keydown-EQUALS", onTimePlus);
       kb.off("keydown-NUMPAD_ADD", onTimePlus);
@@ -767,6 +775,18 @@ export class MissionScene extends Phaser.Scene {
       })
       .setScrollFactor(0)
       .setDepth(Layer.HUD);
+    this.runStatsHud.txt = this.add
+      .text(this.scale.width / 2, 12, "", {
+        fontFamily: "Share Tech Mono, monospace",
+        fontSize: "12px",
+        color: "#8a8470",
+        align: "center",
+      })
+      .setOrigin(0.5, 0)
+      .setAlpha(0.85)
+      .setScrollFactor(0)
+      .setDepth(Layer.HUD)
+      .setStroke("#12100c", 3);
     this.threatHud.paintTxt = this.add
       .text(this.scale.width / 2, 40, "◆ RADAR PAINT", {
         fontFamily: "Share Tech Mono, monospace",
@@ -1280,6 +1300,7 @@ export class MissionScene extends Phaser.Scene {
         if (this.camera.shake < 0.06) this.camera.shake = 0;
       }
     }
+    this.stats.tick(dt, this.projectiles.shotFrame);
     this.countermeasures.tickEmpFx(dt, wallDt);
     this.countermeasures.tickTimewarpFx(wallDt);
     this.countermeasures.tickWarpDistortFx();
@@ -1299,6 +1320,7 @@ export class MissionScene extends Phaser.Scene {
       }
       if (!objectiveAlive && !this.completedHv.has(h.id)) {
         this.completedHv.add(h.id);
+        this.stats.objective();
         // Moving HV (field officer) dies away from the site pin — focus the unit, not spawn.
         const corpse = this.units.find((q) => q.hv === h.id);
         const x = corpse?.x ?? h.x;
@@ -1413,6 +1435,7 @@ export class MissionScene extends Phaser.Scene {
 
     this.cornerHud.syncObjectivesHud();
     this.cornerHud.layoutUpperRightHud();
+    this.runStatsHud.sync();
     this.weaponHud.draw();
   }
 
@@ -1635,6 +1658,7 @@ export class MissionScene extends Phaser.Scene {
       this.postFx.hud,
       this.cornerHud.fpsHud,
       this.perf.hud,
+      this.runStatsHud.txt,
       this.threatHud.paintTxt,
       this.threatHud.missileTxt,
       this.prompts.liftPrompt,

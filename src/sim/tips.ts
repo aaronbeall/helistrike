@@ -180,8 +180,21 @@ export function tipKnownFromSelection(enemies?: readonly UnitKind[]): TipKnown {
   };
 }
 
-export function pickRandomTip(known: TipKnown, catalog: readonly TacticalTip[] = TACTICAL_TIPS): TacticalTip {
+/** Least-shown first, ties shuffled: rare or unseen tips for this context surface early. `shown` = times shown by tip id. */
+export function orderByLeastShown(
+  tips: readonly TacticalTip[],
+  shown: Readonly<Record<string, number>>,
+  random: () => number = Math.random
+): TacticalTip[] {
+  return tips
+    .map((tip) => ({ tip, n: shown[tip.id] ?? 0, r: random() }))
+    .sort((a, b) => a.n - b.n || a.r - b.r)
+    .map((k) => k.tip);
+}
+
+/** The tip to show for this context: least shown among matching tips (generic tips when none match). */
+export function pickTip(known: TipKnown, shown: Readonly<Record<string, number>>, catalog: readonly TacticalTip[] = TACTICAL_TIPS): TacticalTip {
   const pool = tipsForKnown(known, catalog);
   const list = pool.length ? pool : catalog.filter((t) => !t.context || Object.keys(t.context).length === 0);
-  return list[(Math.random() * list.length) | 0] ?? catalog[0]!;
+  return orderByLeastShown(list, shown)[0] ?? catalog[0]!;
 }

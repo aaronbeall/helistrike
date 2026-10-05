@@ -27,7 +27,8 @@ Imports only flow **down** this list. A lower layer never imports a higher one a
 | `src/worldgen/` | World generation, height/biome data, the 2.5D projection (`worldToScreen`, `Camera25D`) | |
 | `src/art/` | Sprite processing, baking, sprite origin / mount / muzzle metadata | |
 | `src/render/` | Shaders + pipelines, depth layers, thermal tint, camo, FX scaling, stateless drawing maths (`spritePose`, `ribbons`, `fxCurves`) | Stateless; no scene state. |
-| `src/util/` | Generic helpers (`rng`, `vec`) | |
+| `src/util/` | Generic helpers (`rng`, `vec`), `storage` (swappable async key/value backend: IndexedDB by default, localStorage / memory fallbacks), `format` | |
+| `src/persist/` | Player persistence on top of `util/storage` (mission history, lifetime stats, tip show counts; later settings / unlocks) | `loadPersistence()` once at boot; reads are then sync from memory, writes save in the background at explicit commit points. |
 | `src/ui/` | UI shared across scenes (Field Manual, menu chrome) | |
 | `src/scenes/mission/` | The live mission's subsystems (see below) | May use everything above. |
 | `src/scenes/missionScene.ts` | Wiring only | See below. |
@@ -55,8 +56,8 @@ destruction/  destruction
 render/       hostCraft · unitSprites · thermalMode
 world/        powerLines
 camera/       camera
-flow/         missionFlow
-hud/          weaponHud · statusHud · threatHud · reticleHud · minimap · cornerHud · prompts · help · fieldBars
+flow/         missionFlow · missionStats
+hud/          weaponHud · statusHud · threatHud · reticleHud · minimap · cornerHud · runStatsHud · prompts · help · fieldBars
 debug/        menu · overlays · relief · sideView · perf · postFx
 ```
 
@@ -107,6 +108,7 @@ export class RemoteFleet {
 | Water ripples (splashes, wakes) | `fx/ripples` (`s.ripples.spawn` / `.splash`) |
 | Deaths, crashes, debris | `destruction/destruction` |
 | HUD element | the matching `hud/…` module, or a new one |
+| Player stats | record in `flow/missionStats` (`s.stats.*`); fact tables + `query`/`total` rollups in `sim/stats` (add a dim or measure there, never a new fixed bucket); saved by `persist/statsStore` at mission end as a history record (one key per mission) + lifetime totals rebuilt from the history when out of step |
 | Debug tool / overlay | `debug/…` |
 | Dev rig (overlay tool, cycled with `` ` ``) | `src/rigs/…`, registered in `rigs.ts` |
 | Map silhouette / domain warp | `src/worldgen/shape.ts` |

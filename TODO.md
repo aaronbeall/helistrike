@@ -51,6 +51,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
   * [x] Steamship (steampunk airship — Leviathan)
   * [ ] Destroyer (water ship with heli remote)
   * [ ] Carrier (big water ship with lots of remotes)
+* [ ] Customize craft paint (camo pattern, color)
 * [ ] Single player progress, mission/vehicle unlocks, weapon/upgrade purchases
   * [ ] Campaign: multiple theater hand crafted missions with a light story, craft/weapon unlocks, between mission resource management, and progress pathing
   * [ ] Rogue Operation: a roguelike mode that uses procedural generated series of increasingly difficult missions, unlocks (craft and weapons) stick across playthroughs
@@ -168,6 +169,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [ ] Eject, infiltrate, hijack
 * [ ] Hulk break-apart effect (dynamic splitting of hulk graphics into individual parts)
 * [ ] Predictive firing (enemy units and craft gunners, fire at predicted location, accuracy of prediction falls off with range and speed)
+* [ ] Automatic turrets prioritize targets by their weapon damage multipliers (e.g. anti-armor stations pick vehicles, flak picks troops)
 * [ ] Lens flare
 * [ ] Stats (mission, all time)
 * [ ] Score
@@ -198,6 +200,32 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [ ] Dropship artillery strike should not follow the player reticle while active -- it messes it up
 * [ ] Map/theater view draws the current-view frame in the wrong location -- likely the captured play-camera view vs the map's zoom/projection pose (pre-existing)
 * [ ] Sustained Starscream fire causes big framerate drops and short freezes (GC?) -- energy ribbons allocate per frame across dozens of live shots + bomblets; reuse buffers, profile explosion cost (pre-existing)
+
+## Stats
+
+Candidates for the stats system (`sim/stats` fact tables). **Additive** = new measure, new table, or new mission-result field: safe any time. **Breaking** = a new dim on an existing table: bumps the stats version and discards saved data (no migration). Stats only count from when they're added; no backfill.
+
+* Achievement prerequisites (see Achievements below)
+  * [ ] Multi-kills + kill streaks (kills within a short window, longest streak) — additive measures; Coming in Hot, Brrrrrt, Armeggedon, Death from Above, Kabob
+  * [x] Kills while the enemy was debuffed (EMP/tesla stunned, smoke-blinded) — additive measures; Lights Out, Dark Knight Rises, Silent Assassin
+  * [x] Kill context: NLOS (target's cached line of sight), kill range (close / mid / long), debuff — `killContext` table; You Can't Hide, Search and Destroy, Never Saw it Coming
+  * [ ] Kill context: attacker above target — Ride The Lightning
+  * [x] Missiles dodged (locked missiles that missed, how many flared off) — additive; Can't Touch This
+  * [ ] Per-mission flags: no damage taken, guns only, thrust held the whole mission, % of time firing — additive mission-result fields; Knife Fight, Guns Blazing, Lightning Round, Thunder Run
+* Combat depth
+  * [ ] Lock-ons acquired; guided hits on the locked target (lock accuracy)
+  * [ ] Overkill (damage past a target's remaining health); shots with nothing in range
+  * [ ] Enemy shots fired at the player vs hits taken (dodge rate, per enemy / enemy weapon)
+  * [x] Kill distance buckets (close / mid / long) per weapon
+* Survival + flying
+  * [ ] Health repaired / docked; closest call (lowest health while surviving)
+  * [ ] Time nap-of-earth (Shift / low AGL) vs cruise; time in bullet time / time warp; distance flown per craft
+* Collateral + objectives
+  * [ ] Civilian collateral per mission (civilians / buildings destroyed) as named result fields — Surgical, Oopsie Daisy
+  * [ ] Time to each objective; objective type completed (bunker, SAM, officer…)
+* Remotes + meta
+  * [ ] Remote launches / docks / losses per remote craft (remote survival rate) — launches done (`remoteLaunches`); docks / losses open
+  * [ ] Session play time (outside missions); favorite craft / weapon (derivable)
 
 ## Achievements
 

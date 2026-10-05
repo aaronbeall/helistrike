@@ -331,7 +331,10 @@ export class Countermeasures {
     if (id === "timewarp") {
       // Pausable: toggle off keeps the remaining charge; toggle on resumes from it.
       if (this.timewarpT > 0) this.timewarpT = 0;
-      else if (this.timewarpCharge > 0.02) this.timewarpT = this.timewarpCharge * spec.duration;
+      else if (this.timewarpCharge > 0.02) {
+        this.timewarpT = this.timewarpCharge * spec.duration;
+        this.s.stats.countermeasure(id);
+      }
       return;
     }
     if (id === "phase_cloak" && this.cloakT > 0) {
@@ -339,6 +342,7 @@ export class Countermeasures {
       return;
     }
     if (this.cd > 0) return;
+    this.s.stats.countermeasure(id);
     if (id === "flares") {
       this.cd = spec.cooldown;
       this.fireFlares(spec.duration);
