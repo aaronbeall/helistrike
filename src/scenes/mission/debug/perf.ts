@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import type { MissionScene } from "../../missionScene";
 
-const PERF_LABELS = [
+export const PERF_LABELS = [
   "frame",
   "scene",
   "player",

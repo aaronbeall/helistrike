@@ -5,12 +5,14 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "bench": "node scripts/bench.mjs"
   },
   "dependencies": {
     "phaser": "^3.90.0"
   },
   "devDependencies": {
+    "playwright": "^1.63.0",
     "typescript": "^5.9.2",
     "vite": "^6.3.5"
   }

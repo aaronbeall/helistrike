@@ -18,6 +18,7 @@ import { pickTip, tipKnownFromSelection, tipText } from "../sim/tips";
 import { markTipShown, tipShownCounts } from "../persist/tipHistory";
 import { ensureExhaustGlow, extractBiomeTiles, FX_VARIANTS, spriteUvPos } from "../art/sprites";
 import { missionOf } from "../sim/mission";
+import { applyBenchForces, benchScenario } from "./mission/debug/bench";
 import { generateWorldAsync, type WorldData } from "../worldgen/world";
 
 export class LoadScene extends Phaser.Scene {
@@ -38,8 +39,14 @@ export class LoadScene extends Phaser.Scene {
   private rotorFlight = 32;
   private loadU = 0.02;
 
+  /** Hidden perf scenario to load instead of a normal mission. */
+  private benchId: string | undefined;
+
   constructor() {
     super("load");
+  }
+  init(data: { bench?: string }): void {
+    this.benchId = data?.bench;
   }
   create(): void {
     // Craft preview reuses craft_* textures; chrome Text/Graphics get load_* names.
@@ -174,7 +181,8 @@ export class LoadScene extends Phaser.Scene {
     const bar = this.add.graphics();
     const known = tipKnownFromSelection();
     const picked = pickTip(known, tipShownCounts());
-    markTipShown(picked.id);
+    const bench = benchScenario(this.benchId);
+    if (!bench) markTipShown(picked.id);
     const tip = tipText(picked, known);
     this.add
       .text(w / 2, h * 0.72, `TIP  ·  ${tip}`, {
@@ -206,7 +214,7 @@ export class LoadScene extends Phaser.Scene {
     };
     drawBar(0.02, "relief");
     this.time.delayedCall(16, () => {
-      const seed = (Date.now() ^ (Math.random() * 1e9)) >>> 0;
+      const seed = bench?.seed ?? (Date.now() ^ (Math.random() * 1e9)) >>> 0;
       const tiles = extractBiomeTiles(this.textures);
       const mission = missionOf();
       sub.setText(`${mission.label}  ·  RELIEF  ·  2%`);
@@ -215,9 +223,11 @@ export class LoadScene extends Phaser.Scene {
         await waitFrame();
         await waitFrame();
         if (!this.scene.isActive()) return;
-        this.scene.start("mission", { world });
+        if (bench) applyBenchForces(world, bench);
+        this.scene.start("mission", { world, bench: bench?.id });
       };
-      generateWorldAsync(seed, tiles, (t, label) => drawBar(t, label), mission.profile)
+      const profile = bench?.profile ? { ...mission.profile, ...bench.profile } : mission.profile;
+      generateWorldAsync(seed, tiles, (t, label) => drawBar(t, label), profile)
         .then(go)
         .catch((err) => {
           // Never fall back to sync generateWorld on the main thread — that freezes the UI

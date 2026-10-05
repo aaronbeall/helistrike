@@ -6,6 +6,7 @@ import Phaser from "phaser";
 import { FieldBars } from "./mission/hud/fieldBars";
 import { MissionFlow } from "./mission/flow/missionFlow";
 import { MissionStats } from "./mission/flow/missionStats";
+import { Bench } from "./mission/debug/bench";
 import { MissionCamera } from "./mission/camera/camera";
 import { ThermalMode } from "./mission/render/thermalMode";
 import { UnitSprites } from "./mission/render/unitSprites";
@@ -101,6 +102,7 @@ export class MissionScene extends Phaser.Scene {
   // flow
   flow = new MissionFlow(this);
   stats = new MissionStats(this);
+  bench = new Bench(this);
   // hud
   weaponHud = new WeaponHud(this);
   statusHud = new StatusHud(this);
@@ -178,7 +180,8 @@ export class MissionScene extends Phaser.Scene {
     super("mission");
   }
 
-  init(data: { world?: WorldData }): void {
+  init(data: { world?: WorldData; bench?: string }): void {
+    this.bench.reset(data.bench);
     this.over = false;
     this.flow.reset();
     this.stats.reset();
@@ -257,6 +260,7 @@ export class MissionScene extends Phaser.Scene {
     this.help.setup();
     this.flow.setupExitMenu();
     this.setupHudCam();
+    this.bench.start();
   }
 
   /** Textures, pipelines and art bakes the rest of create() draws from. */
@@ -683,7 +687,8 @@ export class MissionScene extends Phaser.Scene {
     kb.on("keydown-NUMPAD_SUBTRACT", onTimeMinus);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       // Left before the end screen (menu / restart): save the run with an inferred outcome.
-      this.stats.finish();
+      if (!this.bench.holdsMission()) this.stats.finish();
+      this.bench.stop();
       kb.off("keydown-PLUS", onTimePlus);
       kb.off("keydown-EQUALS", onTimePlus);
       kb.off("keydown-NUMPAD_ADD", onTimePlus);
@@ -1112,6 +1117,7 @@ export class MissionScene extends Phaser.Scene {
       this.reticleHud.hideAimChrome();
       return;
     }
+    this.bench.drive();
     const wallDt = Math.min(dms / 1000, 0.05);
     this.frameWallDt = wallDt;
     const mapPause = this.camera.mapWant || this.camera.mapBlend > 0.02;
@@ -1340,7 +1346,7 @@ export class MissionScene extends Phaser.Scene {
         }
       }
     }
-    if (!hvAlive && this.player.phase !== "dead" && !this.missionEndQueued) {
+    if (!hvAlive && this.player.phase !== "dead" && !this.missionEndQueued && !this.bench.holdsMission()) {
       this.missionEndQueued = true;
       // Keep flight controls through the victory stinger; lock only when end() runs.
       this.flow.showStinger(
