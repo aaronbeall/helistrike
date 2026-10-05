@@ -3365,6 +3365,8 @@ function pickSite(
 }
 
 const SPAWN_TRIES = 6;
+/** Chance an objective base gets a military heli pad (land) or platform (water). */
+const BASE_PAD_CHANCE = 0.5;
 
 /** Original siting: first random dry, non-peak spot clear of spawn + other objectives. */
 function scatterSite(
@@ -3501,6 +3503,21 @@ function placeForces(
         if (!placeable(bk, bx, by)) continue;
         spawns.push({ kind: bk, x: bx, y: by });
         buildings.push({ x: bx, y: by, r: footprintR(bk) });
+        break;
+      }
+    }
+    // Military heli pad by the base: a platform where the spot is water, a pad on land.
+    if (rng.chance(BASE_PAD_CHANCE)) {
+      for (let t = 0; t < SPAWN_TRIES; t++) {
+        const a = rng.range(0, Math.PI * 2);
+        const d = rng.range(90, 220 + t * 60);
+        const px = x + Math.cos(a) * d;
+        const py = y + Math.sin(a) * d;
+        const b = biome[Math.floor(py / SCALE) * TEX + Math.floor(px / SCALE)];
+        const pk: UnitKind = b === BIOME_ID.water || b === BIOME_ID.river ? "military_platform" : "military_helipad";
+        if (!placeable(pk, px, py)) continue;
+        spawns.push({ kind: pk, x: px, y: py });
+        buildings.push({ x: px, y: py, r: footprintR(pk) });
         break;
       }
     }

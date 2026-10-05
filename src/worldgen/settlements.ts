@@ -25,6 +25,8 @@ export type StructureKind =
   | "silo_single"
   | "oil_rig"
   | "sea_platform"
+  | "military_helipad"
+  | "military_platform"
   | "dock_building"
   | "fishing_boat"
   | "yacht";

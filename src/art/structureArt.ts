@@ -47,6 +47,8 @@ export const STRUCTURE_ART: Record<StructureKind, StructureArtSpec> = {
   silo_single: { label: "Grain silo", crop: { from: "silo", x0: 0, x1: 0.48 } },
   oil_rig: { label: "Oil rig", file: "sprites/structures/oil_rig.png", hulk: "sprites/structures/oil_rig_hulk.png" },
   sea_platform: { label: "Heli platform", file: "sprites/structures/sea_platform.png", hulk: "sprites/structures/sea_platform_hulk.png" },
+  military_helipad: { label: "Military helipad", crop: { from: "helipad", x0: 0, x1: 1 } },
+  military_platform: { label: "Military heli platform", crop: { from: "sea_platform", x0: 0, x1: 1 } },
   dock_building: { label: "Dock house", file: "sprites/structures/dock_building.png", hulk: "sprites/structures/dock_building_hulk.png" },
   fishing_boat: { label: "Fishing boat", file: "sprites/structures/fishing_boat.png", hulk: "sprites/structures/fishing_boat_hulk.png" },
   yacht: { label: "Yacht", file: "sprites/structures/yacht.png", hulk: "sprites/structures/yacht_hulk.png" },

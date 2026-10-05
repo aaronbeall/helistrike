@@ -200,6 +200,8 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [ ] Dropship artillery strike should not follow the player reticle while active -- it messes it up
 * [ ] Map/theater view draws the current-view frame in the wrong location -- likely the captured play-camera view vs the map's zoom/projection pose (pre-existing)
 * [ ] Sustained Starscream fire causes big framerate drops and short freezes (GC?) -- energy ribbons allocate per frame across dozens of live shots + bomblets; reuse buffers, profile explosion cost (pre-existing)
+* [ ] Map edge shows for helis -- out-of-bounds cloud mountains don't hide the seam everywhere (e.g. top of the plane map)
+* [ ] Out-of-bounds cloud mountains have a lot of pink/magenta contamination
 
 ## Stats
 
@@ -260,3 +262,4 @@ Candidates for the stats system (`sim/stats` fact tables). **Additive** = new me
   * Buzzcut -- rotor kill a troop with the Murder Hornet
   * Surgical -- beat a mission with 0% collateral damage
   * Oopsie Daisy -- beat a mission with 100% collateral damage
+  * SHocking Habit -- destroy 1000 powerlines
