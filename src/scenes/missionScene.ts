@@ -216,8 +216,10 @@ export class MissionScene extends Phaser.Scene {
     this.warpLingerScale = null;
     this.overlays.reset();
     this.lineOfSight.reset();
+    this.unitSim.reset();
     this.powerLines.reset();
     this.spatial.reset();
+    this.unitSprites.reset();
     this.spatialOverlay.reset();
     this.statusHud.reset();
     this.runStatsHud.reset();

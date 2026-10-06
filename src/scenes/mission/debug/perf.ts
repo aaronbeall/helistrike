@@ -158,6 +158,8 @@ export class PerfMonitor {
       lines.push(`${PERF_LABELS[i]!.padEnd(9)} ${avg.toFixed(2)} avg  ${p95s[i]!.toFixed(2)} p95  ${((avg / Math.max(frameAvg, 0.01)) * 100).toFixed(1)}%`);
     }
     lines.push(`objects  u${this.s.units.length} s${this.s.shots.length} d${this.s.debris.length} p${this.s.fx.simParticles.length}`);
+    const lod = this.s.unitSim.lodStats;
+    lines.push(`units    full ${lod.full}  far ${lod.ticked + lod.skipped} (${lod.ticked} ticked)  sprites ${this.s.unitSprites.slotsInUse()}`);
     this.hud.setText(lines.join("\n"));
   }
 }

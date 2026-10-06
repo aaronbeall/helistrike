@@ -15,6 +15,8 @@ import { spritePivot } from "../../../art/sprites";
 import { groundSlope, worldToScreen, cameraPointVisible, screenVelX, screenVelY, projectHeading } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
 
+/** Pooled images per on-screen unit: shadow, body, 6 parts, muzzle flash, roof. */
+const SLOTS = 10;
 /** Buildings cast their shadow from this fraction of their height. */
 const BUILDING_SHADOW_HEIGHT = 0.25;
 /** Ground vehicles cast their shadow from this fraction of their height. */
@@ -38,7 +40,54 @@ export class UnitSprites {
   texSpanCache = new Map<string, number>();
   textureAlphaCache = new Map<string, TextureAlphaBounds | null>();
 
+  /** Image block per on-screen unit (`s.units` index → block, -1 none); blocks are pooled, never destroyed. */
+  private slotOf = new Int32Array(0).fill(-1);
+  private freeSlots: number[] = [];
+  private slotCount = 0;
+
   constructor(readonly s: MissionScene) {}
+
+  /** Per-mission state reset (called from the scene's init). */
+  reset(): void {
+    this.slotOf = new Int32Array(0);
+    this.freeSlots = [];
+    this.slotCount = 0;
+  }
+
+  /** Image blocks in use (debug). */
+  slotsInUse(): number {
+    return this.slotCount - this.freeSlots.length;
+  }
+
+  private claimSlot(ui: number): number {
+    let slot = this.freeSlots.pop();
+    if (slot == null) {
+      slot = this.slotCount++;
+      this.unitG.add(this.s.add.image(0, 0, "fx_shadow").setVisible(false));
+      this.unitG.add(this.s.add.image(0, 0, "enemy_tank").setVisible(false));
+      for (let p = 0; p < 6; p++) this.unitG.add(this.s.add.image(0, 0, "enemy_heli_rotor").setVisible(false));
+      const mz = this.s.add.image(0, 0, "fx_muzzle").setVisible(false);
+      mz.setBlendMode(Phaser.BlendModes.ADD);
+      this.unitG.add(mz);
+      this.unitG.add(this.s.add.image(0, 0, "fx_shadow").setVisible(false));
+    }
+    this.slotOf[ui] = slot;
+    return slot;
+  }
+
+  private releaseSlot(ui: number): void {
+    this.freeSlots.push(this.slotOf[ui]!);
+    this.slotOf[ui] = -1;
+  }
+
+  private hideSlot(kids: Phaser.GameObjects.Image[], slot: number): void {
+    for (let k = slot * SLOTS, end = k + SLOTS; k < end; k++) {
+      const im = kids[k]!;
+      if (im.visible) im.setVisible(false);
+      const wrap = im.getData("tiltWrap") as Phaser.GameObjects.Container | undefined;
+      if (wrap?.visible) wrap.setVisible(false);
+    }
+  }
 
   spriteOrigin(key: string): { x: number; y: number } {
     if (key === "craft_apache_rotor") return { x: this.s.hostCraft.rotor.originX, y: this.s.hostCraft.rotor.originY };
@@ -243,45 +292,44 @@ export class UnitSprites {
   }
 
   sync(): void {
-    const SLOTS = 10;
-    let liveN = 0;
-    for (const u of this.s.units) if (!u.dead) liveN++;
-    while (this.unitG.getLength() < liveN * SLOTS) {
-      this.unitG.add(this.s.add.image(0, 0, "fx_shadow"));
-      this.unitG.add(this.s.add.image(0, 0, "enemy_tank"));
-      for (let p = 0; p < 6; p++) this.unitG.add(this.s.add.image(0, 0, "enemy_heli_rotor"));
-      const mz = this.s.add.image(0, 0, "fx_muzzle");
-      mz.setBlendMode(Phaser.BlendModes.ADD);
-      this.unitG.add(mz);
-      this.unitG.add(this.s.add.image(0, 0, "fx_shadow"));
+    const units = this.s.units;
+    if (this.slotOf.length < units.length) {
+      const g = new Int32Array(Math.max(units.length, this.slotOf.length * 2)).fill(-1);
+      g.set(this.slotOf);
+      this.slotOf = g;
     }
     const kids = this.unitG.getChildren() as Phaser.GameObjects.Image[];
-    for (let i = 0; i < kids.length; i++) {
-      const k = kids[i]!;
-      k.setVisible(false);
-      const wrap = k.getData("tiltWrap") as Phaser.GameObjects.Container | undefined;
-      if (wrap) wrap.setVisible(false);
-    }
-    let slot = 0;
-    for (const u of this.s.units) {
-      if (u.dead) continue;
-      const i = slot++;
+    for (let ui = 0; ui < units.length; ui++) {
+      const u = units[ui]!;
+      const held = this.slotOf[ui]!;
+      if (held >= 0) this.hideSlot(kids, held);
+      if (u.dead) {
+        if (held >= 0) this.releaseSlot(ui);
+        continue;
+      }
       const sp = specOf(u.kind);
       const roofZ = u.z + heightOf(u.kind);
-      if (!cameraPointVisible(u.z, u.y) && !(sp.roof && cameraPointVisible(roofZ, u.y))) continue;
-      const guns = gunsOf(u);
-      const sh = kids[i * SLOTS]!;
-      const im = kids[i * SLOTS + 1]!;
-      const partBase = i * SLOTS + 2;
-      const flash = kids[i * SLOTS + 8]!;
-      const roofIm = kids[i * SLOTS + 9]!;
+      if (!cameraPointVisible(u.z, u.y) && !(sp.roof && cameraPointVisible(roofZ, u.y))) {
+        if (held >= 0) this.releaseSlot(ui);
+        continue;
+      }
       const tex = resolveSkin(this.s.textures, textureOf(u.kind), u.camo);
       const rot = troopDrawAng(u) + sp.rotOff;
       const scr = worldToScreen(u.x, u.y, u.z);
       const scrX = scr.x;
       const scrY = scr.y;
       const roofScr = sp.roof ? worldToScreen(u.x, u.y, roofZ) : undefined;
-      if (!this.s.camera.projectedInView(scrX, scrY, 220) && !(roofScr && this.s.camera.projectedInView(roofScr.x, roofScr.y, 220))) continue;
+      if (!this.s.camera.projectedInView(scrX, scrY, 220) && !(roofScr && this.s.camera.projectedInView(roofScr.x, roofScr.y, 220))) {
+        if (held >= 0) this.releaseSlot(ui);
+        continue;
+      }
+      const i = held >= 0 ? held : this.claimSlot(ui);
+      const guns = gunsOf(u);
+      const sh = kids[i * SLOTS]!;
+      const im = kids[i * SLOTS + 1]!;
+      const partBase = i * SLOTS + 2;
+      const flash = kids[i * SLOTS + 8]!;
+      const roofIm = kids[i * SLOTS + 9]!;
       const drawRot = this.unitDrawRot(u, rot);
       const zs = scr.scale;
       const pivot = spritePivot(textureOf(u.kind));
