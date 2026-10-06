@@ -111,20 +111,21 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [ ] Designed maps (seed + brush + placements)
 * More enemy targets:
   * [ ] HV: missile silo
-  * [ ] Hover tank with laser
+  * [ ] HV: satellite array (multiple small satellites)
   * [ ] Submarines
   * [ ] VTOL aircraft
   * [ ] HV: nuclear weapons facility
-  * [ ] Runway/landing pad
+  * [ ] Jet
+  * [ ] Fast attack heli
+  * [ ] Runway/heli pad with takeoffs
   * [ ] Drone swarm truck
-  * [ ] Troop truck
-  * [ ] Landed planes on runways
+  * [ ] APC Troop truck
+  * [ ] Landed bomber planes near runways
   * [ ] Ammo depot (with cookoff)
   * [ ] Explosive tanks
   * [ ] Explosive trucks
   * [ ] Destroyer
   * [ ] Carrier
-  * [ ] APC
   * [ ] Trains
 * More doodads:
   * [ ] destroyed buildings
@@ -143,7 +144,6 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [x] Enemy unit damage effects like player
 * [x] Screen shock when player takes damage
 * [x] Radial blur spinningblades
-* [ ] Bubble explosion
 * [ ] Improve toon blast with volume bubbling
 * [ ] Weather effects (rain, lightning, thunder)
 * [ ] Time of day lighting effects
@@ -153,7 +153,6 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [ ] Generated art height map
   * [ ] Whole image generation
   * [ ] Asset composition generation
-* [ ] Circular map?
 * [ ] Hit force (knockback, torque)
 * [ ] Unit spawners
   * [ ] Tents -> troops
@@ -169,20 +168,22 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [x] Clouds
 * [x] Drive ground vehicles (pilotable ground remotes: HOUND, WOLF)
 * [ ] Eject, infiltrate, hijack
-* [ ] Hulk break-apart effect (dynamic splitting of hulk graphics into individual parts)
+* [x] Hulk break-apart effect (dynamic splitting of hulk graphics into individual parts)
 * [ ] Predictive firing (enemy units and craft gunners, fire at predicted location, accuracy of prediction falls off with range and speed)
 * [ ] Automatic turrets prioritize targets by their weapon damage multipliers (e.g. anti-armor stations pick vehicles, flak picks troops)
 * [ ] Popped turrets should do a little damage on landing -- enough to kill a troop or break a house
 * [ ] Lens flare
-* [ ] Stats (mission, all time)
+* [x] Stats (mission, all time)
 * [ ] Score
   * [ ] Kill
   * [ ] Bonuses: Double/Tripple/Multi kill
   * [ ] Records
-* [ ] Power lines -- poles and wires that break/fall, lots of sparks
+* [x] Power lines -- poles and wires that break/fall, lots of sparks
 
 ## Fix
 
+* [ ] Space to release the focus cam should also return time scale to normal
+* [ ] Focus cam should pause or scale cooldowns (whichever is simpler and less fragile)
 * [ ] Low flying shooting just immediately hits ground
 * [ ] Enemies should not leave map
 * [ ] Enemy collision/avoidance sucks/doesn't work -- should avoid unit-to-unit collisions and buildings
@@ -198,7 +199,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [x] Boat spawns should happen only with enough space
 * [ ] Chroma key bleed
 * [x] Camera change shouldn't change reticle location
-* [ ] Spash down debris/hulks/shells in water should either disappear or become blue and sink to bottom, and not draw craters
+* [x] Splash down debris/hulks/shells in water should either disappear or become blue and sink to bottom, and not draw craters
 * [ ] Switching from thermal to normal reveals pink graphics
 * [ ] Dropship artillery strike should not follow the player reticle while active -- it messes it up
 * [ ] Map/theater view draws the current-view frame in the wrong location -- likely the captured play-camera view vs the map's zoom/projection pose (pre-existing)
