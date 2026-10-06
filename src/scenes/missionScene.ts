@@ -273,7 +273,6 @@ export class MissionScene extends Phaser.Scene {
     this.createPlayer();
     this.createWeaponGraphics();
     this.spawnUnits();
-    this.spatial.sync();
     this.createFx();
     this.bindInput();
     this.createHud();
@@ -569,17 +568,22 @@ export class MissionScene extends Phaser.Scene {
   /** Initial units from world spawns, plus posted crew. */
   spawnUnits(): void {
     this.units = [];
-    for (const s of this.world.spawns) {
+    const spawned = this.world.spawns.map((s) => {
       const u = makeUnit(this.world, s.kind, s.x, s.y);
       u.hv = s.hv;
-      this.units.push(u);
-    }
-    this.units.push(...makeSettlementUnits(this.world));
+      return u;
+    });
+    spawned.push(...makeSettlementUnits(this.world));
     const posted: Unit[] = [];
-    for (const host of this.units) {
-      posted.push(...spawnCrewFor(this.world, this.textures, host));
-    }
-    this.units.push(...posted);
+    for (const host of spawned) posted.push(...spawnCrewFor(this.world, this.textures, host));
+    this.addUnits(spawned);
+    this.addUnits(posted);
+  }
+
+  /** The only way units enter `s.units`: append-only, never removed (dead units stay, `dead` set); index-keyed modules rely on it. */
+  addUnits(units: readonly Unit[]): void {
+    for (const u of units) this.units.push(u);
+    this.spatial.sync();
   }
 
   /** Particle emitters, thermal particle tint hook, time scale. */

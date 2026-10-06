@@ -438,9 +438,7 @@ export class DebugMenu {
     const x = h.x + Math.cos(a) * d;
     const y = h.y + Math.sin(a) * d;
     const u = makeUnit(this.s.world, kind, x, y);
-    this.s.units.push(u);
-    this.s.units.push(...spawnCrewFor(this.s.world, this.s.textures, u));
-    this.s.spatial.sync();
+    this.s.addUnits([u, ...spawnCrewFor(this.s.world, this.s.textures, u)]);
   }
 
   setNoDamage(on: boolean): void {

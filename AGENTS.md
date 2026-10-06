@@ -132,6 +132,7 @@ export class RemoteFleet {
 - **Scene events survive mission restarts.** Anything registered on `this.events` (or other long-lived emitters) must be removed on `SHUTDOWN`, or handlers stack per mission.
 - **Per-mission state is reset in each module's `reset()`.** A field that isn't reset there persists across missions — make that a deliberate choice.
 - **Phaser reuses the scene instance** across restarts; don't rely on constructor-time state.
+- **`s.units` is append-only.** Add units only through `MissionScene.addUnits`; never remove, splice, filter or reassign it mid-mission (dead units stay with `dead` set). The spatial index, unit LOD and sprite blocks key state by list index; dev builds log if this breaks.
 - **Hot paths:** `update()` runs every frame for dozens of units/shots. Avoid per-frame allocations (arrays/objects in loops) in shot, trail and particle code.
 
 ## Conventions

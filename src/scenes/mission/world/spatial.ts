@@ -98,6 +98,9 @@ export class SpatialIndex {
   private moverSlots: number[] = [];
   private slots = new Map<Unit, number>();
   private known = 0;
+  /** `s.units` and its last indexed unit at the previous sync (dev append-only check). */
+  private listRef?: Unit[];
+  private lastRef?: Unit;
   private pool: UnitHits[] = [];
   private depth = 0;
 
@@ -111,6 +114,8 @@ export class SpatialIndex {
     this.moverSlots = [];
     this.slots = new Map();
     this.known = 0;
+    this.listRef = undefined;
+    this.lastRef = undefined;
     this.depth = 0;
     this.check = false;
     this.recent.length = 0;
@@ -121,6 +126,7 @@ export class SpatialIndex {
   /** Index new units, drop dead movers, refresh mover positions + categories. */
   sync(): void {
     const units = this.s.units;
+    if (import.meta.env.DEV) this.checkAppendOnly(units);
     if (units.length < this.known) this.reset();
     for (let i = this.known; i < units.length; i++) {
       const u = units[i]!;
@@ -134,6 +140,8 @@ export class SpatialIndex {
       }
     }
     this.known = units.length;
+    this.listRef = units;
+    this.lastRef = units[units.length - 1];
     const slots = this.moverSlots;
     for (let k = 0; k < slots.length; ) {
       const i = slots[k]!;
@@ -148,6 +156,13 @@ export class SpatialIndex {
       this.movers.setMask(i, spatialMask(u));
       k++;
     }
+  }
+
+  /** `s.units` may only grow at its end (`MissionScene.addUnits`); anything else breaks index-keyed state. */
+  private checkAppendOnly(units: Unit[]): void {
+    if (!this.known) return;
+    if (units === this.listRef && units.length >= this.known && units[this.known - 1] === this.lastRef) return;
+    console.error("[spatial] s.units changed other than by appending: add units with MissionScene.addUnits and never remove them");
   }
 
   /** Unit `i` just moved (position only; categories refresh in `sync`). */
