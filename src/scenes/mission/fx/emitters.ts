@@ -915,7 +915,7 @@ export function createFxEmitters(scene: MissionScene): void {
       rotate: fxSpin,
     })
   );
-  scene.fx.blastBurn = scene.fx.pool("fire", () =>
+  scene.fx.lingerBurn = scene.fx.pool("fire", () =>
     scene.add.particles(0, 0, "fx_flame", {
       // Match lingerSmoke buoyancy/path so fire fades into the same rising plume.
       lifespan: { onEmit: () => range(240, 420) * scene.fx.trailFxLife },
@@ -936,7 +936,7 @@ export function createFxEmitters(scene: MissionScene): void {
       rotate: fxSpin,
     })
   );
-  scene.fx.ember = scene.fx.pool("fire", () =>
+  scene.fx.tinyBurn = scene.fx.pool("fire", () =>
     scene.add.particles(0, 0, "fx_flame", {
       lifespan: { onEmit: () => range(180, 320) * scene.fx.trailFxLife },
       speed: { min: 1, max: 10 },

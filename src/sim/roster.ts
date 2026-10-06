@@ -46,9 +46,9 @@ export type UnitKind =
   | "silo"
   | "silo_single"
   | "oil_rig"
-  | "sea_platform"
-  | "military_helipad"
-  | "military_platform"
+  | "heli_platform"
+  | "military_heli_platform"
+  | "military_heli_platform_sea"
   | "dock_building"
   | "fishing_boat"
   | "yacht";

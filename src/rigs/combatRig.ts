@@ -32,6 +32,7 @@ import {
   FX_BLAST_FIT,
   FX_KINDS,
   FX_SHEET_SIZE,
+  fxSheetKey,
   FX_VARIANTS,
   nameGameTexture,
   type FxKind,
@@ -808,7 +809,7 @@ function fxEntries(): CombatEntry[] {
 }
 
 function fxSheetEntry(kind: FxKind): CombatEntry {
-  const key = `fx_${kind}`;
+  const key = fxSheetKey(kind);
   return {
     id: key,
     cat: "fx",

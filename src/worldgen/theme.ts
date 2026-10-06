@@ -1,5 +1,5 @@
-/** Terrain themes: per-biome palette, tile texture + tint, and decor swaps. Visual only; biome rules are unchanged. */
-import type { DecorKind } from "./world";
+/** Terrain themes: per-biome palette, tile texture + tint, and doodad swaps. Visual only; biome rules are unchanged. */
+import type { DoodadKind } from "./world";
 
 export type TerrainTheme =
   | "temperate"
@@ -33,8 +33,8 @@ export interface ThemeSpec {
   label: string;
   description: string;
   looks: BiomeLook[];
-  /** Decor substitutions (picked at random when several). */
-  decor: Partial<Record<DecorKind, DecorKind[]>>;
+  /** Doodad substitutions (picked at random when several). */
+  doodads: Partial<Record<DoodadKind, DoodadKind[]>>;
 }
 
 const look = (lo: RGB, hi: RGB, nz: RGB, tile: number, tint?: RGB): BiomeLook => ({ lo, hi, nz, tile, tint });
@@ -54,7 +54,7 @@ export const TERRAIN_THEMES: Record<TerrainTheme, ThemeSpec> = {
       look([92, 86, 78], [92, 86, 78], N1, 5),
       look([140, 138, 132], [220, 218, 222], N1, 6),
     ],
-    decor: {},
+    doodads: {},
   },
   autumn: {
     id: "autumn",
@@ -69,7 +69,7 @@ export const TERRAIN_THEMES: Record<TerrainTheme, ThemeSpec> = {
       look([104, 92, 82], [104, 92, 82], N1, 5),
       look([86, 80, 74], [128, 118, 106], N1, 5, [100, 92, 84]),
     ],
-    decor: {
+    doodads: {
       tree: ["tree_amber", "tree_red", "tree_gold", "tree_amber", "pine", "dead"],
       bush: ["bush_rust", "shrub", "bush_rust"],
       palm: ["pine"],
@@ -91,7 +91,7 @@ export const TERRAIN_THEMES: Record<TerrainTheme, ThemeSpec> = {
       look([100, 102, 108], [100, 102, 108], N1, 5, [118, 120, 126]),
       look([196, 206, 218], [250, 252, 255], [0.6, 0.6, 0.6], 6),
     ],
-    decor: {
+    doodads: {
       tree: ["pine"],
       palm: ["pine"],
       bush: ["snowrock", "pine"],
@@ -115,7 +115,7 @@ export const TERRAIN_THEMES: Record<TerrainTheme, ThemeSpec> = {
       look([156, 98, 64], [156, 98, 64], [1, 0.7, 0.4], 5),
       look([186, 146, 106], [216, 184, 142], [1, 0.8, 0.5], 5, [204, 166, 124]),
     ],
-    decor: {
+    doodads: {
       tree: ["palm", "dead", "cactus"],
       pine: ["dead", "palm"],
       bush: ["shrub", "cactus2"],
@@ -136,7 +136,7 @@ export const TERRAIN_THEMES: Record<TerrainTheme, ThemeSpec> = {
       look([68, 76, 58], [68, 76, 58], N1, 5, [80, 86, 66]),
       look([78, 72, 68], [108, 102, 98], N1, 5, [86, 80, 76]),
     ],
-    decor: {
+    doodads: {
       tree: ["tree", "palm"],
       pine: ["palm", "tree"],
       cactus: ["bush"],
@@ -158,7 +158,7 @@ export const TERRAIN_THEMES: Record<TerrainTheme, ThemeSpec> = {
       look([150, 146, 132], [150, 146, 132], N1, 5, [158, 152, 138]),
       look([172, 168, 156], [216, 214, 206], N1, 6),
     ],
-    decor: {
+    doodads: {
       cactus: ["shrub"],
       cactus2: ["bush"],
       pine: ["tree", "pine"],
@@ -178,7 +178,7 @@ export const TERRAIN_THEMES: Record<TerrainTheme, ThemeSpec> = {
       look([138, 92, 64], [138, 92, 64], [1, 0.7, 0.4], 5, [142, 94, 66]),
       look([160, 116, 82], [186, 146, 108], [1, 0.7, 0.4], 5, [170, 128, 92]),
     ],
-    decor: {
+    doodads: {
       tree: ["tree_olive", "tree_olive", "dead", "shrub"],
       pine: ["tree_olive", "dead"],
       palm: ["tree_olive"],
@@ -202,7 +202,7 @@ export const TERRAIN_THEMES: Record<TerrainTheme, ThemeSpec> = {
       look([80, 84, 68], [80, 84, 68], N1, 5, [84, 88, 70]),
       look([96, 100, 84], [120, 122, 104], N1, 5, [104, 108, 90]),
     ],
-    decor: {
+    doodads: {
       tree: ["tree_swamp", "tree_swamp", "dead", "tree"],
       pine: ["tree_swamp", "dead"],
       palm: ["tree_swamp"],
@@ -227,7 +227,7 @@ export const TERRAIN_THEMES: Record<TerrainTheme, ThemeSpec> = {
       look([46, 44, 44], [46, 44, 44], N1, 5, [52, 50, 50]),
       look([40, 36, 36], [96, 56, 40], [0.8, 0.5, 0.3], 5, [46, 42, 42]),
     ],
-    decor: {
+    doodads: {
       tree: ["dead", "tree_ash", "dead"],
       pine: ["dead", "tree_ash"],
       palm: ["dead"],
@@ -252,7 +252,7 @@ export const TERRAIN_THEMES: Record<TerrainTheme, ThemeSpec> = {
       look([70, 64, 96], [70, 64, 96], [0.6, 0.6, 0.8], 5, [76, 70, 104]),
       look([120, 170, 190], [200, 236, 240], [0.5, 0.7, 0.7], 6, [170, 214, 224]),
     ],
-    decor: {
+    doodads: {
       tree: ["tree_teal", "tree_violet", "tree_violet"],
       pine: ["tree_teal"],
       palm: ["tree_magenta"],

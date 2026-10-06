@@ -1,4 +1,4 @@
-/** Road ribbon art (seamless horizontal tiles), once loaded. Bridges are structures (`structureArt`). */
+/** Road ribbon art (seamless horizontal tiles), once loaded. Bridges are buildings (`buildingArt`). */
 
 export type RoadArtKind = "road" | "paved";
 

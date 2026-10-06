@@ -59,7 +59,7 @@ export class Fx {
   hurtSmoke!: Phaser.GameObjects.Particles.ParticleEmitter;
   playerHurtSmoke!: Phaser.GameObjects.Particles.ParticleEmitter;
   burn!: Phaser.GameObjects.Particles.ParticleEmitter;
-  blastBurn!: Phaser.GameObjects.Particles.ParticleEmitter;
+  lingerBurn!: Phaser.GameObjects.Particles.ParticleEmitter;
   shortBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
   /** Long, fast, high-drag streaks for HE / death bursts. */
   streakBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
@@ -93,7 +93,7 @@ export class Fx {
   signalFlareSpark!: Phaser.GameObjects.Particles.ParticleEmitter;
   muzzleBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
   splashBurst!: Phaser.GameObjects.Particles.ParticleEmitter;
-  ember!: Phaser.GameObjects.Particles.ParticleEmitter;
+  tinyBurn!: Phaser.GameObjects.Particles.ParticleEmitter;
   shortTrailSmoke!: Phaser.GameObjects.Particles.ParticleEmitter;
   lingerSmoke!: Phaser.GameObjects.Particles.ParticleEmitter;
   /** Hydra / rocket plume — stretched along flight heading. */
@@ -1453,8 +1453,8 @@ export class Fx {
   /** Mean emit scale of a fire emitter's base size range (fx_flame units). */
   private fireMeanScale(proto: Phaser.GameObjects.Particles.ParticleEmitter): number {
     if (proto === this.burn) return 1.12;
-    if (proto === this.blastBurn) return 0.45;
-    if (proto === this.ember) return 0.2;
+    if (proto === this.lingerBurn) return 0.45;
+    if (proto === this.tinyBurn) return 0.2;
     if (proto === this.flame || proto === this.hotFlame) return 0.46;
     return 0;
   }

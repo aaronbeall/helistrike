@@ -122,7 +122,9 @@ export class RemoteFleet {
 | Map silhouette / domain warp | `src/worldgen/shape.ts` |
 | Terrain palette, tiles, decor per theme | `src/worldgen/theme.ts` |
 | Landform stamps (mesas, craters, volcanoes, dunes) | `src/worldgen/landforms.ts` |
-| Towns (+ street grid), ports, airfields, dams, farms, oil fields, power lines, bridges | `src/worldgen/settlements.ts` (art: `src/art/structureArt.ts`; buildings in `UNIT_STRUCTURES` spawn as neutral units, the rest are printed into the terrain) |
+| Towns (+ street grid), ports, airfields, dams, farms, oil fields, power lines, bridges | `src/worldgen/settlements.ts` (kinds in `UNIT_STRUCTURES` spawn as units, the rest are terrain decor prints: art in `src/art/decorArt.ts`) |
+| Building / decor / civilian-boat art | buildings `public/sprites/buildings/building_<kind>.png` (+ `_hulk`), all listed in `src/art/buildingArt.ts`: live art sized in world units, hulk authored at the live art's pixel scale (evenly padded canvas for spilled debris) and centered on it; missing hulk = darkened, broken-apart copy at runtime; terrain prints `public/sprites/decor/decor_<kind>.png`; boats `public/sprites/units/civilian_<kind>.png`. Scattered rocks / plants are doodads (`sprites/doodads`, `world.doodads`) |
+| Building / unit specs | hostile → enemy roster `src/catalog/units.ts`; civilian → settlement roster `src/catalog/settlementUnits.ts`; both use `building()` / `roundBuilding()` / `civilianBoat()` from `src/catalog/buildingSpec.ts` |
 | Neutral (civilian) units | `neutral: true` on the `UnitSpec`; player-side auto-picks filter with `hostileUnit` (`sim/targetRules`) |
 
 ## Gotchas (learned the hard way)

@@ -2,6 +2,8 @@
 import { lookupSpriteMuzzles, lookupSpriteOrigin, mountOf, mountsOf } from "../art/spriteOrigin";
 import type { PartMount, UnitKind, UnitSpec, WeaponSpec } from "../sim/roster";
 import { WPN, wpn } from "./enemyWeapons";
+import { building, MILITARY, OFFSHORE, roundBuilding } from "./buildingSpec";
+import { SETTLEMENT_UNITS } from "./settlementUnits";
 
 export const gun = (
   tex: string,
@@ -32,41 +34,8 @@ export const gun = (
  *   14–20    hardened buildings
  *   40       battleship
  */
-/** Settlement building: art is `struct_<kind>`, box in world units. Civilian (neutral) unless `extra` says otherwise. */
-const civ = (
-  kind: string,
-  label: string,
-  health: number,
-  halfW: number,
-  halfL: number,
-  height: number,
-  extra: Partial<UnitSpec> = {}
-): UnitSpec => ({
-  label,
-  health,
-  radius: Math.round(Math.max(halfW, halfL) * 0.85),
-  box: { halfW, halfL },
-  height,
-  texture: `struct_${kind}`,
-  hulk: `struct_${kind}_hulk`,
-  debris: "struct",
-  rotOff: Math.PI / 2,
-  behavior: "static_hold",
-  building: true,
-  neutral: true,
-  deathFx: "collapse",
-  guns: [],
-  rotors: [],
-  ...extra
-});
-/** Civilian boat: sinks when destroyed. */
-const WET: Partial<UnitSpec> = { behavior: "patrol_boat", water: true, noCrater: true };
-/** Military site building: hostile, with hardened-building toughness. */
-const MILITARY: Partial<UnitSpec> = { neutral: false, deathFx: undefined };
-/** Sea structure: normal building death, wreck stays at the surface. */
-const OFFSHORE: Partial<UnitSpec> = { water: true, noCrater: true };
-
-export const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
+/** Enemy roster: every hostile unit and building. */
+const ENEMY_UNITS = {
   tank: {
     label: "TANK",
     health: 336,
@@ -174,23 +143,12 @@ export const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
       }
     }
   },
-  tower: {
-    label: "AA TOWER",
-    health: 280,
+  tower: building("tower", "AA TOWER", 280, 34, 37, 48, {
+    ...MILITARY,
     radius: 28,
-    box: { halfW: 34, halfL: 37 },
-    height: 48,
-    texture: "building_tower",
-    hulk: "building_tower_hulk",
-    debris: "struct",
-    rotOff: Math.PI / 2,
-    behavior: "static_hold",
-    building: true,
     throwGuns: true,
     spawnYaw: (5 * Math.PI) / 180,
     weapon: WPN.tower_cannon,
-    guns: [],
-    rotors: [],
     partsRoll: {
       mode: "pick",
       mount: mountOf("building_tower", "gun"),
@@ -206,38 +164,16 @@ export const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
         sam: { tex: "building_tower_sam", originY: 1.25, w: WPN.seeker, label: "seeker" }
       }
     }
-  },
-  bunker: {
-    label: "BUNKER",
-    health: 560,
-    radius: 54,
-    height: 32,
-    texture: "building_bunker",
-    hulk: "building_bunker_hulk",
-    debris: "struct",
-    rotOff: Math.PI / 2,
-    behavior: "static_hold",
-    building: true,
+  }),
+  bunker: roundBuilding("bunker", "BUNKER", 560, 54, 32, {
+    ...MILITARY,
     spawnYaw: (45 * Math.PI) / 180,
-    guns: [],
-    rotors: [],
     crew: { mounts: mountsOf("building_bunker", "troop"), mode: "leash", leashR: 38 }
-  },
-  radar: {
-    label: "RADAR",
-    health: 392,
+  }),
+  radar: building("radar", "RADAR", 392, 57, 104, 56, {
+    ...MILITARY,
     radius: 72,
-    box: { halfW: 57, halfL: 104 },
-    height: 56,
-    texture: "building_radar",
-    hulk: "building_radar_hulk",
-    debris: "struct",
-    rotOff: Math.PI / 2,
-    behavior: "static_hold",
-    building: true,
     spawnYaw: (5 * Math.PI) / 180,
-    guns: [],
-    rotors: [],
     dish: {
       tex: "building_radar_disk",
       hulk: "building_radar_disk_hulk",
@@ -245,7 +181,7 @@ export const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
       mount: mountOf("building_radar", "dish"),
       scale: 1
     }
-  },
+  }),
   pickup: {
     label: "PICKUP",
     health: 70,
@@ -568,125 +504,22 @@ export const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
     guns: [],
     rotors: []
   },
-  barn: {
-    label: "BARN",
-    health: 196,
-    radius: 34,
-    box: { halfW: 23, halfL: 41 },
-    height: 28,
-    texture: "building_barn",
-    hulk: "building_barn_hulk",
-    debris: "struct",
-    rotOff: Math.PI / 2,
-    behavior: "static_hold",
-    building: true,
-    deathFx: "collapse",
-    guns: [],
-    rotors: []
-  },
-  tent: {
-    label: "TENT",
-    health: 50,
-    radius: 20,
-    box: { halfW: 18, halfL: 30 },
-    height: 14,
-    texture: "building_tent",
-    hulk: "building_tent_hulk",
-    debris: "struct",
-    rotOff: Math.PI / 2,
-    behavior: "static_hold",
-    building: true,
-    deathFx: "collapse",
-    guns: [],
-    rotors: []
-  },
-  fob: {
-    label: "FOB",
-    health: 448,
-    radius: 52,
-    box: { halfW: 61, halfL: 53 },
-    height: 28,
-    texture: "building_fob",
-    hulk: "building_fob_hulk",
-    debris: "struct",
-    rotOff: Math.PI / 2,
-    behavior: "static_hold",
-    building: true,
-    hv: true,
-    spawnYaw: (20 * Math.PI) / 180,
-    guns: [],
-    rotors: []
-  },
-  lookout: {
-    label: "LOOKOUT",
-    health: 168,
+  barn: building("barn", "BARN", 196, 23, 41, 28, { neutral: false, radius: 34 }),
+  tent: building("tent", "TENT", 50, 18, 30, 14, { neutral: false, radius: 20 }),
+  fob: building("fob", "FOB", 448, 61, 53, 28, { ...MILITARY, radius: 52, hv: true, spawnYaw: (20 * Math.PI) / 180 }),
+  lookout: building("lookout", "LOOKOUT", 168, 23, 25, 56, {
+    neutral: false,
     radius: 22,
-    box: { halfW: 23, halfL: 25 },
-    height: 56,
-    texture: "building_lookout",
-    hulk: "building_lookout_hulk",
-    debris: "struct",
-    rotOff: Math.PI / 2,
-    behavior: "static_hold",
-    building: true,
-    deathFx: "collapse",
     hv: true,
     spawnYaw: (5 * Math.PI) / 180,
-    guns: [],
-    rotors: [],
     crew: { mounts: [mountOf("building_lookout", "troop")], mode: "leash", leashR: 17 }
-  },
-  house: civ("house", "HOUSE", 36, 22, 30, 22),
-  warehouse: civ("warehouse", "WAREHOUSE", 70, 32, 44, 30),
-  hangar: civ("hangar", "HANGAR", 280, 44, 70, 34, MILITARY),
-  control_tower: civ("control_tower", "CONTROL TOWER", 200, 21, 21, 60, MILITARY),
-  dock_shed: civ("dock_shed", "DOCK SHED", 64, 31, 45, 26),
-  // Pylon height just under heli cruise AGL (46): cruise clears, ground-hugging risks the wires.
-  pylon: civ("pylon", "POWER PYLON", 40, 10, 46, 38, {
-    texture: "struct_pylon_base",
-    hulk: "struct_pylon_base_hulk",
-    deathFx: "zap",
-    wreckScale: 0.45,
-    debris: "mech",
-    // Popped top: the bent, broken cross-arm wreck art.
-    roof: { tex: "struct_pylon", hulk: "struct_pylon_hulk" }
   }),
-  // Bridge deck segment: the deck is a roof `height` above the unit base (spawned at deck level - height).
-  // Normal building death; its wreck stays at deck height (no sinking).
-  bridge: civ("bridge", "BRIDGE", 60, 9, 31, 6, {
-    breakApart: true,
-    wreckJitter: 0.22,
-    water: true,
-    noCrater: true,
-    roof: { tex: "struct_bridge", noBody: true }
-  }),
-  // Two-lane steel span on paved roads: wider and tougher than the plank bridge.
-  // Twice the plank bridge's width; length keeps the art's aspect (two truss panels per segment).
-  bridge_steel: civ("bridge_steel", "STEEL BRIDGE", 110, 18, 64, 6, {
-    breakApart: true,
-    wreckJitter: 0.18,
-    water: true,
-    noCrater: true,
-    debris: "mech",
-    roof: { tex: "struct_bridge_steel", noBody: true }
-  }),
-  // Pier deck: roof just above the water, like a bridge segment.
-  pier: civ("pier", "PIER", 50, 8, 47, 5, {
-    breakApart: true,
-    water: true,
-    noCrater: true,
-    roof: { tex: "struct_pier", noBody: true }
-  }),
-  power_station: civ("power_station", "POWER STATION", 90, 22, 40, 28, { deathFx: "sparks", debris: "mech" }),
-  silo: civ("silo", "GRAIN SILOS", 50, 24, 44, 70, { debris: "mech" }),
-  silo_single: civ("silo_single", "GRAIN SILO", 36, 22, 22, 70, { debris: "mech" }),
-  oil_rig: civ("oil_rig", "OIL RIG", 150, 88, 118, 90, { ...OFFSHORE, deathFx: "inferno", debris: "mech" }),
-  sea_platform: civ("sea_platform", "HELI PLATFORM", 220, 42, 48, 40, { ...OFFSHORE, debris: "mech" }),
-  military_helipad: civ("military_helipad", "HELIPAD", 160, 31, 31, 3, { ...MILITARY, debris: "mech" }),
-  military_platform: civ("military_platform", "HELI PLATFORM", 220, 42, 48, 40, { ...OFFSHORE, ...MILITARY, debris: "mech" }),
-  dock_building: civ("dock_building", "DOCK HOUSE", 50, 30, 50, 26, OFFSHORE),
-  fishing_boat: civ("fishing_boat", "FISHING BOAT", 24, 10, 32, 14, { ...WET, building: false, deathFx: undefined, debris: "mech" }),
-  yacht: civ("yacht", "YACHT", 24, 10, 36, 12, { ...WET, building: false, deathFx: undefined, debris: "mech" }),
+  // Military site buildings (settlement art; hostile).
+  hangar: building("hangar", "HANGAR", 280, 44, 70, 34, MILITARY),
+  control_tower: building("control_tower", "CONTROL TOWER", 200, 21, 21, 60, MILITARY),
+  // Base heli platform: same art as the settlement platform; land or sea by where the base lands.
+  military_heli_platform: building("heli_platform", "HELI PLATFORM", 220, 42, 48, 40, { ...MILITARY, debris: "mech" }),
+  military_heli_platform_sea: building("heli_platform", "HELI PLATFORM", 220, 42, 48, 40, { ...OFFSHORE, ...MILITARY, debris: "mech" }),
   drone: {
     label: "DRONE",
     health: 24,
@@ -804,7 +637,11 @@ export const UNIT_SPECS: Record<UnitKind, UnitSpec> = {
       scale: 1.25
     }))
   }
-};
+} satisfies Partial<Record<UnitKind, UnitSpec>>;
+
+/** Every unit spec: the enemy roster plus the civilian settlement roster (same spec shape). */
+export const UNIT_SPECS: Record<UnitKind, UnitSpec> = { ...ENEMY_UNITS, ...SETTLEMENT_UNITS };
+
 
 export const TROOP_WEIGHTS: [UnitKind, number][] = [
   ["soldier", 40],

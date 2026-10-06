@@ -172,8 +172,9 @@ export function breakApart(
 }
 
 /** Bake break variants for every unit whose spec has `breakApart` (skips wrecks not loaded yet). */
-export function bakeHulkBreakVariants(textures: Phaser.Textures.TextureManager): void {
+export function bakeHulkBreakVariants(textures: Phaser.Textures.TextureManager): string[] {
   const n = Math.max(1, Math.round(hulkBreakParams.variants));
+  const baked: string[] = [];
   for (const sp of Object.values(UNIT_SPECS)) {
     if (!sp.breakApart || !textures.exists(sp.hulk)) continue;
     const img = textures.get(sp.hulk).getSourceImage() as HTMLCanvasElement;
@@ -181,10 +182,12 @@ export function bakeHulkBreakVariants(textures: Phaser.Textures.TextureManager):
       const key = breakVariantKey(sp.hulk, i);
       if (textures.exists(key)) textures.remove(key);
       textures.addCanvas(key, breakApart(img, i * 7919 + sp.hulk.length));
+      baked.push(key);
     }
     // Drop stale variants left from a larger count.
     for (let i = n + 1; textures.exists(breakVariantKey(sp.hulk, i)); i++) textures.remove(breakVariantKey(sp.hulk, i));
   }
+  return baked;
 }
 
 /** Variant keys available for a hulk (only those baked). */

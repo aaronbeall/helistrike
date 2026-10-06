@@ -1,6 +1,6 @@
 import { heightOf, radius, playerLoadoutFromSockets, type Unit, type Debris, type Shot, type PlayerWpnSpec } from "../sim/combat";
 import { makeSettlementUnits, makeUnit, spawnCrewFor } from "../sim/units";
-import { stampDecor, GroundMarks } from "./mission/fx/groundMarks";
+import { stampDoodads, GroundMarks } from "./mission/fx/groundMarks";
 import { Ripples } from "./mission/fx/ripples";
 import Phaser from "phaser";
 import { FieldBars } from "./mission/hud/fieldBars";
@@ -292,7 +292,7 @@ export class MissionScene extends Phaser.Scene {
     ensureEdgeLightPipeline(this.game);
     // Sunk wrecks take on this theme's water colour.
     setSinkWater(this.textures, waterColor(themeOf(this.world.theme)));
-    stampDecor(this.world, this.textures);
+    stampDoodads(this.world, this.textures);
     if (this.textures.exists("map_terrain")) this.textures.remove("map_terrain");
     this.textures.addCanvas("map_terrain", this.world.canvas);
     registerArt("map_terrain", "generated");

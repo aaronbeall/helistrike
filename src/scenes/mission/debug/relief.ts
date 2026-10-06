@@ -5,13 +5,13 @@ import { Layer } from "../../../render/depth";
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "../../../worldgen/brushes";
 import type { MissionScene } from "../../missionScene";
 
-export function stampDecorRect(world: WorldData, textures: Phaser.Textures.TextureManager, g: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number): void {
+export function stampDoodadsRect(world: WorldData, textures: Phaser.Textures.TextureManager, g: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number): void {
   const wx0 = x0 * SCALE;
   const wy0 = y0 * SCALE;
   const wx1 = (x1 + 1) * SCALE;
   const wy1 = (y1 + 1) * SCALE;
   g.imageSmoothingEnabled = true;
-  for (const dec of world.decor) {
+  for (const dec of world.doodads) {
     const pad = dec.size * SCALE * 0.5;
     if (dec.x < wx0 - pad || dec.x > wx1 + pad || dec.y < wy0 - pad || dec.y > wy1 + pad) continue;
     const skin = resolveSkin(textures, doodadTex(dec.kind), camoForBiome(sampleBiome(world, dec.x, dec.y)));
@@ -28,7 +28,7 @@ export function stampDecorRect(world: WorldData, textures: Phaser.Textures.Textu
   g.globalAlpha = 1;
 }
 
-/** Debug terrain relief editor (B): brush painting onto the height map + decor. */
+/** Debug terrain relief editor (B): brush painting onto the height map + doodads. */
 export class ReliefEditor {
   open = false;
   brush = 0;
@@ -307,7 +307,7 @@ export class ReliefEditor {
     this.dirty = null;
     rebuildWorldPatch(this.s.world, d.x0, d.y0, d.x1, d.y1, this.s.biomeTiles, (g, x0, y0, x1, y1) => {
       paintRoadsRect(this.s.world, g, x0, y0, x1, y1);
-      stampDecorRect(this.s.world, this.s.textures, g, x0, y0, x1, y1);
+      stampDoodadsRect(this.s.world, this.s.textures, g, x0, y0, x1, y1);
     });
     paintHeightMapRect(this.s.heightMapCanvas, this.s.world.height, d.x0, d.y0, d.x1, d.y1, this.s.world.roads);
     (this.s.textures.get("map_terrain") as Phaser.Textures.CanvasTexture).refresh();

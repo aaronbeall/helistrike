@@ -116,10 +116,10 @@ function thermalWreckTiming(kind: ThermalWreckKind, scaleX: number, scaleY: numb
   return { hold: 0.35, fadeDur: 6 + Math.min(7, span * 2.4) };
 }
 
-export function stampDecor(world: WorldData, textures: Phaser.Textures.TextureManager): void {
+export function stampDoodads(world: WorldData, textures: Phaser.Textures.TextureManager): void {
   const g = world.canvas.getContext("2d", { willReadFrequently: true })!;
   g.imageSmoothingEnabled = true;
-  for (const d of world.decor) {
+  for (const d of world.doodads) {
     const tex = doodadTex(d.kind);
     const skin = resolveSkin(textures, tex, camoForBiome(sampleBiome(world, d.x, d.y)));
     if (!textures.exists(skin)) continue;
@@ -146,7 +146,7 @@ function emberGlowFade(g: EmberGlow): number {
   return Math.max(0, 1 - (g.age - g.hold) / g.fadeDur);
 }
 
-/** Ground marks: wreck/decor stamps on the decal layer, craters, embers, thermal wreck marks, scorch / blood / tracks. */
+/** Ground marks: wreck/doodad stamps on the decal layer, craters, embers, thermal wreck marks, scorch / blood / tracks. */
 export class GroundMarks {
   wreckLayer!: Phaser.GameObjects.RenderTexture;
   stampBrush!: Phaser.GameObjects.Image;
@@ -391,14 +391,12 @@ export class GroundMarks {
     opts?: {
       hold?: number;
       fade?: number;
-      /** How many single ember particles to scatter (default 1 pattern stamp). */
+      /** How many single ember particles to scatter (default 1). */
       particles?: number;
     }
   ): void {
     if (isWater(this.s.world, x, y)) return;
-    const particleKey = this.s.textures.exists("fx_ember_particle")
-      ? "fx_ember_particle"
-      : "fx_ember";
+    const particleKey = "fx_ember_particle";
     if (!this.s.textures.exists(particleKey)) return;
     const n = Math.max(1, opts?.particles ?? 1);
     for (let p = 0; p < n; p++) {

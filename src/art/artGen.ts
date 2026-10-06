@@ -701,12 +701,12 @@ registerArtGen({
 
 /** Wrecks offered for preview (any loaded texture works). */
 const HULK_BREAK_SOURCES = [
-  "struct_bridge_hulk",
-  "struct_pier_hulk",
-  "struct_house_hulk",
-  "struct_warehouse_hulk",
-  "struct_hangar_hulk",
-  "struct_dock_shed_hulk",
+  "building_bridge_hulk",
+  "building_pier_hulk",
+  "building_house_hulk",
+  "building_warehouse_hulk",
+  "building_hangar_hulk",
+  "building_dock_shed_hulk",
   "building_barn_hulk",
   "enemy_tank_hulk",
   "enemy_boat_hulk",

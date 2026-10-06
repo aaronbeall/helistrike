@@ -24,15 +24,13 @@ export type StructureKind =
   | "silo"
   | "silo_single"
   | "oil_rig"
-  | "sea_platform"
-  | "military_helipad"
-  | "military_platform"
+  | "heli_platform"
   | "dock_building"
   | "fishing_boat"
   | "yacht";
 export type SettlementKind = "town" | "port" | "airfield" | "dam" | "farm" | "oil_field" | "power_station" | "powerline" | "bridge";
 
-/** Structures that spawn as destructible (neutral) units instead of being painted into the terrain. */
+/** Structures that spawn as destructible units (buildings + civilian boats); the rest are terrain decor prints. */
 export const UNIT_STRUCTURES = [
   "house",
   "warehouse",
@@ -47,7 +45,7 @@ export const UNIT_STRUCTURES = [
   "silo",
   "silo_single",
   "oil_rig",
-  "sea_platform",
+  "heli_platform",
   "dock_building",
   "fishing_boat",
   "yacht",
@@ -123,6 +121,11 @@ const RUNWAY_HALF_W = 6;
 const TOWN_RADIUS = 70;
 const TOWN_GRID = 30;
 const HELIPAD = 20;
+const PLAZA = 16;
+/** Dam abutments added past the ravine span (texels). */
+const DAM_ABUTMENTS = 16;
+/** A middling ravine span (texels), for previews; real dams fit their ravine. */
+const DAM_TYPICAL_SPAN = 30;
 const FARM_RADIUS = 62;
 /** Field size (texels, long × short) and gap between fields. */
 const FIELD_L = 30;
@@ -131,6 +134,17 @@ const FIELD_GAP = 3;
 /** Pylon spacing along a power line (texels). */
 const PYLON_STEP = 58;
 const FIELD_KINDS = ["field_wheat", "field_green", "field_plowed"] as const;
+
+/** Typical long side (texels) of each terrain decor print, for previews (sprite rig). */
+export const DECOR_TYPICAL_LEN: Record<Exclude<StructureKind, UnitStructureKind>, number> = {
+  plaza: PLAZA,
+  runway: RUNWAY_HALF_LEN * 2,
+  dam: DAM_TYPICAL_SPAN + DAM_ABUTMENTS,
+  field_wheat: FIELD_L,
+  field_green: FIELD_L,
+  field_plowed: FIELD_L,
+  helipad: HELIPAD,
+};
 const PIER_LEN = 30;
 const KEEP_CLEAR = 120;
 
@@ -411,7 +425,7 @@ function placeDam(inp: SettlementInput, clear: (x: number, y: number, r: number)
   }
   if (!best) return null;
   const { x, y, a, span } = best;
-  const parts: Structure[] = [part(inp, "dam", x, y, a + Math.PI / 2, 6, span + 16)];
+  const parts: Structure[] = [part(inp, "dam", x, y, a + Math.PI / 2, 6, span + DAM_ABUTMENTS)];
   const ex = x - Math.sin(a) * (span / 2 + 14);
   const ey = y + Math.cos(a) * (span / 2 + 14);
   return { settlement: { kind: "dam", x: ex * inp.scale, y: ey * inp.scale, parts }, zone: { x, y, r: 40 } };
@@ -452,7 +466,7 @@ function placeTown(inp: SettlementInput, clear: (x: number, y: number, r: number
   const c = Math.cos(a);
   const s = Math.sin(a);
   levelRect(inp, x, y, a, 8, 8, 10);
-  const parts: Structure[] = [part(inp, "plaza", x, y, a, 16, 16)];
+  const parts: Structure[] = [part(inp, "plaza", x, y, a, PLAZA, PLAZA)];
   const grid = TOWN_GRID;
   const R = Math.floor(TOWN_RADIUS / grid);
   // Some towns give one cell next to the plaza to a helipad; every town gives an outer cell to its power station.
@@ -577,7 +591,7 @@ function placeOilField(inp: SettlementInput, clear: (x: number, y: number, r: nu
     if (!rig) continue;
     const parts: Structure[] = [rig];
     const pa = a + rng.range(-0.6, 0.6);
-    const pad = building(inp, "sea_platform", x + Math.cos(pa) * 62, y + Math.sin(pa) * 62, a);
+    const pad = building(inp, "heli_platform", x + Math.cos(pa) * 62, y + Math.sin(pa) * 62, a);
     if (pad) parts.push(pad);
     return { settlement: { kind: "oil_field", x: x * inp.scale, y: y * inp.scale, parts }, zone: { x, y, r: 90 } };
   }

@@ -1615,7 +1615,7 @@ export class Destruction {
       f.y + lx * sa + ly * ca,
       f.z
     );
-    const fireProto = f.trailSoft ? this.s.fx.ember : f.linger ? this.s.fx.blastBurn : this.s.fx.burn;
+    const fireProto = f.trailSoft ? this.s.fx.tinyBurn : f.linger ? this.s.fx.lingerBurn : this.s.fx.burn;
     // Same long-lived drifting smoke as unit fires (short-trail smoke is a missile streak, gone in ~0.5s).
     const puffProto = f.linger ? this.s.fx.lingerSmoke : this.s.fx.hurtSmoke;
     const rawSc = this.debrisTrailSize(f);
@@ -1623,7 +1623,7 @@ export class Destruction {
     const sc = f.trailSoft
       ? Phaser.Math.Clamp(rawSc, 1.4, 1.65)
       : Phaser.Math.Clamp(rawSc, 0.35, 2.75);
-    // Soft fire uses ember (tiny base); keep smoke from inheriting the ember boost.
+    // Soft fire uses tinyBurn (tiny base); keep smoke from inheriting its boost.
     const smokeSc = f.trailSoft ? Phaser.Math.Clamp(sc * 0.28, 0.32, 0.48) : sc;
     // No jitter: the trail rides the piece's offset point, so a spinning piece sweeps its flame around.
     const { fire, smoke: puff } = this.s.fx.pair(f.z, f.y, fireProto, puffProto, trailFire, trailSmoke);

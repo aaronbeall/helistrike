@@ -7,12 +7,11 @@ import { pickTroop, type UnitKind } from "../sim/roster";
 import { UNIT_SPECS } from "../catalog/units";
 import { drawRoadStamp } from "../art/artGen";
 import { roadImage } from "../art/roadArt";
-import { structureImage } from "../art/structureArt";
+import { decorImage } from "../art/decorArt";
 import { isGroundPrint, isUnitStructure, placeSettlements, type Settlement, type Structure } from "./settlements";
 
-export const WORLD = 5600;
-export const TEX = 1800;
-export const SCALE = WORLD / TEX;
+import { SCALE, TEX, WORLD } from "./dims";
+export { SCALE, TEX, WORLD } from "./dims";
 export const WRECK_TEX = 4096;
 
 export type Biome = "water" | "river" | "sand" | "grass" | "forest" | "rock" | "peak";
@@ -34,7 +33,7 @@ export interface Spawn {
   hv?: string;
 }
 
-export type DecorKind =
+export type DoodadKind =
   | "tree"
   | "pine"
   | "palm"
@@ -61,12 +60,12 @@ export type DecorKind =
   | "tree_magenta"
   | "bush_magenta";
 
-export function doodadTex(kind: DecorKind): string {
+export function doodadTex(kind: DoodadKind): string {
   return `doodad_${kind}`;
 }
 
-export interface Decor {
-  kind: DecorKind;
+export interface Doodad {
+  kind: DoodadKind;
   x: number;
   y: number;
   size: number;
@@ -109,7 +108,7 @@ export interface WorldData {
   spawns: Spawn[];
   trees: { x: number; y: number }[];
   rocks: { x: number; y: number }[];
-  decor: Decor[];
+  doodads: Doodad[];
   roads: Road[];
   canvas: HTMLCanvasElement;
 }
@@ -136,7 +135,7 @@ export interface WorldGenProfile {
   shape: MapShape;
   /** Domain warp strength (0 = none): twists ridges and coastlines. */
   warp: number;
-  /** Terrain palette + tiles + decor (visual only). */
+  /** Terrain palette + tiles + doodads (visual only). */
   theme: TerrainTheme;
   /** Drainage network density (0 = none): higher shows streams from smaller catchments. */
   riverTarget: number;
@@ -849,14 +848,14 @@ export function generateWorld(
   settlements.push(...placeBridges(roads, height, water));
   // Road sprites stamp on the main-thread canvas (worker has no document canvas).
   // Keep trees / rocks off settlement footprints.
-  const decor = placeDecor(biome, rng, theme).filter(
+  const doodads = placeDoodads(biome, rng, theme).filter(
     (d) => !settlements.some((st) => st.parts.some((p) => Math.hypot(d.x - p.x, d.y - p.y) < Math.max(p.w, p.l) * 0.6 + 6))
   );
-  const trees = decor.filter((d) => d.kind === "tree" || d.kind.startsWith("tree_") || d.kind === "pine" || d.kind === "palm").map((d) => ({ x: d.x, y: d.y }));
-  const rocks = decor.filter((d) => d.kind === "rock" || d.kind === "boulder" || d.kind === "snowrock").map((d) => ({ x: d.x, y: d.y }));
+  const trees = doodads.filter((d) => d.kind === "tree" || d.kind.startsWith("tree_") || d.kind === "pine" || d.kind === "palm").map((d) => ({ x: d.x, y: d.y }));
+  const rocks = doodads.filter((d) => d.kind === "rock" || d.kind === "boulder" || d.kind === "snowrock").map((d) => ({ x: d.x, y: d.y }));
 
   onProgress?.(0.97, "laydown");
-  return { seed, missionId: profile.id, theme: theme.id, height, water, biome, settlements, spawnX, spawnY, hv, spawns, trees, rocks, decor, roads, terrain };
+  return { seed, missionId: profile.id, theme: theme.id, height, water, biome, settlements, spawnX, spawnY, hv, spawns, trees, rocks, doodads, roads, terrain };
 }
 
 export function imageDataToCanvas(img: ImageData): HTMLCanvasElement {
@@ -2169,7 +2168,7 @@ function pickBiomeTexel(biome: Uint8Array, rng: Rng, id: number): { tx: number; 
   return null;
 }
 
-/** Spatial hash over placed decor (texel space) so clumps keep a little room from each other. */
+/** Spatial hash over placed doodads (texel space) so clumps keep a little room from each other. */
 class DecorSpacing {
   private cells = new Map<number, { x: number; y: number }[]>();
   constructor(private readonly cell: number) {}
@@ -2197,24 +2196,24 @@ class DecorSpacing {
   }
 }
 
-/** Decor clump grown by accretion: each item lands beside a random earlier member, never too close to any decor. */
+/** Doodad clump grown by accretion: each item lands beside a random earlier member, never too close to another doodad. */
 function pushGroup(
-  out: Decor[],
+  out: Doodad[],
   biome: Uint8Array,
   rng: Rng,
   id: number,
-  kinds: DecorKind[],
+  kinds: DoodadKind[],
   count: number,
   spacing: number,
   sizeMin: number,
   sizeMax: number,
   at: { tx: number; ty: number } | undefined,
-  swap: ThemeSpec["decor"] | undefined,
+  swap: ThemeSpec["doodads"] | undefined,
   room: DecorSpacing
 ): void {
   const c = at ?? pickBiomeTexel(biome, rng, id);
   if (!c) return;
-  const minD = spacing * DECOR_MIN_GAP;
+  const minD = spacing * DOODAD_MIN_GAP;
   const pts: { x: number; y: number }[] = [];
   for (let tries = 0; pts.length < count && tries < count * 14; tries++) {
     let x = c.tx;
@@ -2244,31 +2243,31 @@ function pushGroup(
   }
 }
 
-/** Closest two decor may sit, as a fraction of their clump spacing (a little overlap is fine). */
-const DECOR_MIN_GAP = 0.65;
+/** Closest two doodads may sit, as a fraction of their clump spacing (a little overlap is fine). */
+const DOODAD_MIN_GAP = 0.65;
 
-function placeDecor(biome: Uint8Array, rng: Rng, theme: ThemeSpec): Decor[] {
-  const out: Decor[] = [];
+function placeDoodads(biome: Uint8Array, rng: Rng, theme: ThemeSpec): Doodad[] {
+  const out: Doodad[] = [];
   const u = TEX / 1400;
   const room = new DecorSpacing(8 * u);
   for (let i = 0; i < 52; i++)
-    pushGroup(out, biome, rng, BIOME_ID.forest, ["tree", "tree", "pine", "bush"], 6 + rng.int(0, 5), 7 * u, 5.5 * u, 13 * u, undefined, theme.decor, room);
+    pushGroup(out, biome, rng, BIOME_ID.forest, ["tree", "tree", "pine", "bush"], 6 + rng.int(0, 5), 7 * u, 5.5 * u, 13 * u, undefined, theme.doodads, room);
   for (let i = 0; i < 22; i++)
-    pushGroup(out, biome, rng, BIOME_ID.grass, ["tree", "bush", "shrub"], 4 + rng.int(0, 4), 9 * u, 4.5 * u, 10 * u, undefined, theme.decor, room);
+    pushGroup(out, biome, rng, BIOME_ID.grass, ["tree", "bush", "shrub"], 4 + rng.int(0, 4), 9 * u, 4.5 * u, 10 * u, undefined, theme.doodads, room);
   for (let i = 0; i < 18; i++)
-    pushGroup(out, biome, rng, BIOME_ID.grass, ["shrub", "bush", "rock"], 5 + rng.int(0, 3), 6 * u, 3.5 * u, 7 * u, undefined, theme.decor, room);
+    pushGroup(out, biome, rng, BIOME_ID.grass, ["shrub", "bush", "rock"], 5 + rng.int(0, 3), 6 * u, 3.5 * u, 7 * u, undefined, theme.doodads, room);
   for (let i = 0; i < 24; i++)
-    pushGroup(out, biome, rng, BIOME_ID.sand, ["cactus", "cactus2", "shrub"], 3 + rng.int(0, 4), 8 * u, 4 * u, 9.5 * u, undefined, theme.decor, room);
+    pushGroup(out, biome, rng, BIOME_ID.sand, ["cactus", "cactus2", "shrub"], 3 + rng.int(0, 4), 8 * u, 4 * u, 9.5 * u, undefined, theme.doodads, room);
   for (let i = 0; i < 10; i++)
-    pushGroup(out, biome, rng, BIOME_ID.sand, ["rock", "boulder"], 3 + rng.int(0, 2), 7 * u, 4 * u, 8 * u, undefined, theme.decor, room);
+    pushGroup(out, biome, rng, BIOME_ID.sand, ["rock", "boulder"], 3 + rng.int(0, 2), 7 * u, 4 * u, 8 * u, undefined, theme.doodads, room);
   for (let i = 0; i < 8; i++)
-    pushGroup(out, biome, rng, BIOME_ID.sand, ["palm"], 3 + rng.int(0, 2), 11 * u, 6 * u, 12 * u, undefined, theme.decor, room);
+    pushGroup(out, biome, rng, BIOME_ID.sand, ["palm"], 3 + rng.int(0, 2), 11 * u, 6 * u, 12 * u, undefined, theme.doodads, room);
   for (let i = 0; i < 26; i++)
-    pushGroup(out, biome, rng, BIOME_ID.rock, ["boulder", "rock", "rock"], 3 + rng.int(0, 3), 6 * u, 4.5 * u, 9 * u, undefined, theme.decor, room);
+    pushGroup(out, biome, rng, BIOME_ID.rock, ["boulder", "rock", "rock"], 3 + rng.int(0, 3), 6 * u, 4.5 * u, 9 * u, undefined, theme.doodads, room);
   for (let i = 0; i < 8; i++)
-    pushGroup(out, biome, rng, BIOME_ID.rock, ["pine", "dead"], 3 + rng.int(0, 2), 10 * u, 5 * u, 11 * u, undefined, theme.decor, room);
+    pushGroup(out, biome, rng, BIOME_ID.rock, ["pine", "dead"], 3 + rng.int(0, 2), 10 * u, 5 * u, 11 * u, undefined, theme.doodads, room);
   for (let i = 0; i < 16; i++)
-    pushGroup(out, biome, rng, BIOME_ID.peak, ["snowrock", "boulder"], 3 + rng.int(0, 3), 7 * u, 4 * u, 8.5 * u, undefined, theme.decor, room);
+    pushGroup(out, biome, rng, BIOME_ID.peak, ["snowrock", "boulder"], 3 + rng.int(0, 3), 7 * u, 4 * u, 8.5 * u, undefined, theme.doodads, room);
   for (let i = 0; i < 14; i++) {
     const c = pickBiomeTexel(biome, rng, BIOME_ID.sand);
     if (!c) continue;
@@ -2280,7 +2279,7 @@ function placeDecor(biome: Uint8Array, rng: Rng, theme: ThemeSpec): Decor[] {
       }
     }
     if (!shore) continue;
-    pushGroup(out, biome, rng, BIOME_ID.sand, ["reed", "shrub"], 5 + rng.int(0, 4), 5 * u, 3.2 * u, 6.5 * u, c, theme.decor, room);
+    pushGroup(out, biome, rng, BIOME_ID.sand, ["reed", "shrub"], 5 + rng.int(0, 4), 5 * u, 3.2 * u, 6.5 * u, c, theme.doodads, room);
   }
   return out;
 }
@@ -2981,7 +2980,7 @@ export function paintSettlementsOntoCanvas(canvas: HTMLCanvasElement, settlement
       const y0 = -p.w / SCALE / 2;
       if (ground) {
         // Blend into the land: crop colour over the terrain's own shading, then a lighter pass for the rows.
-        const print = printArt(structureImage(p.kind), p.l / SCALE, p.w / SCALE);
+        const print = printArt(decorImage(p.kind), p.l / SCALE, p.w / SCALE);
         g.globalCompositeOperation = "color";
         g.globalAlpha = PRINT_COLOR_ALPHA;
         g.drawImage(print, x0, y0, p.l / SCALE, p.w / SCALE);
@@ -2992,7 +2991,7 @@ export function paintSettlementsOntoCanvas(canvas: HTMLCanvasElement, settlement
         g.globalAlpha = PRINT_PAINT_ALPHA;
         g.drawImage(print, x0, y0, p.l / SCALE, p.w / SCALE);
       } else {
-        g.drawImage(structureImage(p.kind), x0, y0, p.l / SCALE, p.w / SCALE);
+        g.drawImage(decorImage(p.kind), x0, y0, p.l / SCALE, p.w / SCALE);
       }
       g.restore();
     }
@@ -3506,7 +3505,7 @@ function placeForces(
         break;
       }
     }
-    // Military heli pad by the base: a platform where the spot is water, a pad on land.
+    // Military heli platform by the base, on land or water.
     if (rng.chance(BASE_PAD_CHANCE)) {
       for (let t = 0; t < SPAWN_TRIES; t++) {
         const a = rng.range(0, Math.PI * 2);
@@ -3514,7 +3513,7 @@ function placeForces(
         const px = x + Math.cos(a) * d;
         const py = y + Math.sin(a) * d;
         const b = biome[Math.floor(py / SCALE) * TEX + Math.floor(px / SCALE)];
-        const pk: UnitKind = b === BIOME_ID.water || b === BIOME_ID.river ? "military_platform" : "military_helipad";
+        const pk: UnitKind = b === BIOME_ID.water || b === BIOME_ID.river ? "military_heli_platform_sea" : "military_heli_platform";
         if (!placeable(pk, px, py)) continue;
         spawns.push({ kind: pk, x: px, y: py });
         buildings.push({ x: px, y: py, r: footprintR(pk) });

@@ -2,12 +2,13 @@ import type Phaser from "phaser";
 import { allCrafts, craftOf, craftPivot, EXHAUST_TRAIL_FLAME_HUES, socketGunTex } from "../sim/crafts";
 import { lookupSpriteOrigin, setSpriteOrigin } from "./spriteOrigin";
 import { ROAD_ART, setRoadImage, type RoadArtKind } from "./roadArt";
-import { bakeHulkBreakVariants } from "./hulkBreak";
-import { setStructureImage, STRUCTURE_ART, structureImage, structureTexKey } from "./structureArt";
-import type { StructureKind } from "../worldgen/settlements";
+import { bakeHulkBreakVariants, breakApart } from "./hulkBreak";
+import { DECOR_ART, decorImage, decorTexKey, setDecorImage, type DecorKind } from "./decorArt";
+import { BUILDING_ART, type BuildingArtSpec } from "./buildingArt";
+import { DECOR_TYPICAL_LEN } from "../worldgen/settlements";
+import { SCALE } from "../worldgen/dims";
 import type { RGB } from "../worldgen/theme";
 import { UNIT_SPECS } from "../catalog/units";
-import type { UnitKind } from "../sim/roster";
 
 const SRC = {
   enemyHeli: "sprites/units/enemy_heli.png",
@@ -25,14 +26,11 @@ const SRC = {
   enemyMotoMg: "sprites/units/enemy_moto_mg.png",
   enemyMotoMgHulk: "sprites/units/enemy_moto_mg_hulk.png",
   enemyMotoHulk: "sprites/units/enemy_moto_hulk.png",
-  buildingBunker: "sprites/units/building_bunker.png",
-  buildingBunkerHulk: "sprites/units/building_bunker_hulk.png",
-  buildingStructures: "sprites/units/building_structures.png",
-  buildingStructuresHulk: "sprites/units/building_structures_hulk.png",
-  buildingTowerGuns: "sprites/units/building_tower_guns.png",
-  buildingTowerGunsHulk: "sprites/units/building_tower_guns_hulk.png",
-  buildingRadarDish: "sprites/units/building_radar_dish.png",
-  buildingRadarDishHulk: "sprites/units/building_radar_dish_hulk.png",
+  fxHulkCrater: "sprites/fx/hulk_crater.png",
+  buildingTowerGuns: "sprites/buildings/building_tower_guns.png",
+  buildingTowerGunsHulk: "sprites/buildings/building_tower_guns_hulk.png",
+  buildingRadarDish: "sprites/buildings/building_radar_dish.png",
+  buildingRadarDishHulk: "sprites/buildings/building_radar_dish_hulk.png",
   debrisMech: "sprites/debris/mech.png",
   debrisStruct: "sprites/debris/struct.png",
   debrisOrganic: "sprites/debris/organic.png",
@@ -45,10 +43,8 @@ const SRC = {
  */
 const UNIT_PART_ART: readonly { key: string; size: number; hulk?: boolean }[] = [
   { key: "enemy_boat", size: 92 },
-  { key: "building_tower", size: 78 },
   { key: "enemy_boat_gun", size: 36 },
   { key: "building_tower_gun", size: 52 },
-  { key: "building_radar", size: 220 },
   { key: "enemy_lav_gun", size: 40 },
   { key: "enemy_sam_gun", size: 48 },
   { key: "enemy_ptboat_gun", size: 32 },
@@ -59,10 +55,8 @@ const UNIT_PART_ART: readonly { key: string; size: number; hulk?: boolean }[] = 
   { key: "enemy_heli_heavy_gun", size: 48 },
   { key: "enemy_drone_rotor", size: 14 },
   { key: "enemy_boat_hulk", size: 88, hulk: true },
-  { key: "building_tower_hulk", size: 78, hulk: true },
   { key: "enemy_boat_gun_hulk", size: 36, hulk: true },
   { key: "building_tower_gun_hulk", size: 52, hulk: true },
-  { key: "building_radar_hulk", size: 210, hulk: true },
   { key: "enemy_lav_gun_hulk", size: 40, hulk: true },
   { key: "enemy_sam_gun_hulk", size: 48, hulk: true },
   { key: "enemy_ptboat_gun_hulk", size: 32, hulk: true },
@@ -237,6 +231,10 @@ const FOLIAGE_TINTS: { key: string; from: string; hue: number; sat: number; val:
 
 export const FX_KINDS = ["spark", "flame", "smoke", "muzzle", "exhaust", "dirt", "splash", "zap", "ember"] as const;
 export type FxKind = (typeof FX_KINDS)[number];
+/** Baked sheet key for an FX kind (ember bakes single particles, not a `fx_ember` sheet). */
+export function fxSheetKey(kind: FxKind): string {
+  return kind === "ember" ? "fx_ember_particle" : `fx_${kind}`;
+}
 export const FX_VARIANTS = 4;
 /** Bake cell size per FX sheet (putFxSheet). */
 export const FX_SHEET_SIZE: Record<FxKind, number> = {
@@ -248,10 +246,7 @@ export const FX_SHEET_SIZE: Record<FxKind, number> = {
   dirt: 22,
   splash: 20,
   zap: 96,
-  /**
-   * Source PNGs are single ember particles; bake composes scatter patterns
-   * into `fx_ember` and keeps raw particles on `fx_ember_particle`.
-   */
+  /** Source PNGs are single ember particles (`fx_ember_particle` + blurred `_soft` glow). */
   ember: 48,
 };
 /** Cells from src_blasts 2×2 grid → fx_blast_0..n-1. */
@@ -292,10 +287,7 @@ export function preloadArt(scene: Phaser.Scene): void {
   scene.load.image("src_enemy_moto_mg", SRC.enemyMotoMg);
   scene.load.image("src_enemy_moto_mg_hulk", SRC.enemyMotoMgHulk);
   scene.load.image("src_enemy_moto_hulk", SRC.enemyMotoHulk);
-  scene.load.image("src_building_bunker", SRC.buildingBunker);
-  scene.load.image("src_building_bunker_hulk", SRC.buildingBunkerHulk);
-  scene.load.image("src_building_structures", SRC.buildingStructures);
-  scene.load.image("src_building_structures_hulk", SRC.buildingStructuresHulk);
+  scene.load.image("src_fx_hulk_crater", SRC.fxHulkCrater);
   scene.load.image("src_building_tower_guns", SRC.buildingTowerGuns);
   scene.load.image("src_building_tower_guns_hulk", SRC.buildingTowerGunsHulk);
   scene.load.image("src_building_radar_dish", SRC.buildingRadarDish);
@@ -306,7 +298,7 @@ export function preloadArt(scene: Phaser.Scene): void {
   scene.load.image("src_debris_wheels", SRC.debrisWheels);
   scene.load.image("src_blasts", SRC.blasts);
   for (const art of UNIT_PART_ART) {
-    scene.load.image(`src_${art.key}`, `sprites/units/${art.key}.png`);
+    scene.load.image(`src_${art.key}`, `sprites/${art.key.startsWith("building_") ? "buildings" : "units"}/${art.key}.png`);
   }
   for (const art of CRAFT_ART) {
     scene.load.image(`src_${art.key}`, art.file);
@@ -317,13 +309,16 @@ export function preloadArt(scene: Phaser.Scene): void {
   for (const d of DOODAD_ART) {
     scene.load.image(`src_doodad_${d.key}`, `sprites/doodads/${d.key}.png`);
   }
-  // Settlement structures: only kinds with real art listed load a file; the rest use generated stubs.
-  for (const [kind, spec] of Object.entries(STRUCTURE_ART)) {
-    if (spec.file) scene.load.image(`src_${structureTexKey(kind as StructureKind)}`, spec.file);
-    if (spec.hulk) scene.load.image(`src_${structureTexKey(kind as StructureKind)}_hulk`, spec.hulk);
-    if (spec.base) scene.load.image(`src_${structureTexKey(kind as StructureKind)}_base`, spec.base.file);
-    if (spec.base?.hulk) scene.load.image(`src_${structureTexKey(kind as StructureKind)}_base_hulk`, spec.base.hulk);
+  // Buildings + civilian boats (sheets load once), then terrain decor (stub when a file is missing).
+  for (const [key, art] of Object.entries(BUILDING_ART)) {
+    if (art.file) scene.load.image(`src_${key}`, art.file);
+    if (art.hulk) scene.load.image(`src_${key}_hulk`, art.hulk);
+    if (art.sheet) {
+      scene.load.image(sheetKey(art.sheet.file), art.sheet.file);
+      if (art.sheet.hulk) scene.load.image(sheetKey(art.sheet.hulk), art.sheet.hulk);
+    }
   }
+  for (const [kind, spec] of Object.entries(DECOR_ART)) if (spec.file) scene.load.image(`src_${decorTexKey(kind as DecorKind)}`, spec.file);
   for (const [kind, file] of Object.entries(ROAD_ART)) scene.load.image(`src_road_${kind}`, file);
   for (const kind of FX_KINDS) {
     scene.load.image(`src_fx_${kind}_0`, `sprites/fx/${kind}.png`);
@@ -827,7 +822,8 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   put(textures, "enemy_tank_gun_hulk", hulkTurret);
   setSpriteOrigin("enemy_tank_gun_hulk", cupolaOrigin(hulkTurret));
 
-  put(textures, "building_bunker", fit(keyImage(src(textures, "src_building_bunker"), "magenta"), 128));
+  bakeBuildings(textures);
+  if (textures.exists("src_fx_hulk_crater")) put(textures, "fx_hulk_crater", darkenWreck(fit(keyPixels(src(textures, "src_fx_hulk_crater"), "magenta"), 48)));
 
   for (const art of UNIT_PART_ART) {
     const srcKey = `src_${art.key}`;
@@ -862,12 +858,6 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     ["enemy_troop_mechanic", 18],
     ["enemy_troop_officer", 19],
     ["enemy_troop_soldier", 26],
-  ]);
-  putGrid(textures, "src_building_structures", 2, 2, [
-    ["building_barn", 86],
-    ["building_tent", 64],
-    ["building_fob", 128],
-    ["building_lookout", 70],
   ]);
   putGrid(textures, "src_enemy_air_ship", 2, 2, [
     ["enemy_drone", 20],
@@ -910,12 +900,6 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
       darkenWreck(fit(keyImage(src(textures, "src_enemy_moto_hulk"), "magenta"), 52))
     );
   }
-  putHulkGrid(textures, "src_building_structures_hulk", 2, 2, [
-    ["building_barn_hulk", 86],
-    ["building_tent_hulk", 64],
-    ["building_fob_hulk", 128],
-    ["building_lookout_hulk", 70],
-  ]);
   putHulkGrid(textures, "src_enemy_air_ship_hulk", 2, 2, [
     ["enemy_drone_hulk", 20],
     ["enemy_heli_small_hulk", 62],
@@ -968,10 +952,6 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     put(textures, `doodad_${f.key}`, shiftFoliageHue(copyCanvas(img), f.hue, f.sat, f.val), "generated");
   }
 
-  putHulkGrid(textures, "src_building_bunker_hulk", 2, 1, [
-    ["building_bunker_hulk", 120],
-    ["fx_hulk_crater", 48],
-  ]);
 
   putDebrisSheet(textures, "src_debris_mech", "mech");
   putDebrisSheet(textures, "src_debris_struct", "struct");
@@ -1040,9 +1020,6 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     "enemy_tank_gun_hulk",
     "enemy_tank_hulk",
     "enemy_boat",
-    "building_tower",
-    "building_bunker",
-    "building_radar",
     "enemy_troop_soldier",
     "enemy_pickup",
     "enemy_motorcycle",
@@ -1058,10 +1035,6 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
     "enemy_troop_stinger",
     "enemy_troop_mechanic",
     "enemy_troop_officer",
-    "building_barn",
-    "building_tent",
-    "building_fob",
-    "building_lookout",
     "enemy_drone",
     "enemy_heli_small",
     "enemy_heli_heavy",
@@ -1101,59 +1074,15 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
       put(textures, sock.gunHulk, darkenWreck(copy), "generated");
     }
   }
-  // Settlement structures: real art when loaded (replaces the stub in terrain painting), else the stub; both
-  // registered so they show in the sprite rig.
-  for (const kind of Object.keys(STRUCTURE_ART) as StructureKind[]) {
-    const crop = STRUCTURE_ART[kind].crop;
-    if (crop) {
-      // Variants sliced from another kind's art (e.g. one silo of the pair).
-      const from = `src_${structureTexKey(crop.from)}`;
-      for (const suf of ["", "_hulk"]) {
-        if (!textures.exists(from + suf)) continue;
-        const img = src(textures, from + suf);
-        const c = document.createElement("canvas");
-        const sx = Math.round(img.width * crop.x0);
-        c.width = Math.round(img.width * crop.x1) - sx;
-        c.height = img.height;
-        c.getContext("2d")!.drawImage(img, sx, 0, c.width, c.height, 0, 0, c.width, c.height);
-        textures.addCanvas(`src_${structureTexKey(kind)}${suf}`, c);
-      }
-    }
-    const srcKey = `src_${structureTexKey(kind)}`;
-    if (textures.exists(srcKey)) setStructureImage(kind, src(textures, srcKey));
-    const img = structureImage(kind);
-    const unit = UNIT_SPECS[kind as UnitKind];
-    if (unit?.box) {
-      // Unit-backed: long axis up (rotOff π/2), sized to the footprint box.
-      put(textures, structureTexKey(kind), boxArt(img, unit.box), textures.exists(srcKey) ? "image" : "generated");
-      bakeShadows(textures, structureTexKey(kind));
-      // No authored wreck: darkened copy of the live art.
-      const hulkSrc = textures.exists(`${srcKey}_hulk`) ? src(textures, `${srcKey}_hulk`) : img;
-      put(textures, `${structureTexKey(kind)}_hulk`, darkenWreck(boxArt(hulkSrc, unit.box)));
-      const base = STRUCTURE_ART[kind].base;
-      if (base && textures.exists(`${srcKey}_base`)) {
-        const half = base.size / 2;
-        put(textures, `${structureTexKey(kind)}_base`, boxArt(src(textures, `${srcKey}_base`), { halfW: half, halfL: half }));
-        bakeShadows(textures, `${structureTexKey(kind)}_base`);
-        if (textures.exists(`${srcKey}_base_hulk`)) {
-          put(textures, `${structureTexKey(kind)}_base_hulk`, darkenWreck(boxArt(src(textures, `${srcKey}_base_hulk`), { halfW: half, halfL: half })));
-        }
-      }
-      // Roof part thrown on death: darkened copy of the roof.
-      const roof = unit.roof;
-      if (roof?.hulk && textures.exists(roof.tex) && !textures.exists(roof.hulk)) {
-        put(textures, roof.hulk, darkenWreck(copyCanvas(textures.get(roof.tex).getSourceImage() as HTMLCanvasElement)), "generated");
-      }
-      continue;
-    }
-    const c = document.createElement("canvas");
-    c.width = (img as HTMLImageElement).width;
-    c.height = (img as HTMLImageElement).height;
-    c.getContext("2d")!.drawImage(img, 0, 0);
-    put(textures, structureTexKey(kind), c, textures.exists(srcKey) ? "image" : "generated");
+  // Terrain decor: the terrain paints from `decorImage`; the texture is a sprite-rig preview at typical world size.
+  for (const kind of Object.keys(DECOR_ART) as DecorKind[]) {
+    const srcKey = `src_${decorTexKey(kind)}`;
+    if (textures.exists(srcKey)) setDecorImage(kind, src(textures, srcKey));
+    const img = decorImage(kind) as HTMLImageElement;
+    put(textures, decorTexKey(kind), fit(copyToCanvas(img, img.width, img.height), DECOR_TYPICAL_LEN[kind] * SCALE), textures.exists(srcKey) ? "image" : "generated");
   }
-  // Broken-apart wreck variants (needs the structure hulks above).
-  bakeHulkBreakVariants(textures);
+  // Broken-apart wreck variants (needs the structure hulks above); listed in the sprite rig.
+  for (const key of bakeHulkBreakVariants(textures)) registerArt(key, "generated");
   for (const kind of Object.keys(ROAD_ART) as RoadArtKind[]) {
     if (textures.exists(`src_road_${kind}`)) setRoadImage(kind, src(textures, `src_road_${kind}`));
   }
@@ -1329,7 +1258,7 @@ function putFxSheet(
   }
   if (!cells.length) return;
 
-  // Ember sources are single particles — keep them, and bake scatter patterns.
+  // Ember sources are single particles: crisp sheet + blurred glow sheet (crater ember glows).
   if (kind === "ember") {
     const particleSize = Math.max(10, Math.round(size * 0.28));
     const particles = cells.map((c) => fit(trim(c, 1), particleSize));
@@ -1339,17 +1268,6 @@ function putFxSheet(
       "fx_ember_particle_soft",
       particles.map((p) => softBlurFx(p, 0.42)),
       particleSize,
-      "generated"
-    );
-    const patterns = Array.from({ length: FX_VARIANTS }, (_, i) =>
-      composeEmberPattern(particles, size, 1103 + i * 7919)
-    );
-    putFxSpriteSheet(textures, destKey, patterns, size, "generated");
-    putFxSpriteSheet(
-      textures,
-      `${destKey}_soft`,
-      patterns.map((cell) => softBlurFx(cell, 0.4)),
-      size,
       "generated"
     );
     return;
@@ -1382,60 +1300,6 @@ function putFxSheet(
       "generated"
     );
   }
-}
-
-/** Deterministic mulberry32 from a seed. */
-function emberRand(seed: number): () => number {
-  let s = seed >>> 0;
-  return () => {
-    s = (s + 0x6d2b79f5) >>> 0;
-    let t = s;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-/**
- * Scatter single ember particles into a pattern cell (additive, radial bias).
- * Source art is one coal each — composition is randomized per seed.
- */
-function composeEmberPattern(
-  particles: HTMLCanvasElement[],
-  size: number,
-  seed: number
-): HTMLCanvasElement {
-  const out = document.createElement("canvas");
-  out.width = size;
-  out.height = size;
-  const g = out.getContext("2d", { willReadFrequently: true })!;
-  g.clearRect(0, 0, size, size);
-  g.globalCompositeOperation = "lighter";
-  const rnd = emberRand(seed);
-  const n = 7 + ((rnd() * 8) | 0);
-  const cx = size * 0.5;
-  const cy = size * 0.5;
-  for (let i = 0; i < n; i++) {
-    const p = particles[(rnd() * particles.length) | 0]!;
-    // Radial bias: denser near center, sparse rim.
-    const ang = rnd() * Math.PI * 2;
-    const dist = Math.pow(rnd(), 0.55) * size * 0.42;
-    const x = cx + Math.cos(ang) * dist;
-    const y = cy + Math.sin(ang) * dist;
-    const sc = 0.35 + rnd() * 1.15;
-    const rot = rnd() * Math.PI * 2;
-    const w = p.width * sc;
-    const h = p.height * sc;
-    g.save();
-    g.translate(x, y);
-    g.rotate(rot);
-    g.globalAlpha = 0.55 + rnd() * 0.45;
-    g.drawImage(p, -w * 0.5, -h * 0.5, w, h);
-    g.restore();
-  }
-  g.globalCompositeOperation = "source-over";
-  g.globalAlpha = 1;
-  return out;
 }
 
 /** Keep horizontal U range [u0, u1] of an FX cell (tear tip cut for exhaust cones). */
@@ -2424,7 +2288,8 @@ function keepLargestOpaque(src: HTMLCanvasElement, alphaMin = 12): HTMLCanvasEle
   return src;
 }
 
-function trim(src: HTMLCanvasElement, pad = 4): HTMLCanvasElement {
+/** Bounds of pixels with alpha ≥ 12, padded by `pad` (clamped); the whole canvas when empty. */
+function contentRect(src: HTMLCanvasElement, pad: number): Rect {
   const g = src.getContext("2d", { willReadFrequently: true })!;
   const pix = g.getImageData(0, 0, src.width, src.height);
   const d = pix.data;
@@ -2441,31 +2306,123 @@ function trim(src: HTMLCanvasElement, pad = 4): HTMLCanvasElement {
       if (y > y1) y1 = y;
     }
   }
-  if (x1 < x0) return src;
+  if (x1 < x0) return { x: 0, y: 0, w: src.width, h: src.height };
   x0 = Math.max(0, x0 - pad);
   y0 = Math.max(0, y0 - pad);
   x1 = Math.min(src.width - 1, x1 + pad);
   y1 = Math.min(src.height - 1, y1 + pad);
-  const w = x1 - x0 + 1;
-  const h = y1 - y0 + 1;
-  const c = document.createElement("canvas");
-  c.width = w;
-  c.height = h;
-  c.getContext("2d", { willReadFrequently: true })!.drawImage(src, x0, y0, w, h, 0, 0, w, h);
-  return c;
+  return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+
+function trim(src: HTMLCanvasElement, pad = 4): HTMLCanvasElement {
+  const r = contentRect(src, pad);
+  if (r.w === src.width && r.h === src.height) return src;
+  return cropCanvas(src, r);
 }
 
 /** +X-long structure art → nose-up canvas filling a unit footprint box (1 px = 1 world unit). */
-function boxArt(img: CanvasImageSource, box: { halfW: number; halfL: number }): HTMLCanvasElement {
+type Rect = { x: number; y: number; w: number; h: number };
+
+const sheetKey = (file: string) => `src_sheet_${file}`;
+
+/** Buildings + civilian boats (art/buildingArt): live art scaled to its world length; hulk at the same scale, centered, spill kept. */
+function bakeBuildings(textures: Phaser.Textures.TextureManager): void {
+  const raw = new Map<string, { live: HTMLCanvasElement; hulk?: HTMLCanvasElement }>();
+  const sheets = new Map<string, HTMLCanvasElement[]>();
+  const cells = (file: string, cols: number, rows: number): HTMLCanvasElement[] | undefined => {
+    if (!sheets.has(file) && textures.exists(sheetKey(file))) sheets.set(file, sliceGrid(keyPixels(src(textures, sheetKey(file)), "magenta"), cols, rows));
+    return sheets.get(file);
+  };
+  const read = (key: string, art: BuildingArtSpec): HTMLCanvasElement | undefined => {
+    if (!textures.exists(key)) return undefined;
+    const img = src(textures, key);
+    return art.magenta ? keyPixels(img, "magenta") : copyToCanvas(img, img.width, img.height);
+  };
+  const sources = (key: string, art: BuildingArtSpec): { live: HTMLCanvasElement; hulk?: HTMLCanvasElement } | undefined => {
+    if (art.crop) {
+      const from = raw.get(art.crop.from);
+      if (!from) return undefined;
+      const { x0, x1 } = art.crop;
+      const slice = (c: HTMLCanvasElement) => cropCanvas(c, { x: Math.round(c.width * x0), y: 0, w: Math.round(c.width * (x1 - x0)), h: c.height });
+      return { live: slice(from.live), hulk: from.hulk && slice(from.hulk) };
+    }
+    if (art.sheet) {
+      const { file, hulk, cols, rows, cell } = art.sheet;
+      const live = cells(file, cols, rows)?.[cell];
+      return live && { live, hulk: hulk ? cells(hulk, cols, rows)?.[cell] : undefined };
+    }
+    const live = read(`src_${key}`, art);
+    return live && { live, hulk: read(`src_${key}_hulk`, art) };
+  };
+  for (const [key, art] of Object.entries(BUILDING_ART)) {
+    const r = sources(key, art);
+    if (!r) {
+      if (import.meta.env.DEV) console.warn(`[sprites] no art for ${key}`);
+      continue;
+    }
+    raw.set(key, r);
+    const landscape = !!art.landscape;
+    const R = art.trim ? contentRect(r.live, 4) : { x: 0, y: 0, w: r.live.width, h: r.live.height };
+    const k = (art.len ?? footprintLen(key)) / (landscape ? R.w : Math.max(R.w, R.h));
+    const live = scaleRect(r.live, R, k, landscape);
+    put(textures, key, live);
+    bakeShadows(textures, key);
+    let hulk: HTMLCanvasElement;
+    if (r.hulk && art.hulkFit === "fill") {
+      hulk = scaleRect(r.hulk, { x: 0, y: 0, w: r.hulk.width, h: r.hulk.height }, 1, landscape);
+      hulk = stretchTo(hulk, live.width, live.height);
+    } else if (r.hulk) {
+      // Same center as the live art (an evenly padded canvas keeps it), widened to keep spilled debris.
+      const cx = R.x + R.w / 2 + (r.hulk.width - r.live.width) / 2;
+      const cy = R.y + R.h / 2 + (r.hulk.height - r.live.height) / 2;
+      const b = contentRect(r.hulk, 0);
+      const hx = Math.max(R.w / 2, cx - b.x, b.x + b.w - cx);
+      const hy = Math.max(R.h / 2, cy - b.y, b.y + b.h - cy);
+      hulk = scaleRect(r.hulk, { x: cx - hx, y: cy - hy, w: hx * 2, h: hy * 2 }, k, landscape);
+    } else hulk = breakApart(live, key.length * 7919);
+    put(textures, `${key}_hulk`, darkenWreck(hulk), r.hulk ? "image" : "generated");
+  }
+}
+
+/** Long side (world units) of the footprint of the unit drawn with `key` (body or roof). */
+function footprintLen(key: string): number {
+  const sp = Object.values(UNIT_SPECS).find((u) => u.texture === key || u.roof?.tex === key);
+  if (!sp) throw new Error(`footprintLen: no unit uses ${key}`);
+  return sp.box ? sp.box.halfL * 2 : sp.radius * 2;
+}
+
+/** `r` of `src` scaled by `k`; `landscape` rotates the long (+x) axis up. Out-of-bounds area is transparent. */
+function scaleRect(src: HTMLCanvasElement, r: Rect, k: number, landscape: boolean): HTMLCanvasElement {
+  const w = Math.max(1, Math.round(r.w * k));
+  const h = Math.max(1, Math.round(r.h * k));
   const c = document.createElement("canvas");
-  c.width = Math.round(box.halfW * 2);
-  c.height = Math.round(box.halfL * 2);
+  c.width = landscape ? h : w;
+  c.height = landscape ? w : h;
   const g = c.getContext("2d")!;
   g.imageSmoothingEnabled = true;
   g.imageSmoothingQuality = "high";
   g.translate(c.width / 2, c.height / 2);
-  g.rotate(-Math.PI / 2);
-  g.drawImage(img, -c.height / 2, -c.width / 2, c.height, c.width);
+  if (landscape) g.rotate(-Math.PI / 2);
+  g.drawImage(src, r.x, r.y, r.w, r.h, -w / 2, -h / 2, w, h);
+  return c;
+}
+
+function stretchTo(src: HTMLCanvasElement, w: number, h: number): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const g = c.getContext("2d")!;
+  g.imageSmoothingEnabled = true;
+  g.imageSmoothingQuality = "high";
+  g.drawImage(src, 0, 0, w, h);
+  return c;
+}
+
+function cropCanvas(src: HTMLCanvasElement, r: Rect): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, r.w);
+  c.height = Math.max(1, r.h);
+  c.getContext("2d")!.drawImage(src, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
   return c;
 }
 

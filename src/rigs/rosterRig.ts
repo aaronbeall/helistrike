@@ -128,8 +128,8 @@ export class RosterRig {
   private zoom = 2;
   /** Mount / muzzle / traverse overlays (O). Footprint / radius / height always draw. */
   private showMarks = true;
-  /** Preview wreck textures (hull, guns, rotors, dish, roof) instead of live art. */
-  private showHulks = false;
+  /** Wreck textures (hull, guns, rotors, dish, roof): off, instead of live art, or beside it. */
+  private hulkView: "off" | "on" | "both" = "off";
   /** Assembled (mounted) vs parts laid out separately. */
   private composition: Composition = "assembled";
   /** Index into `partsRollPickIds` for the current unit (pick-mode only). */
@@ -144,6 +144,9 @@ export class RosterRig {
   private board!: Phaser.GameObjects.Graphics;
   private hull!: Phaser.GameObjects.Image;
   private parts: Phaser.GameObjects.Image[] = [];
+  /** Second assembled preview (hulk) for `hulkView` "both". */
+  private hulkHull!: Phaser.GameObjects.Image;
+  private hulkParts: Phaser.GameObjects.Image[] = [];
   private shots: Phaser.GameObjects.Image[] = [];
   private overlay!: Phaser.GameObjects.Graphics;
   private listTxt!: Phaser.GameObjects.Text;
@@ -190,6 +193,17 @@ export class RosterRig {
         .setVisible(false);
       this.parts.push(im);
     }
+    this.hulkHull = scene.add
+      .image(0, 0, "__DEFAULT")
+      .setName("rig_roster_hulk_hull")
+      .setScrollFactor(0)
+      .setDepth(DEPTH + 2)
+      .setVisible(false);
+    for (let i = 0; i < PART_SLOTS; i++) {
+      this.hulkParts.push(
+        scene.add.image(0, 0, "__DEFAULT").setName(`rig_roster_hulk_part_${i}`).setScrollFactor(0).setDepth(DEPTH + 3).setVisible(false)
+      );
+    }
     for (let i = 0; i < SHOT_SLOTS; i++) {
       const im = scene.add
         .image(0, 0, "__DEFAULT")
@@ -235,6 +249,8 @@ export class RosterRig {
       this.board,
       this.hull,
       ...this.parts,
+      this.hulkHull,
+      ...this.hulkParts,
       ...this.shots,
       this.overlay,
       this.listTxt,
@@ -287,7 +303,7 @@ export class RosterRig {
       });
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.U).on("down", () => {
         if (!this.open) return;
-        this.showHulks = !this.showHulks;
+        this.hulkView = this.hulkView === "off" ? "on" : this.hulkView === "on" ? "both" : "off";
         this.refreshPreview();
       });
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.C).on("down", () => {
@@ -429,7 +445,7 @@ export class RosterRig {
     const compositionLabel = this.composition === "assembled" ? "ASSEMBLED" : "UNASSEMBLED";
     const zoomShown = this.zoom;
     this.hintTxt.setText(
-      `ROSTER RIG   ↑ ↓ select   , . page   - + zoom ${fmtZoom(zoomShown)}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   U hulks ${this.showHulks ? "ON" : "OFF"}   C composition ${compositionLabel}${rollHint}${craftHint}`
+      `ROSTER RIG   ↑ ↓ select   , . page   - + zoom ${fmtZoom(zoomShown)}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   U hulks ${this.hulkView.toUpperCase()}   C composition ${compositionLabel}${rollHint}${craftHint}`
     );
 
     const size = this.pageSize();
@@ -457,6 +473,8 @@ export class RosterRig {
       ].join("\n")
     );
 
+    this.hulkHull.setVisible(false);
+    for (const p of this.hulkParts) p.setVisible(false);
     if (ent.cat === "craft") this.layoutCraftPreview(craftOf(ent.kind));
     else if (ent.cat === "remote") this.layoutRemotePreview(remoteSpecOf(ent.kind));
     else this.layoutPreview(ent.kind, specOf(ent.kind));
@@ -717,8 +735,9 @@ export class RosterRig {
   private layoutPreview(kind: UnitKind, sp: UnitSpec): void {
     const w = this.scene.scale.width;
     const h = this.scene.scale.height;
-    // Hulk view: wreck art where it exists, live art otherwise.
-    const pick = (live: string, hulk?: string) => (this.showHulks && hulk && this.scene.textures.exists(hulk) ? hulk : live);
+    // Hulk view: wreck art where it exists, live art otherwise ("both" shows live here, the hulk beside it).
+    let wreck = this.hulkView === "on";
+    const pick = (live: string, hulk?: string) => (wreck && hulk && this.scene.textures.exists(hulk) ? hulk : live);
     const tex = pick(sp.texture, sp.hulk);
     const listRight = LIST_X + LIST_W + 20;
     const gap = 28;
@@ -746,55 +765,59 @@ export class RosterRig {
     const rollGuns = pickId ? gunsForPartsRollOption(kind, pickId) : undefined;
     const guns: PartMount[] = rollGuns ?? sp.guns;
 
-    const parts: PreviewPart[] = [];
-    for (const g of guns) {
-      parts.push({
-        tex: pick(g.tex, g.hulk),
-        origin: g.origin,
-        mount: g.mount,
-        // Limited turrets preview at their arc center (nose-up art, barrel-up guns).
-        rot: g.traverse ? (g.traverse.center * Math.PI) / 180 : 0,
-        scale: g.scale ?? 1,
-        layer: (sp.behavior === "orbit_attack_heli" || sp.behavior === "kite_attack_heli") ? "below" : "above",
-      });
-    }
-    for (const r of sp.rotors) {
-      const spinKey = `${r.tex}_spin`;
-      const rotorKey =
-        r.tex !== "enemy_drone_rotor" && this.scene.textures.exists(spinKey) ? spinKey : r.tex;
-      parts.push({
-        tex: pick(rotorKey, r.hulk),
-        origin: r.origin,
-        mount: r.mount,
-        rot: 0,
-        scale: r.scale ?? 1,
-        layer: "above",
-      });
-    }
-    if (sp.dish) {
-      const d = sp.dish;
-      parts.push({
-        tex: pick(d.tex, d.hulk),
-        origin: d.origin,
-        mount: d.mount,
-        rot: 0,
-        scale: (d.scale ?? 1) * 1.04,
-        layer: "above",
-        squashY: 0.76,
-      });
-    }
-    // Roof: full-footprint overlay drawn over the body (in game it sits `height` up).
-    if (sp.roof) {
-      const roofTex = pick(sp.roof.tex, sp.roof.hulk);
-      parts.push({
-        tex: roofTex,
-        origin: spritePivot(roofTex),
-        mount: spritePivot(tex),
-        rot: 0,
-        scale: 1,
-        layer: "above",
-      });
-    }
+    const buildParts = (): PreviewPart[] => {
+      const parts: PreviewPart[] = [];
+      for (const g of guns) {
+        parts.push({
+          tex: pick(g.tex, g.hulk),
+          origin: g.origin,
+          mount: g.mount,
+          // Limited turrets preview at their arc center (nose-up art, barrel-up guns).
+          rot: g.traverse ? (g.traverse.center * Math.PI) / 180 : 0,
+          scale: g.scale ?? 1,
+          layer: (sp.behavior === "orbit_attack_heli" || sp.behavior === "kite_attack_heli") ? "below" : "above",
+        });
+      }
+      for (const r of sp.rotors) {
+        const spinKey = `${r.tex}_spin`;
+        const rotorKey =
+          r.tex !== "enemy_drone_rotor" && this.scene.textures.exists(spinKey) ? spinKey : r.tex;
+        parts.push({
+          tex: pick(rotorKey, r.hulk),
+          origin: r.origin,
+          mount: r.mount,
+          rot: 0,
+          scale: r.scale ?? 1,
+          layer: "above",
+        });
+      }
+      if (sp.dish) {
+        const d = sp.dish;
+        parts.push({
+          tex: pick(d.tex, d.hulk),
+          origin: d.origin,
+          mount: d.mount,
+          rot: 0,
+          scale: (d.scale ?? 1) * 1.04,
+          layer: "above",
+          squashY: 0.76,
+        });
+      }
+      // Roof: full-footprint overlay drawn over the body (in game it sits `height` up).
+      if (sp.roof) {
+        const roofTex = pick(sp.roof.tex, sp.roof.hulk);
+        parts.push({
+          tex: roofTex,
+          origin: spritePivot(roofTex),
+          mount: spritePivot(tex),
+          rot: 0,
+          scale: 1,
+          layer: "above",
+        });
+      }
+      return parts;
+    };
+    const parts = buildParts();
 
     // One preview per distinct projectile: unit weapon, per-gun weapons, secondary launcher.
     const wpns: WeaponSpec[] = [];
@@ -875,6 +898,23 @@ export class RosterRig {
 
     this.drawPreviewBoard(bx, by, boxW, boxH, pad);
     this.placeMountedParts(parts, pivot, cx, cy, s);
+
+    if (this.hulkView === "both" && sp.hulk && this.scene.textures.exists(sp.hulk)) {
+      wreck = true;
+      const hulkTex = pick(sp.texture, sp.hulk);
+      const hulkPivot = spritePivot(hulkTex);
+      this.hulkHull.setVisible(true).setTexture(hulkTex).setAlpha(sp.roof?.noBody ? 0 : 1).setOrigin(hulkPivot.x, hulkPivot.y).setScale(s).setRotation(0);
+      // Same pixel scale as the live box; a spilled hulk can be bigger.
+      const hw = this.hulkHull.displayWidth;
+      const hh = this.hulkHull.displayHeight;
+      const hx = bx + boxW + pad * 3;
+      const hcx = hx + hw * 0.5;
+      this.hulkHull.setPosition(hcx, cy);
+      this.drawPreviewBoard(hx, cy - hh * 0.5, hw, hh, pad, false);
+      this.placeMountedParts(buildParts(), hulkPivot, hcx, cy, s, this.hulkHull, this.hulkParts);
+      this.statsXY = { x: Math.min(hx + hw + gap, w - STATS_W - 16), y: this.statsXY.y };
+      this.applyStatsPanel(tex);
+    }
 
     this.placeShotPreviews(wpns, bx, by + boxH + pad + 22);
 
@@ -1089,18 +1129,20 @@ export class RosterRig {
     pivot: { x: number; y: number },
     cx: number,
     cy: number,
-    s: number
+    s: number,
+    hull = this.hull,
+    pool = this.parts
   ): void {
     let pi = 0;
     for (const p of parts) {
-      const part = this.parts[pi++];
+      const part = pool[pi++];
       if (!part) break;
       if (!this.scene.textures.exists(p.tex)) {
         part.setVisible(false);
         continue;
       }
-      const mx = (p.mount.x - pivot.x) * this.hull.displayWidth;
-      const my = (p.mount.y - pivot.y) * this.hull.displayHeight;
+      const mx = (p.mount.x - pivot.x) * hull.displayWidth;
+      const my = (p.mount.y - pivot.y) * hull.displayHeight;
       part
         .setVisible(true)
         .setTexture(p.tex)
@@ -1113,10 +1155,10 @@ export class RosterRig {
             : craftCompositePartScale(p, part.width, s)
         );
       if (p.squashY != null) part.setScale(part.scaleX, part.scaleY * p.squashY);
-      if (p.layer === "below") this.root.moveBelow(part, this.hull);
-      else this.root.moveAbove(part, this.hull);
+      if (p.layer === "below") this.root.moveBelow(part, hull);
+      else this.root.moveAbove(part, hull);
     }
-    for (; pi < this.parts.length; pi++) this.parts[pi]!.setVisible(false);
+    for (; pi < pool.length; pi++) pool[pi]!.setVisible(false);
   }
 
   private placeShotPreviews(wpns: WeaponSpec[], shotX0: number, shotY: number): void {
