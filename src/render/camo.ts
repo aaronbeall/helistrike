@@ -72,82 +72,97 @@ function hexRgb(hex: string): [number, number, number] {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
-function drawDigitalCamo(size = 128): HTMLCanvasElement {
-  const rand = rng(DIGITAL.seed);
+/** Tileable value noise: lattice `period` cells across the tile, smooth (quintic) interpolation, 0..1. */
+function tileNoise(seed: number, period: number): (u: number, v: number) => number {
+  const rand = rng(seed);
+  const lattice = Float32Array.from({ length: period * period }, () => rand());
+  const at = (x: number, y: number) => lattice[(((y % period) + period) % period) * period + (((x % period) + period) % period)]!;
+  const fade = (t: number) => t * t * t * (t * (t * 6 - 15) + 10);
+  return (u, v) => {
+    const x = u * period;
+    const y = v * period;
+    const x0 = Math.floor(x);
+    const y0 = Math.floor(y);
+    const fx = fade(x - x0);
+    const fy = fade(y - y0);
+    const a = at(x0, y0) + (at(x0 + 1, y0) - at(x0, y0)) * fx;
+    const b = at(x0, y0 + 1) + (at(x0 + 1, y0 + 1) - at(x0, y0 + 1)) * fx;
+    return a + (b - a) * fy;
+  };
+}
+
+/** Tileable fractal noise (octaves double the lattice period), roughly 0..1. */
+function tileFbm(seed: number, period: number, octaves: number): (u: number, v: number) => number {
+  const layers = Array.from({ length: octaves }, (_, o) => tileNoise(seed + o * 7919, period << o));
+  return (u, v) => {
+    let sum = 0;
+    let amp = 1;
+    let norm = 0;
+    for (const n of layers) {
+      sum += n(u, v) * amp;
+      norm += amp;
+      amp *= 0.5;
+    }
+    return sum / norm;
+  };
+}
+
+/** Patch coverage of each accent color (fraction of the tile), back to front. */
+const CAMO_COVER = [0.42, 0.34, 0.22];
+
+/** Layered camo: per accent color, a warped fractal noise field thresholded to its coverage; `block` > 1 = digital cells. */
+function drawPatchCamo(seed: number, colors: string[], size: number, block: number, grain: number): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = size;
   c.height = size;
   const g = c.getContext("2d", { willReadFrequently: true })!;
-  const [br, bg, bb] = hexRgb(DIGITAL.colors[0]!);
-  g.fillStyle = `rgb(${br},${bg},${bb})`;
-  g.fillRect(0, 0, size, size);
-  const spots = DIGITAL.colors.slice(1);
-  for (let i = 0; i < 72; i++) {
-    const [r, gv, b] = hexRgb(spots[i % spots.length]!);
-    const cell = 4 + Math.floor(rand() * 3) * 4;
-    const w = cell * (1 + Math.floor(rand() * 3));
-    const h = cell * (1 + Math.floor(rand() * 2));
-    const x = Math.floor(rand() * size / cell) * cell;
-    const y = Math.floor(rand() * size / cell) * cell;
-    g.fillStyle = `rgba(${r},${gv},${b},${0.78 + rand() * 0.22})`;
-    for (const ox of [-size, 0, size]) {
-      for (const oy of [-size, 0, size]) {
-        g.fillRect(x + ox, y + oy, w, h);
-      }
+  const img = g.createImageData(size, size);
+  const d = img.data;
+  const warpX = tileFbm(seed ^ 0x51, 3, 3);
+  const warpY = tileFbm(seed ^ 0xa7, 3, 3);
+  const accents = colors.slice(1).map((hex, i) => ({ rgb: hexRgb(hex), field: tileFbm(seed + 101 * (i + 1), 4, 4) }));
+  // Threshold per field from its own value distribution, so each color covers its share.
+  const sample = (u: number, v: number) => [u + (warpX(u, v) - 0.5) * 0.32, v + (warpY(u, v) - 0.5) * 0.32] as const;
+  const cuts = accents.map((acc, i) => {
+    const vals: number[] = [];
+    for (let y = 0; y < 48; y++) for (let x = 0; x < 48; x++) {
+      const [u, v] = sample(x / 48, y / 48);
+      vals.push(acc.field(u, v));
+    }
+    vals.sort((p, q) => p - q);
+    return vals[Math.floor(vals.length * (1 - (CAMO_COVER[i] ?? 0.2)))]!;
+  });
+  const base = hexRgb(colors[0]!);
+  const noise = rng(seed ^ 0x9e3779b9);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const bx = Math.floor(x / block) * block + block / 2;
+      const by = Math.floor(y / block) * block + block / 2;
+      const [u, v] = sample(bx / size, by / size);
+      let rgb = base;
+      accents.forEach((acc, i) => {
+        if (acc.field(u, v) > cuts[i]!) rgb = acc.rgb;
+      });
+      const j = (noise() - 0.5) * grain;
+      const i = (y * size + x) * 4;
+      d[i] = Math.max(0, Math.min(255, rgb[0] + j));
+      d[i + 1] = Math.max(0, Math.min(255, rgb[1] + j));
+      d[i + 2] = Math.max(0, Math.min(255, rgb[2] + j));
+      d[i + 3] = 255;
     }
   }
-  const pix = g.getImageData(0, 0, size, size);
-  const d = pix.data;
-  const n2 = rng(DIGITAL.seed ^ 0x9e3779b9);
-  for (let i = 0; i < d.length; i += 4) {
-    const j = (n2() - 0.5) * 10;
-    d[i] = Math.max(0, Math.min(255, d[i]! + j));
-    d[i + 1] = Math.max(0, Math.min(255, d[i + 1]! + j));
-    d[i + 2] = Math.max(0, Math.min(255, d[i + 2]! + j));
-  }
-  g.putImageData(pix, 0, 0);
+  g.putImageData(img, 0, 0);
   return c;
+}
+
+function drawDigitalCamo(size = 128): HTMLCanvasElement {
+  return drawPatchCamo(DIGITAL.seed, DIGITAL.colors, size, 4, 10);
 }
 
 function drawCamo(kind: CamoKind, size = 128): HTMLCanvasElement {
   if (kind === "digital") return drawDigitalCamo(size);
   const { seed, colors } = PATTERNS[kind];
-  const rand = rng(seed);
-  const c = document.createElement("canvas");
-  c.width = size;
-  c.height = size;
-  const g = c.getContext("2d", { willReadFrequently: true })!;
-  const [br, bg, bb] = hexRgb(colors[0]!);
-  g.fillStyle = `rgb(${br},${bg},${bb})`;
-  g.fillRect(0, 0, size, size);
-  const spots = colors.slice(1);
-  for (let i = 0; i < 48; i++) {
-    const [r, gv, b] = hexRgb(spots[i % spots.length]!);
-    const cx = rand() * size;
-    const cy = rand() * size;
-    const rx = 7 + rand() * 22;
-    const ry = 6 + rand() * 18;
-    const rot = rand() * Math.PI;
-    g.fillStyle = `rgba(${r},${gv},${b},${0.72 + rand() * 0.28})`;
-    for (const ox of [-size, 0, size]) {
-      for (const oy of [-size, 0, size]) {
-        g.beginPath();
-        g.ellipse(cx + ox, cy + oy, rx, ry, rot, 0, Math.PI * 2);
-        g.fill();
-      }
-    }
-  }
-  const pix = g.getImageData(0, 0, size, size);
-  const d = pix.data;
-  const n2 = rng(seed ^ 0x9e3779b9);
-  for (let i = 0; i < d.length; i += 4) {
-    const j = (n2() - 0.5) * 14;
-    d[i] = Math.max(0, Math.min(255, d[i]! + j));
-    d[i + 1] = Math.max(0, Math.min(255, d[i + 1]! + j));
-    d[i + 2] = Math.max(0, Math.min(255, d[i + 2]! + j));
-  }
-  g.putImageData(pix, 0, 0);
-  return c;
+  return drawPatchCamo(seed, colors, size, 1, 14);
 }
 
 function hash(s: string): number {
