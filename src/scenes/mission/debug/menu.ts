@@ -284,7 +284,7 @@ export class DebugMenu {
                   : item.action === "spatial"
                     ? this.s.spatialOverlay.on
                   : item.action === "lod"
-                    ? this.s.unitSim.lodOn
+                    ? this.s.unitLod.on
                     : item.action === "sideView"
                     ? this.s.sideView.on
                     : item.action === "terrainMesh"
@@ -326,7 +326,7 @@ export class DebugMenu {
     else if (item.action === "los") this.s.lineOfSight.setDebug(!this.s.lineOfSight.debugOn);
     else if (item.action === "blast") this.s.overlays.setBlast(!this.s.overlays.blastOn);
     else if (item.action === "spatial") this.s.spatialOverlay.setOn(!this.s.spatialOverlay.on);
-    else if (item.action === "lod") this.s.unitSim.setLod(!this.s.unitSim.lodOn);
+    else if (item.action === "lod") this.s.unitLod.setOn(!this.s.unitLod.on);
     else if (item.action === "sideView") this.s.sideView.setOn(!this.s.sideView.on);
     else if (item.action === "terrainMesh") this.s.toggleTerrainMesh();
     else if (item.action === "fx") this.s.postFx.toggle();

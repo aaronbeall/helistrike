@@ -1,11 +1,11 @@
 import { craftCameraScale, craftControlScheme, craftOf, craftCloudParallax } from "../../../sim/crafts";
-import { camZoomAt, worldToScreen, setCamera25DFocus, screenToWorldAtZ, groundZ, WORLD, CamTune } from "../../../worldgen/world";
+import { camZoomAt, worldToScreen, setCamera25DFocus, screenToWorldAtZ, groundZ, WORLD, CamTune, Camera25D } from "../../../worldgen/world";
 import { PLAYER_WPNS, type PlayerWpnSpec, type Shot } from "../../../sim/combat";
 import Phaser from "phaser";
 
 import { Layer, worldDepth } from "../../../render/depth";
 import { range } from "../../../util/rng";
-import { MAP_AIR_SOFT, craftCameraEdgeLocked } from "../../../sim/craft";
+import { MAP_AIR_SOFT, MAX_AGL, craftCameraEdgeLocked } from "../../../sim/craft";
 import { type ThermalPalette } from "../../../render/thermal";
 import type { MissionScene } from "../../missionScene";
 import { missionOf } from "../../../sim/mission";
@@ -35,6 +35,11 @@ export function craftPlayZoom(
     : Phaser.Math.Clamp(0.1 * speedClass, 0.08, 0.16);
   return base * (1 - spdN * maxPullback);
 }
+
+/** Pad (projected px) around the view that unit sprites still draw in; far-unit LOD treats the same padded view as on screen. */
+export const VIEW_PAD = 220;
+/** Scratch point for `viewGroundRadius`. */
+const VIEW_PT = { x: 0, y: 0, z: 0 };
 
 /** Camera: play zoom + projection pose, look cam, impact linger, screen shake, theater/map view + overlay + labels, theater sky + peaks, plane cloud parallax. */
 export class MissionCamera {
@@ -101,6 +106,19 @@ export class MissionCamera {
     this.povCamLookX = 0;
     this.povCamLookY = 0;
     this.playLastFrame = false;
+  }
+
+  /** World distance from the camera focus to the farthest corner of the view padded by `pad`, at ground and at `MAX_AGL`. */
+  viewGroundRadius(pad: number): number {
+    const v = this.s.cameras.main.worldView;
+    let r = 0;
+    for (let k = 0; k < 8; k++) {
+      const p = screenToWorldAtZ(k & 1 ? v.right + pad : v.x - pad, k & 2 ? v.bottom + pad : v.y - pad, k & 4 ? MAX_AGL : 0, VIEW_PT);
+      const d = Math.hypot(p.x - Camera25D.focusX, p.y - Camera25D.focusY);
+      if (!Number.isFinite(d)) return Infinity;
+      if (d > r) r = d;
+    }
+    return r;
   }
 
   projectedInView(x: number, y: number, pad: number): boolean {

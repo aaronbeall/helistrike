@@ -2,13 +2,13 @@ import { resolveSkin } from "../../../render/camo";
 import { containOnMap, mapEdgeSteer, mapEdgeWeight, pickBoatWaypoint, steerUnitAngle, stepOnTerrain, terrainSteer } from "../../../sim/navigation";
 import { rollSoldierMood } from "../../../sim/units";
 import { troopSoftTurret } from "../../../sim/roster";
-import { enemyWeaponIsAa, remoteTargetable } from "../../../sim/targetRules";
+import { enemyWeaponIsAa, REACT_DRONE, REACT_FLEE, REACT_INFANTRY, REACT_ORBIT, REACT_SCOUT, REACT_VEHICLE, unitSightBase } from "../../../sim/targetRules";
 import { mountAt, spriteHalf } from "../../../render/spritePose";
 import { trackPrintAlpha } from "../../../render/fxCurves";
 import { noteEnemyVolley } from "./enemyFire";
 import { textureOf, heightOf, radius, unitStunned, tickStunKinematics, recordUnitSpin, type Unit } from "../../../sim/combat";
 import { specOf, gunsOf, crewOf, isGroundVehicle, isInfantry, isNeutral, driveOf } from "../../../sim/roster";
-import { groundZ, bedZ, worldToScreen, cameraPointVisible, isWater, screenToWorldAtZ, Camera25D } from "../../../worldgen/world";
+import { groundZ, bedZ, worldToScreen, cameraPointVisible, isWater } from "../../../worldgen/world";
 import Phaser from "phaser";
 import { enemyShotBeh, AI_LOCK_BASE, AI_AIM_NARROW_BASE, AI_AIM_WIDE_MUL, advanceAimHold, aimNarrowTime, aimPrecisionSpread, holdProgress, lockAcquireTime } from "../../../sim/weaponRuntime";
 
@@ -24,16 +24,6 @@ import type { StatBy } from "../flow/missionStats";
 import { SP_INFANTRY, SP_SOLID, SP_STATIC, SP_VEHICLE, type UnitHits } from "../world/spatial";
 import type { MissionScene } from "../../missionScene";
 
-/** Base react radii by role: how close a sighted target must be to be pursued / fled (scaled by `targeting.enemyScaledReach`). */
-const REACT_DRONE = 1400;
-const REACT_SCOUT = 1600;
-const REACT_ORBIT = 1500;
-const REACT_VEHICLE = 980;
-const REACT_FLEE = 520;
-const REACT_INFANTRY = 400;
-
-
-
 /** Max AGL drones will climb/charge to — covers Lightning/Warthog, excludes Reaper (~620). */
 const DRONE_KAMIKAZE_AGL = 400;
 
@@ -43,15 +33,6 @@ const BLOCK_PAD = 12;
 const SEP_PAD = 10;
 /** Separation pushes the unit; re-query once it has moved this far from the query point. */
 const SEP_REQUERY = 32;
-/** Far units (off screen, out of every target's reach) update every Nth frame with the summed dt. */
-const LOD_EVERY = 4;
-/** ...or sooner once this much time has built up (low frame rates). */
-const LOD_MAX_DT = 0.1;
-/** Slack past a unit's reach and past the camera view before it counts as far. */
-const LOD_MARGIN = 300;
-/** Scratch screen-to-world point for the view radius. */
-const LOD_PT = { x: 0, y: 0, z: 0 };
-
 /** Scratch copy of a unit's turret angles for spin recording (one unit at a time). */
 const PREV_TURRETS: number[] = [];
 
@@ -64,71 +45,11 @@ export class UnitSim {
   unitIdMap = new Map<number, Unit>();
   /** `s.units` index of the unit being updated (-1 outside the loop). */
   private cur = -1;
-  /** Reduced-rate updates for far units (debug toggle). */
-  lodOn = true;
-  /** Last frame: units updated at full rate, far units skipped, far units ticked. */
-  lodStats = { full: 0, skipped: 0, ticked: 0 };
-  private lodAcc = new Float64Array(0);
-  private lodFrame = 0;
-  private reachByKind = new Map<string, number>();
-  /** This frame's view radius (world) around the camera focus, and target craft (x, y, aware mul). */
-  private viewR = 0;
-  private lodTargets: number[] = [];
 
   constructor(readonly s: MissionScene) {}
 
   reset(): void {
     this.cur = -1;
-    this.lodOn = true;
-    this.lodAcc = new Float64Array(0);
-    this.lodFrame = 0;
-  }
-
-  setLod(on: boolean): void {
-    this.lodOn = on;
-    this.s.debugMenu.sync();
-  }
-
-  /** View radius + target list for this frame's far test. */
-  private prepLod(): void {
-    const view = this.s.cameras.main.worldView;
-    let r = 0;
-    for (const z of [0, MAX_AGL]) {
-      for (const [sx, sy] of [[view.x, view.y], [view.right, view.y], [view.x, view.bottom], [view.right, view.bottom]] as const) {
-        const p = screenToWorldAtZ(sx!, sy!, z, LOD_PT);
-        const d = Math.hypot(p.x - Camera25D.focusX, p.y - Camera25D.focusY);
-        r = Number.isFinite(d) ? Math.max(r, d) : Infinity;
-      }
-    }
-    this.viewR = r + LOD_MARGIN;
-    const t = this.lodTargets;
-    t.length = 0;
-    const tg = this.s.targeting;
-    t.push(this.s.player.x, this.s.player.y, tg.targetAwareMul(this.s.player));
-    // Spec mul is the upper bound (autonomous remotes are scaled down from it).
-    for (const rem of this.s.remotes) if (remoteTargetable(rem)) t.push(rem.x, rem.y, rem.spec.enemyAwareMul ?? 1);
-  }
-
-  /** Off screen and out of sight / weapon reach of every target. */
-  private isFar(u: Unit): boolean {
-    const fx = u.x - Camera25D.focusX;
-    const fy = u.y - Camera25D.focusY;
-    if (fx * fx + fy * fy < this.viewR * this.viewR) return false;
-    let reach = this.reachByKind.get(u.kind);
-    if (reach == null) {
-      const sp = specOf(u.kind);
-      reach = Math.max(this.sightBase(u), sp.weapon?.range ?? 0, sp.secondary?.wpn.range ?? 0);
-      for (const g of gunsOf(u)) reach = Math.max(reach, g.weapon?.range ?? 0);
-      this.reachByKind.set(u.kind, reach);
-    }
-    const t = this.lodTargets;
-    for (let k = 0; k < t.length; k += 3) {
-      const r = reach * t[k + 2]! + LOD_MARGIN;
-      const dx = u.x - t[k]!;
-      const dy = u.y - t[k + 1]!;
-      if (dx * dx + dy * dy < r * r) return false;
-    }
-    return true;
   }
 
   leashPinned(u: Unit): void {
@@ -848,53 +769,16 @@ export class UnitSim {
     this.s.projectiles.hurt(u, u.health + 1, false, by);
   }
 
-  /** Base max sight range: `sightRange`, else the widest weapon or role react range. */
-  private sightBase(u: Unit): number {
-    const sp = specOf(u.kind);
-    if (sp.sightRange != null) return sp.sightRange;
-    let r = Math.max(sp.weapon?.range ?? 0, sp.secondary?.wpn.range ?? 0);
-    for (const g of gunsOf(u)) r = Math.max(r, g.weapon?.range ?? 0);
-    if (sp.behavior === "suicide_attack_heli") r = Math.max(r, REACT_DRONE);
-    else if (sp.behavior === "kite_attack_heli") r = Math.max(r, REACT_SCOUT);
-    else if (sp.behavior === "orbit_attack_heli") r = Math.max(r, REACT_ORBIT);
-    if (isGroundVehicle(u.kind)) r = Math.max(r, REACT_VEHICLE, sp.fleeReactRange ?? REACT_FLEE);
-    if (sp.behavior === "attack_infantry" || sp.behavior === "flee_infantry") r = Math.max(r, REACT_INFANTRY);
-    return r;
-  }
-
   updateUnits(dt: number): void {
     this.tickRoadkill();
     this.s.spatial.sync();
     const units = this.s.units;
-    if (this.lodAcc.length < units.length) {
-      const g = new Float64Array(Math.max(units.length, this.lodAcc.length * 2));
-      g.set(this.lodAcc);
-      this.lodAcc = g;
-    }
-    const lod = this.lodOn;
-    if (lod) this.prepLod();
-    const st = this.lodStats;
-    st.full = st.skipped = st.ticked = 0;
-    const frame = this.lodFrame++;
+    const lod = this.s.unitLod;
+    lod.prepare(units.length);
     for (let i = 0; i < units.length; i++) {
       const u = units[i]!;
-      let udt = dt;
-      if (lod && !u.dead && !isNeutral(u.kind)) {
-        const acc = this.lodAcc[i]! + dt;
-        if (this.isFar(u)) {
-          if ((frame + i) % LOD_EVERY !== 0 && acc < LOD_MAX_DT) {
-            this.lodAcc[i] = acc;
-            st.skipped++;
-            continue;
-          }
-          st.ticked++;
-        } else st.full++;
-        udt = acc;
-        this.lodAcc[i] = 0;
-      } else if (this.lodAcc[i]) {
-        udt += this.lodAcc[i]!;
-        this.lodAcc[i] = 0;
-      }
+      const udt = lod.step(i, u, dt);
+      if (udt == null) continue;
       this.cur = i;
       this.updateUnit(u, udt);
       this.s.spatial.moved(i, u);
@@ -932,7 +816,7 @@ export class UnitSim {
     const dist = Math.hypot(dx, dy);
     // Cloak: complete sensor blackout. Smoke: blinds all enemies when the player is covered.
     // Max sight range, then terrain line of sight, gate vision entirely: no sight, no pursuit / aim / fire.
-    const sightReach = this.s.targeting.enemyScaledReach(this.sightBase(u), 1, h);
+    const sightReach = this.s.targeting.enemyScaledReach(unitSightBase(u), 1, h);
     const vision =
       (this.s.countermeasures.cloakT > 0 && h === this.s.player) || !this.s.lineOfSight.sees(u, h, sightReach)
         ? 0

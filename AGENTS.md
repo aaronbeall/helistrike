@@ -51,7 +51,7 @@ New gameplay/rendering logic does **not** go in the scene; it goes in the owning
 ### Subsystem modules (`src/scenes/mission/<domain>/`)
 
 ```
-enemy/        targeting · unitSim · enemyFire · lineOfSight
+enemy/        targeting · unitSim · unitLod · enemyFire · lineOfSight
 remote/       fleet · ai · body
 weapons/      fireControl · projectiles · lockOn · countermeasures · tesla · refractor · callStrike
 fx/           fx · trails · groundMarks · ripples · emitters (function: createFxEmitters)

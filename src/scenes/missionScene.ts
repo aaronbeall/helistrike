@@ -30,6 +30,7 @@ import { CornerHud } from "./mission/hud/cornerHud";
 import { RunStatsHud } from "./mission/hud/runStatsHud";
 import { PromptsHud } from "./mission/hud/prompts";
 import { UnitSim } from "./mission/enemy/unitSim";
+import { UnitLod } from "./mission/enemy/unitLod";
 import { EnemyFire } from "./mission/enemy/enemyFire";
 import { EnemyTargeting } from "./mission/enemy/targeting";
 import { LineOfSight } from "./mission/enemy/lineOfSight";
@@ -85,6 +86,7 @@ export class MissionScene extends Phaser.Scene {
   powerLines = new PowerLines(this);
   spatial = new SpatialIndex(this);
   unitSim = new UnitSim(this);
+  unitLod = new UnitLod(this);
   enemyFire = new EnemyFire(this);
   // remote
   remoteFleet = new RemoteFleet(this);
@@ -217,6 +219,7 @@ export class MissionScene extends Phaser.Scene {
     this.overlays.reset();
     this.lineOfSight.reset();
     this.unitSim.reset();
+    this.unitLod.reset();
     this.powerLines.reset();
     this.spatial.reset();
     this.unitSprites.reset();
