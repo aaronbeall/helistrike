@@ -183,6 +183,15 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 
 ## Fix
 
+* [ ] Don't save mission stats when quitting a mission without any action (no shots, kills, damage or objectives)
+* [ ] Art build step: prepare all sprites ahead of time so the runtime only scales for camera effects
+    * [ ] Full-res masters (magenta and all) live in `assets-src/`; a prep script writes the shipped files into `public/`
+    * [ ] Key magenta to real transparency once (soft alpha from color distance + spill removal) and drop runtime keying -- fixes pink edge fringes (radar, lookout), hard edges, and `magenta` mode punching out whites
+    * [ ] Trim + pre-size to the baked size × a quality factor (~2–3×, for camera zoom ≈1.45 on 2× DPR and close-up previews), instead of shipping 512–1254px sources baked down to ~40–220px at load
+    * [ ] Script reads the same tables the game does (`BUILDING_ART`, unit part sizes, …) so sizes are defined once
+    * [ ] Runtime keeps only cheap / dynamic work: rotation, sheet cuts, hulk darken + break-apart, camo, shadows
+    * [ ] Dev loads masters directly for fast iteration; production build runs the prep automatically (Vite plugin) so shipped art can't drift
+    * [ ] Check whether `src_*` source textures stay resident (RAM / GPU) after baking; free them if so
 * [ ] Theater map stays in thermal view (should switch to the normal palette while open)
 * [ ] Leashed (posted) troops should never flee unless injured
 * [ ] Bomb reticle drop path doesn't show in thermal view
