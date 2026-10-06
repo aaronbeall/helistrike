@@ -179,9 +179,18 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
   * [ ] Bonuses: Double/Tripple/Multi kill
   * [ ] Records
 * [x] Power lines -- poles and wires that break/fall, lots of sparks
+* [ ] Minimap zoom scales with speed / craft type / max speed
 
 ## Fix
 
+* [ ] Theater map stays in thermal view (should switch to the normal palette while open)
+* [ ] Leashed (posted) troops should never flee unless injured
+* [ ] Bomb reticle drop path doesn't show in thermal view
+* [ ] Ground units and buildings spawn under the out-of-bounds edge clouds (keep spawns clear of the cloud margin)
+* [ ] Exiting a piloted Spectre remote (other drones too?) leaves it flying in the last input direction
+* [ ] HV targets on the minimap need a more distinct marker
+* [ ] Remote <-> host off-screen indicators should show in every context
+* [ ] Mission select should launch with the preview's seed (the map you see is the map you get)
 * [ ] Space to release the focus cam should also return time scale to normal
 * [ ] Focus cam should pause or scale cooldowns (whichever is simpler and less fragile)
 * [ ] Low flying shooting just immediately hits ground
@@ -207,6 +216,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [ ] Map edge shows for helis -- out-of-bounds cloud mountains don't hide the seam everywhere (e.g. top of the plane map)
 * [ ] Out-of-bounds cloud mountains have a lot of pink/magenta contamination
 * [ ] Optimize minimap -- don't render from the live terrain
+    * [ ] Try a topographic render (contour lines / height bands) instead of the terrain image
 
 ## Stats
 
