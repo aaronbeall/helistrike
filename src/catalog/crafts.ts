@@ -507,7 +507,7 @@ const CRAFTS_DEFS: Record<CraftKind, Omit<CraftSpec, "kind">> = {
     rotorHulk: "craft_osprey_rotor_hulk",
     rotorScale: 0.24,
     rotOff: Math.PI / 2,
-    forwardThrust: 580, strafeThrust: 0, maxSpeed: 340, minSpeed: 200, yawRate: 0.95, yawAccel: 2.6, drag: 1.25,
+    forwardThrust: 580, strafeThrust: 0, maxSpeed: 340, minSpeed: 200, yawRate: 0.45, yawAccel: 1.3, drag: 1.25,
     verticalThrust: 90, cruiseThrust: 14, cruiseAgl: 320, maxAgl: 520,
     sockets: [
       {
@@ -516,6 +516,7 @@ const CRAFTS_DEFS: Record<CraftKind, Omit<CraftSpec, "kind">> = {
         controller: "automatic",
         weapon: "heavy_artillery",
         points: [{ id: "howitzer" }],
+        gunScale: 1.25,
         heading: -90,
         traverse: 160,
         crew: "door",
@@ -526,6 +527,7 @@ const CRAFTS_DEFS: Record<CraftKind, Omit<CraftSpec, "kind">> = {
         controller: "automatic",
         weapon: "medium_cannon",
         points: [{ id: "bofors" }],
+        gunScale: 0.85,
         heading: -90,
         traverse: 160,
         crew: "door",
@@ -536,6 +538,7 @@ const CRAFTS_DEFS: Record<CraftKind, Omit<CraftSpec, "kind">> = {
         controller: "automatic",
         weapon: "light_cannon",
         points: [{ id: "spooky" }],
+        gunScale: 0.65,
         heading: -90,
         traverse: 160,
         crew: "door",
@@ -547,7 +550,7 @@ const CRAFTS_DEFS: Record<CraftKind, Omit<CraftSpec, "kind">> = {
         weapon: "gps_missile",
       },
     ],
-    sensorPalette: "black_hot",
+    sensorPalette: "white_hot",
   },
   reaper: {
     name: "Reaper",

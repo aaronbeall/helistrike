@@ -583,7 +583,7 @@ const PLAYER_WPNS_DEFS: Record<WpnId, Omit<PlayerWpnSpec, "id">> = {
     // Fatter than MG tracers, not a floating brick — call-strike shell trail behind.
     art: gunArt("heavy_artillery", 0.98, { w: 70, h: 11, core: [255, 250, 230], mid: [255, 170, 50], rim: [180, 70, 20], blunt: 0.72, glow: 0.42 }, MOUNT_ARTILLERY),
     exhaust: particleTrail(0.55, { density: 0.85, contrail: true, emitUv: { x: 0.08, y: 0.5 } }),
-    cam: CAM_ARTILLERY, fire: FIRE_GUN, control: CLICK,
+    cam: CAM_ARTILLERY, fire: { muzzleFlash: true, jitter: 0.24 }, control: CLICK,
     // Heavier g → higher muzzle loft for the same aim (more visible lob).
     launch: { mode: "muzzle", inheritMomentum: 0.4, gravity: { acceleration: 310, terminalVelocity: 980 } },
     payload: HE_FIRE,
@@ -594,7 +594,7 @@ const PLAYER_WPNS_DEFS: Record<WpnId, Omit<PlayerWpnSpec, "id">> = {
     name: "BOFORS", fullName: "BOFORS CANNON", description: "A steady, reliable anti-aircraft and anti-armor autocannon that hits targets with large, uniform explosions.", designation: "40MM BOFORS CANNON", ammo: 90, fireCd: 0.32, speed: 680,
     dmg: 85, blast: 95, life: 0.18,
     art: gunArt("medium_cannon", 1.05, { w: 76, h: 13, core: [255, 245, 210], mid: [255, 160, 45], rim: [200, 80, 18], blunt: 0.55, glow: 0.45 }, MOUNT_ARTILLERY),
-    cam: CAM_GUN, fire: FIRE_GUN, control: HOLD, launch: MUZZLE, payload: HE_FIRE,
+    cam: CAM_GUN, fire: { muzzleFlash: true, jitter: 0.2 }, control: HOLD, launch: MUZZLE, payload: HE_FIRE,
     fits: FIT_GUN, notes: ["medium-caliber explosive cannon"],
   },
   light_cannon: {
@@ -606,13 +606,13 @@ const PLAYER_WPNS_DEFS: Record<WpnId, Omit<PlayerWpnSpec, "id">> = {
     fits: FIT_GUN, notes: ["gunship 25mm hose — GAU-12/U, not the F-35 Equalizer"],
   },
   gps_missile: {
-    name: "GRIFFIN", fullName: "GRIFFIN GUIDED MISSILE", description: "A highly agile, steerable anti-air missile that hunts down agile targets without traditional wire limitations.", designation: "AGM-176 GRIFFIN COMMAND-GUIDED MISSILE", ammo: 12, fireCd: 0.7, speed: 340,
-    dmg: 240, blast: 110, life: 9.5,
+    name: "GRIFFIN", fullName: "GRIFFIN GUIDED MISSILE", description: "A highly agile, steerable anti-air missile that hunts down agile targets without traditional wire limitations.", designation: "AGM-176 GRIFFIN COMMAND-GUIDED MISSILE", ammo: 12, fireCd: 0.7, speed: 200,
+    dmg: 240, blast: 110, life: 15,
     art: ordArt("guided", 0.84, "heading"),
     exhaust: particleTrail(0.52, { fire: "burn", smoke: "linger", density: 1.3 }),
-    cam: { reticle: "square", look: LOOK_GUIDED, povCam: true, sight: "mouse" },
+    cam: { reticle: "square", look: LOOK_GUIDED, sight: "mouse" },
     control: HOLD,
-    launch: motor(140, 260, 3.2),
+    launch: motor(100, 150, 3.2),
     guidance: steerGuidance(4.1, 1.25, { cruise: "player_descend", dive: DIVE_GRIFFIN }, false),
     payload: HE_FIRE,
     dmgMul: { air: 1.9, vehicle: 0.7, building: 0.5 },

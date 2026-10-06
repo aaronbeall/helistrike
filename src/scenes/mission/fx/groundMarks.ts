@@ -73,6 +73,8 @@ type ThermalWreckMark = {
   hold: number;
   /** Cooldown duration after the hold window. */
   fadeDur: number;
+  /** Heat at full (0–1), scaled by the fade. */
+  peak: number;
   /** Elapsed lifetime (hold + fade); advances even when thermal view is off. */
   age: number;
   kind: ThermalWreckKind;
@@ -95,7 +97,7 @@ function thermalWreckDisplayScale(
   return { scaleX: scaleX * mul, scaleY: scaleY * mul };
 }
 
-function thermalWreckTiming(kind: ThermalWreckKind, scaleX: number, scaleY: number): { hold: number; fadeDur: number } {
+function thermalWreckTiming(kind: ThermalWreckKind, scaleX: number, scaleY: number): { hold: number; fadeDur: number; peak?: number } {
   const span = Math.max(scaleX, scaleY);
   if (kind === "blood") {
     return { hold: 0.28, fadeDur: 4.5 + Math.min(5, span * 1.8) };
@@ -108,8 +110,8 @@ function thermalWreckTiming(kind: ThermalWreckKind, scaleX: number, scaleY: numb
     return { hold: 1.6, fadeDur: 9 + Math.min(8, span * 4) };
   }
   if (kind === "hulk") {
-    // Burnt-out hulls hold their heat well past the fire.
-    return { hold: 4, fadeDur: 22 + Math.min(14, span * 6) };
+    // Burnt-out hulls start warm, not white-hot, and cool within seconds.
+    return { hold: 1.5, fadeDur: 9 + Math.min(6, span * 2.5), peak: 0.6 };
   }
   return { hold: 0.35, fadeDur: 6 + Math.min(7, span * 2.4) };
 }
@@ -282,6 +284,7 @@ export class GroundMarks {
       scaleY: display.scaleY,
       hold: timing.hold,
       fadeDur: timing.fadeDur,
+      peak: timing.peak ?? 1,
       age,
       kind,
     };
@@ -301,7 +304,7 @@ export class GroundMarks {
     mark.image.setVisible(visible);
     if (!visible) return;
     const at = worldToScreen(mark.x, mark.y, mark.z);
-    const fade = thermalWreckFade(mark);
+    const fade = thermalWreckFade(mark) * mark.peak;
     const heatTex = mark.image.texture.key.endsWith("_heat");
     // Heat textures: per-pixel heat in alpha. Fallback (no _heat): tint-fill like live sprites.
     if (heatTex) {
