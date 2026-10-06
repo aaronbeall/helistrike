@@ -121,7 +121,9 @@ export class Tesla {
     let bestD = mouseR;
     const tipZ = tip.z ?? 0;
     const limited = Number.isFinite(range);
-    for (const u of this.s.units) {
+    const nearby = this.s.spatial.near(ptr.x, ptr.y, mouseR);
+    for (let qi = 0; qi < nearby.n; qi++) {
+      const u = nearby.at(qi);
       if (!hostileUnit(u)) continue;
       const uz = u.z + heightOf(u.kind) * 0.45;
       if (limited && Math.hypot(u.x - tip.x, u.y - tip.y, uz - tipZ) > range) continue;
@@ -131,6 +133,7 @@ export class Tesla {
         best = u;
       }
     }
+    nearby.done();
     return best;
   }
 

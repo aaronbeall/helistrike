@@ -319,7 +319,9 @@ export class Refractor {
       const px = x0 + (x1 - x0) * t;
       const py = y0 + (y1 - y0) * t;
       const pz = z0 + (z1 - z0) * t;
-      for (const u of this.s.units) {
+      const nearby = this.s.spatial.near(px, py, 14);
+      for (let qi = 0; qi < nearby.n; qi++) {
+        const u = nearby.at(qi);
         if (u.dead) continue;
         const hr = circumRadiusOf(u.kind) + 14;
         if (Math.hypot(px - u.x, py - u.y) > hr) continue;
@@ -329,6 +331,7 @@ export class Refractor {
         if (pz > top + 18 || pz < u.z - 10) continue;
         if (!best || t < best.t) best = { x: px, y: py, z: pz, u, t };
       }
+      nearby.done();
     }
     return best ? { x: best.x, y: best.y, z: best.z, u: best.u } : null;
   }

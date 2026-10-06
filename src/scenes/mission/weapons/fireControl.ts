@@ -1816,7 +1816,9 @@ specIsShellGun(spec)
   ): Unit | undefined {
     let best: Unit | undefined;
     let bestScore = -1e9;
-    for (const u of this.s.units) {
+    const nearby = this.s.spatial.near(fromX, fromY, maxR);
+    for (let qi = 0; qi < nearby.n; qi++) {
+      const u = nearby.at(qi);
       if (!hostileUnit(u) || (groundOnly && isAerial(u.kind))) continue;
       const d = Math.hypot(u.x - fromX, u.y - fromY);
       if (d > maxR || d < 35) continue;
@@ -1835,6 +1837,7 @@ specIsShellGun(spec)
         best = u;
       }
     }
+    nearby.done();
     return best;
   }
 
@@ -1883,7 +1886,9 @@ specIsShellGun(spec)
   ): Unit | undefined {
     let best: Unit | undefined;
     let bestScore = Infinity;
-    for (const u of this.s.units) {
+    const nearby = this.s.spatial.near(x, y, max);
+    for (let qi = 0; qi < nearby.n; qi++) {
+      const u = nearby.at(qi);
       if (!hostileUnit(u)) continue;
       if (categories && !heatCategoryOk(u, categories)) continue;
       const d = Math.hypot(u.x - x, u.y - y);
@@ -1894,6 +1899,7 @@ specIsShellGun(spec)
         best = u;
       }
     }
+    nearby.done();
     return best;
   }
 
@@ -1908,7 +1914,9 @@ specIsShellGun(spec)
   nearestUnit(x: number, y: number, max: number): Unit | undefined {
     let best: Unit | undefined;
     let bd = max;
-    for (const u of this.s.units) {
+    const nearby = this.s.spatial.near(x, y, max);
+    for (let qi = 0; qi < nearby.n; qi++) {
+      const u = nearby.at(qi);
       if (!hostileUnit(u)) continue;
       const d = Math.hypot(u.x - x, u.y - y);
       if (d < bd) {
@@ -1916,6 +1924,7 @@ specIsShellGun(spec)
         best = u;
       }
     }
+    nearby.done();
     return best;
   }
 

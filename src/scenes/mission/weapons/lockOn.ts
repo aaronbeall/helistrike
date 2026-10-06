@@ -104,7 +104,9 @@ export class LockOn {
   ): { u: Unit; score: number; heat: number }[] {
     const h = this.s.player;
     const out: { u: Unit; score: number; heat: number }[] = [];
-    for (const u of this.s.units) {
+    const nearby = this.s.spatial.near(x, y, max);
+    for (let qi = 0; qi < nearby.n; qi++) {
+      const u = nearby.at(qi);
       if (!hostileUnit(u) || u.health < acquire.minHealth) continue;
       if (!heatCategoryOk(u, acquire.categories)) continue;
       const d = Math.hypot(u.x - x, u.y - y);
@@ -121,6 +123,7 @@ export class LockOn {
       const score = heatSeekScore(u, aim, h.angle) - d * 0.01;
       out.push({ u, score, heat });
     }
+    nearby.done();
     return out;
   }
 

@@ -145,13 +145,7 @@ Medians of 3 runs per stage (raw runs: `perf-runs-2026-10/`). Times in ms.
 2. **[done]** Starscream energy ribbons: quads from reused buffers, adaptive subdivision, quantized alpha. CPU −17%, render −24%, garbage −30%.
 3. **GPU / dropped frames:** split GPU from CPU on the fire-heavy scenarios (bloom off, particle counts, overdraw). Interval p99 is still 25–42 ms with CPU at 7–10 ms.
 4. **[done]** Text rendering: `render/textStyle.setTextColor` skips no-op recolors, lock-on text isn't reset every frame, HUD distances in 10 m steps. Text cost went from 60–120 to a few ms/s. Optional follow-up: color via GPU tint with white-filled labels.
-5. **Spatial grid** (`sim/spatialGrid`): a uniform 128-unit grid, rebuilt once per frame into typed arrays, with allocation-free queries. Convert in order, measuring after each:
-   - ground steering, blocked check and separation
-   - player shot hit test
-   - blast damage
-   - remote AI scans
-   - guided-missile retargeting and bomblet target picks
-   - steering's returned-point allocations (`terrainSteer`, `mapEdgeSteer`)
+5. **[done]** Spatial grid: `sim/spatialGrid` (128-unit cells, typed-array linked lists) owned by `world/spatial` (`s.spatial.near`), with buildings in a static grid and everything else in a mover grid. It covers steering / blocked / separation, the shot hit test, blast damage, missile retargeting, bomblets, remote AI, Tesla / refractor / lock-on / fire-control picks and roadkill. Results come back in `s.units` order, so behavior is unchanged: the debug "Spatial grid" overlay cross-checks every query against brute force, and `npm run spatial:check` fuzzes the grid. On the new `desert_stress` map (~1,750 units), unit sim is −86–88% and CPU −48–61%; on the cluster maps, unit sim is −11–32%. Left as is: `terrainSteer` / `mapEdgeSteer` returned-point allocations.
 6. **[done]** Unit AI hot path: allocation-free footprint overlap and point tests, per-frame solids list, no per-unit turret copy. Unit AI −52–71%.
 7. **Phaser render-side costs:** particle emitter updates (the top CPU and allocation item under fire), depth-sort load (8 depth-banded emitter slots per effect type), `setVisible` churn in unit sprites, per-frame texture uploads.
 8. **Render batching:** draw-call and texture-switch counts per frame, then fewer blend-mode breaks.

@@ -8,7 +8,8 @@
     "preview": "vite preview",
     "bench": "node scripts/bench.mjs",
     "bench:history": "node scripts/bench-history.mjs",
-    "bench:report": "node scripts/bench-report.mjs"
+    "bench:report": "node scripts/bench-report.mjs",
+    "spatial:check": "node scripts/spatial-check.mjs"
   },
   "dependencies": {
     "phaser": "^3.90.0"

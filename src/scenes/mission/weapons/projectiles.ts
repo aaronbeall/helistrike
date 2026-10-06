@@ -467,7 +467,9 @@ export class Projectiles {
         }
       }
       if (!s.deadfall && s.from === "player") {
-        for (const u of this.s.units) {
+        const nearby = this.s.spatial.near(s.x + helixDx, s.y + helixDy, 8);
+        for (let qi = 0; qi < nearby.n; qi++) {
+          const u = nearby.at(qi);
           if (u.dead) continue;
           if (st?.hitIds?.includes(u.id)) continue;
           const hr = circumRadiusOf(u.kind) + 8;
@@ -509,6 +511,7 @@ export class Projectiles {
           victim = u;
           break;
         }
+        nearby.done();
         // Proximity fuse — safety net only (prefer real body impact).
         // Arms when we have already passed the lock in XY while still above the hit box,
         // or when skimming inside a very tight 3D pocket.
@@ -812,7 +815,9 @@ export class Projectiles {
           } else {
             let best: Unit | undefined;
             let bd = lockRadius;
-            for (const u of this.s.units) {
+            const nearby = this.s.spatial.near(ptr.x, ptr.y, lockRadius);
+            for (let qi = 0; qi < nearby.n; qi++) {
+              const u = nearby.at(qi);
               if (!hostileUnit(u)) continue;
               const d = Math.hypot(u.x - ptr.x, u.y - ptr.y);
               if (d < bd) {
@@ -820,6 +825,7 @@ export class Projectiles {
                 best = u;
               }
             }
+            nearby.done();
             if (best) s.targetId = best.id;
           }
         }
@@ -1028,7 +1034,9 @@ export class Projectiles {
     const claimed = new Set<number>();
 
     const candidates: { u: Unit; score: number }[] = [];
-    for (const u of this.s.units) {
+    const nearby = this.s.spatial.near(ox, oy, maxRange);
+    for (let qi = 0; qi < nearby.n; qi++) {
+      const u = nearby.at(qi);
       if (!hostileUnit(u)) continue;
       const dx = u.x - ox;
       const dy = u.y - oy;
@@ -1038,6 +1046,7 @@ export class Projectiles {
       if (off > coneHalf) continue;
       candidates.push({ u, score: off * 55 + d });
     }
+    nearby.done();
     candidates.sort((a, b) => a.score - b.score);
 
     for (let i = 0; i < count; i++) {
@@ -1594,7 +1603,10 @@ export class Projectiles {
     this.pushBlastRing(x, y, z, blast);
     const stunDur = shot?.beh?.payload.stun;
     const by = this.statBy(shot);
-    for (const u of this.s.units) {
+    const nearby = this.s.spatial.near(x, y, blast);
+    if (direct && !direct.dead) nearby.include(direct);
+    for (let qi = 0; qi < nearby.n; qi++) {
+      const u = nearby.at(qi);
       if (u.dead) continue;
       const d = distToFootprint(x, y, footprintInto(u, 0, 0));
       if (u !== direct && d >= blast) continue;
@@ -1618,6 +1630,7 @@ export class Projectiles {
         }
       });
     }
+    nearby.done();
     const focus = this.s.targeting.combatFocus();
     const hd = Math.hypot(focus.x - x, focus.y - y);
     if (hd < blast * 0.55) {

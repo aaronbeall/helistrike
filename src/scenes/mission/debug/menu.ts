@@ -17,6 +17,7 @@ const DEBUG_MENU_ITEMS = [
   { action: "ai", label: "AI" },
   { action: "los", label: "Line of sight" },
   { action: "blast", label: "Blast radii" },
+  { action: "spatial", label: "Spatial grid" },
   { action: "sideView", label: "Side view", shortcut: "J" },
   { section: "RENDERING" },
   { action: "terrainMesh", label: "Terrain mesh" },
@@ -279,6 +280,8 @@ export class DebugMenu {
                     ? this.s.lineOfSight.debugOn
                   : item.action === "blast"
                     ? this.s.overlays.blastOn
+                  : item.action === "spatial"
+                    ? this.s.spatialOverlay.on
                     : item.action === "sideView"
                     ? this.s.sideView.on
                     : item.action === "terrainMesh"
@@ -319,6 +322,7 @@ export class DebugMenu {
     else if (item.action === "ai") this.s.overlays.setAi(!this.s.overlays.aiOn);
     else if (item.action === "los") this.s.lineOfSight.setDebug(!this.s.lineOfSight.debugOn);
     else if (item.action === "blast") this.s.overlays.setBlast(!this.s.overlays.blastOn);
+    else if (item.action === "spatial") this.s.spatialOverlay.setOn(!this.s.spatialOverlay.on);
     else if (item.action === "sideView") this.s.sideView.setOn(!this.s.sideView.on);
     else if (item.action === "terrainMesh") this.s.toggleTerrainMesh();
     else if (item.action === "fx") this.s.postFx.toggle();
@@ -432,6 +436,7 @@ export class DebugMenu {
     const u = makeUnit(this.s.world, kind, x, y);
     this.s.units.push(u);
     this.s.units.push(...spawnCrewFor(this.s.world, this.s.textures, u));
+    this.s.spatial.sync();
   }
 
   setNoDamage(on: boolean): void {

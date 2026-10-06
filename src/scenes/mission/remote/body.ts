@@ -791,7 +791,9 @@ export class RemoteBody {
     if (!dash) {
       let best: Unit | undefined;
       let bestD = spider.engageRange;
-      for (const u of this.s.units) {
+      const nearby = this.s.spatial.near(s.x, s.y, spider.engageRange);
+      for (let qi = 0; qi < nearby.n; qi++) {
+        const u = nearby.at(qi);
         if (!hostileUnit(u)) continue;
         const d = Math.hypot(u.x - s.x, u.y - s.y);
         if (d < bestD) {
@@ -799,6 +801,7 @@ export class RemoteBody {
           best = u;
         }
       }
+      nearby.done();
       if (best) {
         s.targetId = best.id;
         prey = best;

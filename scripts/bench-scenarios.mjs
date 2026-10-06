@@ -17,6 +17,9 @@ export const SCENARIOS = [
   { id: "starscream_cluster", label: "Starscream energy ribbons into the cluster", map: "desert_cluster_cyber", fire: { weapon: 2, onS: 2, offS: 0.5 }, ...TIMING },
   { id: "tesla_cluster", label: "Tesla beam into the cluster", map: "desert_cluster_cyber", fire: { weapon: 3, onS: 2, offS: 0.5 }, ...TIMING },
   { id: "tow_cluster", label: "TOW wire-guided missiles into the cluster", map: "desert_cluster_cobra", fire: { weapon: 3, onS: 2, offS: 0.5 }, ...TIMING },
+  { id: "idle_stress", label: "Idle, cluster in a town + ~1,600 units map-wide", map: "desert_stress", ...TIMING },
+  { id: "gun_stress", label: "Chain gun into the town cluster", map: "desert_stress", fire: GUN, ...TIMING },
+  { id: "rockets_stress", label: "Rockets into the town cluster", map: "desert_stress", fire: ROCKETS, ...TIMING },
   { id: "mission_idle", label: "River Run, generated forces + settlements", map: "river_run", ...TIMING },
   { id: "mission_idle_s0", label: "River Run, no settlements", map: "river_run_s0", ...TIMING },
 ];

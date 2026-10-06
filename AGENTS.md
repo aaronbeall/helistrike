@@ -10,6 +10,7 @@ npx tsc --noEmit -p .     # type check (run after every change; must be clean)
 npm run build             # tsc + production build
 npm run bench             # perf scenarios in Chrome via Playwright, real input (--compare <json>, --profile, --runs N, --record "<label>")
 npm run bench:history     # perf trend per scenario from docs/perf-history.csv; see docs/perf-plan-2026-10.md
+npm run spatial:check     # headless fuzz of the spatial grid vs brute force
 ```
 
 There is no test suite. Verify with the type check + build, then a short in-game play-test of whatever you touched.
@@ -56,11 +57,11 @@ weapons/      fireControl · projectiles · lockOn · countermeasures · tesla �
 fx/           fx · trails · groundMarks · ripples · emitters (function: createFxEmitters)
 destruction/  destruction
 render/       hostCraft · unitSprites · thermalMode
-world/        powerLines
+world/        powerLines · spatial
 camera/       camera
 flow/         missionFlow · missionStats
 hud/          weaponHud · statusHud · threatHud · reticleHud · minimap · cornerHud · runStatsHud · prompts · help · fieldBars
-debug/        menu · overlays · relief · sideView · perf · postFx
+debug/        menu · overlays · relief · sideView · perf · postFx · spatialOverlay
 ```
 
 Each module file starts its class with a one-line doc comment saying what it owns — read that first.
@@ -107,6 +108,7 @@ export class RemoteFleet {
 | Trails / ribbons | `fx/trails` |
 | Craters, scorch, wreck stamps | `fx/groundMarks` |
 | Power line wires (draw, shorting, rotor strikes) | `world/powerLines` |
+| Units near a point (any many-to-many scan) | `s.spatial.near(x, y, r, mask)` from `world/spatial` (grid: `sim/spatialGrid`); call `.done()` after the loop; never loop all of `s.units` per shot / unit |
 | Water ripples (splashes, wakes) | `fx/ripples` (`s.ripples.spawn` / `.splash`) |
 | Deaths, crashes, debris | `destruction/destruction` |
 | HUD element | the matching `hud/…` module, or a new one |

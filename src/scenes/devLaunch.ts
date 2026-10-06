@@ -7,7 +7,7 @@
 import type Phaser from "phaser";
 import { MISSIONS } from "../catalog/missions";
 import { CRAFTS } from "../catalog/crafts";
-import { TEST_MAPS, type TestCluster, type TestMap } from "../catalog/testMaps";
+import { TEST_MAPS, type TestCluster, type TestMap, type TestScatter } from "../catalog/testMaps";
 import { selectCraft, type CraftKind } from "../sim/crafts";
 import { selectMission, type MissionKind } from "../sim/mission";
 import type { UnitKind } from "../sim/roster";
@@ -20,6 +20,7 @@ export interface DevLaunch {
   seed?: number;
   profile?: TestMap["profile"];
   forces?: TestMap["forces"];
+  scatter?: TestMap["scatter"];
   cheats: { ammo: boolean; god: boolean };
 }
 
@@ -46,7 +47,7 @@ export function devLaunchFromUrl(): DevLaunch | undefined {
 }
 
 export function testMapLaunch(t: TestMap): DevLaunch {
-  return { mission: t.mission, craft: t.craft, seed: t.seed, profile: t.profile, forces: t.forces, cheats: { ammo: false, god: false } };
+  return { mission: t.mission, craft: t.craft, seed: t.seed, profile: t.profile, forces: t.forces, scatter: t.scatter, cheats: { ammo: false, god: false } };
 }
 
 /** Select the launch's craft + mission and load it. */
@@ -56,13 +57,14 @@ export function startDevLaunch(scene: Phaser.Scene, launch: DevLaunch): void {
   scene.scene.start("load", { dev: launch });
 }
 
-/** Replace a freshly generated world's patrols and garrisons with the launch's forces; objectives stay. */
+/** Replace a freshly generated world's patrols and garrisons with the launch's forces (objectives stay), then scatter. */
 export function applyDevForces(world: WorldData, launch: DevLaunch): void {
   const forces = launch.forces;
-  if (!forces) return;
-  world.spawns = world.spawns.filter((s) => s.hv);
-  if (forces === "none") return;
-  placeCluster(world, forces, launch.seed ?? 1);
+  if (forces) {
+    world.spawns = world.spawns.filter((s) => s.hv);
+    if (forces !== "none") placeCluster(world, forces, launch.seed ?? 1);
+  }
+  launch.scatter?.forEach((sc, i) => placeScatter(world, sc, (launch.seed ?? 1) + i + 1));
 }
 
 /** Cluster centre: `distance` from spawn toward the map centre. */
@@ -90,6 +92,31 @@ function placeCluster(world: WorldData, cluster: TestCluster, seed: number): voi
       if (isWater(world, x, y)) continue;
       world.spawns.push({ kind: kinds[i]!, x, y });
       break;
+    }
+  }
+}
+
+function placeScatter(world: WorldData, sc: TestScatter, seed: number): void {
+  const rng = new Rng(seed);
+  const c = sc.distance != null ? clusterCentre(world, sc.distance) : undefined;
+  for (const g of sc.units) {
+    for (let i = 0; i < g.count; i++) {
+      for (let k = 0; k < 8; k++) {
+        let x: number;
+        let y: number;
+        if (c) {
+          const a = rng.next() * Math.PI * 2;
+          const r = (sc.radius ?? 400) * Math.sqrt(rng.next());
+          x = c.x + Math.cos(a) * r;
+          y = c.y + Math.sin(a) * r;
+        } else {
+          x = 120 + rng.next() * (WORLD - 240);
+          y = 120 + rng.next() * (WORLD - 240);
+        }
+        if (isWater(world, x, y)) continue;
+        world.spawns.push({ kind: g.kind, x, y });
+        break;
+      }
     }
   }
 }

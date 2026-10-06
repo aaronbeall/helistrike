@@ -43,7 +43,9 @@ export class RemoteAi {
     if (spec.ground) {
       let best: Unit | undefined;
       let bestD = 520;
-      for (const u of this.s.units) {
+      const nearby = this.s.spatial.near(drone.x, drone.y, 520);
+      for (let qi = 0; qi < nearby.n; qi++) {
+        const u = nearby.at(qi);
         if (!hostileUnit(u)) continue;
         const d = Math.hypot(u.x - drone.x, u.y - drone.y);
         if (d < bestD) {
@@ -51,6 +53,7 @@ export class RemoteAi {
           best = u;
         }
       }
+      nearby.done();
       if (best) {
         tx = best.x;
         ty = best.y;
@@ -191,7 +194,9 @@ export class RemoteAi {
     ) {
       let best: Unit | undefined;
       let bestD = maxEngage;
-      for (const u of this.s.units) {
+      const nearby = this.s.spatial.near(host.x, host.y, maxEngage);
+      for (let qi = 0; qi < nearby.n; qi++) {
+        const u = nearby.at(qi);
         if (u.dead) continue;
         if (!this.unitKnownToFriendlies(u, aware)) continue;
         const dHost = Math.hypot(u.x - host.x, u.y - host.y);
@@ -202,6 +207,7 @@ export class RemoteAi {
           best = u;
         }
       }
+      nearby.done();
       target = best;
       drone.aiTargetId = best?.id;
       if (!target) drone.aiPass = undefined;
@@ -338,7 +344,9 @@ export class RemoteAi {
     if (!target || target.dead || Math.hypot(target.x - drone.x, target.y - drone.y) > engage) {
       let best: Unit | undefined;
       let bestD = engage;
-      for (const u of this.s.units) {
+      const nearby = this.s.spatial.near(drone.x, drone.y, engage);
+      for (let qi = 0; qi < nearby.n; qi++) {
+        const u = nearby.at(qi);
         if (!hostileUnit(u)) continue;
         const d = Math.hypot(u.x - drone.x, u.y - drone.y);
         if (d < bestD) {
@@ -346,6 +354,7 @@ export class RemoteAi {
           best = u;
         }
       }
+      nearby.done();
       target = best;
       drone.aiTargetId = best?.id;
     }
@@ -458,7 +467,9 @@ export class RemoteAi {
     ) {
       let best: Unit | undefined;
       let bestD = maxEngage;
-      for (const u of this.s.units) {
+      const nearby = this.s.spatial.near(host.x, host.y, maxEngage);
+      for (let qi = 0; qi < nearby.n; qi++) {
+        const u = nearby.at(qi);
         if (u.dead) continue;
         if (!this.unitKnownToFriendlies(u, aware)) continue;
         const dHost = Math.hypot(u.x - host.x, u.y - host.y);
@@ -469,6 +480,7 @@ export class RemoteAi {
           best = u;
         }
       }
+      nearby.done();
       target = best;
       drone.aiTargetId = best?.id;
     }
@@ -488,7 +500,9 @@ export class RemoteAi {
     if (!inGunRange(gunTarget)) {
       gunTarget = undefined;
       let bestD = maxEngage;
-      for (const u of this.s.units) {
+      const nearby = this.s.spatial.near(drone.x, drone.y, maxEngage);
+      for (let qi = 0; qi < nearby.n; qi++) {
+        const u = nearby.at(qi);
         if (!inGunRange(u)) continue;
         const d = Math.hypot(u.x - drone.x, u.y - drone.y);
         if (d < bestD) {
@@ -496,6 +510,7 @@ export class RemoteAi {
           gunTarget = u;
         }
       }
+      nearby.done();
     }
     drone.gunTargetId = gunTarget?.id;
 
@@ -597,7 +612,9 @@ export class RemoteAi {
       const ny = d > 1e-6 ? dy / d : 0;
       consider(r + pad + cr - d, nx, ny, cx + nx * cr, cy + ny * cr);
     };
-    for (const o of this.s.units) {
+    const nearby = this.s.spatial.near(x, y, r + pad + 2);
+    for (let qi = 0; qi < nearby.n; qi++) {
+      const o = nearby.at(qi);
       if (o.dead || o.pinId != null) continue;
       const osp = specOf(o.kind);
       if (osp.aerial || osp.water || osp.behavior === "patrol_boat") continue;
@@ -619,6 +636,7 @@ export class RemoteAi {
         consider(r + pad, dx / dd, dy / dd, o.x, o.y);
       }
     }
+    nearby.done();
     for (const q of this.s.remotes) {
       if (q === self || !q.spec.ground || q.detonate || q.dock || q.airborne) continue;
       circle(q.x, q.y, q.spec.radius);

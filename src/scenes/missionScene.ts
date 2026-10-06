@@ -34,6 +34,8 @@ import { EnemyFire } from "./mission/enemy/enemyFire";
 import { EnemyTargeting } from "./mission/enemy/targeting";
 import { LineOfSight } from "./mission/enemy/lineOfSight";
 import { PowerLines } from "./mission/world/powerLines";
+import { SpatialIndex } from "./mission/world/spatial";
+import { SpatialOverlay } from "./mission/debug/spatialOverlay";
 import { RemoteAi } from "./mission/remote/ai";
 import { ReticleHud } from "./mission/hud/reticleHud";
 import { Minimap } from "./mission/hud/minimap";
@@ -81,6 +83,7 @@ export class MissionScene extends Phaser.Scene {
   targeting = new EnemyTargeting(this);
   lineOfSight = new LineOfSight(this);
   powerLines = new PowerLines(this);
+  spatial = new SpatialIndex(this);
   unitSim = new UnitSim(this);
   enemyFire = new EnemyFire(this);
   // remote
@@ -131,6 +134,7 @@ export class MissionScene extends Phaser.Scene {
   sideView = new SideView(this);
   perf = new PerfMonitor(this);
   postFx = new PostFxTest(this);
+  spatialOverlay = new SpatialOverlay(this);
   world!: WorldData;
   player!: Craft;
   units: Unit[] = [];
@@ -213,6 +217,8 @@ export class MissionScene extends Phaser.Scene {
     this.overlays.reset();
     this.lineOfSight.reset();
     this.powerLines.reset();
+    this.spatial.reset();
+    this.spatialOverlay.reset();
     this.statusHud.reset();
     this.runStatsHud.reset();
     this.sideView.reset();
@@ -262,6 +268,7 @@ export class MissionScene extends Phaser.Scene {
     this.createPlayer();
     this.createWeaponGraphics();
     this.spawnUnits();
+    this.spatial.sync();
     this.createFx();
     this.bindInput();
     this.createHud();
@@ -702,6 +709,7 @@ export class MissionScene extends Phaser.Scene {
       // Left before the end screen (menu / restart): save the run with an inferred outcome.
       this.stats.finish();
       this.perf.dispose();
+      this.spatialOverlay.dispose();
       kb.off("keydown-PLUS", onTimePlus);
       kb.off("keydown-EQUALS", onTimePlus);
       kb.off("keydown-NUMPAD_ADD", onTimePlus);
@@ -1066,6 +1074,7 @@ export class MissionScene extends Phaser.Scene {
     this.overlays.blastGfx = this.add.graphics().setDepth(Layer.FIELD + 20);
     this.overlays.aiGfx = this.add.graphics().setDepth(Layer.FIELD + 8);
     this.lineOfSight.create();
+    this.spatialOverlay.create();
     this.powerLines.create();
     const cx = 18 + 88;
     const cy = this.scale.height - 18 - 88;
@@ -1261,6 +1270,7 @@ export class MissionScene extends Phaser.Scene {
     if (this.relief.open) this.relief.tick(wallDt);
     this.overlays.drawAi();
     this.lineOfSight.drawDebug();
+    this.spatialOverlay.draw();
     this.powerLines.update();
     this.statusHud.tickJolt();
     // Apply suppression after draw/debug updates so nothing can re-enable
