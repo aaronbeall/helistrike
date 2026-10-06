@@ -141,22 +141,22 @@ Medians of 3 runs per stage (raw runs: `perf-runs-2026-10/`). Times in ms.
 
 ## 5. Plan
 
-1. ~~**`Graphics` redraws**~~ Done (`render/fastShapes`: minimap, weapon bar, status panel, reticle and sight lines, lock-on, threat arcs, field bar battery icons).
-2. **GPU / dropped frames:** split GPU from CPU on the cluster scenarios (PostFX bloom off, particle counts, overdraw) to explain the interval p99.
-3. **Text rendering:** `Text.setText` re-rasterizes on a canvas and re-uploads a texture (`texImage2D`).
-   - debug overlays (perf HUD) become a DOM `<pre>`
-   - per-frame gameplay readouts become `BitmapText`
-   - everywhere else, set text only when it changed, with jittery numbers quantized
-4. **Spatial grid** (`sim/spatialGrid`): a uniform 128-unit grid, rebuilt once per frame into typed arrays, with allocation-free queries. Convert in order, measuring after each:
+1. **[done]** `Graphics` redraws: HUD shapes in `render/fastShapes` (minimap, weapon bar, status panel, reticle and sight lines, lock-on, threat arcs, battery icons).
+2. **[done]** Starscream energy ribbons: quads from reused buffers, adaptive subdivision, quantized alpha. CPU −17%, render −24%, garbage −30%.
+3. **GPU / dropped frames:** split GPU from CPU on the fire-heavy scenarios (bloom off, particle counts, overdraw). Interval p99 is still 25–42 ms with CPU at 7–10 ms.
+4. **[done]** Text rendering: `render/textStyle.setTextColor` skips no-op recolors, lock-on text isn't reset every frame, HUD distances in 10 m steps. Text cost went from 60–120 to a few ms/s. Optional follow-up: color via GPU tint with white-filled labels.
+5. **Spatial grid** (`sim/spatialGrid`): a uniform 128-unit grid, rebuilt once per frame into typed arrays, with allocation-free queries. Convert in order, measuring after each:
    - ground steering, blocked check and separation
    - player shot hit test
    - blast damage
    - remote AI scans
    - guided-missile retargeting and bomblet target picks
-5. **Unit AI hot path:** remove per-frame allocations (`u.turrets.slice()`) and repeated `specOf` lookups in `updateUnits` / `driveGroundVehicle`.
-6. **Phaser render-side costs:** find which objects re-upload textures every frame (`texImage2D`), cut `setVisible` churn in unit sprites, reduce emitter count and depth-sort load (8 depth-banded slots per effect type).
-7. **Render batching:** draw-call and texture-switch counts per frame, then fewer blend-mode breaks.
-8. **Fix the ember frame warning.**
-9. **Later:** input recording and replay on top of the bench driver, so input goes through one per-frame snapshot.
+   - steering's returned-point allocations (`terrainSteer`, `mapEdgeSteer`)
+6. **[done]** Unit AI hot path: allocation-free footprint overlap and point tests, per-frame solids list, no per-unit turret copy. Unit AI −52–71%.
+7. **Phaser render-side costs:** particle emitter updates (the top CPU and allocation item under fire), depth-sort load (8 depth-banded emitter slots per effect type), `setVisible` churn in unit sprites, per-frame texture uploads.
+8. **Render batching:** draw-call and texture-switch counts per frame, then fewer blend-mode breaks.
+9. **[done]** Ember frame warning (`frameTotal` includes `__BASE`).
+10. **[done]** Fair before/after tracking: `docs/perf-history.csv` plus `npm run bench:report`, with a 3-run baseline of the committed code.
+11. **Later:** input recording and replay (deterministic repros), with input read through one per-frame snapshot.
 
-After each step: `npm run bench -- --compare docs/perf-baseline-2026-10.json`.
+After each step: `npm run bench -- <scenarios> --runs 3 --record "<what changed>"`, then `npm run bench:report`.
