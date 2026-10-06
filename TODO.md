@@ -30,6 +30,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
   * [x] Urban (roads + buildings heavy): towns, ports, airfields, dams, farms, oil fields, power lines
     * [x] Civilian buildings + boats are destructible neutral units (no HP bar, gray on minimap, never auto-targeted)
     * [x] Oil rigs: chained inferno deaths; pylons: electrical short (tesla zaps) + live wires
+    * [ ] Critters: cows, deer, birds, fish, sharks, etc.
     * [ ] Building roof height: draw building art at its roof (`z + height`) so tall buildings sit up in 2.5D, not flat on the ground
     * [x] Building cast shadows: buildings cast shadows from their height across the terrain (simple: footprint shadow offset from roof height, not an extruded silhouette)
 * [x] Multiple helicopters / craft (playable roster in `craft.ts`; menu select)
@@ -143,6 +144,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [x] Screen shock when player takes damage
 * [x] Radial blur spinningblades
 * [ ] Bubble explosion
+* [ ] Improve toon blast with volume bubbling
 * [ ] Weather effects (rain, lightning, thunder)
 * [ ] Time of day lighting effects
   * [ ] Night rendering (lights)
@@ -203,6 +205,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [ ] Sustained Starscream fire causes big framerate drops and short freezes (GC?) -- energy ribbons allocate per frame across dozens of live shots + bomblets; reuse buffers, profile explosion cost (pre-existing)
 * [ ] Map edge shows for helis -- out-of-bounds cloud mountains don't hide the seam everywhere (e.g. top of the plane map)
 * [ ] Out-of-bounds cloud mountains have a lot of pink/magenta contamination
+* [ ] Optimize minimap -- don't render from the live terrain
 
 ## Stats
 
