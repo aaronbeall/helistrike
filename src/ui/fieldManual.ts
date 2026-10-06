@@ -944,7 +944,7 @@ export class FieldManual {
           label: "KILLS",
           value: `${c.kills}`,
           cells: [
-            { label: "ENMY", value: `${c.unitKills}` },
+            { label: "UNITS", value: `${c.unitKills}` },
             { label: "BLDG", value: `${c.buildingKills}` },
             { label: "COLL", value: `${c.collateralKills}` },
             { label: "K/MIN", value: perMin },
