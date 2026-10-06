@@ -353,7 +353,6 @@ export class MissionScene extends Phaser.Scene {
     }
     this.groundMarks.stampBrush = this.make.image({ key: "fx_blast_0" }, false);
 
-    this.unitSprites.unitG = this.add.group();
     this.projectiles.shotG = this.add.group();
     this.projectiles.photonFxG = this.add.group();
     this.remoteBody.remoteG = this.add.group();

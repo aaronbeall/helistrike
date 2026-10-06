@@ -16,8 +16,19 @@ import { groundSlope, worldToScreen, cameraPointVisible, screenVelX, screenVelY,
 import { VIEW_PAD } from "../camera/camera";
 import type { MissionScene } from "../../missionScene";
 
-/** Pooled images per on-screen unit: shadow, body, 6 parts, muzzle flash, roof. */
-const BLOCK_SIZE = 10;
+/** Part images per sprite block (guns, then rotors, then dish). */
+const BLOCK_PARTS = 6;
+
+/** Pooled images for one on-screen unit. */
+interface SpriteBlock {
+  shadow: Phaser.GameObjects.Image;
+  body: Phaser.GameObjects.Image;
+  parts: Phaser.GameObjects.Image[];
+  flash: Phaser.GameObjects.Image;
+  roof: Phaser.GameObjects.Image;
+  /** Dish tilt container, once a part has been wrapped. */
+  wrap?: Phaser.GameObjects.Container;
+}
 /** Buildings cast their shadow from this fraction of their height. */
 const BUILDING_SHADOW_HEIGHT = 0.25;
 /** Ground vehicles cast their shadow from this fraction of their height. */
@@ -35,7 +46,6 @@ type TextureAlphaBounds = {
 
 /** Unit rendering: sprite sync, draw rotations, thermal hotspots, texture metrics (span / alpha bounds / solid-UV sampling). */
 export class UnitSprites {
-  unitG!: Phaser.GameObjects.Group;
   thermalHotspotG!: Phaser.GameObjects.Group;
   /** Cached texture span / trail radius (key → px). */
   texSpanCache = new Map<string, number>();
@@ -43,34 +53,37 @@ export class UnitSprites {
 
   /** Image block per on-screen unit (`s.units` index → block, -1 none); blocks are pooled, never destroyed. */
   private blockOf = new Int32Array(0);
+  private blocks: SpriteBlock[] = [];
   private freeBlocks: number[] = [];
-  private blockCount = 0;
+  /** Kinds already reported for having more parts than a block holds (dev). */
+  private partOverflow = new Set<string>();
 
   constructor(readonly s: MissionScene) {}
 
   /** Per-mission state reset (called from the scene's init). */
   reset(): void {
     this.blockOf = new Int32Array(0);
+    this.blocks = [];
     this.freeBlocks = [];
-    this.blockCount = 0;
   }
 
   /** Image blocks in use (debug). */
   blocksInUse(): number {
-    return this.blockCount - this.freeBlocks.length;
+    return this.blocks.length - this.freeBlocks.length;
   }
 
   private claimBlock(ui: number): number {
     let block = this.freeBlocks.pop();
     if (block == null) {
-      block = this.blockCount++;
-      this.unitG.add(this.s.add.image(0, 0, "fx_shadow").setVisible(false));
-      this.unitG.add(this.s.add.image(0, 0, "enemy_tank").setVisible(false));
-      for (let p = 0; p < 6; p++) this.unitG.add(this.s.add.image(0, 0, "enemy_heli_rotor").setVisible(false));
-      const mz = this.s.add.image(0, 0, "fx_muzzle").setVisible(false);
-      mz.setBlendMode(Phaser.BlendModes.ADD);
-      this.unitG.add(mz);
-      this.unitG.add(this.s.add.image(0, 0, "fx_shadow").setVisible(false));
+      block = this.blocks.length;
+      const img = (key: string) => this.s.add.image(0, 0, key).setVisible(false);
+      const shadow = img("fx_shadow");
+      const body = img("enemy_tank");
+      const parts: Phaser.GameObjects.Image[] = [];
+      for (let p = 0; p < BLOCK_PARTS; p++) parts.push(img("enemy_heli_rotor"));
+      const flash = img("fx_muzzle").setBlendMode(Phaser.BlendModes.ADD);
+      const roof = img("fx_shadow");
+      this.blocks.push({ shadow, body, parts, flash, roof });
     }
     this.blockOf[ui] = block;
     return block;
@@ -81,13 +94,23 @@ export class UnitSprites {
     this.blockOf[ui] = -1;
   }
 
-  private hideBlock(kids: Phaser.GameObjects.Image[], block: number): void {
-    for (let k = block * BLOCK_SIZE, end = k + BLOCK_SIZE; k < end; k++) {
-      const im = kids[k]!;
-      if (im.visible) im.setVisible(false);
-      const wrap = im.getData("tiltWrap") as Phaser.GameObjects.Container | undefined;
-      if (wrap?.visible) wrap.setVisible(false);
+  private hideBlock(b: SpriteBlock): void {
+    if (b.shadow.visible) b.shadow.setVisible(false);
+    if (b.body.visible) b.body.setVisible(false);
+    for (const p of b.parts) if (p.visible) p.setVisible(false);
+    if (b.flash.visible) b.flash.setVisible(false);
+    if (b.roof.visible) b.roof.setVisible(false);
+    if (b.wrap?.scene && b.wrap.visible) b.wrap.setVisible(false);
+  }
+
+  /** Part image `i` of a block; past the block's capacity the part is skipped (reported once per kind in dev). */
+  private blockPart(b: SpriteBlock, i: number, kind: string): Phaser.GameObjects.Image | undefined {
+    const p = b.parts[i];
+    if (!p && import.meta.env.DEV && !this.partOverflow.has(kind)) {
+      this.partOverflow.add(kind);
+      console.error(`[unitSprites] ${kind} has more than ${BLOCK_PARTS} parts; extras are not drawn`);
     }
+    return p;
   }
 
   spriteOrigin(key: string): { x: number; y: number } {
@@ -299,11 +322,10 @@ export class UnitSprites {
       g.set(this.blockOf);
       this.blockOf = g;
     }
-    const kids = this.unitG.getChildren() as Phaser.GameObjects.Image[];
     for (let ui = 0; ui < units.length; ui++) {
       const u = units[ui]!;
       const held = this.blockOf[ui]!;
-      if (held >= 0) this.hideBlock(kids, held);
+      if (held >= 0) this.hideBlock(this.blocks[held]!);
       if (u.dead) {
         if (held >= 0) this.releaseBlock(ui);
         continue;
@@ -326,11 +348,11 @@ export class UnitSprites {
       }
       const i = held >= 0 ? held : this.claimBlock(ui);
       const guns = gunsOf(u);
-      const sh = kids[i * BLOCK_SIZE]!;
-      const im = kids[i * BLOCK_SIZE + 1]!;
-      const partBase = i * BLOCK_SIZE + 2;
-      const flash = kids[i * BLOCK_SIZE + 8]!;
-      const roofIm = kids[i * BLOCK_SIZE + 9]!;
+      const blk = this.blocks[i]!;
+      const sh = blk.shadow;
+      const im = blk.body;
+      const flash = blk.flash;
+      const roofIm = blk.roof;
       const drawRot = this.unitDrawRot(u, rot);
       const zs = scr.scale;
       const pivot = spritePivot(textureOf(u.kind));
@@ -451,7 +473,7 @@ export class UnitSprites {
         );
       };
       guns.forEach((g, gi) => {
-        const part = kids[partBase + pi++];
+        const part = this.blockPart(blk, pi++, u.kind);
         if (!part) return;
         const gorig = lookupSpriteOrigin(g.tex) ?? g.origin;
         const gmount = g.mount;
@@ -468,7 +490,7 @@ export class UnitSprites {
         );
       });
       sp.rotors.forEach((r, ri) => {
-        const part = kids[partBase + pi++];
+        const part = this.blockPart(blk, pi++, u.kind);
         if (!part) return;
         const spinKey = `${r.tex}_spin`;
         const rotorKey =
@@ -482,7 +504,7 @@ export class UnitSprites {
         }
       });
       if (sp.dish) {
-        const part = kids[partBase + pi++];
+        const part = this.blockPart(blk, pi++, u.kind);
         if (part && this.s.textures.exists(sp.dish.tex)) {
           const d = sp.dish;
           const mx = (d.mount.x - ox) * im.displayWidth;
@@ -496,6 +518,7 @@ export class UnitSprites {
             wrap.add(part);
             part.setData("tiltWrap", wrap);
           }
+          blk.wrap = wrap;
           const dishDepth = worldDepth(u.z, ZOff.turret + zBias, u.y);
           wrap
             .setVisible(true)
