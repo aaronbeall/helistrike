@@ -1,6 +1,6 @@
 import { type Unit } from "./combat";
 import { type RemoteCraft } from "./remote";
-import { specOf, gunsOf, isNeutral, weaponIsAa, isGroundVehicle } from "./roster";
+import { specOf, gunsOf, isNeutral, weaponIsAa, isGroundVehicle, partsRollOf, type UnitKind } from "./roster";
 
 /** Base react radii by role: how close a sighted target must be to be pursued / fled (scaled by `targeting.enemyScaledReach`). */
 export const REACT_DRONE = 1400;
@@ -12,23 +12,33 @@ export const REACT_INFANTRY = 400;
 
 /** Base max sight range: `sightRange`, else the widest weapon or role react range. */
 export function unitSightBase(u: Unit): number {
-  const sp = specOf(u.kind);
-  if (sp.sightRange != null) return sp.sightRange;
-  let r = Math.max(sp.weapon?.range ?? 0, sp.secondary?.wpn.range ?? 0);
-  for (const g of gunsOf(u)) r = Math.max(r, g.weapon?.range ?? 0);
-  if (sp.behavior === "suicide_attack_heli") r = Math.max(r, REACT_DRONE);
-  else if (sp.behavior === "kite_attack_heli") r = Math.max(r, REACT_SCOUT);
-  else if (sp.behavior === "orbit_attack_heli") r = Math.max(r, REACT_ORBIT);
-  if (isGroundVehicle(u.kind)) r = Math.max(r, REACT_VEHICLE, sp.fleeReactRange ?? REACT_FLEE);
-  if (sp.behavior === "attack_infantry" || sp.behavior === "flee_infantry") r = Math.max(r, REACT_INFANTRY);
+  return sightFor(u.kind, gunRange(gunsOf(u)));
+}
+
+/** Farthest any unit of `kind` can see or shoot, over every gun roll option, before target-awareness scaling. */
+export function kindEngageReach(kind: UnitKind): number {
+  const sp = specOf(kind);
+  let guns = gunRange(sp.guns);
+  const roll = partsRollOf(kind);
+  if (roll) for (const o of Object.values(roll.options)) guns = Math.max(guns, o.w.range ?? 0);
+  return Math.max(sightFor(kind, guns), sp.weapon?.range ?? 0, sp.secondary?.wpn.range ?? 0, guns);
+}
+
+function gunRange(guns: readonly { weapon?: { range?: number } }[]): number {
+  let r = 0;
+  for (const g of guns) r = Math.max(r, g.weapon?.range ?? 0);
   return r;
 }
 
-/** Farthest a unit can see or shoot, before target-awareness scaling. */
-export function unitEngageReach(u: Unit): number {
-  const sp = specOf(u.kind);
-  let r = Math.max(unitSightBase(u), sp.weapon?.range ?? 0, sp.secondary?.wpn.range ?? 0);
-  for (const g of gunsOf(u)) r = Math.max(r, g.weapon?.range ?? 0);
+function sightFor(kind: UnitKind, guns: number): number {
+  const sp = specOf(kind);
+  if (sp.sightRange != null) return sp.sightRange;
+  let r = Math.max(sp.weapon?.range ?? 0, sp.secondary?.wpn.range ?? 0, guns);
+  if (sp.behavior === "suicide_attack_heli") r = Math.max(r, REACT_DRONE);
+  else if (sp.behavior === "kite_attack_heli") r = Math.max(r, REACT_SCOUT);
+  else if (sp.behavior === "orbit_attack_heli") r = Math.max(r, REACT_ORBIT);
+  if (isGroundVehicle(kind)) r = Math.max(r, REACT_VEHICLE, sp.fleeReactRange ?? REACT_FLEE);
+  if (sp.behavior === "attack_infantry" || sp.behavior === "flee_infantry") r = Math.max(r, REACT_INFANTRY);
   return r;
 }
 

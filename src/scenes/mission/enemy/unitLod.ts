@@ -1,6 +1,6 @@
 import type { Unit } from "../../../sim/combat";
 import { isNeutral, type UnitKind } from "../../../sim/roster";
-import { remoteTargetable, unitEngageReach } from "../../../sim/targetRules";
+import { kindEngageReach, remoteTargetable } from "../../../sim/targetRules";
 import { Camera25D } from "../../../worldgen/world";
 import { VIEW_PAD } from "../camera/camera";
 import type { MissionScene } from "../../missionScene";
@@ -83,7 +83,7 @@ export class UnitLod {
     if (fx * fx + fy * fy < this.viewR2) return false;
     let reach = this.reachByKind.get(u.kind);
     if (reach == null) {
-      reach = unitEngageReach(u);
+      reach = kindEngageReach(u.kind);
       this.reachByKind.set(u.kind, reach);
     }
     const t = this.targets;
