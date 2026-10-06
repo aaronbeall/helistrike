@@ -10,7 +10,7 @@
  *
  * Options: --compare <file>, --profile, --out <file>, --url <base> (default http://localhost:5174), --keep-open.
  * Starts the Vite dev server when nothing answers at --url. Game side: dev URL launch (?test=…&cheats=…) and the
- * read-only `window.__heli` handle; everything else lives here.
+ * read-only `window.__heli` handle; everything else lives here, and nothing in the game or Phaser is patched.
  */
 import { spawn, execSync } from "node:child_process";
 import fs from "node:fs";
@@ -47,7 +47,7 @@ const LOAD_TIMEOUT_MS = 3 * 60 * 1000;
 const TICK_MS = 100;
 const PROFILE_TOP = 25;
 
-/** Injected before the game loads: per-frame timing around Phaser's step, read through `window.__heli`. */
+/** Injected before the game loads: per-frame timing from the game's prestep / postrender events, read through `window.__heli`. */
 function frameProbe() {
   const P = { on: false, wrapped: null, last: 0, rows: [], longTasks: [] };
   const sample = (time, cpu) => {
@@ -66,17 +66,18 @@ function frameProbe() {
       counts: [s.units.length, live, s.shots.length, s.debris.length, s.fx.simParticles.length],
     });
   };
+  // Listen to the game's own step / render events (no patching): CPU = prestep → postrender.
+  let t0 = 0;
+  let stepTime = 0;
   setInterval(() => {
     const h = window.__heli;
     if (!h || P.wrapped === h.game) return;
     P.wrapped = h.game;
-    const loop = h.game.loop;
-    const step = loop.callback;
-    loop.callback = (time, delta) => {
-      const t0 = performance.now();
-      step(time, delta);
-      sample(time, performance.now() - t0);
-    };
+    h.game.events.on("prestep", (time) => {
+      t0 = performance.now();
+      stepTime = time;
+    });
+    h.game.events.on("postrender", () => sample(stepTime, performance.now() - t0));
   }, 100);
   try {
     new PerformanceObserver((list) => {

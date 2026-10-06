@@ -9,6 +9,7 @@ import { Layer } from "../../../render/depth";
 import { craftCrewHudTag, craftSocketMultiplicity, craftSocketStartingAmmo } from "../../../sim/crafts";
 import type { MissionScene } from "../../missionScene";
 import { fillRoundedRectFast, strokeRoundedRectFast } from "../../../render/fastShapes";
+import { setTextColor } from "../../../render/textStyle";
 
 /** Truncate a HUD label so `text` width stays within `maxW` (ellipsis). */
 export function fitHudLabel(text: Phaser.GameObjects.Text, label: string, maxW: number): string {
@@ -270,20 +271,18 @@ export class WeaponHud {
       if (liveMark) nameCol = sel ? "#0a4020" : "#3dff88";
 
       const textA = disabled ? (sel ? 0.55 : 0.4) : 1;
-      row.key
+      setTextColor(row.key, keyCol)
         .setVisible(true)
         .setPosition(keyLp.x, keyLp.y)
         .setText(String(i + 1))
-        .setColor(keyCol)
         .setStroke(stroke, strokeW)
         .setFontSize("12px")
         .setAlpha(disabled ? textA : sel ? 0.7 : 0.85);
 
-      row.ammo
+      setTextColor(row.ammo, ammoCol)
         .setVisible(true)
         .setPosition(ammoLp.x, ammoLp.y)
         .setText(ammoS)
-        .setColor(ammoCol)
         .setStroke(stroke, strokeW)
         .setFontSize(low && !sel && !disabled ? "13px" : "12px")
         .setAlpha(textA);
@@ -298,11 +297,10 @@ export class WeaponHud {
       const liveBlink = liveMark
         ? 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(this.s.time.now * 0.014))
         : 1;
-      row.name
+      setTextColor(row.name, nameCol)
         .setVisible(true)
         .setPosition(nameLp.x, nameLp.y)
         .setText(nameStr)
-        .setColor(nameCol)
         .setStroke(stroke, strokeW)
         .setFontSize("13px")
         .setAlpha(disabled ? textA : liveBlink);
@@ -313,21 +311,19 @@ export class WeaponHud {
         const label = player
           ? "PILOT"
           : `${craftCrewHudTag(socket!) ?? "CREW"} GUNNER`;
-        row.status
+        setTextColor(row.status, disabled ? "#6a6a72" : player ? "#e8b84a" : "#8ec8e8")
           .setVisible(true)
           .setPosition(statusLp.x, statusLp.y)
           .setText(label)
-          .setColor(disabled ? "#6a6a72" : player ? "#e8b84a" : "#8ec8e8")
           .setStroke("#12100c", 2)
           .setAlpha(disabled ? 0.45 : player ? 0.95 : 0.85)
           .setFontSize("10px");
       } else if (liveMark && liveRemote?.spec.dockable) {
         const statusLp = this.s.hudLocal(x + slotW / 2, y + slotH + 3);
-        row.status
+        setTextColor(row.status, sel ? "#0a4020" : "#3dff88")
           .setVisible(true)
           .setPosition(statusLp.x, statusLp.y)
           .setText("Q RECALL")
-          .setColor(sel ? "#0a4020" : "#3dff88")
           .setStroke("#12100c", 2)
           .setAlpha(0.9)
           .setFontSize("10px");
@@ -346,29 +342,26 @@ export class WeaponHud {
       strokeRoundedRectFast(g, x, y, escortW, slotH, 3, 1.3, follow ? 0x4aa8e8 : 0x8a8470, follow ? 0.9 : 0.75);
       const midY = y + slotH / 2;
       const keyLp = this.s.hudLocal(x + padX, midY);
-      this.escortHudSlot.key
+      setTextColor(this.escortHudSlot.key, follow ? "#6aa8c8" : "#a89868")
         .setVisible(true)
         .setPosition(keyLp.x, keyLp.y)
         .setText("C")
-        .setColor(follow ? "#6aa8c8" : "#a89868")
         .setStroke("#12100c", 3)
         .setFontSize("12px")
         .setAlpha(0.9);
       const nameLp = this.s.hudLocal(x + padX + this.escortHudSlot.key.width + 6, midY);
-      this.escortHudSlot.name
+      setTextColor(this.escortHudSlot.name, follow ? "#7ad0ff" : "#f0d56a")
         .setVisible(true)
         .setPosition(nameLp.x, nameLp.y)
         .setText(follow ? "FOLLOW" : "HOLD")
-        .setColor(follow ? "#7ad0ff" : "#f0d56a")
         .setStroke("#12100c", 3)
         .setFontSize("13px")
         .setAlpha(0.95);
       const statusLp = this.s.hudLocal(x + escortW / 2, y + slotH + 2);
-      this.escortHudSlot.status
+      setTextColor(this.escortHudSlot.status, follow ? "#7ad0ff" : "#c4b48a")
         .setVisible(true)
         .setPosition(statusLp.x, statusLp.y)
         .setText(h.spec.name.toUpperCase())
-        .setColor(follow ? "#7ad0ff" : "#c4b48a")
         .setStroke("#12100c", 2)
         .setFontSize("10px")
         .setAlpha(0.9);
@@ -385,21 +378,19 @@ export class WeaponHud {
       strokeRoundedRectFast(g, x, y, exitW, slotH, 3, 1.3, 0x8a8470, 0.75);
       const midY = y + slotH / 2;
       const keyLp = this.s.hudLocal(x + padX, midY);
-      this.exitHudSlot.key
+      setTextColor(this.exitHudSlot.key, "#a89868")
         .setVisible(true)
         .setPosition(keyLp.x, keyLp.y)
         .setText("Q")
-        .setColor("#a89868")
         .setStroke("#12100c", 3)
         .setFontSize("12px")
         .setAlpha(0.9);
       const nameLp = this.s.hudLocal(x + padX + this.exitHudSlot.key.width + 6, midY);
       const canDock = !!(pov.spec.dockable && this.s.remoteFleet.remoteNearHost(pov));
-      this.exitHudSlot.name
+      setTextColor(this.exitHudSlot.name, canDock ? "#3dff88" : "#f0d56a")
         .setVisible(true)
         .setPosition(nameLp.x, nameLp.y)
         .setText(canDock ? "DOCK" : "EXIT")
-        .setColor(canDock ? "#3dff88" : "#f0d56a")
         .setStroke("#12100c", 3)
         .setFontSize("13px")
         .setAlpha(0.95);
@@ -497,17 +488,15 @@ export class WeaponHud {
     }
     const midY = barY + barH / 2;
     const labelLp = this.s.hudLocal(barX - labelGap, midY);
-    this.cmHudLabel
+    setTextColor(this.cmHudLabel, labelCol)
       .setVisible(true)
       .setPosition(labelLp.x, labelLp.y)
       .setText(label)
-      .setColor(labelCol)
       .setAlpha(1);
     const timeLp = this.s.hudLocal(barX + barW + timeGap, midY);
-    this.cmHudTime
+    setTextColor(this.cmHudTime, timeCol)
       .setVisible(true)
       .setPosition(timeLp.x, timeLp.y)
-      .setColor(timeCol)
       .setAlpha(1);
   }
 
@@ -539,12 +528,11 @@ export class WeaponHud {
     }
     const midY = barY + barH / 2;
     const labelLp = this.s.hudLocal(barX - labelGap, midY);
-    this.btHudLabel
+    setTextColor(this.btHudLabel, on ? "#d6c2ff" : "#a898d8")
       .setPosition(labelLp.x, labelLp.y)
-      .setText("(E) BULLET TIME")
-      .setColor(on ? "#d6c2ff" : "#a898d8");
+      .setText("(E) BULLET TIME");
     const timeLp = this.s.hudLocal(barX + barW + timeGap, midY);
-    this.btHudTime.setPosition(timeLp.x, timeLp.y).setColor(on ? "#e8dcff" : "#8a80a8");
+    setTextColor(this.btHudTime.setPosition(timeLp.x, timeLp.y), on ? "#e8dcff" : "#8a80a8");
   }
 
 }

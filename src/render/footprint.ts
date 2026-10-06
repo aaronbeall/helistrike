@@ -105,8 +105,11 @@ export function pointInFootprint(px: number, py: number, fp: Footprint): boolean
   if (fp.shape === "circle") {
     return Math.hypot(px - fp.x, py - fp.y) <= fp.r;
   }
-  const { along, side } = worldToLocal(px, py, fp.x, fp.y, fp.angle);
-  return Math.abs(along) <= fp.halfL && Math.abs(side) <= fp.halfW;
+  const dx = px - fp.x;
+  const dy = py - fp.y;
+  const c = Math.cos(fp.angle);
+  const s = Math.sin(fp.angle);
+  return Math.abs(dx * c + dy * s) <= fp.halfL && Math.abs(-dx * s + dy * c) <= fp.halfW;
 }
 
 /**
@@ -248,120 +251,105 @@ export function closestOnFootprint(px: number, py: number, fp: Footprint): { x: 
   return localToWorld(ca, cs, fp.x, fp.y, fp.angle);
 }
 
-/**
- * Soft overlap between two footprints.
- * Returns outward normal from b → a and penetration depth when overlapping.
- */
-export function footprintOverlap(
-  a: Footprint,
-  b: Footprint
-): { hit: boolean; nx: number; ny: number; depth: number } {
+/** Footprint overlap: outward normal from b → a and penetration depth. Shared result, valid until the next call. */
+export interface Overlap {
+  hit: boolean;
+  nx: number;
+  ny: number;
+  depth: number;
+}
+
+const OV: Overlap = { hit: false, nx: 0, ny: 0, depth: 0 };
+
+function overlap(hit: boolean, nx: number, ny: number, depth: number): Overlap {
+  OV.hit = hit;
+  OV.nx = nx;
+  OV.ny = ny;
+  OV.depth = depth;
+  return OV;
+}
+
+/** Soft overlap between two footprints (allocation-free; the result is reused by the next call). */
+export function footprintOverlap(a: Footprint, b: Footprint): Overlap {
   if (a.shape === "circle" && b.shape === "circle") {
     const dx = a.x - b.x;
     const dy = a.y - b.y;
     const d = Math.hypot(dx, dy);
     const sep = a.r + b.r;
-    if (d >= sep) return { hit: false, nx: 0, ny: 0, depth: 0 };
-    if (d < 1e-4) return { hit: true, nx: 1, ny: 0, depth: sep };
-    return { hit: true, nx: dx / d, ny: dy / d, depth: sep - d };
+    if (d >= sep) return overlap(false, 0, 0, 0);
+    if (d < 1e-4) return overlap(true, 1, 0, sep);
+    return overlap(true, dx / d, dy / d, sep - d);
   }
-
   // Circle ↔ rect: closest point on rect to circle center.
-  if (a.shape === "circle" && b.shape === "rect") {
-    return circleVsRect(a, b);
-  }
-  if (a.shape === "rect" && b.shape === "circle") {
-    const o = circleVsRect(b, a);
-    return { hit: o.hit, nx: -o.nx, ny: -o.ny, depth: o.depth };
-  }
-
+  if (a.shape === "circle" && b.shape === "rect") return circleVsRect(a, b, 1);
+  if (a.shape === "rect" && b.shape === "circle") return circleVsRect(b, a, -1);
   // Rect ↔ rect: SAT on facing/side axes.
   return rectVsRect(a as FootprintRect, b as FootprintRect);
 }
 
-function circleVsRect(
-  c: FootprintCircle,
-  r: FootprintRect
-): { hit: boolean; nx: number; ny: number; depth: number } {
-  const closest = closestOnFootprint(c.x, c.y, r);
-  const dx = c.x - closest.x;
-  const dy = c.y - closest.y;
-  const d = Math.hypot(dx, dy);
-  const inside = pointInFootprint(c.x, c.y, r);
-  if (!inside && d >= c.r) return { hit: false, nx: 0, ny: 0, depth: 0 };
+/** Circle vs rect; `flip` -1 reports the normal for (rect, circle) order. */
+function circleVsRect(c: FootprintCircle, r: FootprintRect, flip: number): Overlap {
+  const ca = Math.cos(r.angle);
+  const sa = Math.sin(r.angle);
+  const dx = c.x - r.x;
+  const dy = c.y - r.y;
+  const along = dx * ca + dy * sa;
+  const side = -dx * sa + dy * ca;
+  const inside = Math.abs(along) <= r.halfL && Math.abs(side) <= r.halfW;
   if (inside) {
     // Push out along nearest face.
-    const { along, side } = worldToLocal(c.x, c.y, r.x, r.y, r.angle);
     const dl = r.halfL - Math.abs(along);
     const dw = r.halfW - Math.abs(side);
-    const ca = Math.cos(r.angle);
-    const sa = Math.sin(r.angle);
     if (dl < dw) {
       const sign = along >= 0 ? 1 : -1;
-      return { hit: true, nx: ca * sign, ny: sa * sign, depth: dl + c.r };
+      return overlap(true, ca * sign * flip, sa * sign * flip, dl + c.r);
     }
     const sign = side >= 0 ? 1 : -1;
     // side axis = right = (-sin, cos)
-    return { hit: true, nx: -sa * sign, ny: ca * sign, depth: dw + c.r };
+    return overlap(true, -sa * sign * flip, ca * sign * flip, dw + c.r);
   }
-  return { hit: true, nx: dx / d, ny: dy / d, depth: c.r - d };
+  const cl = Math.max(-r.halfL, Math.min(r.halfL, along));
+  const cs = Math.max(-r.halfW, Math.min(r.halfW, side));
+  const ox = c.x - (r.x + cl * ca - cs * sa);
+  const oy = c.y - (r.y + cl * sa + cs * ca);
+  const d = Math.hypot(ox, oy);
+  if (d >= c.r) return overlap(false, 0, 0, 0);
+  return overlap(true, (ox / d) * flip, (oy / d) * flip, c.r - d);
 }
 
-function rectVsRect(
-  a: FootprintRect,
-  b: FootprintRect
-): { hit: boolean; nx: number; ny: number; depth: number } {
-  const axes = [
-    { x: Math.cos(a.angle), y: Math.sin(a.angle) },
-    { x: -Math.sin(a.angle), y: Math.cos(a.angle) },
-    { x: Math.cos(b.angle), y: Math.sin(b.angle) },
-    { x: -Math.sin(b.angle), y: Math.cos(b.angle) },
-  ];
+/** Half-extent of a rect projected onto unit axis (ax, ay). */
+function rectExtent(r: FootprintRect, ax: number, ay: number, c: number, s: number): number {
+  return r.halfL * Math.abs(c * ax + s * ay) + r.halfW * Math.abs(-s * ax + c * ay);
+}
+
+function rectVsRect(a: FootprintRect, b: FootprintRect): Overlap {
+  const ca = Math.cos(a.angle);
+  const sa = Math.sin(a.angle);
+  const cb = Math.cos(b.angle);
+  const sb = Math.sin(b.angle);
+  const acx = a.x - b.x;
+  const acy = a.y - b.y;
   let minDepth = Infinity;
   let bestNx = 1;
   let bestNy = 0;
-  for (const axis of axes) {
-    const pa = projectRect(a, axis.x, axis.y);
-    const pb = projectRect(b, axis.x, axis.y);
-    const overlap = Math.min(pa.max, pb.max) - Math.max(pa.min, pb.min);
-    if (overlap <= 0) return { hit: false, nx: 0, ny: 0, depth: 0 };
-    if (overlap < minDepth) {
-      minDepth = overlap;
+  for (let k = 0; k < 4; k++) {
+    const ax = k === 0 ? ca : k === 1 ? -sa : k === 2 ? cb : -sb;
+    const ay = k === 0 ? sa : k === 1 ? ca : k === 2 ? sb : cb;
+    const pa = a.x * ax + a.y * ay;
+    const pb = b.x * ax + b.y * ay;
+    const ea = rectExtent(a, ax, ay, ca, sa);
+    const eb = rectExtent(b, ax, ay, cb, sb);
+    const depth = Math.min(pa + ea, pb + eb) - Math.max(pa - ea, pb - eb);
+    if (depth <= 0) return overlap(false, 0, 0, 0);
+    if (depth < minDepth) {
+      minDepth = depth;
       // Normal from b toward a along this axis.
-      const acx = a.x - b.x;
-      const acy = a.y - b.y;
-      const sign = acx * axis.x + acy * axis.y >= 0 ? 1 : -1;
-      bestNx = axis.x * sign;
-      bestNy = axis.y * sign;
+      const sign = acx * ax + acy * ay >= 0 ? 1 : -1;
+      bestNx = ax * sign;
+      bestNy = ay * sign;
     }
   }
-  return { hit: true, nx: bestNx, ny: bestNy, depth: minDepth };
-}
-
-function projectRect(
-  r: FootprintRect,
-  ax: number,
-  ay: number
-): { min: number; max: number } {
-  const c = Math.cos(r.angle);
-  const s = Math.sin(r.angle);
-  const ex = r.halfL * c;
-  const ey = r.halfL * s;
-  const fx = -r.halfW * s;
-  const fy = r.halfW * c;
-  let min = Infinity;
-  let max = -Infinity;
-  for (const [ox, oy] of [
-    [ex + fx, ey + fy],
-    [ex - fx, ey - fy],
-    [-ex + fx, -ey + fy],
-    [-ex - fx, -ey - fy],
-  ] as const) {
-    const p = (r.x + ox) * ax + (r.y + oy) * ay;
-    min = Math.min(min, p);
-    max = Math.max(max, p);
-  }
-  return { min, max };
+  return overlap(true, bestNx, bestNy, minDepth);
 }
 
 /** Stroke footprint outline into a Phaser graphics (world XY). */

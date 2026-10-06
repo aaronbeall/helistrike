@@ -2,7 +2,9 @@ import { groundZ, castZ, type WorldData, type HvSpec } from "../../../worldgen/w
 import { labelOf } from "../../../sim/roster";
 import { type Unit } from "../../../sim/combat";
 import Phaser from "phaser";
+import { formatMeters } from "../../../util/format";
 import { type MissionScene } from "../../missionScene";
+import { setTextColor } from "../../../render/textStyle";
 
 function bearing(deg: number): string {
   const d = ((deg % 360) + 360) % 360;
@@ -64,7 +66,7 @@ export class CornerHud {
   syncObjectivesHud(): void {
     const lines = this.s.world.hv.map((spec) => this.hvLine(spec));
     const left = lines.filter((l) => !l.done).length;
-    this.hvHud.setColor("#e8b84a").setText(`OBJECTIVES  ${this.s.world.hv.length - left}/${this.s.world.hv.length}`);
+    setTextColor(this.hvHud, "#e8b84a").setText(`OBJECTIVES  ${this.s.world.hv.length - left}/${this.s.world.hv.length}`);
     for (let i = 0; i < this.hvRows.length; i++) {
       const row = this.hvRows[i]!;
       const line = lines[i];
@@ -74,8 +76,8 @@ export class CornerHud {
       }
       row.setVisible(this.hvHud.visible);
       row.setText(line.text);
-      if (line.done) row.setColor("#6a8a62").setAlpha(0.82);
-      else row.setColor("#ff3a22").setAlpha(1);
+      if (line.done) setTextColor(row, "#6a8a62").setAlpha(0.82);
+      else setTextColor(row, "#ff3a22").setAlpha(1);
     }
   }
 
@@ -86,7 +88,7 @@ export class CornerHud {
     this.fpsHudAt = now;
     const fps = Math.round(this.s.game.loop.actualFps);
     this.fpsHud.setText(`${fps} FPS`);
-    this.fpsHud.setColor(fps >= 55 ? "#6dbb4a" : fps >= 30 ? "#e8b84a" : "#ff3a22");
+    setTextColor(this.fpsHud, fps >= 55 ? "#6dbb4a" : fps >= 30 ? "#e8b84a" : "#ff3a22");
   }
 
   hvLine(spec: HvSpec): { text: string; done: boolean } {
@@ -101,7 +103,7 @@ export class CornerHud {
     const compass = bearing(brg);
     const hp = Math.max(0, (u.health / u.max) * 100) | 0;
     return {
-      text: `${bearingArrow(brg)} ${spec.name}  ${dist | 0}m  ${compass}  ${hp}%`,
+      text: `${bearingArrow(brg)} ${spec.name}  ${formatMeters(dist)}  ${compass}  ${hp}%`,
       done: false,
     };
   }

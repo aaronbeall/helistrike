@@ -49,6 +49,7 @@ import { createFxEmitters } from "./mission/fx/emitters";
 import { type RemoteCraft } from "../sim/remote";
 import { Layer } from "../render/depth";
 import { fillCircleFast, lineFast } from "../render/fastShapes";
+import { formatMeters } from "../util/format";
 import { Craft, craftCameraEdgeLocked } from "../sim/craft";
 import { ensureAllArtGenAnims } from "../art/artGen";
 import { craftComposite, craftExhaustFlameHue, craftExhaustMounts, craftGunOrigin, craftOf, craftPreviewExhaustTint } from "../sim/crafts";
@@ -63,6 +64,7 @@ import { createTerrain25D, type Terrain25D } from "../render/terrain25d";
 import { extractBiomeTiles, bakeHeliHudWireTexture, registerArt, nameGameTexture, muzzleGlowKey, ensureExhaustGlow, ensureImpactGlow, setSinkWater } from "../art/sprites";
 import { themeOf, waterColor } from "../worldgen/theme";
 import { generateWorld, worldFromGen, groundZ, worldToScreen, setCamera25DFocus, screenToWorldOnGround, castZ, paintHeightMap, WORLD, WRECK_TEX, type WorldData } from "../worldgen/world";
+import { setTextColor } from "../render/textStyle";
 
 /** How far aircraft may overshoot before a soft cap (jets / enemy air) — see craft.MAP_AIR_SOFT. */
 
@@ -1529,12 +1531,11 @@ export class MissionScene extends Phaser.Scene {
         oy = 0.5 + Math.sin(ang) * 0.38;
       }
       const lp = this.hudLocal(lx, ly);
-      label
+      setTextColor(label, "#f0e6c8")
         .setVisible(true)
-        .setText(`${spec.name}\n${dist}m`)
+        .setText(`${spec.name}\n${formatMeters(dist)}`)
         .setPosition(lp.x, lp.y)
         .setOrigin(ox, oy)
-        .setColor("#f0e6c8")
         .setAlpha(0.95);
     }
     for (let i = used; i < this.hvArrowLabels.length; i++) this.hvArrowLabels[i]!.setVisible(false);
@@ -1591,12 +1592,11 @@ export class MissionScene extends Phaser.Scene {
     const dist = Math.hypot(host.x - look.x, host.y - look.y) | 0;
     const name = (host.spec.name ?? "HOST").toUpperCase();
     const lp = this.hudLocal(lx, ly);
-    label
+    setTextColor(label, "#ffe08a")
       .setVisible(true)
-      .setText(`${name}\n${dist}m`)
+      .setText(`${name}\n${formatMeters(dist)}`)
       .setPosition(lp.x, lp.y)
       .setOrigin(0.5 + Math.cos(ang) * 0.42, 0.5 + Math.sin(ang) * 0.38)
-      .setColor("#ffe08a")
       .setAlpha(0.95);
   }
 

@@ -7,6 +7,7 @@ import { Layer, worldDepth } from "../../../render/depth";
 import type { MissionScene } from "../../missionScene";
 import { hostileUnit } from "../../../sim/targetRules";
 import { fillCircleFast, strokeCircleFast } from "../../../render/fastShapes";
+import { setTextColor } from "../../../render/textStyle";
 
 export function boxHalf(u: Unit, scale: number): number {
   return (radius(u.kind) + 10) * scale * zScale(u.z, u.y);
@@ -288,7 +289,7 @@ export class LockOn {
     this.arrowGfx.clear();
     this.hudTxt.setVisible(false);
     this.inbdHudTxt.setVisible(false);
-    this.txt.setVisible(false).setText("LOCK").setColor("#ff3a22");
+    this.txt.setVisible(false);
     this.inbdTxt.setVisible(false);
 
     const spec = this.s.fireControl.hudLoadout()[this.s.fireControl.hudWeapon()]!;
@@ -356,16 +357,15 @@ export class LockOn {
         const scale = 2 - t;
         const box = this.drawBox(seeking, scale, 1.6, 0.72 + t * 0.22, lockColor);
         lockDepth = Math.max(lockDepth, box.depth);
-        this.txt
+        setTextColor(this.txt, lockTextColor)
           .setVisible(true)
           .setText(hud?.seeking ?? "LOCK")
-          .setColor(lockTextColor)
           .setPosition(box.x, box.y - box.half - 4)
           .setDepth(lockDepth)
           .setAlpha(0.75 + t * 0.25)
           .setScale(zScale(seeking.z, seeking.y));
       } else {
-        this.hudTxt.setText(hud?.seeking ?? "LOCK").setColor(lockTextColor);
+        setTextColor(this.hudTxt.setText(hud?.seeking ?? "LOCK"), lockTextColor);
         this.drawOffscreen(vis.sx, vis.sy, lockColor, this.hudTxt, 0.85);
       }
     }
@@ -376,16 +376,15 @@ export class LockOn {
       if (vis.on) {
         const box = this.drawDiamond(locked, 1, 2.15, alpha, lockColor);
         lockDepth = Math.max(lockDepth, box.depth);
-        this.txt
+        setTextColor(this.txt, lockTextColor)
           .setVisible(true)
           .setText(hud?.locked ?? "LOCK")
-          .setColor(lockTextColor)
           .setPosition(box.x, box.y - box.half - 4)
           .setDepth(lockDepth)
           .setAlpha(alpha)
           .setScale(zScale(locked.z, locked.y));
       } else {
-        this.hudTxt.setText(hud?.locked ?? "LOCK").setColor(lockTextColor);
+        setTextColor(this.hudTxt.setText(hud?.locked ?? "LOCK"), lockTextColor);
         this.drawOffscreen(vis.sx, vis.sy, lockColor, this.hudTxt, alpha);
       }
     }
@@ -493,9 +492,8 @@ export class LockOn {
         color,
         !inRange
       );
-      this.txt
+      setTextColor(this.txt, inRange ? "#7af0ff" : "#ffd060")
         .setText(label)
-        .setColor(inRange ? "#7af0ff" : "#ffd060")
         .setVisible(true)
         .setPosition(box.x, box.y - box.half - 4)
         .setDepth(box.depth)
@@ -504,7 +502,7 @@ export class LockOn {
       g.setDepth(box.depth);
     } else {
       this.drawOffscreen(vis.sx, vis.sy, color, this.hudTxt, inRange ? 0.95 : 0.82);
-      this.hudTxt.setText(label).setColor(inRange ? "#7af0ff" : "#ffd060");
+      setTextColor(this.hudTxt.setText(label), inRange ? "#7af0ff" : "#ffd060");
     }
   }
 
@@ -577,8 +575,9 @@ export class LockOn {
     const vis = this.s.fireControl.unitOnHud(locked);
     if (vis.on) {
       const box = this.drawDiamond(locked, 1, 2.15, alpha, 0xff3a22);
-      this.txt
+      setTextColor(this.txt, "#ff3a22")
         .setVisible(true)
+        .setText("LOCK")
         .setPosition(box.x, box.y - box.half - 4)
         .setDepth(box.depth)
         .setAlpha(alpha)
@@ -615,8 +614,6 @@ export class LockOn {
     const lx = ax - Math.cos(ang) * 34;
     const ly = ay - Math.sin(ang) * 22;
     const lp = this.s.hudLocal(lx, ly);
-    txt.setVisible(true).setPosition(lp.x, lp.y).setAlpha(alpha).setRotation(0).setColor(
-      color === 0xffb020 ? "#ffb020" : "#ff3a22"
-    );
+    setTextColor(txt, color === 0xffb020 ? "#ffb020" : "#ff3a22").setVisible(true).setPosition(lp.x, lp.y).setAlpha(alpha).setRotation(0);
   }
 }

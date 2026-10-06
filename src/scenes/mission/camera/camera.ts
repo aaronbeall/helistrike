@@ -9,6 +9,7 @@ import { MAP_AIR_SOFT, craftCameraEdgeLocked } from "../../../sim/craft";
 import { type ThermalPalette } from "../../../render/thermal";
 import type { MissionScene } from "../../missionScene";
 import { missionOf } from "../../../sim/mission";
+import { setTextColor } from "../../../render/textStyle";
 
 /** Framing zoom for a craft at altitude / speed (host or remote hull). */
 export function craftPlayZoom(
@@ -980,11 +981,11 @@ export class MissionCamera {
       const status = dead
         ? "DESTROYED"
         : `ACTIVE  ${(Math.max(0, (unit.health / unit.max) * 100) | 0)}%`;
-      t.setVisible(true)
+      setTextColor(t, dead ? "#8a8470" : "#ffe08a")
+        .setVisible(true)
         .setScrollFactor(1)
         .setPosition(x + u(16), y)
         .setText(`${spec.name}\n${kind}  ·  ${status}`)
-        .setColor(dead ? "#8a8470" : "#ffe08a")
         .setFontSize(`${fs}px`)
         .setLineSpacing(u(1.5))
         .setStroke("#12100c", Math.max(3, u(3.5)));

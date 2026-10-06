@@ -36,6 +36,13 @@ const REACT_INFANTRY = 400;
 /** Max AGL drones will climb/charge to — covers Lightning/Warthog, excludes Reaper (~620). */
 const DRONE_KAMIKAZE_AGL = 400;
 
+/** Ground solid categories (`UnitSim.solids`): buildings / statics block hardest; infantry is soft. */
+const SOLID_STATIC = 1;
+const SOLID_VEHICLE = 2;
+const SOLID_INFANTRY = 3;
+/** Scratch copy of a unit's turret angles for spin recording (one unit at a time). */
+const PREV_TURRETS: number[] = [];
+
 /** Stats weapon key for a kamikaze drone ramming the player. */
 const KAMIKAZE_RAM = "ram";
 
@@ -43,6 +50,11 @@ const KAMIKAZE_RAM = "ram";
 export class UnitSim {
   /** Live unit id → unit (rebuilt each sim frame). */
   unitIdMap = new Map<number, Unit>();
+  /** Ground solids this frame (live, unpinned, not air / water / boat) for steering, blocking and separation. */
+  private solids: Unit[] = [];
+  private solidR = new Float32Array(256);
+  private solidKind = new Uint8Array(256);
+  private solidN = 0;
 
   constructor(readonly s: MissionScene) {}
 
@@ -274,31 +286,57 @@ export class UnitSim {
     u.y += u.vy * dt;
   }
 
+  /** Collect this frame's ground solids (see `solids`). */
+  private rebuildSolids(): void {
+    let n = 0;
+    for (const o of this.s.units) {
+      if (o.dead || o.pinId != null) continue;
+      const osp = specOf(o.kind);
+      if (osp.aerial || osp.water || osp.behavior === "patrol_boat") continue;
+      const kind =
+        osp.building || osp.behavior === "static_hold"
+          ? SOLID_STATIC
+          : isGroundVehicle(o.kind)
+            ? SOLID_VEHICLE
+            : osp.behavior === "attack_infantry" || osp.behavior === "flee_infantry"
+              ? SOLID_INFANTRY
+              : 0;
+      if (!kind) continue;
+      if (n >= this.solidR.length) {
+        const r = new Float32Array(n * 2);
+        r.set(this.solidR);
+        this.solidR = r;
+        const k = new Uint8Array(n * 2);
+        k.set(this.solidKind);
+        this.solidKind = k;
+      }
+      this.solids[n] = o;
+      this.solidR[n] = circumRadiusOf(o.kind);
+      this.solidKind[n] = kind;
+      n++;
+    }
+    this.solids.length = n;
+    this.solidN = n;
+  }
+
   steerGround(u: Unit, wantX: number, wantY: number): { x: number; y: number } {
     let wx = wantX;
     let wy = wantY;
     const uR = circumRadiusOf(u.kind);
     const uFp = footprintInto(u, 0, 0);
-    for (const o of this.s.units) {
-      if (o.dead || o.id === u.id || o.pinId != null) continue;
-      const osp = specOf(o.kind);
-      if (osp.aerial || osp.water || osp.behavior === "patrol_boat") continue;
-      // Buildings, statics, ground vehicles, and infantry all block.
-      const solid =
-        !!osp.building ||
-        osp.behavior === "static_hold" ||
-        isGroundVehicle(o.kind) ||
-        osp.behavior === "attack_infantry" ||
-        osp.behavior === "flee_infantry";
-      if (!solid) continue;
-      const pad = osp.building || osp.behavior === "static_hold" ? 40 : 28;
-      const maxR = uR + circumRadiusOf(o.kind) + pad + 2;
+    // Buildings, statics, ground vehicles, and infantry all block.
+    for (let i = 0; i < this.solidN; i++) {
+      const o = this.solids[i]!;
+      if (o === u || o.dead) continue;
+      const hard = this.solidKind[i] === SOLID_STATIC;
+      const pad = hard ? 40 : 28;
+      const maxR = uR + this.solidR[i]! + pad + 2;
       const dx = u.x - o.x;
       const dy = u.y - o.y;
       if (dx * dx + dy * dy > maxR * maxR) continue;
       const ov = footprintOverlap(uFp, footprintInto(o, pad, 1));
       if (!ov.hit || ov.depth <= 0) continue;
-      const strength = osp.building || osp.behavior === "static_hold" ? 3.2 : 2.4;
+      const strength = hard ? 3.2 : 2.4;
       const push = ov.depth * strength;
       wx += ov.nx * push;
       wy += ov.ny * push;
@@ -313,11 +351,10 @@ export class UnitSim {
     const lx = u.x + nx * look;
     const ly = u.y + ny * look;
     const lookPad = radius(u.kind) + 22;
-    for (const o of this.s.units) {
-      if (o.dead || o.id === u.id || o.pinId != null) continue;
-      const osp = specOf(o.kind);
-      if (osp.water || !(osp.building || osp.behavior === "static_hold" || isGroundVehicle(o.kind))) continue;
-      const maxR = circumRadiusOf(o.kind) + lookPad + 2;
+    for (let i = 0; i < this.solidN; i++) {
+      const o = this.solids[i]!;
+      if (o === u || o.dead || this.solidKind[i] === SOLID_INFANTRY) continue;
+      const maxR = this.solidR[i]! + lookPad + 2;
       const odx = lx - o.x;
       const ody = ly - o.y;
       if (odx * odx + ody * ody > maxR * maxR) continue;
@@ -336,24 +373,14 @@ export class UnitSim {
   /** True when this hull is pressed into another solid — unlocks wheeled pivot. */
   groundUnitBlocked(u: Unit): boolean {
     const uR = circumRadiusOf(u.kind);
-    for (const o of this.s.units) {
-      if (o.dead || o.id === u.id || o.pinId != null) continue;
-      const osp = specOf(o.kind);
-      if (osp.aerial || osp.water || osp.behavior === "patrol_boat") continue;
-      if (
-        !(
-          osp.building ||
-          osp.behavior === "static_hold" ||
-          isGroundVehicle(o.kind) ||
-          osp.behavior === "attack_infantry" ||
-          osp.behavior === "flee_infantry"
-        )
-      )
-        continue;
+    for (let i = 0; i < this.solidN; i++) {
+      const o = this.solids[i]!;
+      if (o === u || o.dead) continue;
       // Buildings / statics: easier jam. Soft infantry brush needs a deeper press.
-      const solid = osp.building || osp.behavior === "static_hold" || isGroundVehicle(o.kind);
-      const pad = osp.building || osp.behavior === "static_hold" ? 10 : 6;
-      const maxR = uR + circumRadiusOf(o.kind) + pad + 2;
+      const kind = this.solidKind[i];
+      const solid = kind !== SOLID_INFANTRY;
+      const pad = kind === SOLID_STATIC ? 10 : 6;
+      const maxR = uR + this.solidR[i]! + pad + 2;
       const dx = u.x - o.x;
       const dy = u.y - o.y;
       if (dx * dx + dy * dy > maxR * maxR) continue;
@@ -367,20 +394,18 @@ export class UnitSim {
   /** Soft depenetration vs buildings / other ground units after a move. */
   separateGround(u: Unit): void {
     const uR = circumRadiusOf(u.kind);
-    for (const o of this.s.units) {
-      if (o.dead || o.id === u.id || o.pinId != null) continue;
-      const osp = specOf(o.kind);
-      if (osp.aerial || osp.water || osp.behavior === "patrol_boat") continue;
-      if (!(osp.building || osp.behavior === "static_hold" || isGroundVehicle(o.kind) || osp.behavior === "attack_infantry" || osp.behavior === "flee_infantry"))
-        continue;
-      const pad = osp.building || osp.behavior === "static_hold" ? 8 : 4;
-      const maxR = uR + circumRadiusOf(o.kind) + pad + 2;
+    for (let i = 0; i < this.solidN; i++) {
+      const o = this.solids[i]!;
+      if (o === u || o.dead) continue;
+      const hard = this.solidKind[i] === SOLID_STATIC;
+      const pad = hard ? 8 : 4;
+      const maxR = uR + this.solidR[i]! + pad + 2;
       const dx = u.x - o.x;
       const dy = u.y - o.y;
       if (dx * dx + dy * dy > maxR * maxR) continue;
       const ov = footprintOverlap(footprintInto(u, 0, 0), footprintInto(o, pad, 1));
       if (!ov.hit || ov.depth <= 0) continue;
-      const push = ov.depth * (osp.building || osp.behavior === "static_hold" ? 0.85 : 0.45);
+      const push = ov.depth * (hard ? 0.85 : 0.45);
       u.x += ov.nx * push;
       u.y += ov.ny * push;
       // Kill residual closing speed into the obstacle.
@@ -762,12 +787,15 @@ export class UnitSim {
 
   updateUnits(dt: number): void {
     this.tickRoadkill();
+    this.rebuildSolids();
+    const prevTurrets = PREV_TURRETS;
     for (const u of this.s.units) {
       if (u.dead || isNeutral(u.kind)) continue;
       u.paintT = undefined;
       const prevAngle = u.angle;
       const prevTurret = u.turret;
-      const prevTurrets = u.turrets.slice();
+      prevTurrets.length = u.turrets.length;
+      for (let i = 0; i < u.turrets.length; i++) prevTurrets[i] = u.turrets[i]!;
       if (unitStunned(u)) {
         this.tickStunnedUnit(u, dt);
         if (!u.dead) recordUnitSpin(u, prevAngle, prevTurret, prevTurrets, dt);
