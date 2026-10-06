@@ -6,7 +6,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "bench": "node scripts/bench.mjs"
+    "bench": "node scripts/bench.mjs",
+    "bench:history": "node scripts/bench-history.mjs",
+    "bench:report": "node scripts/bench-report.mjs"
   },
   "dependencies": {
     "phaser": "^3.90.0"

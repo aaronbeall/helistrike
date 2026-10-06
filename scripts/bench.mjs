@@ -7,8 +7,10 @@
  *   npm run bench -- idle_cluster,gun_cluster  some scenarios
  *   npm run bench -- --compare <results.json>
  *   npm run bench -- idle_empty --profile      CPU profile + allocation sample per scenario (timings skewed)
+ *   npm run bench -- --runs 3 --record "what changed"   median of 3 suite runs, appended to docs/perf-history.csv
  *
- * Options: --compare <file>, --profile, --out <file>, --url <base> (default http://localhost:5174), --keep-open.
+ * Options: --compare <file>, --profile, --runs <n>, --record <label>, --out <file>, --url <base>
+ * (default http://localhost:5174), --keep-open.
  * Starts the Vite dev server when nothing answers at --url. Game side: dev URL launch (?test=…&cheats=…) and the
  * read-only `window.__heli` handle; everything else lives here, and nothing in the game or Phaser is patched.
  */
@@ -26,11 +28,15 @@ const opt = (name) => {
   const i = args.indexOf(`--${name}`);
   return i >= 0 ? args[i + 1] : undefined;
 };
-const optValues = new Set(["compare", "out", "url"].map((n) => opt(n)).filter(Boolean));
+const optValues = new Set(["compare", "out", "url", "runs", "record"].map((n) => opt(n)).filter(Boolean));
 const picked = args.filter((a) => !a.startsWith("--") && !optValues.has(a)).flatMap((a) => a.split(","));
 const scenarios = picked.length ? SCENARIOS.filter((s) => picked.includes(s.id)) : SCENARIOS;
 const base = opt("url") ?? "http://localhost:5174";
 const profile = flag("profile");
+const runs = Math.max(1, Number(opt("runs") ?? 1) | 0);
+const record = opt("record");
+const HISTORY = path.join(root, "docs/perf-history.csv");
+const HISTORY_COLS = ["date", "commit", "label", "harness", "runs", "scenario", "frames", "cpu_avg", "cpu_p99", "render_avg", "scene_avg", "unit_ai_avg", "interval_p99", "alloc_mbps"];
 /** Chrome flags: keep the frame loop running at full rate when the window isn't focused. */
 const CHROME_ARGS = [
   "--disable-background-timer-throttling",
@@ -280,6 +286,39 @@ async function stopProfile(cdp, id, secs, heapUsed, outDir) {
   printTop("allocations", alloc, totalA, (v) => `${(v / 1048576 / secs).toFixed(2)} MB/s`);
 }
 
+/** Per-field median of several runs' reports (same scenarios, same shape). */
+function medianReports(all) {
+  if (all.length === 1) return all[0];
+  const med = (vals) => {
+    const s = vals.slice().sort((a, b) => a - b);
+    const m = s.length >> 1;
+    return s.length % 2 ? s[m] : Math.round(((s[m - 1] + s[m]) / 2) * 100) / 100;
+  };
+  const merge = (nodes) => {
+    const first = nodes[0];
+    if (typeof first === "number") return med(nodes);
+    if (!first || typeof first !== "object") return first;
+    const out = Array.isArray(first) ? [] : {};
+    for (const k of Object.keys(first)) out[k] = merge(nodes.map((n) => n?.[k]));
+    return out;
+  };
+  return all[0].map((r, i) => merge(all.map((run) => run[i])));
+}
+
+/** Append one row per scenario to the committed perf history. */
+function recordHistory(results, label) {
+  const csv = (v) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+  if (!fs.existsSync(HISTORY)) fs.writeFileSync(HISTORY, HISTORY_COLS.join(",") + "\n");
+  const date = new Date().toISOString().slice(0, 10);
+  const rows = results.map((r) =>
+    [date, gitSha(), label, "real-input", runs, r.id, r.frames, r.cpu.avg, r.cpu.p99, r.render.avg, r.stages.scene.avg, r.stages["unit sim"].avg, r.interval.p99, r.heap?.allocMBps ?? ""]
+      .map(csv)
+      .join(",")
+  );
+  fs.appendFileSync(HISTORY, rows.join("\n") + "\n");
+  console.log(`[bench] recorded ${rows.length} rows to ${path.relative(root, HISTORY)} as "${label}"`);
+}
+
 function fmtRow(cols, widths) {
   return cols.map((c, i) => String(c).padEnd(widths[i])).join(" ");
 }
@@ -341,9 +380,7 @@ try {
   if (profile) fs.mkdirSync(profileDir, { recursive: true });
   const cdp = profile ? await context.newCDPSession(page) : undefined;
 
-  const results = [];
-  for (const sc of scenarios) {
-    process.stdout.write(`[bench] ${sc.id} … `);
+  const runOne = async (sc) => {
     await setUp(page, sc);
     const t0 = Date.now();
     await play(page, sc, sc.warmupS, t0);
@@ -353,12 +390,35 @@ try {
     const report = await page.evaluate(([id, label, s]) => window.__probe.stop(id, label, s), [sc.id, sc.label, sc.measureS]);
     if (cdp) await stopProfile(cdp, sc.id, sc.measureS, heapUsed, profileDir);
     if (down) await page.mouse.up();
-    results.push(report);
-    console.log(`${report.frames} frames, cpu ${report.cpu.avg} ms avg`);
+    return report;
+  };
+  const allRuns = [];
+  for (let run = 1; run <= runs; run++) {
+    const results = [];
+    for (const sc of scenarios) {
+      process.stdout.write(`[bench] ${runs > 1 ? `run ${run}/${runs} ` : ""}${sc.id} … `);
+      let report;
+      // One retry: a slow boot or world gen shouldn't sink a long multi-run session.
+      for (let attempt = 1; !report; attempt++) {
+        try {
+          report = await runOne(sc);
+        } catch (err) {
+          if (attempt >= 2) throw err;
+          console.log(`failed (${String(err.message ?? err).split("\n")[0]}), retrying`);
+          await page.mouse.up().catch(() => {});
+        }
+      }
+      results.push(report);
+      console.log(`${report.frames} frames, cpu ${report.cpu.avg} ms avg`);
+    }
+    allRuns.push(results);
   }
-  const out = opt("out") ?? path.join(outDir, `${stamp}-${gitSha()}${profile ? "-profiled" : ""}.json`);
+  const results = medianReports(allRuns);
+  const out = opt("out") ?? path.join(outDir, `${stamp}-${gitSha()}${profile ? "-profiled" : ""}${runs > 1 ? `-x${runs}` : ""}.json`);
   fs.writeFileSync(out, JSON.stringify(results, null, 1));
+  if (runs > 1) fs.writeFileSync(out.replace(/\.json$/, "-runs.json"), JSON.stringify(allRuns, null, 1));
   printSummary(results);
+  if (record) recordHistory(results, record);
   if (opt("compare")) printCompare(results, path.resolve(opt("compare")));
   if (warned.size) {
     console.log("\n[console warnings/errors]");

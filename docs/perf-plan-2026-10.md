@@ -11,7 +11,15 @@ npm run bench                                          # all scenarios
 npm run bench -- idle_cluster,rockets_cluster          # some
 npm run bench -- --compare docs/perf-baseline-2026-10.json
 npm run bench -- idle_empty --profile                  # CPU profile + allocation sample per scenario
+npm run bench -- --runs 3 --record "what changed"      # median of 3 suite runs → docs/perf-history.csv
+npm run bench:history -- gun_cluster,tesla_cluster     # trend per scenario
 ```
+
+**Keeping results over time:**
+- **`docs/perf-history.csv` (committed):** one row per scenario per milestone: date, commit, label, harness, runs, frames, CPU avg/p99, render, scene, unit AI, interval p99, garbage. Record a row after each perf change with `--runs 3 --record "<label>"`. The rows from before the real-input runner are marked `fixed-step` and aren't directly comparable with `real-input` rows.
+- **`docs/perf-runs-2026-10/` (committed):** raw runs behind the milestones so far.
+- **`docs/perf-baseline-2026-10.json`:** the current comparison baseline for `--compare`. Refresh it with `--runs 3 --out` when the code moves on.
+- **`bench-results/` (local, git-ignored):** every run and `.cpuprofile`. Large, so not committed.
 
 - **Game side** (dev builds only):
   - `?test=<id>` launches a test map from `src/catalog/testMaps.ts`; `?mission=…&craft=…&seed=…&settlement=…` launches any mission.

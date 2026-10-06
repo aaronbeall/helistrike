@@ -1,0 +1,155 @@
+[
+ {
+  "id": "starscream_cluster",
+  "label": "Starscream energy ribbons into the cluster",
+  "frames": 669,
+  "cpu": {
+   "avg": 11.03,
+   "p50": 10.4,
+   "p95": 15.8,
+   "p99": 17.3,
+   "max": 21
+  },
+  "interval": {
+   "avg": 14.96,
+   "p50": 16,
+   "p95": 33.3,
+   "p99": 58.4,
+   "max": 109.3
+  },
+  "render": {
+   "avg": 5.57,
+   "p50": 5.4,
+   "p95": 7.6,
+   "p99": 8.1,
+   "max": 9.9
+  },
+  "stages": {
+   "scene": {
+    "avg": 5.46,
+    "p50": 4.9,
+    "p95": 8.9,
+    "p99": 10,
+    "max": 14.6
+   },
+   "player": {
+    "avg": 0.42,
+    "p50": 0.4,
+    "p95": 0.7,
+    "p99": 0.9,
+    "max": 1.4
+   },
+   "unit sim": {
+    "avg": 1.53,
+    "p50": 1.4,
+    "p95": 2.3,
+    "p99": 2.8,
+    "max": 3.3
+   },
+   "unit draw": {
+    "avg": 0.56,
+    "p50": 0.5,
+    "p95": 0.9,
+    "p99": 1.1,
+    "max": 1.7
+   },
+   "shot sim": {
+    "avg": 0.48,
+    "p50": 0.4,
+    "p95": 1.2,
+    "p99": 1.7,
+    "max": 2.3
+   },
+   "shot draw": {
+    "avg": 0.13,
+    "p50": 0.1,
+    "p95": 0.2,
+    "p99": 0.3,
+    "max": 0.4
+   },
+   "debris sim": {
+    "avg": 0.28,
+    "p50": 0.2,
+    "p95": 0.7,
+    "p99": 0.8,
+    "max": 1.2
+   },
+   "debris draw": {
+    "avg": 0.2,
+    "p50": 0.2,
+    "p95": 0.4,
+    "p99": 0.6,
+    "max": 0.7
+   },
+   "sim particle sim": {
+    "avg": 0.02,
+    "p50": 0,
+    "p95": 0.1,
+    "p99": 0.1,
+    "max": 0.2
+   },
+   "sim particle draw": {
+    "avg": 0.16,
+    "p50": 0.2,
+    "p95": 0.3,
+    "p99": 0.4,
+    "max": 1.4
+   },
+   "target/fx": {
+    "avg": 0.19,
+    "p50": 0.2,
+    "p95": 0.4,
+    "p99": 0.5,
+    "max": 1.2
+   },
+   "scene other": {
+    "avg": 1.48,
+    "p50": 1.3,
+    "p95": 2.3,
+    "p99": 2.9,
+    "max": 11.1
+   }
+  },
+  "cpuOver": {
+   "ms16": 20,
+   "ms33": 0,
+   "ms50": 0
+  },
+  "intervalOver": {
+   "ms33": 31,
+   "ms50": 9
+  },
+  "longTasks": {
+   "count": 0,
+   "totalMs": 0,
+   "maxMs": 0
+  },
+  "heap": {
+   "allocMBps": 386.79,
+   "gcCount": 151,
+   "freedMB": 3880.03
+  },
+  "counts": {
+   "units": {
+    "avg": 128,
+    "max": 128
+   },
+   "liveUnits": {
+    "avg": 74,
+    "max": 88
+   },
+   "shots": {
+    "avg": 42,
+    "max": 81
+   },
+   "debris": {
+    "avg": 145,
+    "max": 257
+   },
+   "particles": {
+    "avg": 300,
+    "max": 367
+   }
+  }
+ }
+]
