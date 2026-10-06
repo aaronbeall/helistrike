@@ -402,6 +402,7 @@ export class MissionStats {
       neutralKillPct: pct(neutralsDead, neutrals),
       buildingKillPct: pct(buildingsDead, buildings),
       objectivePct: pct(s.completedHv.size, hvTotal),
+      objectiveTotal: hvTotal,
       at: Date.now(),
     };
     commitRun(this.run);

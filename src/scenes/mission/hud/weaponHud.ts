@@ -1,7 +1,7 @@
 
 import Phaser from "phaser";
 import { remoteHostAmmoWeapon } from "../../../sim/remoteRules";
-import { drawBatteryIcon, BATTERY_ICON_W } from "./fieldBars";
+import { drawBatteryIcon, BATTERY_ICON_W } from "../../../render/icons";
 import { BULLET_TIME_DURATION } from "../weapons/countermeasures";
 import { payloadIsRemote } from "../../../sim/payload";
 import { PLAYER_WPNS, COUNTERMEASURES, type WpnId } from "../../../sim/combat";

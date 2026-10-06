@@ -71,7 +71,8 @@ import {
   type RemoteKind,
   type RemoteSpec,
 } from "../sim/remote";
-import { careerOf, isHostileEnemy, ratio, total, type Career, type CraftCareer, type MissionOutcome } from "../sim/stats";
+import { drawIcon, type IconName } from "../render/icons";
+import { careerOf, isHostileEnemy, missionObjectives, ratio, total, type Career, type MissionOutcome } from "../sim/stats";
 import { markTipShown, tipShownCounts } from "../persist/tipHistory";
 import { lifetimeStats, missionHistory } from "../persist/statsStore";
 import type { UnitKind } from "../sim/roster";
@@ -93,9 +94,13 @@ const MONO = "Share Tech Mono, monospace";
 const AMBER = "#e8b84a";
 const AMBER_N = 0xe8b84a;
 const RECENT_MISSIONS_SHOWN = 5;
-const FAVORITE_CRAFT = "★ FAVORITE CRAFT";
-const FAVORITE_WEAPON = "★ FAVORITE WEAPON";
-const OUTCOME_LABEL: Record<MissionOutcome, string> = { succeeded: "WON", failed: "LOST", abandoned: "LEFT" };
+const FAVORITE_WEAPON = "FAVORITE WEAPON";
+/** Recent-mission row accent + icon per outcome. */
+const OUTCOME_STYLE: Record<MissionOutcome, { color: number; icon: IconName }> = {
+  succeeded: { color: 0x6dcc5a, icon: "check" },
+  failed: { color: 0xc8664a, icon: "cross" },
+  abandoned: { color: 0x8a8470, icon: "dash" },
+};
 const CREAM = "#d8d0ba";
 const BRIGHT = "#f0e6c8";
 const DIM = "#8a8470";
@@ -117,6 +122,43 @@ type Focus =
 
 function focusEq(a: Focus, b: Focus): boolean {
   return a.kind === b.kind && (a.kind !== "weapon" || b.kind !== "weapon" || a.slot === b.slot);
+}
+
+/** A colored, icon-led tag in a career pill list. */
+/** Tag chip colors: outline, fill, label text, icon ink. */
+interface TagStyle {
+  stroke: number;
+  fill: number;
+  text: string;
+  ink: number;
+}
+
+const TAG_BLUE: TagStyle = { stroke: 0x4a7a94, fill: 0x16222c, text: "#a8d8f0", ink: 0xa8d8f0 };
+const TAG_GOLD: TagStyle = { stroke: 0x9a7a2e, fill: 0x2a2210, text: "#e8b84a", ink: 0xe8b84a };
+
+/** An icon-led tag in a career list. */
+interface Pill {
+  text: string;
+  style: TagStyle;
+  icon: IconName;
+}
+
+/** Special kill stats shown as career pills (only when non-zero). */
+const STAT_PILLS: { label: string; stat: "rotorKills" | "roadKills" | "stunnedKills" | "blindedKills"; style: TagStyle; icon: IconName }[] = [
+  { label: "ROTOR KILLS", stat: "rotorKills", style: { stroke: 0x9a3e30, fill: 0x2a1410, text: "#f29482", ink: 0xe0503c }, icon: "rotor" },
+  { label: "ROAD KILLS", stat: "roadKills", style: { stroke: 0x9a6a30, fill: 0x2a1d10, text: "#e8b47a", ink: 0xd08a3a }, icon: "tire" },
+  { label: "STUNNED KILLS", stat: "stunnedKills", style: { stroke: 0x3e7aa0, fill: 0x12222e, text: "#a8e0ff", ink: 0x5ac8ff }, icon: "bolt" },
+  { label: "BLINDED KILLS", stat: "blindedKills", style: { stroke: 0x6e6a60, fill: 0x1e1d1a, text: "#d4cebf", ink: 0xa8a294 }, icon: "blind" },
+];
+
+/** Truncate a text object with an ellipsis until it fits `maxW`. */
+function fitText(t: Phaser.GameObjects.Text, maxW: number): void {
+  if (t.width <= maxW) return;
+  let s = t.text;
+  while (s.length > 1 && t.width > maxW) {
+    s = s.slice(0, -1);
+    t.setText(`${s.trimEnd()}…`);
+  }
 }
 
 /** Shared craft/weapon reference UI — the in-mission help panel and the main menu's field manual. */
@@ -890,12 +932,24 @@ export class FieldManual {
     const c = career.crafts.get(craft);
     if (c?.started) {
       let y = y0;
-      if (career.favoriteCraft === craft) y = this.buildBadgeChips([FAVORITE_CRAFT], y, "left", [FAVORITE_CRAFT]) + 12;
+      const pills: Pill[] = [];
+      if (career.favoriteCraft === craft) pills.push({ text: "FAVORITE CRAFT", style: TAG_GOLD, icon: "star" });
+      for (const p of STAT_PILLS) if (c[p.stat] > 0) pills.push({ text: `${p.label} ${c[p.stat]}`, style: p.style, icon: p.icon });
       const decided = c.succeeded + c.failed;
       const pct = (v: number) => `${Math.round(v * 100)}%`;
-      const tiles: { label: string; value: string; note?: string }[] = [
+      const perMin = c.timeFlown > 0 ? (c.kills / (c.timeFlown / 60)).toFixed(1) : "—";
+      const tiles: { label: string; value: string; note?: string; cells?: { label: string; value: string }[] }[] = [
         { label: "MISSIONS", value: `${c.started}`, note: decided > 0 ? `${pct(ratio(c.succeeded, decided))} WON` : undefined },
-        { label: "KILLS", value: `${c.kills}` },
+        {
+          label: "KILLS",
+          value: `${c.kills}`,
+          cells: [
+            { label: "ENMY", value: `${c.unitKills}` },
+            { label: "BLDG", value: `${c.buildingKills}` },
+            { label: "COLL", value: `${c.collateralKills}` },
+            { label: "K/MIN", value: perMin },
+          ],
+        },
         { label: "DEATHS", value: `${c.deaths}` },
         { label: "OBJECTIVES", value: `${c.objectives}` },
         { label: "ACCURACY", value: c.shots > 0 ? pct(ratio(c.hits, c.shots)) : "—" },
@@ -915,9 +969,19 @@ export class FieldManual {
             scene.add.text(value.x + value.width + 8, ty + 24, t.note, { fontFamily: MONO, fontSize: "10px", color: CREAM }).setOrigin(0, 0)
           );
         }
+        if (t.cells) {
+          // Breakdown cells share the tile's right part, same label-over-value layout.
+          const cx0 = x + Math.max(64, value.width + 30);
+          const cellW = (x + tileW - 6 - cx0) / t.cells.length;
+          t.cells.forEach((cell, ci) => {
+            const cx = cx0 + ci * cellW;
+            this.addDetail(scene.add.text(cx, ty + 7, cell.label, { fontFamily: MONO, fontSize: "8px", color: DIM }).setOrigin(0, 0));
+            this.addDetail(scene.add.text(cx, ty + 21, cell.value, { fontFamily: MONO, fontSize: "11px", color: CREAM }).setOrigin(0, 0));
+          });
+        }
       });
       y = y - 6 + Math.ceil(tiles.length / 2) * (tileH + gap) - gap + 10;
-      y = this.buildBonusStats(c, y);
+      if (pills.length) y = this.buildPills(pills, y) + 12;
       return this.buildRecentMissions(craft, y + 4);
     }
     const note = this.addDetail(
@@ -942,45 +1006,94 @@ export class FieldManual {
     return this.careerCache.career;
   }
 
-  /** Secondary stats, each shown only when non-zero: two compact label / value columns. */
-  private buildBonusStats(c: CraftCareer, y0: number): number {
-    const scene = this.scene;
-    const rows = [
-      { label: "STUNNED KILLS", n: c.stunnedKills },
-      { label: "BLINDED KILLS", n: c.blindedKills },
-      { label: "ROTOR KILLS", n: c.rotorKills },
-      { label: "ROAD KILLS", n: c.roadKills },
-    ].filter((r) => r.n > 0);
-    const gap = 8;
-    const colW = (this.rightW - gap) / 2;
-    const rowH = 15;
-    rows.forEach((r, i) => {
-      const x = this.rightX0 + (i % 2) * (colW + gap);
-      const y = y0 + Math.floor(i / 2) * rowH;
-      this.addDetail(scene.add.text(x + 10, y, r.label, { fontFamily: MONO, fontSize: "9px", color: DIM }).setOrigin(0, 0));
-      this.addDetail(scene.add.text(x + colW - 10, y - 1, `${r.n}`, { fontFamily: MONO, fontSize: "11px", color: CREAM }).setOrigin(1, 0));
-    });
-    return y0 + Math.ceil(rows.length / 2) * rowH;
+  /** Colored, icon-led pills, flow-wrapped across the detail column; returns the bottom of the last row. */
+  private buildPills(pills: readonly Pill[], y0: number): number {
+    if (!pills.length) return y0;
+    const gap = 6;
+    let x = this.rightX0;
+    let y = y0;
+    let rowH = 0;
+    for (const p of pills) {
+      const tag = this.tag(p.text, p.style, p.icon);
+      if (x > this.rightX0 && x + tag.w > this.rightX0 + this.rightW) {
+        x = this.rightX0;
+        y += rowH + gap;
+        rowH = 0;
+      }
+      tag.place(x, y);
+      rowH = Math.max(rowH, tag.h);
+      x += tag.w + gap;
+    }
+    return y + rowH;
   }
 
-  /** This craft's last few missions: date, map, outcome, time, hostile kills. */
+  /** One tag chip (outline, fill, optional icon, label), measured first and drawn by `place`. */
+  private tag(label: string, style: TagStyle, icon?: IconName): { w: number; h: number; place: (x: number, y: number) => void } {
+    const scene = this.scene;
+    const iconW = icon ? 12 : 0;
+    const txt = this.addDetail(scene.add.text(0, 0, label, { fontFamily: MONO, fontSize: "9px", color: style.text }).setOrigin(0, 0.5));
+    const w = txt.width + 14 + iconW;
+    const h = txt.height + 8;
+    return {
+      w,
+      h,
+      place: (x, y) => {
+        const g = this.addDetail(scene.add.graphics());
+        g.lineStyle(1, style.stroke, 0.9).fillStyle(style.fill, 0.7);
+        g.fillRoundedRect(x, y, w, h, 4);
+        g.strokeRoundedRect(x, y, w, h, 4);
+        if (icon) drawIcon(g, icon, x + 7 + 5, y + h / 2, style.ink, 9);
+        txt.setPosition(x + 7 + iconW, y + h / 2);
+        // Text was added before its chip graphic; keep it on top.
+        this.root.bringToTop(txt);
+      },
+    };
+  }
+
+  /** This craft's last few missions as rows: outcome, date, map, flight time, hostile kills, objectives. */
   private buildRecentMissions(craft: string, y0: number): number {
     const scene = this.scene;
     const recent = missionHistory().filter((r) => r.result.craft === craft).slice(0, RECENT_MISSIONS_SHOWN);
     if (!recent.length) return y0;
     this.addDetail(scene.add.text(this.rightX0, y0, "RECENT MISSIONS", { fontFamily: MONO, fontSize: "9px", color: DIM }).setOrigin(0, 0));
-    let y = y0 + 15;
+    const g = this.addDetail(scene.add.graphics());
+    const x0 = this.rightX0;
+    const x1 = x0 + this.rightW;
+    const rowH = 20;
+    const gap = 3;
+    // Fixed left-aligned columns at the right: time, kills, objectives.
+    const objX = x1 - 52;
+    const killsX = objX - 50;
+    const timeX = killsX - 66;
+    let y = y0 + 16;
     for (const r of recent) {
       const res = r.result;
+      const o = OUTCOME_STYLE[res.outcome];
+      const cy = y + rowH / 2;
+      g.fillStyle(0x0c0b09, 0.85).fillRect(x0, y, this.rightW, rowH);
+      g.fillStyle(o.color, 0.9).fillRect(x0, y, 2, rowH);
+      drawIcon(g, o.icon, x0 + 13, cy, o.color);
       const date = new Date(res.at).toLocaleDateString(undefined, { month: "short", day: "2-digit" }).toUpperCase();
-      const map = (MISSIONS[res.map as MissionKind]?.label ?? res.map).toUpperCase();
+      this.addDetail(scene.add.text(x0 + 26, cy, date, { fontFamily: MONO, fontSize: "9px", color: DIM }).setOrigin(0, 0.5));
       const kills = total(r.offense, "kills", (at) => isHostileEnemy(at.enemy));
-      const line = `${date.padEnd(7)} ${map.slice(0, 18).padEnd(18)} ${OUTCOME_LABEL[res.outcome].padEnd(5)} ${formatDuration(res.time).padStart(6)}  ${kills} K`;
-      const color = res.outcome === "succeeded" ? AMBER : res.outcome === "failed" ? "#c8664a" : DIM;
-      this.addDetail(scene.add.text(this.rightX0, y, line, { fontFamily: MONO, fontSize: "10px", color }).setOrigin(0, 0));
-      y += 14;
+      const obj = missionObjectives(r);
+      const cols = [
+        { x: timeX, icon: "clock" as const, text: formatDuration(res.time) },
+        { x: killsX, icon: "crosshair" as const, text: `${kills}` },
+        { x: objX, icon: "flag" as const, text: obj.total != null ? `${obj.done}/${obj.total}` : `${obj.done}` },
+      ];
+      for (const col of cols) {
+        drawIcon(g, col.icon, col.x + 5, cy, 0x8a8470);
+        this.addDetail(scene.add.text(col.x + 13, cy, col.text, { fontFamily: MONO, fontSize: "10px", color: CREAM }).setOrigin(0, 0.5));
+      }
+      const mapX = x0 + 72;
+      const mapTxt = this.addDetail(
+        scene.add.text(mapX, cy, (MISSIONS[res.map as MissionKind]?.label ?? res.map).toUpperCase(), { fontFamily: MONO, fontSize: "10px", color: BRIGHT }).setOrigin(0, 0.5)
+      );
+      fitText(mapTxt, timeX - 12 - mapX);
+      y += rowH + gap;
     }
-    return y;
+    return y - gap;
   }
 
   /**
@@ -990,15 +1103,9 @@ export class FieldManual {
    * when there are no labels.
    */
   private buildBadgeChips(labels: string[], y0: number, align: "left" | "center" = "left", gold: readonly string[] = []): number {
-    const scene = this.scene;
-    type Chip = { label: string; w: number; h: number };
+    type Chip = ReturnType<FieldManual["tag"]>;
     const gap = 6;
-    const chips: Chip[] = labels.map((label) => {
-      const txt = scene.add.text(0, 0, label, { fontFamily: MONO, fontSize: "9px", color: "#a8d8f0" });
-      const chip: Chip = { label, w: txt.width + 14, h: txt.height + 8 };
-      txt.destroy();
-      return chip;
-    });
+    const chips = labels.map((label) => (gold.includes(label) ? this.tag(label, TAG_GOLD, "star") : this.tag(label, TAG_BLUE)));
     const lines: Chip[][] = [];
     let cur: Chip[] = [];
     let curW = 0;
@@ -1019,17 +1126,7 @@ export class FieldManual {
       let x = align === "center" ? this.rightX0 + (this.rightW - lineW) / 2 : this.rightX0;
       const lineH = Math.max(...line.map((c) => c.h));
       for (const chip of line) {
-        const isGold = gold.includes(chip.label);
-        const g = scene.add.graphics();
-        if (isGold) g.lineStyle(1, 0x9a7a2e, 0.95).fillStyle(0x2a2210, 0.75);
-        else g.lineStyle(1, 0x4a7a94, 0.9).fillStyle(0x16222c, 0.65);
-        g.fillRoundedRect(x, y, chip.w, chip.h, 4);
-        g.strokeRoundedRect(x, y, chip.w, chip.h, 4);
-        const txt = scene.add
-          .text(x + 7, y + chip.h / 2, chip.label, { fontFamily: MONO, fontSize: "9px", color: isGold ? AMBER : "#a8d8f0" })
-          .setOrigin(0, 0.5);
-        this.addDetail(g);
-        this.addDetail(txt);
+        chip.place(x, y);
         x += chip.w + gap;
       }
       y += lineH + 6;

@@ -116,6 +116,7 @@ export class RemoteFleet {
 | Debug tool / overlay | `debug/…` |
 | Dev test map (`?test=<id>`, main-menu `/` panel) | `src/catalog/testMaps.ts` (URL launch: `scenes/devLaunch.ts`) |
 | Perf scenario (input script + timing) | `scripts/bench-scenarios.mjs` (runner: `scripts/bench.mjs`; reads the dev-only `window.__heli` handle) |
+| Small vector icons (UI pills, HUD gauges) | `render/icons` (`drawIcon(g, name, …)`, `IconName`; triangles only, safe per frame) |
 | Debug text overlay | `ui/domText` (DOM, not Phaser `Text`: no canvas raster / texture upload) |
 | Dev rig (overlay tool, cycled with `` ` ``) | `src/rigs/…`, registered in `rigs.ts` |
 | Map silhouette / domain warp | `src/worldgen/shape.ts` |

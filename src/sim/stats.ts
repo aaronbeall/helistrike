@@ -90,6 +90,8 @@ export interface MissionResult {
   neutralKillPct: number;
   buildingKillPct: number;
   objectivePct: number;
+  /** Objectives on the map (absent on older records). */
+  objectiveTotal?: number;
   /** Wall-clock end time (ms since epoch). */
   at: number;
 }
@@ -273,8 +275,13 @@ export interface CraftCareer {
   failed: number;
   objectives: number;
   timeFlown: number;
-  /** Hostile kills. */
+  /** Hostile kills (units + buildings). */
   kills: number;
+  /** Hostile kills split: units vs buildings. */
+  unitKills: number;
+  buildingKills: number;
+  /** Civilian (non-hostile) kills. */
+  collateralKills: number;
   shots: number;
   hits: number;
   deaths: number;
@@ -295,7 +302,8 @@ export interface Career {
 
 function emptyCraftCareer(): CraftCareer {
   return {
-    started: 0, succeeded: 0, failed: 0, objectives: 0, timeFlown: 0, kills: 0, shots: 0, hits: 0, deaths: 0,
+    started: 0, succeeded: 0, failed: 0, objectives: 0, timeFlown: 0, kills: 0, unitKills: 0, buildingKills: 0, collateralKills: 0,
+    shots: 0, hits: 0, deaths: 0,
     stunnedKills: 0, blindedKills: 0, rotorKills: 0, roadKills: 0,
   };
 }
@@ -330,12 +338,18 @@ export function careerOf(book: StatTables): Career {
   const weaponKills = new Map<string, number>();
   eachRow(book.offense, (dim, r) => {
     const c = crafts.get(dim("craft"));
-    const hostile = isHostileEnemy(dim("enemy"));
+    const enemy = dim("enemy");
+    const hostile = isHostileEnemy(enemy);
     const weapon = dim("weapon");
     if (c) {
       c.shots += r.shots ?? 0;
       c.hits += r.hits ?? 0;
-      if (hostile) c.kills += r.kills ?? 0;
+      const kills = r.kills ?? 0;
+      if (hostile) {
+        c.kills += kills;
+        if (isBuildingEnemy(enemy)) c.buildingKills += kills;
+        else c.unitKills += kills;
+      } else if (kills && enemy !== NO_DIM) c.collateralKills += kills;
       if (weapon === ROTOR_KILL) c.rotorKills += r.kills ?? 0;
       else if (weapon === CRUSH_KILL) c.roadKills += r.kills ?? 0;
     }
@@ -374,6 +388,19 @@ function argMax<V>(m: Map<string, V>, score: (v: V) => number): string | undefin
 /** a / b, or 0 when b is 0 (accuracy = hits / shots, success rate = succeeded / (succeeded + failed)). */
 export function ratio(a: number, b: number): number {
   return b > 0 ? a / b : 0;
+}
+
+/** Objectives completed in a mission record, and the map's total when known (older records: derived from the pct). */
+export function missionObjectives(r: MissionRecord): { done: number; total?: number } {
+  const done = total(r.sorties, "objectives");
+  const pct = r.result.objectivePct;
+  const of = r.result.objectiveTotal ?? (done > 0 && pct > 0 ? Math.round(done / pct) : undefined);
+  return { done, total: of };
+}
+
+/** True for an offense `enemy` value that is a building kind (hostile or civilian). */
+export function isBuildingEnemy(enemy: string): boolean {
+  return !!(UNIT_SPECS as Record<string, { building?: boolean } | undefined>)[enemy]?.building;
 }
 
 /** True for an offense `enemy` value that is a hostile unit kind (not a neutral civilian, not NO_DIM). */
