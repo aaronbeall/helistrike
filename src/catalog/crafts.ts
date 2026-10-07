@@ -195,7 +195,7 @@ const CRAFTS_DEFS: Record<CraftKind, Omit<CraftSpec, "kind">> = {
     rotorHulk: "craft_chinook_rotor_hulk",
     rotorScale: 1.55,
     rotOff: Math.PI / 2,
-    forwardThrust: 520, strafeThrust: 280, maxSpeed: 310, minSpeed: 0, yawRate: 0.72, yawAccel: 3.4, drag: 1.65,
+    forwardThrust: 520, strafeThrust: 0, maxSpeed: 310, minSpeed: 0, yawRate: 0.72, yawAccel: 3.4, drag: 1.65,
     verticalThrust: 340, cruiseThrust: 34, cruiseAgl: 48, maxAgl: 125,
     liftClass: "heavy",
     sockets: [

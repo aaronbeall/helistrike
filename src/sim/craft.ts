@@ -373,8 +373,8 @@ export class Craft {
         ax += ca * fwd * longitudinalThrust;
         ay += sa * fwd * longitudinalThrust;
       }
-      // Ground tanks never strafe — A/D is yaw only (even if strafeThrust is authored).
-      if (!groundDrive) {
+      // Orbit scheme (incl. ground tanks) never strafes — A/D is yaw only (even if strafeThrust is authored).
+      if (!orbit && !groundDrive) {
         ax += -sa * str * this.spec.strafeThrust;
         ay += ca * str * this.spec.strafeThrust;
       }
