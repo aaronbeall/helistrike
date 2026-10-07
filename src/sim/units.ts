@@ -45,7 +45,9 @@ export function makeUnit(world: WorldData, kind: Unit["kind"], x: number, y: num
 /** Camo a unit wears where it spawns (none unless its spec asks for it). */
 function unitCamo(kind: UnitKind, world: WorldData, x: number, y: number): CamoKind | undefined {
   const camo = specOf(kind).camo;
-  return camo === "digital" ? "digital" : camo === "biome" ? camoForBiome(sampleBiome(world, x, y)) : undefined;
+  if (camo === "biome") return camoForBiome(sampleBiome(world, x, y));
+  const pick = camo?.[Math.floor(Math.random() * camo.length)];
+  return pick === "none" ? undefined : pick;
 }
 
 /** Neutral civilian buildings from the world's settlements, facing their layout. */

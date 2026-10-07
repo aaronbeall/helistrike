@@ -1,4 +1,5 @@
 /** Texture UV catalog — single source for origins, mounts, and muzzles. */
+import { CAMO_SUFFIX } from "../catalog/camo";
 
 export type Uv = { x: number; y: number };
 
@@ -622,7 +623,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
 };
 
 export function bareSpriteKey(key: string): string {
-  return key.replace(/__(woodland|desert|urban|snow|digital)$/, "");
+  return key.replace(CAMO_SUFFIX, "");
 }
 
 function resolveSpec(key: string): SpriteSpec | undefined {

@@ -43,6 +43,7 @@ const ENEMY_UNITS = {
     box: { halfW: 19, halfL: 34 },
     height: 20,
     texture: "enemy_tank",
+    camo: "biome",
     hulk: "enemy_tank_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
@@ -51,7 +52,7 @@ const ENEMY_UNITS = {
     throwGuns: true,
     wreckScale: 1.25,
     weapon: wpn("he", { fireCd: 2.05, range: 520}),
-    guns: [gun("enemy_tank_gun", 0.78, mountOf("enemy_tank", "gun"), "enemy_tank_gun_hulk")],
+    guns: [{ ...gun("enemy_tank_gun", 0.78, mountOf("enemy_tank", "gun"), "enemy_tank_gun_hulk"), camo: true }],
     rotors: []
   },
   soldier: {
@@ -77,6 +78,7 @@ const ENEMY_UNITS = {
     height: 16,
     flyZ: 48,
     texture: "enemy_heli",
+    camo: "biome",
     hulk: "enemy_heli_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
@@ -96,7 +98,7 @@ const ENEMY_UNITS = {
       scale: 0.72,
       motor: -0.06
     },
-    guns: [gun("enemy_heli_gun", 0.72, mountOf("enemy_heli", "gun"))],
+    guns: [{ ...gun("enemy_heli_gun", 0.72, mountOf("enemy_heli", "gun")), camo: true }],
     rotors: [
       {
         tex: "enemy_heli_rotor",
@@ -114,6 +116,7 @@ const ENEMY_UNITS = {
     box: { halfW: 13, halfL: 44 },
     height: 16,
     texture: "enemy_boat",
+    camo: ["naval", "dazzle", "none"],
     hulk: "enemy_boat_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
@@ -225,6 +228,7 @@ const ENEMY_UNITS = {
     box: { halfW: 13, halfL: 33 },
     height: 16,
     texture: "enemy_tanker",
+    camo: "biome",
     hulk: "enemy_tanker_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
@@ -261,6 +265,7 @@ const ENEMY_UNITS = {
     box: { halfW: 13, halfL: 27 },
     height: 16,
     texture: "enemy_lav",
+    camo: "biome",
     hulk: "enemy_lav_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
@@ -269,7 +274,7 @@ const ENEMY_UNITS = {
     throwGuns: true,
     wheels: 2,
     weapon: wpn("he", { fireCd: 1.15, range: 440, dmg: 6, blast: 12}),
-    guns: [gun("enemy_lav_gun", 0.76, mountOf("enemy_lav", "gun"))],
+    guns: [{ ...gun("enemy_lav_gun", 0.76, mountOf("enemy_lav", "gun")), camo: true }],
     rotors: []
   },
   lav_aa: {
@@ -286,7 +291,7 @@ const ENEMY_UNITS = {
     drive: { maxSpd: 42, accel: 24, brake: 30, turn: 1.05, track: "tire", trackGap: 14, trackScale: 0.82 },
     throwGuns: true,
     wheels: 2,
-    camo: "digital",
+    camo: ["digital"],
     weapon: WPN.aa,
     guns: [
       {
@@ -304,6 +309,7 @@ const ENEMY_UNITS = {
     box: { halfW: 15, halfL: 32 },
     height: 20,
     texture: "enemy_sam",
+    camo: "biome",
     hulk: "enemy_sam_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
@@ -317,7 +323,7 @@ const ENEMY_UNITS = {
       dmg: 22,
       blast: 28
     }),
-    guns: [gun("enemy_sam_gun", 0.7, mountOf("enemy_sam", "gun"))],
+    guns: [{ ...gun("enemy_sam_gun", 0.7, mountOf("enemy_sam", "gun")), camo: true }],
     rotors: []
   },
   ptboat: {
@@ -327,6 +333,7 @@ const ENEMY_UNITS = {
     box: { halfW: 7, halfL: 24 },
     height: 12,
     texture: "enemy_ptboat",
+    camo: ["naval", "dazzle", "none"],
     hulk: "enemy_ptboat_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
@@ -337,7 +344,7 @@ const ENEMY_UNITS = {
     boatYaw: 1.55,
     boatSpeed: 38,
     weapon: wpn("mg", { fireCd: 0.85, range: 420, speed: 560, dmg: 3, blast: 6, burst: 3, burstGap: 0.09 }),
-    guns: [gun("enemy_ptboat_gun", 0.74, mountOf("enemy_ptboat", "gun"))],
+    guns: [{ ...gun("enemy_ptboat_gun", 0.74, mountOf("enemy_ptboat", "gun")), camo: true }],
     rotors: []
   },
   battleship: {
@@ -347,6 +354,7 @@ const ENEMY_UNITS = {
     box: { halfW: 28, halfL: 133 },
     height: 40,
     texture: "enemy_battleship",
+    camo: ["naval", "dazzle", "none"],
     hulk: "enemy_battleship_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
@@ -510,7 +518,7 @@ const ENEMY_UNITS = {
   },
   barn: building("barn", "BARN", 196, 23, 41, 28, { neutral: false, radius: 34 }),
   tent: building("tent", "TENT", 50, 18, 30, 14, { neutral: false, radius: 20, camo: "biome" }),
-  fob: building("fob", "FOB", 448, 61, 53, 28, { ...MILITARY, radius: 52, hv: true, spawnYaw: (20 * Math.PI) / 180 }),
+  fob: building("fob", "FOB", 448, 61, 53, 28, { ...MILITARY, radius: 52, hv: true, camo: "biome", spawnYaw: (20 * Math.PI) / 180 }),
   lookout: building("lookout", "LOOKOUT", 168, 23, 25, 56, {
     neutral: false,
     radius: 22,
@@ -555,6 +563,7 @@ const ENEMY_UNITS = {
     height: 12,
     flyZ: 44,
     texture: "enemy_heli_small",
+    camo: "biome",
     hulk: "enemy_heli_small_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
@@ -597,6 +606,7 @@ const ENEMY_UNITS = {
     height: 24,
     flyZ: 52,
     texture: "enemy_heli_heavy",
+    camo: "biome",
     hulk: "enemy_heli_heavy_hulk",
     debris: "mech",
     rotOff: Math.PI / 2,
@@ -631,6 +641,7 @@ const ENEMY_UNITS = {
     guns: mountsOf("enemy_heli_heavy", "gun").map((m) => ({
       ...gun("enemy_heli_heavy_gun", 0.78, { ...m }),
       scale: 0.58,
+      camo: true,
       traverse: { arc: 200, center: m.x < 0.5 ? -90 : 90 }
     })),
     rotors: mountsOf("enemy_heli_heavy", "rotor").map((m) => ({

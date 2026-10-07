@@ -87,7 +87,7 @@ const SHOT_SLOTS = 6;
 type Filter = "all" | "ground" | "air" | "water" | "building" | "troop" | "remote";
 const FILTERS: Filter[] = ["all", "ground", "air", "water", "building", "troop", "remote"];
 /** Every camo pattern, in rig cycle order. */
-const ALL_CAMOS: readonly CamoKind[] = [...CAMO_KINDS, "digital"];
+const ALL_CAMOS: readonly CamoKind[] = [...CAMO_KINDS, "digital", "naval", "dazzle"];
 
 type Composition = "assembled" | "separated";
 

@@ -3,16 +3,18 @@ import type { Biome } from "../worldgen/world";
 import { registerArt, type ArtSource } from "../art/sprites";
 import { UNIT_SPECS } from "../catalog/units";
 
-export type CamoKind = "woodland" | "desert" | "urban" | "snow" | "digital";
+import { stripCamoSuffix, type CamoKind } from "../catalog/camo";
+export { stripCamoSuffix, type CamoKind } from "../catalog/camo";
 
-/** Biome-linked patterns (not digital). */
+/** Biome-linked patterns. */
 export const CAMO_KINDS: CamoKind[] = ["woodland", "desert", "urban", "snow"];
 
-const PATTERNS: Record<Exclude<CamoKind, "digital">, { seed: number; colors: string[] }> = {
+const PATTERNS: Record<Exclude<CamoKind, "digital" | "dazzle">, { seed: number; colors: string[] }> = {
   woodland: { seed: 11029, colors: ["#3a5230", "#2a3a22", "#5a6a38", "#4a3a24"] },
   desert: { seed: 44117, colors: ["#c4a06a", "#a88854", "#8a7044", "#d8c08a"] },
   urban: { seed: 77231, colors: ["#6a6c66", "#4a4c48", "#8a8882", "#3a3c38"] },
   snow: { seed: 99013, colors: ["#e6e4dc", "#c4c6c0", "#9aa298", "#d0d4cc"] },
+  naval: { seed: 33091, colors: ["#5a6a7c", "#3a4a5e", "#7a8c9e", "#26323f"] },
 };
 
 const DIGITAL = {
@@ -20,6 +22,17 @@ const DIGITAL = {
   colors: ["#3a4638", "#2a322c", "#52604a", "#1c241e", "#6a7860", "#485248"],
 };
 
+/** Dazzle stripe pairs: light vs dark navy greys. */
+const DAZZLE = {
+  seed: 63211,
+  pairs: [
+    ["#e6e8e6", "#2c3236"],
+    ["#a8b0b4", "#1c2226"],
+    ["#e6e8e6", "#5c6a78"],
+    ["#c4ccd0", "#3c4650"],
+    ["#a8b0b4", "#5c6a78"],
+  ],
+};
 
 export function camoPatternKey(kind: CamoKind): string {
   return `camo_${kind}`;
@@ -27,10 +40,6 @@ export function camoPatternKey(kind: CamoKind): string {
 
 export function skinnedKey(base: string, camo?: CamoKind): string {
   return camo ? `${base}__${camo}` : base;
-}
-
-export function stripCamoSuffix(key: string): string {
-  return key.replace(/__(woodland|desert|urban|snow|digital)$/, "");
 }
 
 export function camoForBiome(biome: Biome): CamoKind {
@@ -144,13 +153,49 @@ function patchSampler(seed: number, colors: string[], block: number): CamoSample
   };
 }
 
+/** Dazzle: periodic Voronoi regions, each striped at an integer (tileable) angle in a two-tone navy pair. */
+function dazzleSampler(seed: number, pairs: string[][]): CamoSampler {
+  const rand = rng(seed);
+  const pal = pairs.map((p) => p.map(hexRgb));
+  const regions = Array.from({ length: 7 }, () => {
+    let a = 0;
+    let b = 0;
+    while (Math.hypot(a, b) < 3 || Math.hypot(a, b) > 7) {
+      a = Math.round((rand() - 0.5) * 14);
+      b = Math.round((rand() - 0.5) * 14);
+    }
+    const [c0, c1] = pal[Math.floor(rand() * pal.length)]!;
+    return { x: rand(), y: rand(), a, b, phase: rand(), solid: rand() < 0.15, c0: c0!, c1: c1! };
+  });
+  const wrap = (d: number) => d - Math.round(d);
+  return (u, v) => {
+    let best = regions[0]!;
+    let bd = Infinity;
+    for (const r of regions) {
+      const dx = wrap(u - r.x);
+      const dy = wrap(v - r.y);
+      const d = dx * dx + dy * dy;
+      if (d < bd) {
+        bd = d;
+        best = r;
+      }
+    }
+    if (best.solid) return best.c0;
+    const t = best.a * u + best.b * v + best.phase;
+    return t - Math.floor(t) < 0.5 ? best.c0 : best.c1;
+  };
+}
+
 const samplers = new Map<CamoKind, { sample: CamoSampler; seed: number; grain: number }>();
 
 function camoSampler(kind: CamoKind): { sample: CamoSampler; seed: number; grain: number } {
   let s = samplers.get(kind);
   if (!s) {
-    const { seed, colors } = kind === "digital" ? DIGITAL : PATTERNS[kind];
-    s = { sample: patchSampler(seed, colors, kind === "digital" ? 4 : 1), seed, grain: kind === "digital" ? 10 : 14 };
+    if (kind === "dazzle") s = { sample: dazzleSampler(DAZZLE.seed, DAZZLE.pairs), seed: DAZZLE.seed, grain: 8 };
+    else {
+      const { seed, colors } = kind === "digital" ? DIGITAL : PATTERNS[kind];
+      s = { sample: patchSampler(seed, colors, kind === "digital" ? 4 : 1), seed, grain: kind === "digital" ? 10 : 14 };
+    }
     samplers.set(kind, s);
   }
   return s;
@@ -229,7 +274,7 @@ function blendCamo(src: HTMLCanvasElement, kind: CamoKind, ox: number, oy: numbe
       const r = sp[i]!;
       const g = sp[i + 1]!;
       const b = sp[i + 2]!;
-      const redMark = r > 115 && r - Math.max(g, b) > 42 && Math.max(g, b) < 110;
+      const redMark = r > 115 && r - Math.max(g, b) > 42 && Math.max(g, b) < 110 && Math.abs(g - b) < 28;
       if (redMark) {
         d[i] = r;
         d[i + 1] = g;
@@ -276,8 +321,8 @@ export function camoSkinBases(): Map<string, CamoKind[]> {
     out.set(tex, have);
   };
   for (const sp of Object.values(UNIT_SPECS)) {
-    if (!sp.camo) continue;
-    const kinds = sp.camo === "digital" ? (["digital"] as const) : CAMO_KINDS;
+    const kinds = sp.camo === "biome" ? CAMO_KINDS : (sp.camo ?? []).filter((k) => k !== "none");
+    if (!kinds.length) continue;
     add(sp.texture, kinds);
     for (const g of sp.guns) if (g.camo) add(g.tex, kinds);
   }
@@ -285,6 +330,6 @@ export function camoSkinBases(): Map<string, CamoKind[]> {
 }
 
 export function bakeCamo(textures: Phaser.Textures.TextureManager): void {
-  for (const kind of [...CAMO_KINDS, "digital"] as const) put(textures, camoPatternKey(kind), drawCamo(kind), "generated");
+  for (const kind of [...CAMO_KINDS, "digital", "naval", "dazzle"] as const) put(textures, camoPatternKey(kind), drawCamo(kind), "generated");
   for (const [base, kinds] of camoSkinBases()) bakeBaseKinds(textures, [base], kinds);
 }

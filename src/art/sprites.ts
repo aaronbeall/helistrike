@@ -1,4 +1,5 @@
 import type Phaser from "phaser";
+import { CAMO_SUFFIX } from "../catalog/camo";
 import { allCrafts, craftOf, craftPivot, EXHAUST_TRAIL_FLAME_HUES, socketGunTex } from "../sim/crafts";
 import { lookupSpriteOrigin, setSpriteOrigin } from "./spriteOrigin";
 import { ROAD_ART, setRoadImage, type RoadArtKind } from "./roadArt";
@@ -623,7 +624,7 @@ export function bakeHeliHudWireTexture(
 }
 
 export function spritePivot(key: string): { x: number; y: number } {
-  const k = key.replace(/__(woodland|desert|urban|snow|digital)$/, "");
+  const k = key.replace(CAMO_SUFFIX, "");
   const craft = craftPivot(k);
   if (craft) return craft;
   return lookupSpriteOrigin(k) ?? DEFAULT_ORIGIN;
@@ -1089,13 +1090,13 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   // Sunk-debris art: every hulk + debris piece gets the boat-hulk `_sink` look up front (no first-sink hitch).
   for (const key of textures.getTextureKeys()) {
     if (!(key.endsWith("_hulk") || key.startsWith("fx_debris_"))) continue;
-    if (/__(woodland|desert|urban|snow|digital)$/.test(key) || isUtilityDerived(key)) continue;
+    if (CAMO_SUFFIX.test(key) || isUtilityDerived(key)) continue;
     ensureSinkTexture(textures, key);
   }
   // Wreck / pop-hulk atlases (guns, rotors, hulls) — needed for in-flight debris shadows.
   for (const key of textures.getTextureKeys()) {
     if (!key.endsWith("_hulk")) continue;
-    if (/__(woodland|desert|urban|snow|digital)$/.test(key)) continue;
+    if (CAMO_SUFFIX.test(key)) continue;
     if (textures.exists(`${key}_sh0`)) continue;
     bakeShadows(textures, key);
   }
@@ -1131,7 +1132,7 @@ export function extractBiomeTiles(textures: Phaser.Textures.TextureManager): (Im
 
 export function shadowKey(base: string, z: number): string {
   const lvl = z < 22 ? 0 : z < 52 ? 1 : z < 88 ? 2 : 3;
-  const bare = base.replace(/__(woodland|desert|urban|snow|digital)$/, "");
+  const bare = base.replace(CAMO_SUFFIX, "");
   return `${bare}_sh${lvl}`;
 }
 
@@ -2034,7 +2035,7 @@ function keyPixels(img: HTMLImageElement, mode: "magenta" | "studio" | "edge" | 
  * clipped to the gun's opaque pixels. Runtime alpha = tip heat.
  */
 export function muzzleGlowKey(gunKey: string): string {
-  return `${gunKey.replace(/__(woodland|desert|urban|snow|digital)$/, "")}_muzzle_glow`;
+  return `${gunKey.replace(CAMO_SUFFIX, "")}_muzzle_glow`;
 }
 
 function muzzleGlowPalette(key: string): "hot" | "cool" {

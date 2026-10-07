@@ -1,4 +1,5 @@
 import { type Unit } from "./combat";
+import { CAMO_SUFFIX, type CamoRoll } from "../catalog/camo";
 import { ENEMY_WPNS } from "../catalog/enemyWeapons";
 import { gun, TROOP_WEIGHTS, UNIT_SPECS } from "../catalog/units";
 
@@ -234,8 +235,8 @@ export interface UnitSpec {
   wreckScale?: number;
   /** Wheel debris draw scale range [lo, hi]. */
   wheelDebrisScale?: [number, number];
-  /** Camo paint: "biome" = picked from the spawn biome, "digital" = always digital. Omit = no camo. */
-  camo?: "biome" | "digital";
+  /** Camo paint roll at spawn. Omit = no camo. */
+  camo?: CamoRoll;
   weapon?: WeaponSpec;
   /**
    * Optional hull hardpoint ordnance (seeker missiles, etc.).
@@ -436,7 +437,6 @@ export function usesOfWeapon(w: WeaponSpec): string[] {
   return uses;
 }
 
-const CAMO_SUFFIX = /__(woodland|desert|urban|snow|digital)$/;
 
 function texKeyBase(tex: string): string {
   return tex.replace(CAMO_SUFFIX, "");

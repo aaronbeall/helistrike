@@ -1,4 +1,5 @@
 import { CRAFTS } from "../catalog/crafts";
+import { CAMO_SUFFIX } from "../catalog/camo";
 import { lookupSpriteMuzzles, lookupSpriteOrigin, lookupSpritePoints, mountsOf, spritePointLabel } from "../art/spriteOrigin";
 import {
   type HullMount,
@@ -1207,7 +1208,7 @@ export function craftWingTipMounts(c: CraftSpec = craftOf()): { x: number; y: nu
 
 /** Pivot for a craft texture (body origin or gun origin). */
 export function craftPivot(key: string): { x: number; y: number } | undefined {
-  const k = key.replace(/__(woodland|desert|urban|snow|digital)$/, "");
+  const k = key.replace(CAMO_SUFFIX, "");
   for (const c of allCrafts()) {
     if (c.body === k || c.hulk === k) return craftOrigin(c);
   }
