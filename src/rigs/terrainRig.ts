@@ -7,15 +7,18 @@ import {
   baseTerrainColor,
   classifyBiome,
   DRAINAGE_STAGES,
+  MAIN_RIVER_STAGES,
   moistureAt,
   OUTLET_EDGE,
   OUTLET_TRUNK,
   OUTLET_WATER,
   previewDrainage,
+  previewMainRivers,
   terrainLight,
   TEX,
   WATER_LEVEL,
   type DrainagePreview,
+  type MainRiverPreview,
 } from "../worldgen/world";
 import { themeOf } from "../worldgen/theme";
 import { missionOf } from "../sim/mission";
@@ -37,11 +40,18 @@ const CONTOUR = 0.05;
 type Entry =
   | { kind: "shape"; id: MapShape; label: string; desc: string }
   | { kind: "landform"; id: LandformKind; label: string; desc: string }
+  | { kind: "mainriver"; id: "mainriver"; label: string; desc: string }
   | { kind: "drainage"; id: "drainage"; label: string; desc: string };
 
 const ENTRIES: Entry[] = [
   ...MAP_SHAPES.map((m): Entry => ({ kind: "shape", id: m.id, label: m.label, desc: m.description })),
   ...LANDFORM_KINDS.map((l): Entry => ({ kind: "landform", id: l.id, label: l.label, desc: l.description })),
+  {
+    kind: "mainriver",
+    id: "mainriver",
+    label: "MAIN RIVER",
+    desc: "Trunk rivers for the selected mission: real world-gen code, step by step (← → or V).",
+  },
   {
     kind: "drainage",
     id: "drainage",
@@ -53,6 +63,7 @@ const ENTRIES: Entry[] = [
 const VIEWS: Record<Entry["kind"], readonly string[]> = {
   shape: ["FIELD", "WITH NOISE"],
   landform: ["RELIEF", "HEIGHT"],
+  mainriver: MAIN_RIVER_STAGES.map((st, i) => `${i + 1} ${st.label}`),
   drainage: DRAINAGE_STAGES.map((st, i) => `${i + 1} ${st.label}`),
 };
 
@@ -74,6 +85,7 @@ export class TerrainRig {
   private valueLabel = "";
   private field: ShapeField | null = null;
   private drain: { key: string; data: DrainagePreview } | null = null;
+  private main: { key: string; data: MainRiverPreview } | null = null;
 
   root: Phaser.GameObjects.Container;
   private dim!: Phaser.GameObjects.Rectangle;
@@ -183,7 +195,7 @@ export class TerrainRig {
     const e = this.entry();
     const shapes = ENTRIES.filter((x) => x.kind === "shape");
     const forms = ENTRIES.filter((x) => x.kind === "landform");
-    const rivers = ENTRIES.filter((x) => x.kind === "drainage");
+    const rivers = ENTRIES.filter((x) => x.kind === "mainriver" || x.kind === "drainage");
     const row = (x: Entry) => `${x === e ? "▸" : " "} ${x.label}`;
     this.listTxt.setText(
       [
@@ -209,12 +221,13 @@ export class TerrainRig {
       this.infoTxt.y
     );
     this.hintTxt.setText(
-      `TERRAIN RIG   ↑ ↓ select   V / ← → view${e.kind === "drainage" ? " (step)" : ""}   R reseed   - + zoom ${this.zoom}×   (preview only — map gen untouched)`
+      `TERRAIN RIG   ↑ ↓ select   V / ← → view${e.kind === "drainage" || e.kind === "mainriver" ? " (step)" : ""}   R reseed   - + zoom ${this.zoom}×   (preview only — map gen untouched)`
     );
   }
 
   private legend(e: Entry): string[] {
     if (e.kind === "drainage") return this.drainLegend();
+    if (e.kind === "mainriver") return this.mainLegend();
     if (e.kind === "shape" && this.view === 0)
       return [
         "Height offset added to the noise.",
@@ -233,8 +246,10 @@ export class TerrainRig {
     const img = this.g.createImageData(SIZE, SIZE);
     if (e.kind === "shape") this.renderShape(e.id, img.data);
     else if (e.kind === "landform") this.renderLandform(e.id, img.data);
+    else if (e.kind === "mainriver") this.renderMainRiver(img.data);
     else this.renderDrainage(img.data);
     this.g.putImageData(img, 0, 0);
+    if (e.kind === "mainriver") this.drawMainRiverPaths();
     const tex = this.scene.textures;
     if (tex.exists(this.previewKey)) tex.remove(this.previewKey);
     tex.addCanvas(this.previewKey, this.canvas);
@@ -393,6 +408,114 @@ export class TerrainRig {
     }
   }
 
+  private mainData(): MainRiverPreview {
+    const m = missionOf();
+    const key = `${this.seed}:${m.kind}:${JSON.stringify(m.profile)}`;
+    if (this.main?.key !== key) this.main = { key, data: previewMainRivers(this.seed, m.profile) };
+    return this.main.data;
+  }
+
+  private mainLegend(): string[] {
+    const m = missionOf();
+    const t = this.main?.data.trace;
+    const head = `${m.label} · MAIN ${m.profile.mainRivers}`;
+    const stats = t
+      ? `grid ${t.n}² (${t.step} tx/cell) · ${t.rivers.length} traced · mouth ${t.sea >= 0 ? "sea" : "map edge"} · source band ${t.srcMin}–${t.srcMax}`
+      : "no main rivers (MAIN 0)";
+    const stage = MAIN_RIVER_STAGES[this.view]!;
+    return [head, stats, "", stage.description, MAIN_KEY[stage.id]];
+  }
+
+  private renderMainRiver(d: Uint8ClampedArray): void {
+    this.field = null;
+    const { relief, trace: t } = this.mainData();
+    const stage = MAIN_RIVER_STAGES[this.view]!.id;
+    const carved = stage === "valley" || stage === "result";
+    const h = carved || !t ? relief.height : t.before;
+    const tx = (x: number) => Math.min(TEX - 2, Math.max(1, Math.floor(((x + 0.5) / SIZE) * TEX)));
+    // Cost ramp spans the 95th percentile (the max is dominated by a few climbs).
+    let p95 = 1;
+    if (t && stage === "cost") {
+      const fin = Array.from(t.dist).filter((v) => v < Infinity).sort((a, b) => a - b);
+      p95 = fin[Math.floor(fin.length * 0.95)] || 1;
+    }
+    this.valueLabel = stage === "cost" ? "route cost" : stage === "valley" ? "lowered" : stage === "mouth" ? "water body" : "height";
+    for (let y = 0; y < SIZE; y++) {
+      for (let x = 0; x < SIZE; x++) {
+        const i = tx(y) * TEX + tx(x);
+        const p = y * SIZE + x;
+        const base = shaded(this.ground(h[i]!, (i % TEX) / TEX, Math.floor(i / TEX) / TEX), h, i, TEX);
+        const dim = base.map((q) => q * 0.45 + 30);
+        const c = t ? Math.min(t.n - 1, Math.floor(((y + 0.5) / SIZE) * t.n)) * t.n + Math.min(t.n - 1, Math.floor(((x + 0.5) / SIZE) * t.n)) : -1;
+        let col = base;
+        let val = h[i]!;
+        if (!t) {
+          col = stage === "input" ? base : dim;
+        } else if (stage === "mouth") {
+          const w = t.wet[c]!;
+          val = w;
+          col = w < 0 ? dim : w === t.sea ? SEA_COL : LAKE_COL;
+          const cx = c % t.n;
+          const cy = (c / t.n) | 0;
+          if (t.sea < 0 && (cx === 0 || cy === 0 || cx === t.n - 1 || cy === t.n - 1)) col = EDGE_COL;
+        } else if (stage === "cost") {
+          const dc = t.dist[c]!;
+          val = dc;
+          if (t.sea >= 0 && t.wet[c] === t.sea) col = SEA_COL;
+          else if (!(dc < Infinity)) col = [20, 18, 16];
+          else {
+            const v = Math.sqrt(Math.min(1, dc / p95));
+            col = [30 + v * 220, 40 + v * 150, 90 - v * 60];
+          }
+        } else if (stage === "route") {
+          const g = t.gh[c]!;
+          col = g >= t.srcMin && g <= t.srcMax ? dim.map((q, k) => q + [60, 50, 0][k]!) : dim;
+        } else if (stage === "meander") {
+          col = dim;
+        } else if (stage === "valley") {
+          val = t.before[i]! - relief.height[i]!;
+          col = val > 0.0005 ? base.map((q, k) => q * 0.6 + [40, 160, 120][k]! * Math.min(1, val / 0.06)) : base;
+        } else if (stage === "result") {
+          if (relief.riverRad[i]! > 0) col = TRUNK_COL;
+        }
+        this.values[p] = val;
+        put(d, p, col);
+      }
+    }
+  }
+
+  /** Route / centerline / meander polylines + source markers over the preview. */
+  private drawMainRiverPaths(): void {
+    const t = this.main?.data.trace;
+    const stage = MAIN_RIVER_STAGES[this.view]!.id;
+    if (!t || (stage !== "route" && stage !== "meander" && stage !== "valley")) return;
+    const g = this.g;
+    const k = SIZE / TEX;
+    const line = (pts: { x: number; y: number }[], color: string, w: number) => {
+      if (pts.length < 2) return;
+      g.strokeStyle = color;
+      g.lineWidth = w;
+      g.beginPath();
+      g.moveTo(pts[0]!.x * k, pts[0]!.y * k);
+      for (let i = 1; i < pts.length; i++) g.lineTo(pts[i]!.x * k, pts[i]!.y * k);
+      g.stroke();
+    };
+    for (const r of t.rivers) {
+      if (stage === "route") line(r.route, "rgb(80,220,230)", 1.5);
+      if (stage === "meander") {
+        line(r.center, "rgba(255,255,255,0.55)", 1);
+        line(r.meander, "rgb(70,140,255)", 2);
+      }
+      if (stage === "valley") line(r.center, "rgba(255,255,255,0.4)", 1);
+      if (stage === "route") {
+        const sx = ((r.src % t.n) * t.step + t.step / 2) * k;
+        const sy = (((r.src / t.n) | 0) * t.step + t.step / 2) * k;
+        g.fillStyle = "rgb(255,0,255)";
+        g.fillRect(sx - 3, sy - 3, 6, 6);
+      }
+    }
+  }
+
   /** World-gen biome + palette for this height (selected mission's theme). */
   private ground(h: number, nx: number, ny: number): number[] {
     const theme = themeOf(missionOf().profile.theme);
@@ -439,8 +562,8 @@ export class TerrainRig {
 function listRowToEntry(line: number): number {
   let l = 0;
   let idx = 0;
-  for (const kind of ["shape", "landform", "drainage"] as const) {
-    const count = ENTRIES.filter((x) => x.kind === kind).length;
+  for (const kinds of [["shape"], ["landform"], ["mainriver", "drainage"]] as const) {
+    const count = ENTRIES.filter((x) => (kinds as readonly string[]).includes(x.kind)).length;
     l++; // header
     if (line >= l && line < l + count) return idx + (line - l);
     l += count + 1; // entries + blank
@@ -463,6 +586,18 @@ const OUTLET_COL: Record<number, number[]> = {
   [OUTLET_WATER]: [40, 110, 200],
   [OUTLET_TRUNK]: [80, 220, 230],
   [OUTLET_EDGE]: [240, 140, 40],
+};
+const SEA_COL = [40, 110, 200];
+const LAKE_COL = [60, 150, 170];
+const EDGE_COL = [240, 140, 40];
+const MAIN_KEY: Record<(typeof MAIN_RIVER_STAGES)[number]["id"], string> = {
+  input: "Terrain the trunk rivers are carved into.",
+  mouth: "Blue: sea (mouth) · teal: other water · orange: map edge (no sea).",
+  cost: "Dark → bright: cheap → costly (95th pct) · black: unreachable.",
+  route: "Gold: source height band · magenta: source · cyan: cheapest route.",
+  meander: "White: smoothed route · blue: meandered channel line.",
+  valley: "Green: how far the valley lowered the ground.",
+  result: "Dark blue: trunk channel as stamped.",
 };
 const STAGE_KEY: Record<(typeof DRAINAGE_STAGES)[number]["id"], string> = {
   terrain: "Dark blue: trunk river channel.",

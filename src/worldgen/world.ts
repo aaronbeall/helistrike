@@ -524,7 +524,13 @@ export interface Relief {
 }
 
 /** Pre-river terrain: shape + noise heights, landform stamps, trunk rivers. Shared by world gen and the terrain rig. */
-export function buildRelief(seed: number, profile: WorldGenProfile, onProgress?: WorldProgress, withMoisture = false): Relief {
+export function buildRelief(
+  seed: number,
+  profile: WorldGenProfile,
+  onProgress?: WorldProgress,
+  withMoisture = false,
+  mainTrace?: (t: MainRiverTrace) => void
+): Relief {
   const height = new Float32Array(TEX * TEX);
   const moisture = new Float32Array(withMoisture ? TEX * TEX : 0);
   const biome = new Uint8Array(TEX * TEX);
@@ -544,7 +550,7 @@ export function buildRelief(seed: number, profile: WorldGenProfile, onProgress?:
   applyLandforms(height, TEX, profile.landforms, seed, hint, H_WATER);
   onProgress?.(0.32, "river carve");
   const riverRad = new Float32Array(TEX * TEX);
-  carveMainRivers(height, biome, riverRad, seed, profile.mainRivers);
+  carveMainRivers(height, biome, riverRad, seed, profile.mainRivers, mainTrace);
   return { height, moisture, biome, riverRad, field, hint };
 }
 
@@ -649,6 +655,49 @@ export function previewDrainage(seed: number, profile: WorldGenProfile): Drainag
   let trace: DrainageTrace | null = null;
   carveDrainage(relief.height, relief.biome, relief.riverRad, seed, profile.riverTarget, lake, (t) => (trace = t));
   return { relief, trunk, trace, lake };
+}
+
+/** carveMainRivers internals for the terrain rig: coarse grid (n × n, `step` texels per cell) + per-river paths in texels. */
+export interface MainRiverTrace {
+  n: number;
+  step: number;
+  /** Coarse routing heights. */
+  gh: Float32Array;
+  /** Water body id per cell (< 0 = land); `sea` = the mouth body, or < 0 (rivers run off the map edge). */
+  wet: Int32Array;
+  sea: number;
+  /** Route cost to the mouth per cell (Infinity = unreachable). */
+  dist: Float64Array;
+  /** Source height band. */
+  srcMin: number;
+  srcMax: number;
+  rivers: { src: number; route: { x: number; y: number }[]; center: { x: number; y: number }[]; meander: { x: number; y: number }[] }[];
+  /** Height before the valley carve. */
+  before: Float32Array;
+}
+
+/** carveMainRivers' steps, in order (the terrain rig steps through these). */
+export const MAIN_RIVER_STAGES = [
+  { id: "input", label: "INPUT", description: "Relief before any river: shape + noise + landforms." },
+  { id: "mouth", label: "MOUTH", description: "Coarse grid; water bodies found, the largest is the sea (mouth). No sea: rivers run off the map edge." },
+  { id: "cost", label: "ROUTE COST", description: "Cheapest-path cost from every cell down to the mouth (climbing is expensive, noise wobbles it)." },
+  { id: "route", label: "SOURCE + ROUTE", description: "Source: longest route from the source height band, clear of other trunks; then follow the cheapest path down." },
+  { id: "meander", label: "MEANDERS", description: "Route smoothed (Chaikin), then bent into meanders sized to the channel width." },
+  { id: "valley", label: "VALLEY", description: "A floodplain valley carved around the smoothed route, stepping down from source to mouth." },
+  { id: "result", label: "RESULT", description: "Channel stamped along the meanders, widening toward the mouth, with a ragged edge." },
+] as const;
+export type MainRiverStage = (typeof MAIN_RIVER_STAGES)[number]["id"];
+
+export interface MainRiverPreview {
+  relief: Relief;
+  trace: MainRiverTrace | null;
+}
+
+/** Same relief code as world gen, with every main-river intermediate captured for preview. */
+export function previewMainRivers(seed: number, profile: WorldGenProfile): MainRiverPreview {
+  let trace: MainRiverTrace | null = null;
+  const relief = buildRelief(seed, profile, undefined, false, (t) => (trace = t));
+  return { relief, trace };
 }
 
 export function generateWorld(
@@ -1656,8 +1705,20 @@ const MAIN_W0 = 4;
 const MAIN_W1 = 14;
 
 /** Long meandering trunk rivers from high ground to the sea (or map edge), each in its own carved valley. */
-function carveMainRivers(height: Float32Array, biome: Uint8Array, riverRad: Float32Array, seed: number, count: number): void {
+/** Source height band for trunk rivers. */
+const MAIN_SRC_MIN = 0.46;
+const MAIN_SRC_MAX = 0.7;
+
+function carveMainRivers(
+  height: Float32Array,
+  biome: Uint8Array,
+  riverRad: Float32Array,
+  seed: number,
+  count: number,
+  trace?: (t: MainRiverTrace) => void
+): void {
   if (count <= 0) return;
+  const before = trace ? new Float32Array(height) : null;
   const rng = new Rng((seed ^ 0x3a1b7) >>> 0);
   const n = Math.floor(TEX / MAIN_STEP);
   const N = n * n;
@@ -1688,7 +1749,7 @@ function carveMainRivers(height: Float32Array, biome: Uint8Array, riverRad: Floa
   let sea = -1;
   for (let id = 0; id < wetSize.length; id++) if (wetSize[id]! >= 150 && (sea < 0 || wetSize[id]! > wetSize[sea]!)) sea = id;
   const sink = (c: number) => sea >= 0 && wet[c] === sea;
-  const dist = new Float32Array(N).fill(Infinity);
+  const dist = new Float64Array(N).fill(Infinity);
   const parent = new Int32Array(N).fill(-1);
   const heap: HeapItem[] = [];
   for (let c = 0; c < N; c++) {
@@ -1725,6 +1786,7 @@ function carveMainRivers(height: Float32Array, biome: Uint8Array, riverRad: Floa
     }
   }
   const taken: { x: number; y: number }[] = [];
+  const traced: MainRiverTrace["rivers"] = [];
   const dMin = new Float32Array(TEX * TEX).fill(Infinity);
   const tAt = new Float32Array(TEX * TEX);
   for (let r = 0; r < count; r++) {
@@ -1733,7 +1795,7 @@ function carveMainRivers(height: Float32Array, biome: Uint8Array, riverRad: Floa
     let best = -Infinity;
     for (let c = 0; c < N; c++) {
       const h = gh[c]!;
-      if (h < 0.46 || h > 0.7 || !(dist[c]! < Infinity) || parent[c]! < 0) continue;
+      if (h < MAIN_SRC_MIN || h > MAIN_SRC_MAX || !(dist[c]! < Infinity) || parent[c]! < 0) continue;
       const cx = c % n;
       const cy = (c / n) | 0;
       if (cx < 8 || cy < 8 || cx > n - 9 || cy > n - 9) continue;
@@ -1751,6 +1813,7 @@ function carveMainRivers(height: Float32Array, biome: Uint8Array, riverRad: Floa
       taken.push({ x: c % n, y: (c / n) | 0 });
     }
     if (pts.length < 20) continue;
+    const route = trace ? pts.slice() : [];
     // Chaikin smoothing.
     for (let k = 0; k < 3; k++) {
       const sm: { x: number; y: number }[] = [pts[0]!];
@@ -1783,6 +1846,7 @@ function carveMainRivers(height: Float32Array, biome: Uint8Array, riverRad: Floa
     }
     const samples = resample(bent);
     const center = resample(pts.map((p, i) => ({ x: p.x, y: p.y, t: arc[i]! / L })));
+    if (trace) traced.push({ src, route, center: pts.slice(), meander: bent.map(({ x, y }) => ({ x, y })) });
     // Valley around the centerline (meanders stay inside a flat floodplain), lowered toward a stepped-down floor.
     const plainW = (w: number) => 5 * w * 1.5 + 2.4 * w + 10;
     const valleyW = (w: number) => plainW(w) + 4 * w + 36;
@@ -1838,6 +1902,7 @@ function carveMainRivers(height: Float32Array, biome: Uint8Array, riverRad: Floa
       stampRiverRagged(biome, riverRad, x, y, widthAt(sp.t) * wander, seed);
     }
   }
+  if (trace && before) trace({ n, step: MAIN_STEP, gh, wet, sea, dist, srcMin: MAIN_SRC_MIN, srcMax: MAIN_SRC_MAX, rivers: traced, before });
 }
 
 /** Polyline → ~1-texel samples, interpolating t. */
