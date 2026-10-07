@@ -312,7 +312,7 @@ function bakeBaseKinds(textures: Phaser.Textures.TextureManager, bases: readonly
   }
 }
 
-/** Textures to skin, from the unit specs: each camo'd unit's body + `camo` parts, with the patterns it can wear. */
+/** Textures to skin, from the unit specs: each camo'd unit's body + guns (incl. parts roll options), with the patterns it can wear. */
 export function camoSkinBases(): Map<string, CamoKind[]> {
   const out = new Map<string, CamoKind[]>();
   const add = (tex: string, kinds: readonly CamoKind[]) => {
@@ -324,7 +324,8 @@ export function camoSkinBases(): Map<string, CamoKind[]> {
     const kinds = sp.camo === "biome" ? CAMO_KINDS : (sp.camo ?? []).filter((k) => k !== "none");
     if (!kinds.length) continue;
     add(sp.texture, kinds);
-    for (const g of sp.guns) if (g.camo) add(g.tex, kinds);
+    for (const g of sp.guns) add(g.tex, kinds);
+    for (const o of Object.values(sp.partsRoll?.options ?? {})) add(o.tex, kinds);
   }
   return out;
 }

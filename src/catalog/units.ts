@@ -52,7 +52,7 @@ const ENEMY_UNITS = {
     throwGuns: true,
     wreckScale: 1.25,
     weapon: wpn("he", { fireCd: 2.05, range: 520}),
-    guns: [{ ...gun("enemy_tank_gun", 0.78, mountOf("enemy_tank", "gun"), "enemy_tank_gun_hulk"), camo: true }],
+    guns: [gun("enemy_tank_gun", 0.78, mountOf("enemy_tank", "gun"), "enemy_tank_gun_hulk")],
     rotors: []
   },
   soldier: {
@@ -98,7 +98,7 @@ const ENEMY_UNITS = {
       scale: 0.72,
       motor: -0.06
     },
-    guns: [{ ...gun("enemy_heli_gun", 0.72, mountOf("enemy_heli", "gun")), camo: true }],
+    guns: [gun("enemy_heli_gun", 0.72, mountOf("enemy_heli", "gun"))],
     rotors: [
       {
         tex: "enemy_heli_rotor",
@@ -274,7 +274,7 @@ const ENEMY_UNITS = {
     throwGuns: true,
     wheels: 2,
     weapon: wpn("he", { fireCd: 1.15, range: 440, dmg: 6, blast: 12}),
-    guns: [{ ...gun("enemy_lav_gun", 0.76, mountOf("enemy_lav", "gun")), camo: true }],
+    guns: [gun("enemy_lav_gun", 0.76, mountOf("enemy_lav", "gun"))],
     rotors: []
   },
   lav_aa: {
@@ -296,8 +296,7 @@ const ENEMY_UNITS = {
     guns: [
       {
         ...gun("building_tower_aa", 0.9, mountOf("enemy_lav", "gun")),
-        scale: 0.83,
-        camo: true
+        scale: 0.83
       },
     ],
     rotors: []
@@ -323,7 +322,7 @@ const ENEMY_UNITS = {
       dmg: 22,
       blast: 28
     }),
-    guns: [{ ...gun("enemy_sam_gun", 0.7, mountOf("enemy_sam", "gun")), camo: true }],
+    guns: [gun("enemy_sam_gun", 0.7, mountOf("enemy_sam", "gun"))],
     rotors: []
   },
   ptboat: {
@@ -344,7 +343,7 @@ const ENEMY_UNITS = {
     boatYaw: 1.55,
     boatSpeed: 38,
     weapon: wpn("mg", { fireCd: 0.85, range: 420, speed: 560, dmg: 3, blast: 6, burst: 3, burstGap: 0.09 }),
-    guns: [{ ...gun("enemy_ptboat_gun", 0.74, mountOf("enemy_ptboat", "gun")), camo: true }],
+    guns: [gun("enemy_ptboat_gun", 0.74, mountOf("enemy_ptboat", "gun"))],
     rotors: []
   },
   battleship: {
@@ -641,7 +640,6 @@ const ENEMY_UNITS = {
     guns: mountsOf("enemy_heli_heavy", "gun").map((m) => ({
       ...gun("enemy_heli_heavy_gun", 0.78, { ...m }),
       scale: 0.58,
-      camo: true,
       traverse: { arc: 200, center: m.x < 0.5 ? -90 : 90 }
     })),
     rotors: mountsOf("enemy_heli_heavy", "rotor").map((m) => ({

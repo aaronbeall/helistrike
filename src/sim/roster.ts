@@ -106,8 +106,6 @@ export interface PartMount {
    * −90 = left, +90 = right). Omit = full 360° — same model as player turret stations.
    */
   traverse?: { arc: number; center: number };
-  /** Wears the host unit's camo. */
-  camo?: boolean;
 }
 
 export type MuzzleFireMode = "alternate" | "simultaneous";
