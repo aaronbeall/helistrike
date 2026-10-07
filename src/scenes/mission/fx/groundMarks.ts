@@ -1,9 +1,8 @@
 import { themeOf, shallowTint } from "../../../worldgen/theme";
-import { applyTerrainLight, sampleBiome, SCALE, doodadTex, groundZ, worldToScreen, cameraPointVisible, projectHeading, isWater, WORLD, WRECK_TEX, type WorldData } from "../../../worldgen/world";
+import { applyTerrainLight, SCALE, doodadTex, groundZ, worldToScreen, cameraPointVisible, projectHeading, isWater, WORLD, WRECK_TEX, type WorldData } from "../../../worldgen/world";
 import { softCapBlastCraterScale } from "../../../render/fxCurves";
 import Phaser from "phaser";
 import { applyThermalHeat } from "../../../render/thermal";
-import { camoForBiome, resolveSkin } from "../../../render/camo";
 import { type SimParticle, type Unit } from "../../../sim/combat";
 import { ZOff, worldDepth } from "../../../render/depth";
 import { range } from "../../../util/rng";
@@ -121,7 +120,7 @@ export function stampDoodads(world: WorldData, textures: Phaser.Textures.Texture
   g.imageSmoothingEnabled = true;
   for (const d of world.doodads) {
     const tex = doodadTex(d.kind);
-    const skin = resolveSkin(textures, tex, camoForBiome(sampleBiome(world, d.x, d.y)));
+    const skin = tex;
     if (!textures.exists(skin)) continue;
     const img = textures.get(skin).getSourceImage() as CanvasImageSource;
     const s = d.size;

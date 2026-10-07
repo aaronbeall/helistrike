@@ -1,6 +1,7 @@
 import type Phaser from "phaser";
 import type { Biome } from "../worldgen/world";
 import { registerArt, type ArtSource } from "../art/sprites";
+import { UNIT_SPECS } from "../catalog/units";
 
 export type CamoKind = "woodland" | "desert" | "urban" | "snow" | "digital";
 
@@ -19,8 +20,6 @@ const DIGITAL = {
   colors: ["#3a4638", "#2a322c", "#52604a", "#1c241e", "#6a7860", "#485248"],
 };
 
-/** Bases that only get digital (LAV-AA) skins, not biome camo. Live only — no hulks. */
-const DIGITAL_CAMO_BASES = ["enemy_lav", "building_tower_aa"] as const;
 
 export function camoPatternKey(kind: CamoKind): string {
   return `camo_${kind}`;
@@ -57,7 +56,6 @@ export function resolveSkin(
   return textures.exists(key) ? key : base;
 }
 
-const CAMO_BASES = ["building_tent", "enemy_pickup", "enemy_truck", "enemy_troop_officer"] as const;
 
 function rng(seed: number): () => number {
   let s = seed >>> 0;
@@ -110,39 +108,67 @@ function tileFbm(seed: number, period: number, octaves: number): (u: number, v: 
 /** Patch coverage of each accent color (fraction of the tile), back to front. */
 const CAMO_COVER = [0.42, 0.34, 0.22];
 
+/** Pattern tile size (px); patterns are continuous, so skins sample them at any scale. */
+const CAMO_TILE = 128;
+
+type Rgb = readonly [number, number, number];
+type CamoSampler = (u: number, v: number) => Rgb;
+
 /** Layered camo: per accent color, a warped fractal noise field thresholded to its coverage; `block` > 1 = digital cells. */
-function drawPatchCamo(seed: number, colors: string[], size: number, block: number, grain: number): HTMLCanvasElement {
-  const c = document.createElement("canvas");
-  c.width = size;
-  c.height = size;
-  const g = c.getContext("2d", { willReadFrequently: true })!;
-  const img = g.createImageData(size, size);
-  const d = img.data;
+function patchSampler(seed: number, colors: string[], block: number): CamoSampler {
   const warpX = tileFbm(seed ^ 0x51, 3, 3);
   const warpY = tileFbm(seed ^ 0xa7, 3, 3);
   const accents = colors.slice(1).map((hex, i) => ({ rgb: hexRgb(hex), field: tileFbm(seed + 101 * (i + 1), 4, 4) }));
+  const warp = (u: number, v: number) => [u + (warpX(u, v) - 0.5) * 0.32, v + (warpY(u, v) - 0.5) * 0.32] as const;
   // Threshold per field from its own value distribution, so each color covers its share.
-  const sample = (u: number, v: number) => [u + (warpX(u, v) - 0.5) * 0.32, v + (warpY(u, v) - 0.5) * 0.32] as const;
   const cuts = accents.map((acc, i) => {
     const vals: number[] = [];
     for (let y = 0; y < 48; y++) for (let x = 0; x < 48; x++) {
-      const [u, v] = sample(x / 48, y / 48);
+      const [u, v] = warp(x / 48, y / 48);
       vals.push(acc.field(u, v));
     }
     vals.sort((p, q) => p - q);
     return vals[Math.floor(vals.length * (1 - (CAMO_COVER[i] ?? 0.2)))]!;
   });
   const base = hexRgb(colors[0]!);
+  const cell = block / CAMO_TILE;
+  return (u, v) => {
+    if (block > 1) {
+      u = (Math.floor(u / cell) + 0.5) * cell;
+      v = (Math.floor(v / cell) + 0.5) * cell;
+    }
+    const [wu, wv] = warp(u, v);
+    let rgb: Rgb = base;
+    for (let i = 0; i < accents.length; i++) if (accents[i]!.field(wu, wv) > cuts[i]!) rgb = accents[i]!.rgb;
+    return rgb;
+  };
+}
+
+const samplers = new Map<CamoKind, { sample: CamoSampler; seed: number; grain: number }>();
+
+function camoSampler(kind: CamoKind): { sample: CamoSampler; seed: number; grain: number } {
+  let s = samplers.get(kind);
+  if (!s) {
+    const { seed, colors } = kind === "digital" ? DIGITAL : PATTERNS[kind];
+    s = { sample: patchSampler(seed, colors, kind === "digital" ? 4 : 1), seed, grain: kind === "digital" ? 10 : 14 };
+    samplers.set(kind, s);
+  }
+  return s;
+}
+
+/** Reference tile of a pattern (sprite rig / thumbnails). */
+function drawCamo(kind: CamoKind, size = CAMO_TILE): HTMLCanvasElement {
+  const { sample, seed, grain } = camoSampler(kind);
+  const c = document.createElement("canvas");
+  c.width = size;
+  c.height = size;
+  const g = c.getContext("2d", { willReadFrequently: true })!;
+  const img = g.createImageData(size, size);
+  const d = img.data;
   const noise = rng(seed ^ 0x9e3779b9);
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const bx = Math.floor(x / block) * block + block / 2;
-      const by = Math.floor(y / block) * block + block / 2;
-      const [u, v] = sample(bx / size, by / size);
-      let rgb = base;
-      accents.forEach((acc, i) => {
-        if (acc.field(u, v) > cuts[i]!) rgb = acc.rgb;
-      });
+      const rgb = sample(x / size, y / size);
       const j = (noise() - 0.5) * grain;
       const i = (y * size + x) * 4;
       d[i] = Math.max(0, Math.min(255, rgb[0] + j));
@@ -153,16 +179,6 @@ function drawPatchCamo(seed: number, colors: string[], size: number, block: numb
   }
   g.putImageData(img, 0, 0);
   return c;
-}
-
-function drawDigitalCamo(size = 128): HTMLCanvasElement {
-  return drawPatchCamo(DIGITAL.seed, DIGITAL.colors, size, 4, 10);
-}
-
-function drawCamo(kind: CamoKind, size = 128): HTMLCanvasElement {
-  if (kind === "digital") return drawDigitalCamo(size);
-  const { seed, colors } = PATTERNS[kind];
-  return drawPatchCamo(seed, colors, size, 1, 14);
 }
 
 function hash(s: string): number {
@@ -188,20 +204,22 @@ function srcCanvas(textures: Phaser.Textures.TextureManager, key: string): HTMLC
   return c;
 }
 
-function blendCamo(src: HTMLCanvasElement, camo: HTMLCanvasElement, ox: number, oy: number): HTMLCanvasElement {
+/** Most the pattern is shrunk on a small sprite (tiny troops would turn to noise). */
+const CAMO_MAX_DENSITY = 4;
+
+/** Repaint `src` with camo `kind` (shading kept via luminance, red markings kept); `k` = tile px per sprite px. */
+function blendCamo(src: HTMLCanvasElement, kind: CamoKind, ox: number, oy: number, k: number): HTMLCanvasElement {
+  const { sample, seed, grain } = camoSampler(kind);
   const w = src.width;
   const h = src.height;
   const out = document.createElement("canvas");
   out.width = w;
   out.height = h;
   const sg = src.getContext("2d", { willReadFrequently: true })!;
-  const cg = camo.getContext("2d", { willReadFrequently: true })!;
   const sp = sg.getImageData(0, 0, w, h).data;
-  const cp = cg.getImageData(0, 0, camo.width, camo.height).data;
   const dest = sg.createImageData(w, h);
   const d = dest.data;
-  const cw = camo.width;
-  const ch = camo.height;
+  const noise = rng(seed ^ (ox * 73856093) ^ (oy * 19349663));
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = (y * w + x) * 4;
@@ -218,13 +236,13 @@ function blendCamo(src: HTMLCanvasElement, camo: HTMLCanvasElement, ox: number, 
         d[i + 2] = b;
         continue;
       }
-      const cx = ((x + ox) % cw + cw) % cw;
-      const cy = ((y + oy) % ch + ch) % ch;
-      const ci = (cy * cw + cx) * 4;
+      const rgb = sample((x * k + ox) / CAMO_TILE, (y * k + oy) / CAMO_TILE);
+      // Half grain: per-pixel noise reads as speckle on small sprites.
+      const j = (noise() - 0.5) * grain * 0.5;
       const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 148;
-      d[i] = Math.max(0, Math.min(255, cp[ci]! * lum));
-      d[i + 1] = Math.max(0, Math.min(255, cp[ci + 1]! * lum));
-      d[i + 2] = Math.max(0, Math.min(255, cp[ci + 2]! * lum));
+      d[i] = Math.max(0, Math.min(255, (rgb[0] + j) * lum));
+      d[i + 1] = Math.max(0, Math.min(255, (rgb[1] + j) * lum));
+      d[i + 2] = Math.max(0, Math.min(255, (rgb[2] + j) * lum));
     }
   }
   out.getContext("2d", { willReadFrequently: true })!.putImageData(dest, 0, 0);
@@ -237,29 +255,36 @@ function put(textures: Phaser.Textures.TextureManager, key: string, c: HTMLCanva
   registerArt(key, source);
 }
 
-function bakeBaseKinds(
-  textures: Phaser.Textures.TextureManager,
-  bases: readonly string[],
-  kinds: readonly CamoKind[]
-): void {
+function bakeBaseKinds(textures: Phaser.Textures.TextureManager, bases: readonly string[], kinds: readonly CamoKind[]): void {
   for (const base of bases) {
     if (base.endsWith("_hulk")) continue; // never bake camo hulks
     const src = srcCanvas(textures, base);
     if (!src) continue;
     const h = hash(base);
-    for (const kind of kinds) {
-      const camo = srcCanvas(textures, camoPatternKey(kind));
-      if (!camo) continue;
-      const ox = h % camo.width;
-      const oy = (h >>> 8) % camo.height;
-      put(textures, skinnedKey(base, kind), blendCamo(src, camo, ox, oy), "image");
-    }
+    // One tile across the sprite's long side: a few patches on every vehicle.
+    const k = Math.min(CAMO_MAX_DENSITY, Math.max(1, CAMO_TILE / Math.max(src.width, src.height)));
+    for (const kind of kinds) put(textures, skinnedKey(base, kind), blendCamo(src, kind, h % CAMO_TILE, (h >>> 8) % CAMO_TILE, k), "image");
   }
 }
 
+/** Textures to skin, from the unit specs: each camo'd unit's body + `camo` parts, with the patterns it can wear. */
+export function camoSkinBases(): Map<string, CamoKind[]> {
+  const out = new Map<string, CamoKind[]>();
+  const add = (tex: string, kinds: readonly CamoKind[]) => {
+    const have = out.get(tex) ?? [];
+    for (const k of kinds) if (!have.includes(k)) have.push(k);
+    out.set(tex, have);
+  };
+  for (const sp of Object.values(UNIT_SPECS)) {
+    if (!sp.camo) continue;
+    const kinds = sp.camo === "digital" ? (["digital"] as const) : CAMO_KINDS;
+    add(sp.texture, kinds);
+    for (const g of sp.guns) if (g.camo) add(g.tex, kinds);
+  }
+  return out;
+}
+
 export function bakeCamo(textures: Phaser.Textures.TextureManager): void {
-  for (const kind of CAMO_KINDS) put(textures, camoPatternKey(kind), drawCamo(kind), "generated");
-  put(textures, camoPatternKey("digital"), drawDigitalCamo(), "generated");
-  bakeBaseKinds(textures, CAMO_BASES, CAMO_KINDS);
-  bakeBaseKinds(textures, DIGITAL_CAMO_BASES, ["digital"]);
+  for (const kind of [...CAMO_KINDS, "digital"] as const) put(textures, camoPatternKey(kind), drawCamo(kind), "generated");
+  for (const [base, kinds] of camoSkinBases()) bakeBaseKinds(textures, [base], kinds);
 }

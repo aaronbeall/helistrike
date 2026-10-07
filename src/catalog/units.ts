@@ -190,6 +190,7 @@ const ENEMY_UNITS = {
     height: 14,
     texture: "enemy_pickup",
     hulk: "enemy_pickup_hulk",
+    camo: "biome",
     debris: "mech",
     rotOff: Math.PI / 2,
     behavior: "flee_vehicle",
@@ -208,6 +209,7 @@ const ENEMY_UNITS = {
     height: 16,
     texture: "enemy_truck",
     hulk: "enemy_truck_hulk",
+    camo: "biome",
     debris: "mech",
     rotOff: Math.PI / 2,
     behavior: "flee_vehicle",
@@ -284,12 +286,13 @@ const ENEMY_UNITS = {
     drive: { maxSpd: 42, accel: 24, brake: 30, turn: 1.05, track: "tire", trackGap: 14, trackScale: 0.82 },
     throwGuns: true,
     wheels: 2,
-    forcedCamo: "digital",
+    camo: "digital",
     weapon: WPN.aa,
     guns: [
       {
         ...gun("building_tower_aa", 0.9, mountOf("enemy_lav", "gun")),
-        scale: 0.83
+        scale: 0.83,
+        camo: true
       },
     ],
     rotors: []
@@ -495,6 +498,7 @@ const ENEMY_UNITS = {
     height: 9,
     texture: "enemy_troop_officer",
     hulk: "enemy_troop_officer_hulk",
+    camo: "biome",
     debris: "organic",
     rotOff: Math.PI / 2,
     behavior: "flee_infantry",
@@ -505,7 +509,7 @@ const ENEMY_UNITS = {
     rotors: []
   },
   barn: building("barn", "BARN", 196, 23, 41, 28, { neutral: false, radius: 34 }),
-  tent: building("tent", "TENT", 50, 18, 30, 14, { neutral: false, radius: 20 }),
+  tent: building("tent", "TENT", 50, 18, 30, 14, { neutral: false, radius: 20, camo: "biome" }),
   fob: building("fob", "FOB", 448, 61, 53, 28, { ...MILITARY, radius: 52, hv: true, spawnYaw: (20 * Math.PI) / 180 }),
   lookout: building("lookout", "LOOKOUT", 168, 23, 25, 56, {
     neutral: false,

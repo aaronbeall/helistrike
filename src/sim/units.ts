@@ -1,8 +1,8 @@
 import { mountAt } from "../render/spritePose";
 import Phaser from "phaser";
-import { camoForBiome, resolveSkin } from "../render/camo";
+import { camoForBiome, resolveSkin, type CamoKind } from "../render/camo";
 import { nextId, stats, textureOf, type Unit } from "./combat";
-import { specOf, spawnAngle, pickTroop, gunsOf, rollParts, crewOf } from "./roster";
+import { specOf, spawnAngle, pickTroop, gunsOf, rollParts, crewOf, type UnitKind } from "./roster";
 import { groundZ, sampleBiome, type WorldData } from "../worldgen/world";
 import { isUnitStructure } from "../worldgen/settlements";
 import { CRUISE_AGL } from "./craft";
@@ -38,8 +38,14 @@ export function makeUnit(world: WorldData, kind: Unit["kind"], x: number, y: num
     pinId,
     pinMount,
     parts,
-    camo: specOf(kind).forcedCamo ?? camoForBiome(sampleBiome(world, x, y)),
+    camo: unitCamo(kind, world, x, y),
   };
+}
+
+/** Camo a unit wears where it spawns (none unless its spec asks for it). */
+function unitCamo(kind: UnitKind, world: WorldData, x: number, y: number): CamoKind | undefined {
+  const camo = specOf(kind).camo;
+  return camo === "digital" ? "digital" : camo === "biome" ? camoForBiome(sampleBiome(world, x, y)) : undefined;
 }
 
 /** Neutral civilian buildings from the world's settlements, facing their layout. */
@@ -51,7 +57,6 @@ export function makeSettlementUnits(world: WorldData): Unit[] {
       const u = makeUnit(world, p.kind, p.x, p.y);
       u.angle = u.turret = p.rot;
       if (p.z != null) u.z = p.z;
-      u.camo = undefined;
       out.push(u);
     }
   }

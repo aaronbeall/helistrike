@@ -1,6 +1,5 @@
-import { sampleBiome, SCALE, doodadTex, groundZ, worldToScreen, projectHeading, paintHeightMapRect, stampHeightBrush, rebuildWorldPatch, paintRoadsRect, type WorldData } from "../../../worldgen/world";
+import { SCALE, doodadTex, groundZ, worldToScreen, projectHeading, paintHeightMapRect, stampHeightBrush, rebuildWorldPatch, paintRoadsRect, type WorldData } from "../../../worldgen/world";
 import Phaser from "phaser";
-import { camoForBiome, resolveSkin } from "../../../render/camo";
 import { Layer } from "../../../render/depth";
 import { HEIGHT_BRUSHES, bakeHeightBrushes } from "../../../worldgen/brushes";
 import type { MissionScene } from "../../missionScene";
@@ -14,7 +13,7 @@ export function stampDoodadsRect(world: WorldData, textures: Phaser.Textures.Tex
   for (const dec of world.doodads) {
     const pad = dec.size * SCALE * 0.5;
     if (dec.x < wx0 - pad || dec.x > wx1 + pad || dec.y < wy0 - pad || dec.y > wy1 + pad) continue;
-    const skin = resolveSkin(textures, doodadTex(dec.kind), camoForBiome(sampleBiome(world, dec.x, dec.y)));
+    const skin = doodadTex(dec.kind);
     if (!textures.exists(skin)) continue;
     const img = textures.get(skin).getSourceImage() as CanvasImageSource;
     const s = dec.size;

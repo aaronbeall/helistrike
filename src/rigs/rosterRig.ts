@@ -57,6 +57,7 @@ import {
   spritePointLabel,
 } from "../art/spriteOrigin";
 import { footprintOf, strokeFootprint } from "../render/footprint";
+import { CAMO_KINDS, resolveSkin, skinnedKey, type CamoKind } from "../render/camo";
 import { nameGameTexture, spritePivot } from "../art/sprites";
 import {
   RIG_INFO,
@@ -85,6 +86,8 @@ const SHOT_SLOTS = 6;
 
 type Filter = "all" | "ground" | "air" | "water" | "building" | "troop" | "remote";
 const FILTERS: Filter[] = ["all", "ground", "air", "water", "building", "troop", "remote"];
+/** Every camo pattern, in rig cycle order. */
+const ALL_CAMOS: readonly CamoKind[] = [...CAMO_KINDS, "digital"];
 
 type Composition = "assembled" | "separated";
 
@@ -130,6 +133,8 @@ export class RosterRig {
   private showMarks = true;
   /** Wreck textures (hull, guns, rotors, dish, roof): off, instead of live art, or beside it. */
   private hulkView: "off" | "on" | "both" = "off";
+  /** Camo preview (L): 0 = off, else 1-based index into the selected unit's baked camos. */
+  private camoView = 0;
   /** Assembled (mounted) vs parts laid out separately. */
   private composition: Composition = "assembled";
   /** Index into `partsRollPickIds` for the current unit (pick-mode only). */
@@ -293,6 +298,7 @@ export class RosterRig {
         this.filter = FILTERS[(i + 1) % FILTERS.length]!;
         this.idx = 0;
         this.rollPickIdx = 0;
+        this.camoView = 0;
         this.pinned = null;
         this.refreshPreview();
       });
@@ -304,6 +310,12 @@ export class RosterRig {
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.U).on("down", () => {
         if (!this.open) return;
         this.hulkView = this.hulkView === "off" ? "on" : this.hulkView === "on" ? "both" : "off";
+        this.refreshPreview();
+      });
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.L).on("down", () => {
+        if (!this.open) return;
+        const n = this.camoOptions(this.entries()[this.idx]).length;
+        this.camoView = n ? (this.camoView + 1) % (n + 1) : 0;
         this.refreshPreview();
       });
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.C).on("down", () => {
@@ -372,6 +384,7 @@ export class RosterRig {
     if (!n) return;
     this.idx = (this.idx + dir + n) % n;
     this.rollPickIdx = 0;
+    this.camoView = 0;
     this.pinned = null;
     this.refreshPreview();
   }
@@ -425,6 +438,7 @@ export class RosterRig {
     if (i < 0 || i >= entries.length) return;
     this.idx = i;
     this.rollPickIdx = 0;
+    this.camoView = 0;
     this.pinned = null;
     this.refreshPreview();
   }
@@ -445,7 +459,7 @@ export class RosterRig {
     const compositionLabel = this.composition === "assembled" ? "ASSEMBLED" : "UNASSEMBLED";
     const zoomShown = this.zoom;
     this.hintTxt.setText(
-      `ROSTER RIG   ↑ ↓ select   , . page   - + zoom ${fmtZoom(zoomShown)}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   U hulks ${this.hulkView.toUpperCase()}   C composition ${compositionLabel}${rollHint}${craftHint}`
+      `ROSTER RIG   ↑ ↓ select   , . page   - + zoom ${fmtZoom(zoomShown)}   G filter ${this.filter.toUpperCase()}   O marks ${this.showMarks ? "ON" : "OFF"}   U hulks ${this.hulkView.toUpperCase()}   L camo ${this.camoLabel(ent)}   C composition ${compositionLabel}${rollHint}${craftHint}`
     );
 
     const size = this.pageSize();
@@ -479,6 +493,21 @@ export class RosterRig {
     else if (ent.cat === "remote") this.layoutRemotePreview(remoteSpecOf(ent.kind));
     else this.layoutPreview(ent.kind, specOf(ent.kind));
     syncRigSystemCursor(this.scene, this.uvAt(this.scene.input.activePointer) ? "crosshair" : "default");
+  }
+
+  /** Camo patterns baked for the entry's unit texture (empty for crafts, remotes and plain units). */
+  private camoOptions(ent: RosterEntry | undefined): CamoKind[] {
+    if (ent?.cat !== "unit") return [];
+    const tex = specOf(ent.kind).texture;
+    return ALL_CAMOS.filter((k) => this.scene.textures.exists(skinnedKey(tex, k)));
+  }
+
+  /** Hint for the camo preview: "—" when the unit has none, else OFF or the pattern (i/n). */
+  private camoLabel(ent: RosterEntry): string {
+    const opts = this.camoOptions(ent);
+    if (!opts.length) return "—";
+    const camo = opts[this.camoView - 1];
+    return camo ? `${camo.toUpperCase()} ${this.camoView}/${opts.length}` : "OFF";
   }
 
   private pageSize(): number {
@@ -737,7 +766,10 @@ export class RosterRig {
     const h = this.scene.scale.height;
     // Hulk view: wreck art where it exists, live art otherwise ("both" shows live here, the hulk beside it).
     let wreck = this.hulkView === "on";
-    const pick = (live: string, hulk?: string) => (wreck && hulk && this.scene.textures.exists(hulk) ? hulk : live);
+    // Camo preview repaints live art only (hulks are never skinned).
+    const camo = this.camoOptions({ cat: "unit", kind })[this.camoView - 1];
+    const pick = (live: string, hulk?: string) =>
+      wreck && hulk && this.scene.textures.exists(hulk) ? hulk : camo ? resolveSkin(this.scene.textures, live, camo) : live;
     const tex = pick(sp.texture, sp.hulk);
     const listRight = LIST_X + LIST_W + 20;
     const gap = 28;

@@ -1,5 +1,4 @@
 import { type Unit } from "./combat";
-import type { CamoKind } from "../render/camo";
 import { ENEMY_WPNS } from "../catalog/enemyWeapons";
 import { gun, TROOP_WEIGHTS, UNIT_SPECS } from "../catalog/units";
 
@@ -106,6 +105,8 @@ export interface PartMount {
    * −90 = left, +90 = right). Omit = full 360° — same model as player turret stations.
    */
   traverse?: { arc: number; center: number };
+  /** Wears the host unit's camo. */
+  camo?: boolean;
 }
 
 export type MuzzleFireMode = "alternate" | "simultaneous";
@@ -233,8 +234,8 @@ export interface UnitSpec {
   wreckScale?: number;
   /** Wheel debris draw scale range [lo, hi]. */
   wheelDebrisScale?: [number, number];
-  /** Force this camo at spawn (lav_aa digital). */
-  forcedCamo?: CamoKind;
+  /** Camo paint: "biome" = picked from the spawn biome, "digital" = always digital. Omit = no camo. */
+  camo?: "biome" | "digital";
   weapon?: WeaponSpec;
   /**
    * Optional hull hardpoint ordnance (seeker missiles, etc.).
