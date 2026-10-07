@@ -273,8 +273,8 @@ const CRAFTS_DEFS: Record<CraftKind, Omit<CraftSpec, "kind">> = {
         traverse: 360,
         crew: "belly",
       },
-      { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "guided_rockets", ammoMul: 1.25 },
-      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "hellfire_missile" },
+      { id: "wing_hardpoint_1", class: "hardpoint", controller: "pilot", weapon: "guided_rockets", ammoMul: 1.25, points: [{ id: "hardpoint0" }, { id: "hardpoint1" }] },
+      { id: "wing_hardpoint_2", class: "hardpoint", controller: "pilot", weapon: "hellfire_missile", points: [{ id: "hardpoint0" }, { id: "hardpoint1" }] },
       {
         id: "cabin_ramp",
         class: "turret",
