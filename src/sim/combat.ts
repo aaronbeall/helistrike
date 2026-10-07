@@ -1051,6 +1051,8 @@ export interface SimParticle {
   capacityClass: "impact" | "dust" | "blood";
   dart?: boolean;
   blood?: boolean;
+  /** Water spray: tint-filled white (dirt texture is brown). */
+  mist?: boolean;
   /** Blood particle already painted a multiply stain onto the terrain. */
   stamped?: boolean;
   orb?: boolean;

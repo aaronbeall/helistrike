@@ -99,6 +99,8 @@ export class Fx {
   /** Hydra / rocket plume — stretched along flight heading. */
   rocketSmoke!: Phaser.GameObjects.Particles.ParticleEmitter;
   heliDust!: Phaser.GameObjects.Particles.ParticleEmitter;
+  /** Rotor wash over water: white mist. */
+  heliMist!: Phaser.GameObjects.Particles.ParticleEmitter;
   craftExhaust!: Phaser.GameObjects.Particles.ParticleEmitter;
   craftExhaustMote!: Phaser.GameObjects.Particles.ParticleEmitter;
   craftExhaustSmoke!: Phaser.GameObjects.Particles.ParticleEmitter;
@@ -1120,7 +1122,7 @@ export class Fx {
         : shock
           ? 0.38 + 0.58 * Math.pow(fade, 0.55)
           : dart
-            ? (0.16 + 0.2 * fade) * (1 - round * 0.25)
+            ? (0.16 + 0.2 * fade) * (1 - round * 0.25) * Math.min(1, fade * 3)
             : baseA * (0.35 + 0.65 * fade);
       const at = worldToScreen(s.x, s.y, s.z);
       const zs = at.scale;
@@ -1139,7 +1141,7 @@ export class Fx {
       if (this.s.thermal.on) {
         // Dirt/dust: medium heat so scars aren't masked black. Blood: hotter live spray.
         applyThermalHeat(im, true, s.blood ? 0.72 : 0.42);
-      } else if (s.blood) {
+      } else if (s.blood || s.mist) {
         im.setTintFill(s.tint);
       } else {
         im.clearTint();

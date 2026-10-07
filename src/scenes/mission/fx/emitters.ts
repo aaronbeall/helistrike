@@ -1123,12 +1123,11 @@ export function createFxEmitters(scene: MissionScene): void {
       },
     })
   );
-  scene.fx.heliDust = scene.add.particles(0, 0, "fx_smoke", {
+  const washConfig = (alpha: number): Phaser.Types.GameObjects.Particles.ParticleEmitterConfig => ({
     lifespan: { min: 900, max: 1600 },
     speed: { min: 240, max: 460 },
     scale: { start: 0.48, end: 2.1 },
-    alpha: { start: 0.58, end: 0 },
-    gravityY: 8,
+    alpha: { start: alpha, end: 0 },
     emitting: false,
     frame: fxFrames,
     rotate: {
@@ -1145,9 +1144,16 @@ export function createFxEmitters(scene: MissionScene): void {
         return (extra.dustRot0 ?? 0) + (extra.dustSpin ?? 0) * late;
       },
     },
-    accelerationX: { onUpdate: (p) => -p.velocityX * 5.2 },
-    accelerationY: { onUpdate: (p) => -p.velocityY * 5.2 },
+    accelerationX: { onUpdate: (p) => -p.velocityX * 2.4 },
+    accelerationY: { onUpdate: (p) => -p.velocityY * 2.4 },
+  });
+  scene.fx.heliDust = scene.add.particles(0, 0, "fx_smoke", washConfig(0.58));
+  scene.fx.heliMist = scene.add.particles(0, 0, scene.textures.exists("fx_smoke_tint") ? "fx_smoke_tint" : "fx_smoke", {
+    ...washConfig(0.46),
+    tint: 0xf2f6f8,
   });
   scene.fx.heliDust.setDepth(Layer.WORLD);
   scene.fx.register("dust", scene.fx.heliDust);
+  scene.fx.heliMist.setDepth(Layer.WORLD);
+  scene.fx.register("dust", scene.fx.heliMist);
 }

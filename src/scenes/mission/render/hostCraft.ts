@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { imageDrawPose, remoteBodyDrawPose, type DrawPose } from "../../../render/spritePose";
-import { simParticleTexKey, simParticleLook } from "../../../render/simParticleLook";
+import { mistLook, simParticleTexKey, simParticleLook } from "../../../render/simParticleLook";
 import { applyThermalHeat } from "../../../render/thermal";
 import { launchIsArcBeam } from "../../../sim/combat";
 import { type RemoteCraft } from "../../../sim/remote";
@@ -43,6 +43,8 @@ export class HostCraft {
   wingTrailPrevScreen: ({ x: number; y: number } | undefined)[] = [];
   /** Sim-time accumulator for the player hover bob, so it scales with timeScale. */
   bobPhase = 0;
+  /** Seconds until the next rotor-wash ripple over water. */
+  washRippleT = 0;
 
   constructor(readonly s: MissionScene) {}
 
@@ -53,6 +55,7 @@ export class HostCraft {
     this.wingTrailPrevScreen = [];
     this.wingTrailEmitCarry = 0;
     this.wingTrailMountCursor = 0;
+    this.washRippleT = 0;
   }
 
   applyCastShadow(
@@ -832,17 +835,26 @@ export class HostCraft {
     const gnd = groundZ(this.s.world, h.x, h.y);
     const wet = isWater(this.s.world, h.x, h.y);
     this.s.fx.heliDust.setDepth(worldDepth(gnd, 0.2, h.y));
+    this.s.fx.heliMist.setDepth(worldDepth(gnd, 0.2, h.y));
     const puffs = Math.max(0, Math.round((takeoff ? 0.4 + power * 4.5 : 0.6 + power * 1.4) * rate));
     for (let i = 0; i < puffs; i++) {
       const a = Math.random() * Math.PI * 2;
-      const r = range(16, 56 + power * 36);
+      const r = (40 + power * 40) * range(0.55, 1);
       const wx = h.x + Math.cos(a) * r;
       const wy = h.y + Math.sin(a) * r;
-      const at = worldToScreen(wx, wy, groundZ(this.s.world, wx, wy));
-      this.s.fx.heliDust.setEmitterAngle(Phaser.Math.RadToDeg(a) + (Math.random() - 0.5) * 28);
-      this.s.fx.emitBudgeted("dust", this.s.fx.heliDust, at.x, at.y, 1);
+      const gz = groundZ(this.s.world, wx, wy);
+      const at = worldToScreen(wx, wy, gz);
+      const em = isWater(this.s.world, wx, wy) ? this.s.fx.heliMist : this.s.fx.heliDust;
+      em.setEmitterAngle(Phaser.Math.RadToDeg(projectHeading(a, wx, wy, gz)) + (Math.random() - 0.5) * 28);
+      this.s.fx.emitBudgeted("dust", em, at.x, at.y, 1);
     }
-    if (wet) return;
+    if (wet) {
+      this.washRippleT -= Phaser.Math.Clamp(dt, 0, 0.05);
+      if (this.washRippleT <= 0) {
+        this.washRippleT = 0.32 - power * 0.18;
+        this.s.ripples.spawn(h.x, h.y, 40 + power * 70, 0.35 + power * 0.65, 1.6);
+      }
+    }
     const n = Math.max(0, Math.round((takeoff ? 0.5 + power * 9 : 1 + power * 3) * rate));
     if (n < 1) return;
     const admitted = this.s.fx.reserveSimParticleSlots("dust", n);
@@ -855,7 +867,7 @@ export class HostCraft {
       const r0 = range(8, 26);
       const spd = range(420, 800) * (0.35 + power * 0.9);
       const life = range(0.48, 0.86);
-      const look = simParticleLook("dirt", biome);
+      const look = wet ? mistLook() : simParticleLook("dirt", biome);
       this.s.fx.simParticles.push({
         x: h.x + ca * r0,
         y: h.y + sa * r0,
@@ -877,6 +889,7 @@ export class HostCraft {
         heading: a,
         capacityClass: "dust",
         dart: true,
+        mist: wet,
         ox: h.x,
         oy: h.y,
         swirl: spinSign * range(180, 420),

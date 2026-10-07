@@ -23,3 +23,9 @@ export function simParticleLook(_kind: SimParticleKind, biome: Biome, blood = fa
   const pal = dirt[biome];
   return { tint: pal[(Math.random() * pal.length) | 0]!, add: false };
 }
+
+/** Rotor-wash spray over water: white / pale blue-grey mist. */
+export function mistLook(): { tint: number; add: boolean } {
+  const pal = [0xf4f8f8, 0xe2eaee, 0xccd8de];
+  return { tint: pal[(Math.random() * pal.length) | 0]!, add: false };
+}
