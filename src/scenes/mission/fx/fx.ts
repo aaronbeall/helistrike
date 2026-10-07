@@ -1120,7 +1120,7 @@ export class Fx {
         : orb
           ? 0.55 + 0.45 * Math.pow(fade, 0.45)
         : shock
-          ? 0.38 + 0.58 * Math.pow(fade, 0.55)
+          ? (0.38 + 0.58 * Math.pow(fade, 0.55)) * Math.min(1, fade * 3)
           : dart
             ? (0.16 + 0.2 * fade) * (1 - round * 0.25) * Math.min(1, fade * 3)
             : baseA * (0.35 + 0.65 * fade);

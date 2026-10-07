@@ -13,6 +13,11 @@ import { shadowAlpha, shadowKey, spriteUvPos, FX_VARIANTS, muzzleGlowKey } from 
 import { groundZ, worldToScreen, cameraPointVisible, screenToWorldAtZ, projectHeading, castZ, castShadowToGround, isWater, sampleBiome } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
 
+/** Water death splash vs the dust shock ring: particle size, throw speed and lifetime. */
+const MIST_SHOCK_SCALE = 0.5;
+const MIST_SHOCK_SPEED = 0.75;
+const MIST_SHOCK_LIFE = 0.5;
+
 /** Host craft rendering: hull/rotor/gun sprites + tilt wraps, cast shadow, gun tips + heat glow, mount positions, exhaust plumes, contrails, dust-off. */
 /** Shadow on a bed under water: softer + slightly spread, full effect by this water depth (z). */
 const UNDERWATER_SHADOW_FULL = 24;
@@ -898,9 +903,30 @@ export class HostCraft {
   }
 
   emitDustShock(x: number, y: number, power = 1): void {
+    if (isWater(this.s.world, x, y)) return;
+    this.shockRing(x, y, power, false);
+  }
+
+  /** Water death splash: the dust shock ring in white mist, plus mist puffs thrown outward. */
+  emitMistShock(x: number, y: number, power = 1): void {
+    this.shockRing(x, y, power, true);
+    const gz = groundZ(this.s.world, x, y);
+    const em = this.s.fx.heliMist;
+    em.setDepth(worldDepth(gz, 0.2, y));
+    const puffs = Math.round(10 + power * 8);
+    for (let i = 0; i < puffs; i++) {
+      const a = (i / puffs) * Math.PI * 2 + range(-0.2, 0.2);
+      const r = range(10, 28) * (0.8 + power * 0.4);
+      const wx = x + Math.cos(a) * r;
+      const wy = y + Math.sin(a) * r;
+      const at = worldToScreen(wx, wy, gz);
+      em.setEmitterAngle(Phaser.Math.RadToDeg(projectHeading(a, wx, wy, gz)) + range(-12, 12));
+      this.s.fx.emitBudgeted("dust", em, at.x, at.y, 1);
+    }
+  }
+
+  private shockRing(x: number, y: number, power: number, mist: boolean): void {
     const gnd = groundZ(this.s.world, x, y);
-    const wet = isWater(this.s.world, x, y);
-    if (wet) return;
     const n = Math.round(64 * power);
     const admitted = this.s.fx.reserveSimParticleSlots("dust", n);
     const biome = sampleBiome(this.s.world, x, y);
@@ -909,15 +935,20 @@ export class HostCraft {
       const a = (i / Math.max(1, admitted)) * Math.PI * 2 + range(-0.12, 0.12);
       const ca = Math.cos(a);
       const sa = Math.sin(a);
-      const spd = range(145, 290) * (0.92 + power * 0.1);
-      const life = range(1.2, 1.8);
-      const look = simParticleLook("dirt", biome);
-      const tint = Phaser.Display.Color.Interpolate.ColorWithColor(
-        Phaser.Display.Color.IntegerToColor(look.tint),
-        Phaser.Display.Color.IntegerToColor(0xd8c9a4),
-        100,
-        42
-      );
+      const spd = range(145, 290) * (0.92 + power * 0.1) * (mist ? MIST_SHOCK_SPEED : 1);
+      const life = range(1.2, 1.8) * (mist ? MIST_SHOCK_LIFE : 1);
+      let tint: number;
+      if (mist) tint = mistLook().tint;
+      else {
+        const look = simParticleLook("dirt", biome);
+        const c = Phaser.Display.Color.Interpolate.ColorWithColor(
+          Phaser.Display.Color.IntegerToColor(look.tint),
+          Phaser.Display.Color.IntegerToColor(0xd8c9a4),
+          100,
+          42
+        );
+        tint = Phaser.Display.Color.GetColor(c.r, c.g, c.b);
+      }
       this.s.fx.simParticles.push({
         x: x + ca * range(2, 12),
         y: y + sa * range(2, 12),
@@ -927,18 +958,19 @@ export class HostCraft {
         vz: range(24, 90),
         life,
         max: life,
-        scale: range(1.15, 1.85),
+        scale: range(1.15, 1.85) * (mist ? MIST_SHOCK_SCALE : 1),
         bounces: 0,
         kind: "dirt",
         tex: simParticleTexKey("dirt"),
         frame: (Math.random() * FX_VARIANTS) | 0,
         angJit: range(-0.04, 0.04),
         spin: 0,
-        tint: Phaser.Display.Color.GetColor(tint.r, tint.g, tint.b),
+        tint,
         additive: false,
         heading: a,
         capacityClass: "dust",
         shock: true,
+        mist,
       });
     }
   }

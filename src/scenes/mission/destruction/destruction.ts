@@ -203,10 +203,14 @@ export class Destruction {
             const kdz = burst?.dz ?? 1;
             this.s.fx.emitBigBoomSparks(u.x, u.y, hz + 8, boomSize, kdx, kdy, kdz);
             this.s.fx.emitBigBoomDebris(u.x, u.y, hz + 8, boomSize, kdx, kdy, kdz);
+          } else if (isGroundVehicle(u.kind) || sp.water) {
+            // Smaller vehicles: the small-building spark shower.
+            this.s.fx.emitBigBoomSparks(u.x, u.y, hz + 6, 0.3, burst.dx, burst.dy, burst.dz, COLLAPSE_SPARK_SCALE, 0.7);
           }
         }
       }
       if (building) this.s.hostCraft.emitDustShock(u.x, u.y, collapse ? 1.35 : 1);
+      else if (sp.water) this.s.hostCraft.emitMistShock(u.x, u.y, Phaser.Math.Linear(0.7, 1.3, boom));
       if (sp.deathFx === "sparks" || zap) this.s.fx.electricShort(u.x, u.y, u.z + heightOf(u.kind) * 0.9, u.angle, (sp.box?.halfL ?? radius(u.kind)) * 0.85);
       if (sp.deathFx === "inferno") {
         this.s.fx.infernoChain(u.x, u.y, hz, bodyR * 0.7);
