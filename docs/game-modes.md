@@ -96,6 +96,27 @@ Wave-defense arcade mode: survive as many waves as possible; each wave brings mo
 
 ---
 
+## Difficulty levels
+
+One difficulty setting across every mode. Each level scales four enemy-side knobs:
+
+| Knob | What it scales |
+|---|---|
+| Shot power | Enemy weapon damage |
+| Seeker strength | Enemy guided missiles: tracking / turn rate (harder to dodge or decoy) |
+| Enemy armor | Enemy unit health |
+| Enemy counts | Number of enemy units spawned |
+
+**Open:**
+- How many levels, and their names?
+- Is it chosen per run / campaign, or a global option? Can it change mid-campaign or mid-Rogue run?
+- Does it affect rewards (Rogue money, score) or only the challenge?
+- Last Stand already ramps per wave: does difficulty set the starting point, the ramp rate, or both?
+- Which seeker parameters count as "strength" (turn rate, lock speed, flare / chaff resistance)?
+- Stats: record difficulty per mission (a dim in `sim/stats`) so history and lifetime totals can split by it?
+
+---
+
 ## Shared systems to plan
 
 These are needed by more than one mode; worth designing once.
@@ -110,6 +131,7 @@ These are needed by more than one mode; worth designing once.
 | Run state across missions | Rogue | Craft health, ammo, money, base condition. |
 | Mission end → next step | All except Skirmish | Debrief, rewards, then return to base / next wave. |
 | Wave spawner | Last Stand | Scaling composition and count per wave; may share spawn rules with world gen. |
+| Difficulty scaling | All | Enemy shot power, seeker strength, armor and counts; see Difficulty levels. |
 | Craft paint | Campaign (maybe Rogue) | Camo patterns already exist for enemies (`render/camo`); player craft skinning is a TODO. |
 
 ## Existing TODO entries this replaces / touches
