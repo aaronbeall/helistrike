@@ -1,9 +1,9 @@
 import Phaser from "phaser";
 import { heightOf, type EnergyTrailNode, type Unit } from "../../../sim/combat";
 import { specOf } from "../../../sim/roster";
-import { craftRotorDrawSpan } from "../../../sim/crafts";
 import { cameraPointVisible, worldToScreen, type ScreenPos } from "../../../worldgen/world";
 import { worldDepth, ZOff } from "../../../render/depth";
+import { craftRotorDiscs, rotorDiscs } from "../../../render/spritePose";
 import { range } from "../../../util/rng";
 import { ENVIRONMENT } from "../../../sim/stats";
 import type { MissionScene } from "../../missionScene";
@@ -140,14 +140,21 @@ export class PowerLines {
     }
   }
 
-  /** Heli rotors snap any intact span they touch; the short runs out both ways from the strike. */
+  /** Lift rotors (helis + rotor VTOLs) snap any intact span they touch; the short runs out both ways from the strike. */
   private rotorStrikes(): void {
     const h = this.s.player;
-    if (h.phase !== "flight" || h.spec.flightModel !== "heli") return;
-    // Any overlap with the craft: within the rotor disc, between hull bottom and rotor top.
-    const reach = craftRotorDrawSpan(h.spec) / 2;
+    if (h.phase !== "flight") return;
+    const discs = craftRotorDiscs(this.s.textures, h.spec, h.x, h.y, h.angle);
+    // Any overlap with the craft: within a rotor disc, between hull bottom and rotor top.
     const zLo = h.z;
     const zHi = h.z + h.spec.height;
+    for (let di = 0; di < discs; di++) {
+      const disc = rotorDiscs[di]!;
+      this.rotorDiscStrikes(disc.x, disc.y, disc.r, zLo, zHi);
+    }
+  }
+
+  private rotorDiscStrikes(x: number, y: number, reach: number, zLo: number, zHi: number): void {
     for (const line of this.lines) {
       for (const sp of line.spans) {
         if (sp.cut || sp.a.dead || sp.b.dead) continue;
@@ -157,8 +164,8 @@ export class PowerLines {
         const maxX = Math.max(sp.a.x, sp.b.x) + pad;
         const minY = Math.min(sp.a.y, sp.b.y) - pad;
         const maxY = Math.max(sp.a.y, sp.b.y) + pad;
-        if (h.x < minX || h.x > maxX || h.y < minY || h.y > maxY) continue;
-        const hitT = this.rotorHit(line, sp, h.x, h.y, zLo, zHi, reach);
+        if (x < minX || x > maxX || y < minY || y > maxY) continue;
+        const hitT = this.rotorHit(line, sp, x, y, zLo, zHi, reach);
         if (hitT == null) continue;
         sp.cut = true;
         this.shortSpan(line, sp, 0, hitT);

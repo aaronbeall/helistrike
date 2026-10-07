@@ -4,7 +4,7 @@ import { textureOf, SHOT_ORIGIN, SHOT_TAIL, exhaustIsGunSpark, type Debris, type
 import { spritePivot, spriteUvPos } from "../art/sprites";
 import { gunWorldRot, lookupSpriteMuzzles, lookupSpriteOrigin, lookupSpritePoints } from "../art/spriteOrigin";
 import type { RemoteCraft } from "../sim/remote";
-import { craftGunScale, craftGunTex } from "../sim/crafts";
+import { craftGunScale, craftGunTex, craftHasLiftRotors, craftOrigin, craftRotorMounts, rotorDrawSpan, type CraftSpec } from "../sim/crafts";
 import { resolveSkin } from "./camo";
 import { worldToScreen, screenVelX, screenVelY, projectHeading } from "../worldgen/world";
 /** Shot sprite pose / orientation rules. */
@@ -326,6 +326,50 @@ export function mountAt(textures: Phaser.Textures.TextureManager, host: Unit, te
     x: host.x + mx * Math.cos(rot) - my * Math.sin(rot),
     y: host.y + mx * Math.sin(rot) + my * Math.cos(rot),
   };
+}
+
+/** World rotor disc: hub + radius. */
+export type RotorDisc = { x: number; y: number; r: number };
+/** Filled by `craftRotorDiscs`; valid up to its returned count until the next call. */
+export const rotorDiscs: RotorDisc[] = [];
+
+function setDisc(i: number, x: number, y: number, r: number): void {
+  const d = rotorDiscs[i] ?? (rotorDiscs[i] = { x: 0, y: 0, r: 0 });
+  d.x = x;
+  d.y = y;
+  d.r = r;
+}
+
+/** Lift-rotor discs of a craft in world space into `rotorDiscs` (helis + rotor VTOLs; none for props / rotorless); returns the count. */
+export function craftRotorDiscs(
+  textures: Phaser.Textures.TextureManager,
+  spec: CraftSpec,
+  x: number,
+  y: number,
+  angle: number,
+  drawScale = 1
+): number {
+  if (!spec.rotor || !craftHasLiftRotors(spec)) return 0;
+  const base = spec.rotorScale ?? 1;
+  const mounts = craftRotorMounts(spec);
+  if (!mounts.length) {
+    setDisc(0, x, y, (rotorDrawSpan(spec.rotor, base) / 2) * drawScale);
+    return 1;
+  }
+  const pivot = craftOrigin(spec);
+  const img = textures.exists(spec.body)
+    ? (textures.get(spec.body).getSourceImage() as { width: number; height: number })
+    : { width: 0, height: 0 };
+  const rot = angle + spec.rotOff;
+  const c = Math.cos(rot);
+  const sn = Math.sin(rot);
+  for (let i = 0; i < mounts.length; i++) {
+    const m = mounts[i]!;
+    const mx = (m.x - pivot.x) * img.width * drawScale;
+    const my = (m.y - pivot.y) * img.height * drawScale;
+    setDisc(i, x + mx * c - my * sn, y + mx * sn + my * c, (rotorDrawSpan(spec.rotor, base * (m.scale ?? 1)) / 2) * drawScale);
+  }
+  return mounts.length;
 }
 
 export function shotLookOf(s: Shot): ShotLook {

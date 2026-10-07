@@ -3,7 +3,7 @@ import { containOnMap, mapEdgeSteer, mapEdgeWeight, pickBoatWaypoint, steerUnitA
 import { rollSoldierMood } from "../../../sim/units";
 import { troopSoftTurret } from "../../../sim/roster";
 import { enemyWeaponIsAa, REACT_DRONE, REACT_FLEE, REACT_INFANTRY, REACT_ORBIT, REACT_SCOUT, REACT_VEHICLE, unitSightBase } from "../../../sim/targetRules";
-import { mountAt, spriteHalf } from "../../../render/spritePose";
+import { craftRotorDiscs, mountAt, rotorDiscs, spriteHalf } from "../../../render/spritePose";
 import { trackPrintAlpha } from "../../../render/fxCurves";
 import { noteEnemyVolley } from "./enemyFire";
 import { textureOf, heightOf, radius, unitStunned, tickStunKinematics, recordUnitSpin, type Unit } from "../../../sim/combat";
@@ -17,7 +17,7 @@ import { range } from "../../../util/rng";
 import { CRUISE_AGL, Craft, LOW_AGL, MAX_AGL } from "../../../sim/craft";
 import { circumRadiusOf, footprintInto, footprintOverlap, pointInFootprint } from "../../../render/footprint";
 import { lookupSpriteMuzzles } from "../../../art/spriteOrigin";
-import { craftRotorIsProp, craftRotorDrawSpan, type CraftSpec } from "../../../sim/crafts";
+import { type CraftSpec } from "../../../sim/crafts";
 import { spritePivot } from "../../../art/sprites";
 import { CRUSH_KILL, enemyWeaponKey, ROTOR_KILL } from "../../../sim/stats";
 import type { StatBy } from "../flow/missionStats";
@@ -682,10 +682,10 @@ export class UnitSim {
   /** Roadkill (rotor strike / crush) is a player-side mechanic — the player's craft and its remotes, never enemies. */
   tickRoadkill(): void {
     const h = this.s.player;
-    if (h.phase === "flight") this.roadkillCraft(h.x, h.y, h.z, h.vx, h.vy, h.spec, 1, this.s.stats.hostCredit(ROTOR_KILL));
+    if (h.phase === "flight") this.roadkillCraft(h.x, h.y, h.z, h.vx, h.vy, h.angle, h.spec, 1, this.s.stats.hostCredit(ROTOR_KILL));
     for (const r of this.s.remotes) {
       if (r.detonate || r.dock || r.airborne || !r.spec.craftLook) continue;
-      this.roadkillCraft(r.x, r.y, r.z, r.vx, r.vy, r.spec, r.spec.scale, this.s.stats.remoteCredit(r, ROTOR_KILL));
+      this.roadkillCraft(r.x, r.y, r.z, r.vx, r.vy, r.angle, r.spec, r.spec.scale, this.s.stats.remoteCredit(r, ROTOR_KILL));
     }
   }
 
@@ -695,20 +695,21 @@ export class UnitSim {
     z: number,
     vx: number,
     vy: number,
+    angle: number,
     spec: CraftSpec,
     drawScale: number,
     by: StatBy
   ): void {
     const crush = !!spec.crushesInfantry;
-    const blades =
-      spec.flightModel === "heli" && !!spec.rotor && !craftRotorIsProp(spec);
     if (crush) {
       const hullR = Math.max(spec.radius, spriteHalf(this.s.textures, spec.body) * drawScale * 0.72);
       const spd = Math.hypot(vx, vy);
       if (spd > 32) this.roadkillSweep(x, y, z, vx, vy, hullR, spec.cruiseAgl + 8, this.s.stats.credit(by.craft, by.control, CRUSH_KILL));
     }
-    if (blades) {
-      this.roadkillBlades(x, y, z, vx, vy, spec.height, craftRotorDrawSpan(spec) * 0.5 * drawScale, by);
+    const discs = craftRotorDiscs(this.s.textures, spec, x, y, angle, drawScale);
+    for (let i = 0; i < discs; i++) {
+      const d = rotorDiscs[i]!;
+      this.roadkillBlades(d.x, d.y, z, vx, vy, spec.height, d.r, by);
     }
   }
 

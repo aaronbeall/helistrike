@@ -1,5 +1,5 @@
 /** Load-screen / Field Manual tactical tips. */
-import { craftOf, craftRotorIsProp } from "../sim/crafts";
+import { craftHasLiftRotors, craftOf } from "../sim/crafts";
 import { isInfantry, specOf } from "../sim/roster";
 import { wpnGuidedFamily, wpnIsAntiArmor, wpnIsAntiAir, wpnIsAntiSoft, wpnPierces, wpnIsBombDrop, wpnIsRemoteDeploy } from "../sim/weaponTags";
 import type { TacticalTip } from "../sim/tips";
@@ -50,7 +50,7 @@ export const TACTICAL_TIPS: TacticalTip[] = [
     id: "roadkill_rotor",
     text: "Flying low enough for the rotor disc to reach standing troops will mow them down.",
     context: {
-      forCraft: (c) => craftOf(c).flightModel === "heli" && !!craftOf(c).rotor && !craftRotorIsProp(craftOf(c)),
+      forCraft: (c) => craftHasLiftRotors(craftOf(c)),
     },
   },
   {

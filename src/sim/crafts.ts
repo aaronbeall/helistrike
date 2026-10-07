@@ -591,6 +591,11 @@ export function craftRotorIsProp(c: CraftSpec | CraftKind = craftOf()): boolean 
   return craftRotorAlongScale(c) < 0.999;
 }
 
+/** Top-down lift rotors that can strike things (helis + rotor VTOLs like Osprey; not props / rotorless jets). */
+export function craftHasLiftRotors(c: CraftSpec): boolean {
+  return (c.flightModel === "heli" || c.flightModel === "vtol") && !!c.rotor && !craftRotorIsProp(c);
+}
+
 /**
  * Phaser spin sign for a rotor mount (+1 CW, −1 CCW), viewed from above.
  * Western single mains → CCW. Tandem / side-by-side / quad use counter-rotation.
