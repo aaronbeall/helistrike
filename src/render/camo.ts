@@ -186,15 +186,15 @@ function dazzleSampler(seed: number, pairs: string[][]): CamoSampler {
   };
 }
 
-const samplers = new Map<CamoKind, { sample: CamoSampler; seed: number; grain: number }>();
+const samplers = new Map<CamoKind, CamoSampler>();
 
-function camoSampler(kind: CamoKind): { sample: CamoSampler; seed: number; grain: number } {
+function camoSampler(kind: CamoKind): CamoSampler {
   let s = samplers.get(kind);
   if (!s) {
-    if (kind === "dazzle") s = { sample: dazzleSampler(DAZZLE.seed, DAZZLE.pairs), seed: DAZZLE.seed, grain: 8 };
+    if (kind === "dazzle") s = dazzleSampler(DAZZLE.seed, DAZZLE.pairs);
     else {
       const { seed, colors } = kind === "digital" ? DIGITAL : PATTERNS[kind];
-      s = { sample: patchSampler(seed, colors, kind === "digital" ? 4 : 1), seed, grain: kind === "digital" ? 10 : 14 };
+      s = patchSampler(seed, colors, kind === "digital" ? 4 : 1);
     }
     samplers.set(kind, s);
   }
@@ -203,22 +203,20 @@ function camoSampler(kind: CamoKind): { sample: CamoSampler; seed: number; grain
 
 /** Reference tile of a pattern (sprite rig / thumbnails). */
 function drawCamo(kind: CamoKind, size = CAMO_TILE): HTMLCanvasElement {
-  const { sample, seed, grain } = camoSampler(kind);
+  const sample = camoSampler(kind);
   const c = document.createElement("canvas");
   c.width = size;
   c.height = size;
   const g = c.getContext("2d", { willReadFrequently: true })!;
   const img = g.createImageData(size, size);
   const d = img.data;
-  const noise = rng(seed ^ 0x9e3779b9);
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const rgb = sample(x / size, y / size);
-      const j = (noise() - 0.5) * grain;
       const i = (y * size + x) * 4;
-      d[i] = Math.max(0, Math.min(255, rgb[0] + j));
-      d[i + 1] = Math.max(0, Math.min(255, rgb[1] + j));
-      d[i + 2] = Math.max(0, Math.min(255, rgb[2] + j));
+      d[i] = rgb[0];
+      d[i + 1] = rgb[1];
+      d[i + 2] = rgb[2];
       d[i + 3] = 255;
     }
   }
@@ -254,7 +252,7 @@ const CAMO_MAX_DENSITY = 4;
 
 /** Repaint `src` with camo `kind` (shading kept via luminance, red markings kept); `k` = tile px per sprite px. */
 function blendCamo(src: HTMLCanvasElement, kind: CamoKind, ox: number, oy: number, k: number): HTMLCanvasElement {
-  const { sample, seed, grain } = camoSampler(kind);
+  const sample = camoSampler(kind);
   const w = src.width;
   const h = src.height;
   const out = document.createElement("canvas");
@@ -264,7 +262,6 @@ function blendCamo(src: HTMLCanvasElement, kind: CamoKind, ox: number, oy: numbe
   const sp = sg.getImageData(0, 0, w, h).data;
   const dest = sg.createImageData(w, h);
   const d = dest.data;
-  const noise = rng(seed ^ (ox * 73856093) ^ (oy * 19349663));
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = (y * w + x) * 4;
@@ -282,12 +279,10 @@ function blendCamo(src: HTMLCanvasElement, kind: CamoKind, ox: number, oy: numbe
         continue;
       }
       const rgb = sample((x * k + ox) / CAMO_TILE, (y * k + oy) / CAMO_TILE);
-      // Half grain: per-pixel noise reads as speckle on small sprites.
-      const j = (noise() - 0.5) * grain * 0.5;
       const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 148;
-      d[i] = Math.max(0, Math.min(255, (rgb[0] + j) * lum));
-      d[i + 1] = Math.max(0, Math.min(255, (rgb[1] + j) * lum));
-      d[i + 2] = Math.max(0, Math.min(255, (rgb[2] + j) * lum));
+      d[i] = Math.min(255, rgb[0] * lum);
+      d[i + 1] = Math.min(255, rgb[1] * lum);
+      d[i + 2] = Math.min(255, rgb[2] * lum);
     }
   }
   out.getContext("2d", { willReadFrequently: true })!.putImageData(dest, 0, 0);
