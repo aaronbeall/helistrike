@@ -19,6 +19,7 @@ export const SETTLEMENT_UNITS = {
   // Bridge deck segment: the deck is a roof `height` above the unit base (spawned at deck level - height).
   // Normal building death; its wreck stays at deck height (no sinking).
   bridge: building("bridge", "BRIDGE", 60, 9, 31, 6, {
+    deck: true,
     breakApart: true,
     wreckJitter: 0.22,
     water: true,
@@ -28,6 +29,7 @@ export const SETTLEMENT_UNITS = {
   // Two-lane steel span on paved roads: wider and tougher than the plank bridge.
   // Twice the plank bridge's width; length keeps the art's aspect (two truss panels per segment).
   bridge_steel: building("bridge_steel", "STEEL BRIDGE", 110, 18, 64, 6, {
+    deck: true,
     breakApart: true,
     wreckJitter: 0.18,
     water: true,
@@ -37,6 +39,7 @@ export const SETTLEMENT_UNITS = {
   }),
   // Pier deck: roof just above the water, like a bridge segment.
   pier: building("pier", "PIER", 50, 8, 47, 5, {
+    deck: true,
     breakApart: true,
     water: true,
     noCrater: true,

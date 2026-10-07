@@ -18,6 +18,7 @@ const DEBUG_MENU_ITEMS = [
   { action: "los", label: "Line of sight" },
   { action: "blast", label: "Blast radii" },
   { action: "spatial", label: "Spatial grid" },
+  { action: "nav", label: "Nav grid + routes" },
   { action: "lod", label: "Far unit LOD" },
   { action: "sideView", label: "Side view", shortcut: "J" },
   { section: "RENDERING" },
@@ -283,6 +284,8 @@ export class DebugMenu {
                     ? this.s.overlays.blastOn
                   : item.action === "spatial"
                     ? this.s.spatialOverlay.on
+                  : item.action === "nav"
+                    ? this.s.navOverlay.on
                   : item.action === "lod"
                     ? this.s.unitLod.on
                     : item.action === "sideView"
@@ -326,6 +329,7 @@ export class DebugMenu {
     else if (item.action === "los") this.s.lineOfSight.setDebug(!this.s.lineOfSight.debugOn);
     else if (item.action === "blast") this.s.overlays.setBlast(!this.s.overlays.blastOn);
     else if (item.action === "spatial") this.s.spatialOverlay.setOn(!this.s.spatialOverlay.on);
+    else if (item.action === "nav") this.s.navOverlay.setOn(!this.s.navOverlay.on);
     else if (item.action === "lod") this.s.unitLod.setOn(!this.s.unitLod.on);
     else if (item.action === "sideView") this.s.sideView.setOn(!this.s.sideView.on);
     else if (item.action === "terrainMesh") this.s.toggleTerrainMesh();

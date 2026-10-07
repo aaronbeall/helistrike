@@ -22,4 +22,5 @@ export const SCENARIOS = [
   { id: "rockets_stress", label: "Rockets into the town cluster", map: "desert_stress", fire: ROCKETS, ...TIMING },
   { id: "mission_idle", label: "River Run, generated forces + settlements", map: "river_run", ...TIMING },
   { id: "mission_idle_s0", label: "River Run, no settlements", map: "river_run_s0", ...TIMING },
+  { id: "idle_coast", label: "Coastal Strike + 100 ground units near spawn (routing around water / cliffs)", map: "coast_nav", ...TIMING },
 ];

@@ -1,6 +1,7 @@
 import { specOf, type DebrisCat, type ShotLook, type UnitKind, type PartMount } from "./roster";
 import type { SocketClass } from "./crafts";
 import type { CamoKind } from "../render/camo";
+import type { UnitNav } from "./navGrid";
 import type { RemoteKind } from "./remote";
 
 export type { DebrisCat, UnitKind } from "./roster";
@@ -524,6 +525,8 @@ export interface Unit {
   aiState?: string;
   aiTx?: number;
   aiTy?: number;
+  /** Route / stuck state, owned by `world/nav`. */
+  route?: UnitNav;
   rotor: number;
   track: number;
   turrets: number[];

@@ -233,6 +233,8 @@ export interface UnitSpec {
   wreckScale?: number;
   /** Wheel debris draw scale range [lo, hi]. */
   wheelDebrisScale?: [number, number];
+  /** Walkable roof over water (bridge / pier deck): ground units drive on it; destroying it cuts the crossing. */
+  deck?: boolean;
   /** Camo paint roll at spawn. Omit = no camo. */
   camo?: CamoRoll;
   weapon?: WeaponSpec;

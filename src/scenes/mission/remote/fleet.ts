@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { gateGroundRemoteWater, groundRemoteEntersWater } from "../../../sim/navigation";
+import { settleGroundMove } from "../../../sim/navigation";
 import { remoteAiStickAim, tickRemoteIdle } from "../../../sim/remoteRules";
 import { planeLookCam } from "../camera/camera";
 import { payloadIsRemote } from "../../../sim/payload";
@@ -495,13 +495,8 @@ export class RemoteFleet {
       drone.spec.ground ? false : !!opts?.space,
       drone.spec.ground ? false : !!opts?.shift
     );
-    // Ground remotes can't drive into water: refuse the move (AI stuck→reverse kicks in; pilot must turn/back up).
-    if (drone.spec.ground && !drone.airborne && groundRemoteEntersWater(this.s.world, drone, trackX0, trackY0, craft.x, craft.y)) {
-      craft.x = trackX0;
-      craft.y = trackY0;
-      craft.vx = 0;
-      craft.vy = 0;
-    }
+    // Ground remotes follow the shared ground-step rule (wade shallows, no deep water or cliffs; decks OK).
+    if (drone.spec.ground && !drone.airborne) settleGroundMove(this.s.world, craft, trackX0, trackY0, this.s.nav.onDeck);
     drone.x = craft.x;
     drone.y = craft.y;
     drone.z = craft.z;
@@ -626,7 +621,8 @@ export class RemoteFleet {
    * Airborne drops fall under gravity and thud-land with no bounce.
    */
   snapRemoteGround(drone: RemoteCraft, dt: number): void {
-    const gnd = groundZ(this.s.world, drone.x, drone.y);
+    // Ground hulls wade shallows on the bed (or ride a deck), like enemy ground units.
+    const gnd = drone.spec.ground ? this.s.nav.surfaceZ(drone.x, drone.y) : groundZ(this.s.world, drone.x, drone.y);
     if (!drone.spec.ground) {
       const rest = gnd + drone.spec.cruiseAgl;
       drone.vz += (rest - drone.z) * 2.4 * dt;
@@ -699,7 +695,7 @@ export class RemoteFleet {
         r.x += r.vx * dt;
         r.y += r.vy * dt;
         r.z += r.vz * dt;
-        gateGroundRemoteWater(this.s.world, r, trackX0, trackY0);
+        if (r.spec.ground && !r.airborne) settleGroundMove(this.s.world, r, trackX0, trackY0, this.s.nav.onDeck);
       }
       const docking = r.dock || !!r.dockPending;
       if (!docking) this.snapRemoteGround(r, dt);

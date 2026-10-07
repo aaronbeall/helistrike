@@ -36,7 +36,9 @@ import { EnemyTargeting } from "./mission/enemy/targeting";
 import { LineOfSight } from "./mission/enemy/lineOfSight";
 import { PowerLines } from "./mission/world/powerLines";
 import { SpatialIndex } from "./mission/world/spatial";
+import { Nav } from "./mission/world/nav";
 import { SpatialOverlay } from "./mission/debug/spatialOverlay";
+import { NavOverlay } from "./mission/debug/navOverlay";
 import { RemoteAi } from "./mission/remote/ai";
 import { ReticleHud } from "./mission/hud/reticleHud";
 import { Minimap } from "./mission/hud/minimap";
@@ -85,6 +87,7 @@ export class MissionScene extends Phaser.Scene {
   lineOfSight = new LineOfSight(this);
   powerLines = new PowerLines(this);
   spatial = new SpatialIndex(this);
+  nav = new Nav(this);
   unitSim = new UnitSim(this);
   unitLod = new UnitLod(this);
   enemyFire = new EnemyFire(this);
@@ -137,6 +140,7 @@ export class MissionScene extends Phaser.Scene {
   perf = new PerfMonitor(this);
   postFx = new PostFxTest(this);
   spatialOverlay = new SpatialOverlay(this);
+  navOverlay = new NavOverlay(this);
   world!: WorldData;
   player!: Craft;
   units: Unit[] = [];
@@ -222,8 +226,10 @@ export class MissionScene extends Phaser.Scene {
     this.unitLod.reset();
     this.powerLines.reset();
     this.spatial.reset();
+    this.nav.reset();
     this.unitSprites.reset();
     this.spatialOverlay.reset();
+    this.navOverlay.reset();
     this.statusHud.reset();
     this.runStatsHud.reset();
     this.sideView.reset();
@@ -578,6 +584,7 @@ export class MissionScene extends Phaser.Scene {
     for (const host of spawned) posted.push(...spawnCrewFor(this.world, this.textures, host));
     this.addUnits(spawned);
     this.addUnits(posted);
+    this.nav.build();
   }
 
   /** The only way units enter `s.units`: append-only, never removed (dead units stay, `dead` set); index-keyed modules rely on it. */
@@ -718,6 +725,7 @@ export class MissionScene extends Phaser.Scene {
       this.stats.finish();
       this.perf.dispose();
       this.spatialOverlay.dispose();
+      this.navOverlay.dispose();
       kb.off("keydown-PLUS", onTimePlus);
       kb.off("keydown-EQUALS", onTimePlus);
       kb.off("keydown-NUMPAD_ADD", onTimePlus);
@@ -1083,6 +1091,7 @@ export class MissionScene extends Phaser.Scene {
     this.overlays.aiGfx = this.add.graphics().setDepth(Layer.FIELD + 8);
     this.lineOfSight.create();
     this.spatialOverlay.create();
+    this.navOverlay.create();
     this.powerLines.create();
     const cx = 18 + 88;
     const cy = this.scale.height - 18 - 88;
@@ -1279,6 +1288,7 @@ export class MissionScene extends Phaser.Scene {
     this.overlays.drawAi();
     this.lineOfSight.drawDebug();
     this.spatialOverlay.draw();
+    this.navOverlay.draw();
     this.powerLines.update();
     this.statusHud.tickJolt();
     // Apply suppression after draw/debug updates so nothing can re-enable

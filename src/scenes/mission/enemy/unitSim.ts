@@ -1,5 +1,5 @@
 import { resolveSkin } from "../../../render/camo";
-import { containOnMap, mapEdgeSteer, mapEdgeWeight, pickBoatWaypoint, steerUnitAngle, stepOnTerrain, terrainSteer } from "../../../sim/navigation";
+import { containOnMap, mapEdgeSteer, steerUnitAngle, stepOnTerrain, turnsInPlace } from "../../../sim/navigation";
 import { rollSoldierMood } from "../../../sim/units";
 import { troopSoftTurret } from "../../../sim/roster";
 import { enemyWeaponIsAa, REACT_DRONE, REACT_FLEE, REACT_INFANTRY, REACT_ORBIT, REACT_SCOUT, REACT_VEHICLE, unitSightBase } from "../../../sim/targetRules";
@@ -8,7 +8,7 @@ import { trackPrintAlpha } from "../../../render/fxCurves";
 import { noteEnemyVolley } from "./enemyFire";
 import { textureOf, heightOf, radius, unitStunned, tickStunKinematics, recordUnitSpin, type Unit } from "../../../sim/combat";
 import { specOf, gunsOf, crewOf, isGroundVehicle, isInfantry, isNeutral, driveOf } from "../../../sim/roster";
-import { groundZ, bedZ, worldToScreen, cameraPointVisible, isWater } from "../../../worldgen/world";
+import { groundZ, worldToScreen, cameraPointVisible, isWater, isDeepWater } from "../../../worldgen/world";
 import Phaser from "phaser";
 import { enemyShotBeh, AI_LOCK_BASE, AI_AIM_NARROW_BASE, AI_AIM_WIDE_MUL, advanceAimHold, aimNarrowTime, aimPrecisionSpread, holdProgress, lockAcquireTime } from "../../../sim/weaponRuntime";
 
@@ -27,6 +27,8 @@ import type { MissionScene } from "../../missionScene";
 /** Max AGL drones will climb/charge to — covers Lightning/Warthog, excludes Reaper (~620). */
 const DRONE_KAMIKAZE_AGL = 400;
 
+/** Recovery reverse speed, as a fraction of max speed. */
+const BACKUP_SPEED = 0.45;
 /** Max steering / separation pad around a solid (see `steerGround`, `separateGround`). */
 const STEER_PAD = 42;
 const BLOCK_PAD = 12;
@@ -337,7 +339,7 @@ export class UnitSim {
       }
     }
     ahead.done();
-    const dry = terrainSteer(this.s.world, u.x, u.y, wx, wy, false, u.angle);
+    const dry = this.s.nav.repel(u, wx, wy, "land");
     return mapEdgeSteer(u.x, u.y, dry.x, dry.y);
   }
 
@@ -409,13 +411,24 @@ export class UnitSim {
     near.done();
   }
 
+  /** Ground unit left in deep water (e.g. its bridge deck fell): step toward the nearest walkable cell. */
+  private escapeDeepWater(u: Unit, step: number): void {
+    if (!isDeepWater(this.s.world, u.x, u.y) || this.s.nav.onDeck(u.x, u.y)) return;
+    const out = this.s.nav.escapePoint(u, "land");
+    if (!out) return;
+    const dx = out.x - u.x;
+    const dy = out.y - u.y;
+    const d = Math.hypot(dx, dy) || 1;
+    stepOnTerrain(this.s.world, u, (dx / d) * step, (dy / d) * step, false, this.s.nav.onDeck);
+  }
+
   driveBoat(u: Unit, dt: number): void {
     const sp = specOf(u.kind);
     const yaw = sp.boatYaw ?? 0.85;
     const spd = sp.boatSpeed ?? 22;
     if (!isWater(this.s.world, u.x, u.y)) {
-      const seek = terrainSteer(this.s.world, u.x, u.y, u.x + Math.cos(u.angle) * 80, u.y + Math.sin(u.angle) * 80, true, u.angle);
-      const want = Math.atan2(seek.y - u.y, seek.x - u.x);
+      const out = this.s.nav.escapePoint(u, "water");
+      const want = out ? Math.atan2(out.y - u.y, out.x - u.x) : u.angle;
       u.angle = steerUnitAngle(u.angle, want, yaw * 1.4, dt);
       const step = spd * 0.35 * dt;
       // Stranded: crawl over land toward water (don't require wet cells yet).
@@ -427,18 +440,10 @@ export class UnitSim {
       return;
     }
     if (u.aiTx == null || u.aiTy == null || Math.hypot((u.aiTx ?? 0) - u.x, (u.aiTy ?? 0) - u.y) < 40) {
-      pickBoatWaypoint(this.s.world, u);
+      this.s.nav.pickWaterWaypoint(u);
     }
-    const hx = Math.cos(u.angle);
-    const hy = Math.sin(u.angle);
-    if (
-      !isWater(this.s.world, u.x + hx * 36, u.y + hy * 36) ||
-      !isWater(this.s.world, u.x + hx * 70, u.y + hy * 70) ||
-      !isWater(this.s.world, u.x + hx * 110, u.y + hy * 110)
-    ) {
-      pickBoatWaypoint(this.s.world, u);
-    }
-    const steered = terrainSteer(this.s.world, u.x, u.y, u.aiTx ?? u.x, u.aiTy ?? u.y, true, u.angle);
+    const r = this.s.nav.route(u, u.aiTx ?? u.x, u.aiTy ?? u.y, "water", dt);
+    const steered = this.s.nav.repel(u, r.x, r.y, "water");
     const want = Math.atan2(steered.y - u.y, steered.x - u.x);
     u.angle = steerUnitAngle(u.angle, want, yaw, dt);
     const step = spd * dt;
@@ -479,9 +484,9 @@ export class UnitSim {
     ) {
       if (vision > 0) {
         u.reacting = true;
-        const away = Math.atan2(u.y - h.y, u.x - h.x);
-        wantX = u.x + Math.cos(away) * 240;
-        wantY = u.y + Math.sin(away) * 240;
+        const flee = this.s.nav.fleePoint(u, h.x, h.y, "land", dt);
+        wantX = flee.x;
+        wantY = flee.y;
         drive = true;
         u.aiState = "FLEE";
         u.aiTx = wantX;
@@ -498,6 +503,11 @@ export class UnitSim {
       u.aiTx = undefined;
       u.aiTy = undefined;
     }
+    if (drive) {
+      const r = this.s.nav.route(u, wantX, wantY, "land", dt);
+      wantX = r.x;
+      wantY = r.y;
+    } else if (u.route) u.route.path.length = 0;
     const wantSteer = this.steerGround(u, wantX, wantY);
     wantX = wantSteer.x;
     wantY = wantSteer.y;
@@ -515,16 +525,20 @@ export class UnitSim {
       want = Math.atan2(twy, twx);
     }
     const slow = 1 - Math.min(1, spd / Math.max(d.maxSpd, 1));
-    const wheeled = d.track !== "tread";
+    const wheeled = !turnsInPlace(u);
     // Wheeled: need forward speed to yaw (car-like). Default higher than old 7 so
     // trucks don't spin on a crawl. Motorcycle sets minTurnSpd explicitly.
     const minTurnSpd = sp.minTurnSpd ?? 14;
-    const rim = mapEdgeWeight(u.x, u.y);
     const jammed = this.groundUnitBlocked(u);
-    // Pivot only when actually wedged — soft rim alone must not unlock zero-point turn.
-    const stuck = jammed || rim > 0.55;
+    if (jammed && drive) this.s.nav.noteJam(u, dt);
+    // Jam recovery (shared nav): wheeled hulls back out, rear swinging toward open ground; treads pivot toward it.
+    const recovering = drive && this.s.nav.stuck(u);
+    const backing = recovering && wheeled;
     const turnDt = Math.min(dt, 1 / 20);
-    if (drive) {
+    if (backing) {
+      const turnGate = Phaser.Math.Clamp(spd / (minTurnSpd + 10), 0.3, 1);
+      u.angle = steerUnitAngle(u.angle, want + Math.PI, d.turn * turnGate, turnDt);
+    } else if (drive) {
       if (!wheeled) {
         // Treads: pivot OK; slightly snappier when slow.
         u.angle = steerUnitAngle(
@@ -533,16 +547,13 @@ export class UnitSim {
           d.turn * (0.45 + 0.55 * slow),
           turnDt
         );
-      } else if (stuck) {
-        // Unwedge: allow in-place yaw so they can face out of a jam / hard rim.
-        u.angle = steerUnitAngle(u.angle, want, d.turn, turnDt);
       } else if (spd > minTurnSpd) {
         // Turning radius feel: yaw rate scales with speed (ω ∝ v), never while stopped.
         const turnGate = Phaser.Math.Clamp(spd / Math.max(d.maxSpd * 0.55, minTurnSpd + 10), 0, 1);
         u.angle = steerUnitAngle(u.angle, want, d.turn * turnGate, turnDt);
       }
     }
-    if (stuck && spd < 18) {
+    if (!wheeled && (jammed || recovering) && spd < 18) {
       u.vx += Math.cos(want) * 50 * dt;
       u.vy += Math.sin(want) * 50 * dt;
     }
@@ -550,13 +561,16 @@ export class UnitSim {
     const ny = Math.sin(u.angle);
     const align = drive ? Math.cos(Phaser.Math.Angle.Wrap(want - u.angle)) : 1;
     let a = -d.brake;
-    if (drive && wheeled && spd <= minTurnSpd) a = d.accel;
+    if (backing) a = -d.accel;
+    else if (drive && wheeled && spd <= minTurnSpd) a = d.accel;
     else if (drive && align > 0.2) a = d.accel * Phaser.Math.Clamp(align, 0.25, 1);
     else if (drive) a = -d.brake * 0.65;
     let vx = u.vx + nx * a * dt;
     let vy = u.vy + ny * a * dt;
     let fwd = vx * nx + vy * ny;
-    if (fwd < 0) fwd *= 0.35;
+    // Brakes don't roll a hull backward; only a recovery reverse does.
+    if (backing) fwd = Math.max(fwd, -d.maxSpd * BACKUP_SPEED);
+    else if (fwd < 0) fwd *= 0.35;
     vx = nx * fwd;
     vy = ny * fwd;
     const s = Math.hypot(vx, vy);
@@ -568,15 +582,9 @@ export class UnitSim {
     u.vy = vy;
     const trackX0 = u.x;
     const trackY0 = u.y;
-    stepOnTerrain(this.s.world, u, vx * dt, vy * dt, false);
+    stepOnTerrain(this.s.world, u, vx * dt, vy * dt, false, this.s.nav.onDeck);
     this.separateGround(u);
-    if (isWater(this.s.world, u.x, u.y)) {
-      const seek = terrainSteer(this.s.world, u.x, u.y, u.x, u.y, false, u.angle);
-      const sx = seek.x - u.x;
-      const sy = seek.y - u.y;
-      const sd = Math.hypot(sx, sy) || 1;
-      stepOnTerrain(this.s.world, u, (sx / sd) * 10, (sy / sd) * 10, false);
-    }
+    this.escapeDeepWater(u, 10);
     const step = Math.hypot(u.vx, u.vy) * dt;
     if (Math.hypot(u.vx, u.vy) > 6 && !isWater(this.s.world, u.x, u.y)) {
       const printGap = d.trackGap * 0.8;
@@ -639,9 +647,9 @@ export class UnitSim {
       stepOnTerrain(this.s.world, u, u.vx * dt, u.vy * dt, true);
       u.z = groundZ(this.s.world, u.x, u.y);
     } else if (isGroundVehicle(u.kind) || sp.behavior === "attack_infantry" || sp.behavior === "flee_infantry") {
-      stepOnTerrain(this.s.world, u, u.vx * dt, u.vy * dt, false);
+      stepOnTerrain(this.s.world, u, u.vx * dt, u.vy * dt, false, this.s.nav.onDeck);
       this.separateGround(u);
-      u.z = bedZ(this.s.world, u.x, u.y);
+      u.z = this.s.nav.surfaceZ(u.x, u.y);
     }
     containOnMap(u, dt);
     this.tickStunZapFx(u, dt);
@@ -772,6 +780,7 @@ export class UnitSim {
 
   updateUnits(dt: number): void {
     this.tickRoadkill();
+    this.s.nav.beginFrame();
     this.s.spatial.sync();
     const units = this.s.units;
     const lod = this.s.unitLod;
@@ -968,9 +977,15 @@ export class UnitSim {
           const away = Math.atan2(-dy, -dx);
           const ring = fleeing ? screenR : 250;
           const weave = fleeing ? 0.35 : 0.7;
-          const ox = h.x + Math.cos(away + Math.sin(u.orbit) * weave) * ring;
-          const oy = h.y + Math.sin(away + Math.sin(u.orbit) * weave) * ring;
-          const steered = this.steerGround(u, ox, oy);
+          let ox = h.x + Math.cos(away + Math.sin(u.orbit) * weave) * ring;
+          let oy = h.y + Math.sin(away + Math.sin(u.orbit) * weave) * ring;
+          if (fleeing) {
+            const f = this.s.nav.fleePoint(u, h.x, h.y, "land", dt);
+            ox = f.x;
+            oy = f.y;
+          }
+          const r = this.s.nav.route(u, ox, oy, "land", dt);
+          const steered = this.steerGround(u, r.x, r.y);
           const twx = steered.x - u.x;
           const twy = steered.y - u.y;
           const twd = Math.hypot(twx, twy);
@@ -996,15 +1011,9 @@ export class UnitSim {
           const step = (limp ? 22 : base) * gait * align * dt;
           u.vx = Math.cos(u.angle) * (step / Math.max(dt, 1e-6));
           u.vy = Math.sin(u.angle) * (step / Math.max(dt, 1e-6));
-          stepOnTerrain(this.s.world, u, Math.cos(u.angle) * step, Math.sin(u.angle) * step, false);
+          stepOnTerrain(this.s.world, u, Math.cos(u.angle) * step, Math.sin(u.angle) * step, false, this.s.nav.onDeck);
           this.separateGround(u);
-          if (isWater(this.s.world, u.x, u.y)) {
-            const seek = terrainSteer(this.s.world, u.x, u.y, u.x, u.y, false, u.angle);
-            const sx = seek.x - u.x;
-            const sy = seek.y - u.y;
-            const sd = Math.hypot(sx, sy) || 1;
-            stepOnTerrain(this.s.world, u, (sx / sd) * 8, (sy / sd) * 8, false);
-          }
+          this.escapeDeepWater(u, 8);
           if (limp) {
             u.track += step;
             if (u.track > 0) {
@@ -1033,7 +1042,7 @@ export class UnitSim {
       }
       this.leashPinned(u);
       // Boats ride the water surface; land units stand on the bed (wading shallows).
-      u.z = sp.water ? groundZ(this.s.world, u.x, u.y) : bedZ(this.s.world, u.x, u.y);
+      u.z = sp.water ? groundZ(this.s.world, u.x, u.y) : this.s.nav.surfaceZ(u.x, u.y);
     }
     containOnMap(u, dt);
     const guns = gunsOf(u);

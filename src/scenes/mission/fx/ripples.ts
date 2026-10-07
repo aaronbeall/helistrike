@@ -77,8 +77,8 @@ export class Ripples {
     this.spawn(x, y, size, strength, 2.1);
   }
 
-  /** Land unit moving through shallows: periodic splash spray + ripple. */
-  private wade(u: { x: number; y: number; z: number; vx: number; vy: number; kind: Parameters<typeof specOf>[0] }, dt: number): void {
+  /** Ground unit / remote moving through shallows: periodic splash spray + ripple (+ V wake for vehicles). */
+  private wade(u: { x: number; y: number; vx: number; vy: number }, r: number, vehicle: boolean, dt: number): void {
     const spd = Math.hypot(u.vx, u.vy);
     if (spd < WADE_MIN_SPEED || !isWater(this.s.world, u.x, u.y)) return;
     const t = (this.wakeT.get(u) ?? 0) + dt;
@@ -87,8 +87,25 @@ export class Ripples {
       return;
     }
     this.wakeT.set(u, 0);
-    const r = specOf(u.kind).radius;
     this.spawn(u.x, u.y, r * 1.8, 0.6, 1.2);
+    // Vehicles also leave a boat-style V wake (troops just splash).
+    if (vehicle) {
+      const sx = u.x - (u.vx / spd) * r * 0.8;
+      const sy = u.y - (u.vy / spd) * r * 0.8;
+      if (isWater(this.s.world, sx, sy)) {
+        this.push({
+          kind: "wake",
+          x: sx,
+          y: sy,
+          t: 0,
+          life: WAKE_LIFE * 0.75,
+          heading: Math.atan2(u.vy, u.vx),
+          spread: spd * Math.tan(WAKE_ARM),
+          len: r * 0.9,
+          strength: Math.min(0.85, 0.35 + spd / 100),
+        });
+      }
+    }
     this.s.fx.emitVisualBurst(
       u.x,
       u.y,
@@ -111,8 +128,9 @@ export class Ripples {
   update(dt: number): void {
     for (const u of this.s.units) {
       if (u.dead) continue;
-      if (!specOf(u.kind).water) {
-        this.wade(u, dt);
+      const sp = specOf(u.kind);
+      if (!sp.water) {
+        this.wade(u, sp.radius, !sp.organic && !sp.aerial, dt);
         continue;
       }
       const spd = Math.hypot(u.vx, u.vy);
@@ -138,6 +156,9 @@ export class Ripples {
         len: r * 0.9,
         strength: Math.min(1, 0.45 + spd / 90),
       });
+    }
+    for (const r of this.s.remotes) {
+      if (r.spec.ground && !r.airborne && !r.dock) this.wade(r, r.spec.radius, true, dt);
     }
     const k = RIPPLE_TEX / RIPPLE_SPAN;
     // Idle: nothing to draw and the buffer is already empty — skip the clear and the shader reads.

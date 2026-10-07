@@ -80,6 +80,27 @@ export const TEST_MAPS: TestMap[] = [
   { ...DESERT, id: "desert_stress", label: "Desert stress: cluster in a town, ~1,600 units map-wide", forces: TEST_CLUSTER_120, scatter: TEST_STRESS },
   { id: "river_run", label: "River Run, generated forces + settlements", mission: "river_run", seed: 4242, craft: "apache" },
   {
+    id: "coast_nav",
+    label: "Coastal Strike, generated forces + 100 ground units near spawn (navigation)",
+    mission: "coastal_strike",
+    seed: 4242,
+    craft: "apache",
+    scatter: [
+      {
+        distance: 420,
+        radius: 520,
+        units: [
+          { kind: "soldier", count: 40 },
+          { kind: "rpg", count: 10 },
+          { kind: "tank", count: 15 },
+          { kind: "truck", count: 15 },
+          { kind: "lav", count: 10 },
+          { kind: "pickup", count: 10 },
+        ],
+      },
+    ],
+  },
+  {
     id: "river_run_s0",
     label: "River Run, generated forces, no settlements",
     mission: "river_run",

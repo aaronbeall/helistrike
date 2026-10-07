@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { gateGroundRemoteWater, waterSteerWant } from "../../../sim/navigation";
+import { settleGroundMove, turnsInPlace } from "../../../sim/navigation";
 import { remoteAiStickAim } from "../../../sim/remoteRules";
 import { GUN_STATION_TURN_RATE } from "../weapons/fireControl";
 import { PLAYER_WPNS, type Unit } from "../../../sim/combat";
@@ -10,6 +10,8 @@ import { circumRadiusOf, closestOnFootprint, distToFootprint, footprintInto } fr
 import { craftAimsWithTurret, craftGunId, craftSocketBarrelCount, craftSocketFireCd } from "../../../sim/crafts";
 import type { MissionScene } from "../../missionScene";
 
+/** Heading-only moves (back off / strafe) route toward a point this far ahead. */
+const ROUTE_AHEAD = 120;
 /** Auto-launch skips the bay until a remote has at least this battery fraction. */
 const AUTO_LAUNCH_MIN_BATTERY = 0.25;
 
@@ -392,24 +394,24 @@ export class RemoteAi {
       }
     }
 
-    let want: number;
+    // Each branch picks a goal point (or none = hold); driving toward it is routed like every ground unit.
+    let goal: { x: number; y: number } | undefined;
     let throttle: number;
+    const ahead = (a: number) => ({ x: drone.x + Math.cos(a) * ROUTE_AHEAD, y: drone.y + Math.sin(a) * ROUTE_AHEAD });
     // Orbit a hostile while the reticle is still nearby; past the leash, return to the mouse.
     if (target && toMouse <= leashR) {
       const dist = Math.hypot(target.x - drone.x, target.y - drone.y);
       const away = Math.atan2(drone.y - target.y, drone.x - target.x);
       if (dist < strafeR * 0.75) {
-        want = away;
+        goal = ahead(away);
         throttle = 0.65;
       } else if (dist < strafeR * 1.35) {
-        want = away + Math.PI / 2;
+        goal = ahead(away + Math.PI / 2);
         throttle = 0.5;
       } else {
         drone.orbit = (drone.orbit ?? 0) + dt * 0.9;
         const lead = (drone.orbit ?? 0) + drone.id * 0.7;
-        const tx = target.x + Math.cos(lead) * strafeR;
-        const ty = target.y + Math.sin(lead) * strafeR;
-        want = Math.atan2(ty - drone.y, tx - drone.x);
+        goal = { x: target.x + Math.cos(lead) * strafeR, y: target.y + Math.sin(lead) * strafeR };
         throttle = 0.75;
       }
     } else {
@@ -419,9 +421,7 @@ export class RemoteAi {
       if (toMouse > stopR) {
         const ux = (drone.x - ptr.x) / toMouse;
         const uy = (drone.y - ptr.y) / toMouse;
-        const tx = ptr.x + ux * stopR;
-        const ty = ptr.y + uy * stopR;
-        want = Math.atan2(ty - drone.y, tx - drone.x);
+        goal = { x: ptr.x + ux * stopR, y: ptr.y + uy * stopR };
         const remain = toMouse - stopR;
         if (remain < coast) {
           const safeSpeed = (remain / coast) * spec.maxSpeed;
@@ -430,12 +430,12 @@ export class RemoteAi {
           throttle = toMouse < leashR ? 0.55 : 0.75;
         }
       } else {
-        want = drone.angle;
         throttle = spd > 12 ? -0.6 : 0;
       }
     }
-    if (throttle > 0) want = waterSteerWant(this.s.world, drone, want);
-    const { stick, aim } = remoteAiStickAim(drone, want, throttle);
+    let want = goal ? Math.atan2(goal.y - drone.y, goal.x - drone.x) : drone.angle;
+    if (goal && throttle > 0) want = this.routedWant(drone, goal.x, goal.y, dt);
+    const { stick, aim } = !turnsInPlace(drone) && this.s.nav.stuck(drone) ? backOut(drone, want) : remoteAiStickAim(drone, want, throttle);
     this.s.remoteFleet.driveRemoteCraft(drone, dt, stick, aim, {
       syncGun: false,
       gunAim,
@@ -585,6 +585,7 @@ export class RemoteAi {
       }
     }
 
+    if (state !== "PARKED") want = this.routedWant(drone, goalX, goalY, dt);
     this.driveGroundEscort(drone, dt, want, throttle, state, goalX, goalY, target ? { x: target.x, y: target.y } : undefined);
 
     if (spec.dockable && drone.life < 8 && this.s.remoteFleet.remoteNearHost(drone)) {
@@ -663,8 +664,15 @@ export class RemoteAi {
       }
       total += hit.depth;
     }
-    gateGroundRemoteWater(this.s.world, drone, x0, y0);
+    settleGroundMove(this.s.world, drone, x0, y0, this.s.nav.onDeck);
     return total;
+  }
+
+  /** Heading toward (tx, ty) along the shared ground route (wades shallows, uses bridges); jams detected by `s.nav`. */
+  private routedWant(drone: RemoteCraft, tx: number, ty: number, dt: number): number {
+    const r = this.s.nav.route(drone, tx, ty, "land", dt);
+    const p = this.s.nav.repel(drone, r.x, r.y, "land");
+    return Math.atan2(p.y - drone.y, p.x - drone.x);
   }
 
   /** Car-style ground drive: goal heading + avoidance probe + stuck→reverse recovery; writes nav debug state. */
@@ -692,12 +700,6 @@ export class RemoteAi {
       steer: 0,
       avoidT: 0,
       avoidOs: 0,
-      stuckT: 0,
-      sampleT: 0,
-      lastX: drone.x,
-      lastY: drone.y,
-      reverseT: 0,
-      reverseSteer: 0,
     });
     const r = drone.spec.radius;
     const ca = Math.cos(drone.angle);
@@ -712,43 +714,16 @@ export class RemoteAi {
     nav.probeX = drone.x + ca * (r + 22);
     nav.probeY = drone.y + sa * (r + 22);
 
-    nav.sampleT += dt;
-    if (nav.sampleT >= 0.25) {
-      const moved = Math.hypot(drone.x - nav.lastX, drone.y - nav.lastY);
-      if (moving && nav.reverseT <= 0 && moved < 5) nav.stuckT += nav.sampleT;
-      else nav.stuckT = Math.max(0, nav.stuckT - nav.sampleT);
-      nav.lastX = drone.x;
-      nav.lastY = drone.y;
-      nav.sampleT = 0;
-    }
-    if (nav.reverseT <= 0 && nav.stuckT >= 0.6) {
-      nav.stuckT = 0;
-      nav.reverseT = 0.9;
-      const ahead = this.groundObstacleAt(drone, drone.x + ca * (r + 6), drone.y + sa * (r + 6), r, 8);
-      if (ahead) {
-        const side = -(ahead.px - drone.x) * sa + (ahead.py - drone.y) * ca;
-        nav.reverseSteer = side >= 0 ? 1 : -1;
-      } else {
-        nav.reverseSteer = Phaser.Math.Angle.Wrap(want - drone.angle) >= 0 ? -1 : 1;
-      }
-    }
-
     let stick: { up: boolean; down: boolean; left: boolean; right: boolean };
     let aim: { x: number; y: number };
-    if (nav.reverseT > 0) {
-      nav.reverseT -= dt;
+    if (!turnsInPlace(drone) && this.s.nav.stuck(drone)) {
+      // Shared jam recovery; wheeled hulls back out (`want` points at the open cell the router picked).
       nav.state = "REVERSE";
       nav.steerWant = drone.angle;
       nav.throttle = -1;
-      ({ stick, aim } = remoteAiStickAim(drone, drone.angle, -1));
-      stick.left = nav.reverseSteer < 0;
-      stick.right = nav.reverseSteer > 0;
-      if (nav.reverseT <= 0) {
-        nav.avoidT = 0.5;
-        nav.avoidOs = nav.reverseSteer;
-      }
+      ({ stick, aim } = backOut(drone, want));
     } else {
-      let steerWant = moving ? waterSteerWant(this.s.world, drone, want) : want;
+      let steerWant = want;
       let thr = throttle;
       nav.state = state;
       if (moving || spd > 20) {
@@ -789,7 +764,16 @@ export class RemoteAi {
 
     this.s.remoteFleet.driveRemoteCraft(drone, dt, stick, aim, { syncGun: false, gunAim });
     const pen = this.resolveGroundRemote(drone);
-    if (pen > 0.5 && moving) nav.stuckT += dt;
+    if (pen > 0.5 && moving) this.s.nav.noteJam(drone, dt);
   }
 
+}
+
+/** Reverse with the rear swinging toward `toward` (car steering flips while rolling backward). */
+function backOut(drone: RemoteCraft, toward: number): ReturnType<typeof remoteAiStickAim> {
+  const out = remoteAiStickAim(drone, drone.angle, -1);
+  const err = Phaser.Math.Angle.Wrap(toward + Math.PI - drone.angle);
+  out.stick.left = err > 0.06;
+  out.stick.right = err < -0.06;
+  return out;
 }

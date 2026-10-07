@@ -132,6 +132,7 @@ export class Destruction {
     if (u.dead) return;
     u.dead = true;
     this.s.stats.kill(u);
+    this.s.nav.onUnitDead(u);
     for (const crew of this.s.units) {
       if (crew.dead || crew.pinId !== u.id) continue;
       // Crew go down with their host: same kill credit.
@@ -329,8 +330,8 @@ export class Destruction {
     }
     const guns = gunsOf(u);
     // Helis and drones: spinning hull falls then impacts — not on suicide/kamikaze pops.
-    // Ships sink (patrol boats, battleships); water buildings stay put.
-    if (sp.behavior === "patrol_boat" || (sp.water && !sp.building)) {
+    // Ships sink in deep water (patrol boats, battleships); in shallows they leave a surface wreck like anything else.
+    if ((sp.behavior === "patrol_boat" || (sp.water && !sp.building)) && isDeepWater(this.s.world, u.x, u.y)) {
       this.spawnBoatSink(u);
     } else if (((sp.behavior === "orbit_attack_heli" || sp.behavior === "kite_attack_heli") || sp.behavior === "suicide_attack_heli") && !skipAirCrash) {
       this.spawnHeliCrash({
@@ -354,21 +355,7 @@ export class Destruction {
       const throwRotors = sp.rotors.length > 0;
       const throwDish = !!sp.dish;
       if (throwGuns || throwRotors || throwDish) {
-        const hullKey = resolveSkin(this.s.textures, sp.hulk, u.camo);
-        const hp = spritePivot(hullKey);
-        const hs = wreckDrawScale(this.s.world, u.x, u.y, u.z, 1, isGroundVehicle(u.kind), u.angle);
-        this.s.groundMarks.stampWreck(
-          hullKey,
-          u.x,
-          u.y,
-          troopDrawAng(u) + Math.PI / 2,
-          hs.sx,
-          0.95,
-          hp.x,
-          hp.y,
-          hs.sy
-        );
-        this.s.groundMarks.addThermalWreckMark(hullKey, u.x, u.y, troopDrawAng(u) + Math.PI / 2, hs.sx, hs.sy, hp.x, hp.y, undefined, "hulk");
+        this.placeHullWreck(u, resolveSkin(this.s.textures, sp.hulk, u.camo), troopDrawAng(u) + Math.PI / 2);
         const throwOff = (key: string, ang: number, x: number, y: number, scale = 1, extra: Partial<Debris> = {}) =>
           this.throwPart(key, ang, x, y, u.z + 18, scale, extra);
         if (throwGuns) {
@@ -487,18 +474,7 @@ export class Destruction {
         const hulkKey = broken.length
           ? broken[(Math.random() * broken.length) | 0]!
           : resolveSkin(this.s.textures, hulkOf(u.kind), u.camo);
-        const hp = spritePivot(hulkKey);
-        const hs = wreckDrawScale(this.s.world, u.x, u.y, u.z, 1, isGroundVehicle(u.kind), u.angle);
-        const wreckRot = u.angle + Math.PI / 2 + (sp.wreckJitter ? range(-sp.wreckJitter, sp.wreckJitter) : 0);
-        if (sp.water && isWater(this.s.world, u.x, u.y)) {
-          // Roofed structures (bridge decks) leave their wreck up at the roof.
-          const wz = u.z + (sp.roof ? heightOf(u.kind) : 0);
-          this.s.groundMarks.addSurfaceWreck(this.s.textures.exists(hulkKey) ? hulkKey : "fx_hulk_crater", u.x, u.y, wz, wreckRot, hp.x, hp.y);
-        } else {
-          const key = this.s.textures.exists(hulkKey) ? hulkKey : "fx_hulk_crater";
-          this.s.groundMarks.stampWreck(key, u.x, u.y, wreckRot, hs.sx, 0.95, hp.x, hp.y, hs.sy);
-          if (!hasSoftBlood(u.kind)) this.s.groundMarks.addThermalWreckMark(key, u.x, u.y, wreckRot, hs.sx, hs.sy, hp.x, hp.y, undefined, "hulk");
-        }
+        this.placeHullWreck(u, hulkKey, u.angle + Math.PI / 2 + (sp.wreckJitter ? range(-sp.wreckJitter, sp.wreckJitter) : 0));
         if (hasSoftBlood(u.kind) && this.s.textures.exists("fx_dirt") && !isWater(this.s.world, u.x, u.y)) {
           const kdx = u.killDx ?? 0;
           const kdy = u.killDy ?? 0;
@@ -677,6 +653,23 @@ export class Destruction {
   /** Debris scale so a rotor hulk draws ~60% of the live rotor size. */
   rotorHulkScale(liveTex: string, hulkKey: string, partScale = 1): number {
     return (this.liveRotorDrawPx(liveTex, partScale) * 0.6) / Math.max(this.s.unitSprites.texSpan(hulkKey), 1);
+  }
+
+  /**
+   * A dead unit's hull wreck: water units over water float it on the surface (roofed decks keep it up at the roof);
+   * everything else stamps it into the ground (+ thermal mark).
+   */
+  placeHullWreck(u: Unit, key: string, rot: number): void {
+    const sp = specOf(u.kind);
+    const tex = this.s.textures.exists(key) ? key : "fx_hulk_crater";
+    const hp = spritePivot(key);
+    if (sp.water && isWater(this.s.world, u.x, u.y)) {
+      this.s.groundMarks.addSurfaceWreck(tex, u.x, u.y, u.z + (sp.roof ? heightOf(u.kind) : 0), rot, hp.x, hp.y);
+      return;
+    }
+    const hs = wreckDrawScale(this.s.world, u.x, u.y, u.z, 1, isGroundVehicle(u.kind), u.angle);
+    this.s.groundMarks.stampWreck(tex, u.x, u.y, rot, hs.sx, 0.95, hp.x, hp.y, hs.sy);
+    if (!hasSoftBlood(u.kind)) this.s.groundMarks.addThermalWreckMark(tex, u.x, u.y, rot, hs.sx, hs.sy, hp.x, hp.y, undefined, "hulk");
   }
 
   /** Hull sinks below the waterline; guns still pop off as normal debris. */

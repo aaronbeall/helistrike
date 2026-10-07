@@ -57,11 +57,11 @@ weapons/      fireControl · projectiles · lockOn · countermeasures · tesla �
 fx/           fx · trails · groundMarks · ripples · emitters (function: createFxEmitters)
 destruction/  destruction
 render/       hostCraft · unitSprites · thermalMode
-world/        powerLines · spatial
+world/        powerLines · spatial · nav
 camera/       camera
 flow/         missionFlow · missionStats
 hud/          weaponHud · statusHud · threatHud · reticleHud · minimap · cornerHud · runStatsHud · prompts · help · fieldBars
-debug/        menu · overlays · relief · sideView · perf · postFx · spatialOverlay
+debug/        menu · overlays · relief · sideView · perf · postFx · spatialOverlay · navOverlay
 ```
 
 Each module file starts its class with a one-line doc comment saying what it owns — read that first.
@@ -101,6 +101,7 @@ export class RemoteFleet {
 | Weapon behaviour while firing | `weapons/fireControl` (trigger, muzzles) or `weapons/projectiles` (flight, impact, blast) |
 | A new special weapon with its own state | new `weapons/<name>.ts` module |
 | Enemy movement / AI | `enemy/unitSim` (+ pure steering in `sim/navigation`) |
+| Where ground units / boats / autonomous ground remotes can go (terrain, water, cliffs, bridges) | `sim/navGrid` (walkable grid, regions, clearance, A*); routing, flee picks, jam detection + recovery, decks in `world/nav` (`s.nav.route(agent, x, y, layer, dt)`). One system for everything on the ground: callers only choose the target and layer (`land`: all ground units, wades shallows + walks decks; `water`: boats). While `s.nav.stuck(agent)`, `route` returns an open cell: wheeled hulls back out toward it, zero-point-turn hulls rotate to it |
 | Who enemies target | `enemy/targeting` (+ rules in `sim/targetRules`) |
 | Enemy line of sight (terrain occlusion) | `enemy/lineOfSight` |
 | Remote launch/dock/pilot | `remote/fleet`; autonomous behaviour `remote/ai`; visuals + guns `remote/body` |

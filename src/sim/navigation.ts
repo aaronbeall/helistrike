@@ -3,6 +3,7 @@ import { type Unit } from "./combat";
 import { specOf, isGroundVehicle, driveOf } from "./roster";
 import { bedZ, isWater, WORLD, type WorldData, isDeepWater } from "../worldgen/world";
 import { MAP_AIR_SOFT } from "./craft";
+import { craftOf } from "./crafts";
 import { type RemoteCraft } from "./remote";
 
 /**
@@ -30,101 +31,6 @@ export function steerUnitAngle(angle: number, want: number, rate: number, dt: nu
   // ~10°/tick hard cap — turns always take multiple frames, never axis snaps.
   const maxStep = Math.min(Math.abs(rate) * stepDt, 0.18);
   return Phaser.Math.Angle.RotateTo(angle, want, maxStep);
-}
-
-/**
- * Bias a chase point toward dry land (`preferWater=false`) or open water (`true`).
- * Samples look-ahead along want / facing and a local ring so units turn before crossing.
- */
-export function terrainSteer(world: WorldData, 
-  x: number,
-  y: number,
-  wantX: number,
-  wantY: number,
-  preferWater: boolean,
-  facing?: number
-): { x: number; y: number } {
-  let wx = wantX;
-  let wy = wantY;
-  // Land units: water and cliffs ahead are both bad (cliff = steep average grade over the probe's last stretch).
-  const ok = (px: number, py: number) => {
-    if (preferWater) return isWater(world, px, py);
-    if (isWater(world, px, py)) return false;
-    const bx = x + (px - x) * 0.7;
-    const by = y + (py - y) * 0.7;
-    return Math.abs(groundGrade(world, bx, by, px, py)) < CLIFF_GRADE * 0.85;
-  };
-  const bad = (px: number, py: number) => !ok(px, py);
-
-  const hx = wantX - x;
-  const hy = wantY - y;
-  const hd = Math.hypot(hx, hy) || 1;
-  const dirs: { nx: number; ny: number }[] = [{ nx: hx / hd, ny: hy / hd }];
-  if (facing != null) dirs.push({ nx: Math.cos(facing), ny: Math.sin(facing) });
-
-  for (const { nx, ny } of dirs) {
-    for (const dist of [28, 52, 84, 120]) {
-      if (!bad(x + nx * dist, y + ny * dist)) continue;
-      const strength = Phaser.Math.Clamp(1.25 - dist / 150, 0.4, 1.15);
-      wx -= nx * 62 * strength;
-      wy -= ny * 62 * strength;
-      const leftOk = ok(x - ny * 44, y + nx * 44);
-      const rightOk = ok(x + ny * 44, y - nx * 44);
-      if (leftOk && !rightOk) {
-        wx += -ny * 78 * strength;
-        wy += nx * 78 * strength;
-      } else if (rightOk && !leftOk) {
-        wx += ny * 78 * strength;
-        wy += -nx * 78 * strength;
-      } else {
-        wx += -ny * 48 * strength;
-        wy += nx * 48 * strength;
-      }
-      break;
-    }
-  }
-
-  if (bad(x, y)) {
-    let gx = 0;
-    let gy = 0;
-    for (let i = 0; i < 12; i++) {
-      const a = (i / 12) * Math.PI * 2;
-      if (ok(x + Math.cos(a) * 52, y + Math.sin(a) * 52)) {
-        gx += Math.cos(a);
-        gy += Math.sin(a);
-      }
-    }
-    const gd = Math.hypot(gx, gy);
-    if (gd > 0.2) {
-      wx += (gx / gd) * 140;
-      wy += (gy / gd) * 140;
-    }
-  } else {
-    // Soft shore margin: ease away before the look-ahead hits.
-    let bx = 0;
-    let by = 0;
-    for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2;
-      if (bad(x + Math.cos(a) * 40, y + Math.sin(a) * 40)) {
-        bx -= Math.cos(a);
-        by -= Math.sin(a);
-      }
-    }
-    const bd = Math.hypot(bx, by);
-    if (bd > 0.2) {
-      wx += (bx / bd) * 58;
-      wy += (by / bd) * 58;
-    }
-  }
-  return { x: wx, y: wy };
-}
-
-/** Bend an autonomous ground remote's heading away from water ahead (shared enemy look-ahead). */
-export function waterSteerWant(world: WorldData, drone: RemoteCraft, want: number): number {
-  const tx = drone.x + Math.cos(want) * 120;
-  const ty = drone.y + Math.sin(want) * 120;
-  const p = terrainSteer(world, drone.x, drone.y, tx, ty, false, drone.angle);
-  return Math.atan2(p.y - drone.y, p.x - drone.x);
 }
 
 /** 0 at inland → 1 deep in the map rim. */
@@ -223,27 +129,6 @@ export function containOnMap(u: Unit, dt: number): void {
   }
 }
 
-/** Wet samples over the hull footprint (center + ring), heading-independent. */
-export function groundRemoteWetness(world: WorldData, drone: RemoteCraft, x: number, y: number): number {
-  const r = drone.spec.radius * 0.75;
-  let n = isWater(world, x, y) ? 1 : 0;
-  for (let k = 0; k < 8; k++) {
-    const a = (k / 8) * Math.PI * 2;
-    if (isWater(world, x + Math.cos(a) * r, y + Math.sin(a) * r)) n++;
-  }
-  return n;
-}
-
-/** Revert a ground remote's move that would put it (further) over water. */
-export function gateGroundRemoteWater(world: WorldData, drone: RemoteCraft, x0: number, y0: number): void {
-  if (!drone.spec.ground || drone.airborne) return;
-  if (!groundRemoteEntersWater(world, drone, x0, y0, drone.x, drone.y)) return;
-  drone.x = x0;
-  drone.y = y0;
-  drone.vx = 0;
-  drone.vy = 0;
-}
-
 export function pickBoatWaypoint(world: WorldData, u: Unit): void {
   const lo = MAP_EDGE_PAD + 80;
   const hi = WORLD - MAP_EDGE_PAD - 80;
@@ -284,12 +169,39 @@ export function pickBoatWaypoint(world: WorldData, u: Unit): void {
   u.aiTy = Phaser.Math.Clamp(u.y + Math.sin(u.angle) * 80, lo, hi);
 }
 
+/** Anything moved by `stepOnTerrain`: a unit, a ground remote, a remote's pilot craft. */
+export interface GroundMover {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+}
+
 /**
- * Step on preferred terrain only; slide on axes or brake if blocked. Land units wade shallows (not depths), slow
- * down climbing, and can't cross cliffs (up or down).
+ * The one ground-step rule for every ground hull: wade shallows, never into deep water (bridge decks excepted), never
+ * a cliff-steep step up or down (on / off a deck excepted). Stranded in deep water, any move is allowed (way out).
  */
-export function stepOnTerrain(world: WorldData, u: Unit, dx: number, dy: number, preferWater: boolean): void {
-  if (!preferWater) {
+export function groundStepOk(world: WorldData, x0: number, y0: number, x1: number, y1: number, onDeck?: (x: number, y: number) => boolean): boolean {
+  if (onDeck?.(x1, y1)) return true;
+  if (isDeepWater(world, x1, y1)) return isDeepWater(world, x0, y0) && !onDeck?.(x0, y0);
+  if (onDeck?.(x0, y0)) return true;
+  return Math.abs(groundGrade(world, x0, y0, x1, y1)) < CLIFF_GRADE;
+}
+
+/**
+ * Step on preferred terrain only; slide on axes or brake if blocked. Ground: `groundStepOk`, plus slowing on climbs.
+ * Boats (`preferWater`): water only.
+ */
+export function stepOnTerrain(
+  world: WorldData,
+  u: GroundMover,
+  dx: number,
+  dy: number,
+  preferWater: boolean,
+  onDeck?: (x: number, y: number) => boolean
+): void {
+  const fromDeck = !preferWater && !!onDeck?.(u.x, u.y);
+  if (!preferWater && !fromDeck) {
     const g = groundGrade(world, u.x, u.y, u.x + dx, u.y + dy);
     if (g > 0) {
       const k = 1 - (1 - UPHILL_MIN_SPEED) * Math.min(1, g / CLIFF_GRADE);
@@ -297,10 +209,7 @@ export function stepOnTerrain(world: WorldData, u: Unit, dx: number, dy: number,
       dy *= k;
     }
   }
-  const ok = (px: number, py: number) =>
-    preferWater
-      ? isWater(world, px, py)
-      : !isDeepWater(world, px, py) && Math.abs(groundGrade(world, u.x, u.y, px, py)) < CLIFF_GRADE;
+  const ok = (px: number, py: number) => (preferWater ? isWater(world, px, py) : groundStepOk(world, u.x, u.y, px, py, onDeck));
   const nx = u.x + dx;
   const ny = u.y + dy;
   if (ok(nx, ny)) {
@@ -335,10 +244,18 @@ export function mapEdgeSteer(x: number, y: number, wantX: number, wantY: number)
   };
 }
 
-/** True when a ground move leaves more of the hull over water (only drying moves allowed once wet). */
-export function groundRemoteEntersWater(world: WorldData, drone: RemoteCraft, x0: number, y0: number, x1: number, y1: number): boolean {
-  if (Math.abs(x1 - x0) < 1e-4 && Math.abs(y1 - y0) < 1e-4) return false;
-  const wet1 = groundRemoteWetness(world, drone, x1, y1);
-  if (wet1 === 0) return false;
-  return wet1 >= groundRemoteWetness(world, drone, x0, y0);
+/** A ground hull already integrated from (x0, y0) by its own physics: replay the move through `stepOnTerrain`. */
+export function settleGroundMove(world: WorldData, m: GroundMover, x0: number, y0: number, onDeck?: (x: number, y: number) => boolean): void {
+  const dx = m.x - x0;
+  const dy = m.y - y0;
+  if (Math.abs(dx) < 1e-4 && Math.abs(dy) < 1e-4) return;
+  m.x = x0;
+  m.y = y0;
+  stepOnTerrain(world, m, dx, dy, false, onDeck);
+}
+
+/** Zero-point turn (tracks, infantry, walker / hover remotes) vs car steering that needs rolling speed: rotate vs back out of a jam. */
+export function turnsInPlace(a: Unit | RemoteCraft): boolean {
+  if ("spec" in a) return !craftOf(a.spec.craftLook).vehicleSteering;
+  return !isGroundVehicle(a.kind) || driveOf(a.kind).track === "tread";
 }

@@ -1,3 +1,4 @@
+import type { UnitNav } from "./navGrid";
 /** Launched craft pods — Spectre, airship wingmen/fighter, HOUND AGV.
  *
  * Remotes are their own roster (`REMOTES` → `remoteSpecOf`).
@@ -216,13 +217,6 @@ export interface EscortNav {
   /** Seconds left holding an away-turn after a probe hit, and its side (+1 obstacle on the right). */
   avoidT: number;
   avoidOs: number;
-  /** Accumulated no-progress time, progress sampler, and the active unstick reverse. */
-  stuckT: number;
-  sampleT: number;
-  lastX: number;
-  lastY: number;
-  reverseT: number;
-  reverseSteer: number;
 }
 
 export interface RemoteCraft {
@@ -291,6 +285,8 @@ export interface RemoteCraft {
   aimHoldTargetId?: number;
   /** Ground-escort movement state: avoidance, unstick, and debug readout. */
   nav?: EscortNav;
+  /** Grid route toward the autopilot goal, owned by `world/nav`. */
+  route?: UnitNav;
   /**
    * Skiff attack-pass FSM: `run` lines up fixed guns and fires;
    * `break` coasts outbound past the target, then turns for another pass.
