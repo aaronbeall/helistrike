@@ -12,8 +12,10 @@ const NEUTRAL_MARK = 0x9a9890;
 const PYLON_DOT_R = 1;
 /** Smallest blip radius (px) so small units still read. */
 const MIN_BLIP_R = 1.25;
-/** Units (not buildings) mark at this multiple of their radius so they read at radar scale. */
-const UNIT_BLIP_SCALE = 2;
+/** Unit (not building) blip radius (px) = K × √(world radius): small hulls stay visible, big ones don't balloon. */
+const UNIT_BLIP_K = 0.6;
+/** Smallest unit blip radius (px). */
+const MIN_UNIT_BLIP_R = 2;
 /** HV target arrows (px): gap past the blip, length, half-width. */
 const HV_ARROW_GAP = 2;
 const HV_ARROW_LEN = 6.5;
@@ -118,7 +120,7 @@ export class Minimap {
   private blip(u: Unit, mx: number, my: number, s: number): void {
     const g = this.gfx;
     if (u.kind === "pylon") return fillCircleFast(g, mx, my, PYLON_DOT_R);
-    if (!specOf(u.kind).building) return fillCircleFast(g, mx, my, unitBlipR(u, s));
+    if (!specOf(u.kind).building) return fillCircleFast(g, mx, my, unitBlipR(u));
     const fp = footprintInto(u);
     if (fp.shape === "circle") return fillCircleFast(g, mx, my, Math.max(MIN_BLIP_R, fp.r * s));
     const hl = Math.max(MIN_BLIP_R, fp.halfL * s);
@@ -138,8 +140,8 @@ export class Minimap {
     const g = this.gfx;
     const fp = footprintInto(u);
     const building = !!specOf(u.kind).building;
-    const rx = (building ? Math.max(MIN_BLIP_R, footprintHalfX(fp) * s) : unitBlipR(u, s)) + HV_ARROW_GAP;
-    const ry = (building ? Math.max(MIN_BLIP_R, footprintHalfY(fp) * s) : unitBlipR(u, s)) + HV_ARROW_GAP;
+    const rx = (building ? Math.max(MIN_BLIP_R, footprintHalfX(fp) * s) : unitBlipR(u)) + HV_ARROW_GAP;
+    const ry = (building ? Math.max(MIN_BLIP_R, footprintHalfY(fp) * s) : unitBlipR(u)) + HV_ARROW_GAP;
     // Outline pass (grown arrow), then the fill.
     for (const e of ARROW_PASSES) {
       g.fillStyle(e ? HV_ARROW_EDGE_RGB : HV_ARROW_RGB, e ? 0.9 : 1);
@@ -155,6 +157,6 @@ export class Minimap {
   }
 }
 
-function unitBlipR(u: Unit, s: number): number {
-  return Math.max(MIN_BLIP_R, radius(u.kind) * UNIT_BLIP_SCALE * s);
+function unitBlipR(u: Unit): number {
+  return Math.max(MIN_UNIT_BLIP_R, UNIT_BLIP_K * Math.sqrt(radius(u.kind)));
 }
