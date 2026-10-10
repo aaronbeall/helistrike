@@ -8,7 +8,7 @@ Shared instructions for AI coding agents (Codex, Cursor, Claude Code, …). For 
 npm run dev               # Vite dev server
 npx tsc --noEmit -p .     # type check (run after every change; must be clean)
 npm run build             # tsc + production build
-npm run bench             # perf scenarios in Chrome via Playwright, real input (--compare <json>, --profile, --runs N, --record "<label>")
+npm run bench             # perf scenarios in Chrome via Playwright, real input (--compare <json>, --profile, --runs N, --record "<label>"); results → docs/perf-runs/ (commit them)
 npm run bench:history     # perf trend per scenario from docs/perf-history.csv; see docs/perf-plan-2026-10.md
 npm run spatial:check     # headless fuzz of the spatial grid vs brute force
 ```

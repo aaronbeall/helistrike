@@ -17,9 +17,10 @@ npm run bench:history -- gun_cluster,tesla_cluster     # trend per scenario
 
 **Keeping results over time:**
 - **`docs/perf-history.csv` (committed):** one row per scenario per milestone: date, commit, label, harness, runs, frames, CPU avg/p99, render, scene, unit AI, interval p99, garbage. Record a row after each perf change with `--runs 3 --record "<label>"`. The rows from before the real-input runner are marked `fixed-step` and aren't directly comparable with `real-input` rows.
-- **`docs/perf-runs-2026-10/` (committed):** raw runs behind the milestones so far.
+- **`docs/perf-runs/` (committed):** every unprofiled run's result JSON (`<date>-<sha>[-dirty][-xN].json`, plus `-runs.json` with each run). `-dirty` = measured with uncommitted changes. Commit them with the change they measure.
+- **`docs/perf-runs-2026-10/` (committed):** raw runs behind the first milestones.
 - **`docs/perf-baseline-2026-10.json`:** the current comparison baseline for `--compare`. Refresh it with `--runs 3 --out` when the code moves on.
-- **`bench-results/` (local, git-ignored):** every run and `.cpuprofile`. Large, so not committed.
+- **`bench-results/` (local, git-ignored):** profiled runs, `.cpuprofile`s and the HTML report. Large or derived, so not committed.
 
 - **Game side** (dev builds only):
   - `?test=<id>` launches a test map from `src/catalog/testMaps.ts`; `?mission=…&craft=…&seed=…&settlement=…` launches any mission.
@@ -31,7 +32,7 @@ npm run bench:history -- gun_cluster,tesla_cluster     # trend per scenario
   - **Launch:** Chrome at 1280×720 and 2× pixel ratio, throttling off; starts the dev server if needed.
   - **Input:** per scenario, boots the test map, presses `P` (perf stage timings on), holds Space to lift off, presses the weapon key, then re-aims the real mouse at the nearest enemies every 100 ms and holds or releases fire on the schedule.
   - **Probe:** an injected script wraps Phaser's game-loop callback from outside and records CPU per frame, the real frame interval, the perf stages, heap, long tasks and object counts.
-  - **Output:** saves to `bench-results/` (git-ignored). `--compare` prints the change against a saved run; `--profile` adds a CPU profile and allocation sample (it skews timings).
+  - **Output:** results to `docs/perf-runs/` (committed), profiles to `bench-results/` (git-ignored). `--compare` prints the change against a saved run; `--profile` adds a CPU profile and allocation sample (it skews timings).
 - **No determinism:** real input runs in real time, so take medians over several runs.
 - **Debug overlay:** the perf overlay is a DOM element (`ui/domText`), so it doesn't add canvas or texture work to the measurement.
 

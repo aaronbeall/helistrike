@@ -77,3 +77,18 @@ date,commit,label,harness,runs,scenario,frames,cpu_avg,cpu_p99,render_avg,scene_
 2026-10-06,ee21dad,far-unit LOD + visible-only sprite pool,real-input,3,gun_stress,685,10.02,15.6,4.04,5.98,1.72,25.2,376.88
 2026-10-06,ee21dad,far-unit LOD + visible-only sprite pool,real-input,3,rockets_stress,644,10.43,17.2,4.7,5.64,1.43,50.1,357.35
 2026-10-06,ee21dad,far-unit LOD + visible-only sprite pool,real-input,3,mission_idle,1208,1.51,4.4,0.63,0.88,0.27,10.2,54.62
+2026-10-10,7874f2a-dirty,baseline: grid nav + review perf fixes,real-input,3,idle_empty,1208,0.76,1.2,0.39,0.37,0.04,9.3,28.9
+2026-10-10,7874f2a-dirty,baseline: grid nav + review perf fixes,real-input,3,gun_empty,1210,1.22,2.4,0.65,0.57,0.04,9.3,53.95
+2026-10-10,7874f2a-dirty,baseline: grid nav + review perf fixes,real-input,3,rockets_empty,1203,3.36,4.2,2.59,0.77,0.04,10.3,256.63
+2026-10-10,7874f2a-dirty,baseline: grid nav + review perf fixes,real-input,3,idle_cluster,1208,4.23,6.1,2.04,2.18,0.92,10.1,256.56
+2026-10-10,7874f2a-dirty,baseline: grid nav + review perf fixes,real-input,3,gun_cluster,849,7.6,12.3,4.14,3.45,1,25.6,233.59
+2026-10-10,7874f2a-dirty,baseline: grid nav + review perf fixes,real-input,3,rockets_cluster,590,8.22,14,5.06,3.15,0.6,74.9,171.6
+2026-10-10,7874f2a-dirty,baseline: grid nav + review perf fixes,real-input,3,starscream_cluster,373,17.2,23.8,9.66,7.54,1.43,66.5,192.02
+2026-10-10,7874f2a-dirty,baseline: grid nav + review perf fixes,real-input,3,tesla_cluster,783,10.54,18,5.37,5.17,1.86,26.6,194.86
+2026-10-10,7874f2a-dirty,baseline: grid nav + review perf fixes,real-input,3,tow_cluster,524,14.08,20.4,7.6,6.48,1.77,41.7,161.73
+2026-10-10,7874f2a-dirty,baseline: grid nav + review perf fixes,real-input,3,idle_stress,786,11.3,19,4.26,7.04,2.63,25,358.35
+2026-10-10,7874f2a-dirty,baseline: grid nav + review perf fixes,real-input,3,gun_stress,499,12.64,21.4,4.99,7.64,2.37,42.4,243.46
+2026-10-10,7874f2a-dirty,baseline: grid nav + review perf fixes,real-input,3,rockets_stress,490,11.94,22.6,5.38,6.56,1.75,75.2,248.06
+2026-10-10,7874f2a-dirty,baseline: grid nav + review perf fixes,real-input,3,mission_idle,1208,1.09,1.8,0.39,0.7,0.2,10.1,58.83
+2026-10-10,7874f2a-dirty,baseline: grid nav + review perf fixes,real-input,3,mission_idle_s0,1208,1.02,1.7,0.37,0.65,0.19,10.2,49.39
+2026-10-10,7874f2a-dirty,baseline: grid nav + review perf fixes,real-input,3,idle_coast,665,14.5,26.3,2.2,12.31,7.73,26.3,152.37

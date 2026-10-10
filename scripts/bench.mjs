@@ -9,6 +9,8 @@
  *   npm run bench -- idle_empty --profile      CPU profile + allocation sample per scenario (timings skewed)
  *   npm run bench -- --runs 3 --record "what changed"   median of 3 suite runs, appended to docs/perf-history.csv
  *
+ * Results are saved to docs/perf-runs/ (committed); CPU profiles to bench-results/ (git-ignored).
+ *
  * Options: --compare <file>, --profile, --runs <n>, --record <label>, --out <file>, --url <base>
  * (default http://localhost:5174), --keep-open.
  * Starts the Vite dev server when nothing answers at --url. Game side: dev URL launch (?test=…&cheats=…) and the
@@ -36,6 +38,8 @@ const profile = flag("profile");
 const runs = Math.max(1, Number(opt("runs") ?? 1) | 0);
 const record = opt("record");
 const HISTORY = path.join(root, "docs/perf-history.csv");
+/** Committed result JSONs (profiled runs stay in bench-results/: skewed timings). */
+const RUNS_DIR = path.join(root, "docs/perf-runs");
 const HISTORY_COLS = ["date", "commit", "label", "harness", "runs", "scenario", "frames", "cpu_avg", "cpu_p99", "render_avg", "scene_avg", "unit_ai_avg", "interval_p99", "alloc_mbps"];
 /** Chrome flags: keep the frame loop running at full rate when the window isn't focused. */
 const CHROME_ARGS = [
@@ -191,13 +195,17 @@ async function ensureServer() {
   throw new Error(`dev server did not start at ${base}`);
 }
 
+/** HEAD short sha, `-dirty` when tracked files have uncommitted changes (read once, before results are written). */
 function gitSha() {
   try {
-    return execSync("git rev-parse --short HEAD", { cwd: root }).toString().trim();
+    const sha = execSync("git rev-parse --short HEAD", { cwd: root }).toString().trim();
+    const dirty = execSync("git status --porcelain --untracked-files=no", { cwd: root }).toString().trim();
+    return dirty ? `${sha}-dirty` : sha;
   } catch {
     return "nogit";
   }
 }
+const SHA = gitSha();
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -311,7 +319,7 @@ function recordHistory(results, label) {
   if (!fs.existsSync(HISTORY)) fs.writeFileSync(HISTORY, HISTORY_COLS.join(",") + "\n");
   const date = new Date().toISOString().slice(0, 10);
   const rows = results.map((r) =>
-    [date, gitSha(), label, "real-input", runs, r.id, r.frames, r.cpu.avg, r.cpu.p99, r.render.avg, r.stages.scene.avg, r.stages["unit sim"].avg, r.interval.p99, r.heap?.allocMBps ?? ""]
+    [date, SHA, label, "real-input", runs, r.id, r.frames, r.cpu.avg, r.cpu.p99, r.render.avg, r.stages.scene.avg, r.stages["unit sim"].avg, r.interval.p99, r.heap?.allocMBps ?? ""]
       .map(csv)
       .join(",")
   );
@@ -376,7 +384,8 @@ try {
   const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
   const outDir = path.join(root, "bench-results");
   fs.mkdirSync(outDir, { recursive: true });
-  const profileDir = path.join(outDir, `${stamp}-${gitSha()}-profiles`);
+  fs.mkdirSync(RUNS_DIR, { recursive: true });
+  const profileDir = path.join(outDir, `${stamp}-${SHA}-profiles`);
   if (profile) fs.mkdirSync(profileDir, { recursive: true });
   const cdp = profile ? await context.newCDPSession(page) : undefined;
 
@@ -414,7 +423,7 @@ try {
     allRuns.push(results);
   }
   const results = medianReports(allRuns);
-  const out = opt("out") ?? path.join(outDir, `${stamp}-${gitSha()}${profile ? "-profiled" : ""}${runs > 1 ? `-x${runs}` : ""}.json`);
+  const out = opt("out") ?? path.join(profile ? outDir : RUNS_DIR, `${stamp}-${SHA}${profile ? "-profiled" : ""}${runs > 1 ? `-x${runs}` : ""}.json`);
   fs.writeFileSync(out, JSON.stringify(results, null, 1));
   if (runs > 1) fs.writeFileSync(out.replace(/\.json$/, "-runs.json"), JSON.stringify(allRuns, null, 1));
   printSummary(results);

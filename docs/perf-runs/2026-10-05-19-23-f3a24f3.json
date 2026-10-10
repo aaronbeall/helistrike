@@ -1,0 +1,155 @@
+[
+ {
+  "id": "idle_empty",
+  "label": "Idle, no units",
+  "frames": 1200,
+  "cpu": {
+   "avg": 2.06,
+   "p50": 1.7,
+   "p95": 3.9,
+   "p99": 4.2,
+   "max": 4.5
+  },
+  "interval": {
+   "avg": 8.33,
+   "p50": 8.3,
+   "p95": 9,
+   "p99": 9.3,
+   "max": 9.4
+  },
+  "render": {
+   "avg": 1.36,
+   "p50": 1.1,
+   "p95": 2.5,
+   "p99": 2.7,
+   "max": 3.3
+  },
+  "stages": {
+   "scene": {
+    "avg": 0.7,
+    "p50": 0.6,
+    "p95": 1.4,
+    "p99": 1.5,
+    "max": 2.4
+   },
+   "player": {
+    "avg": 0.15,
+    "p50": 0.1,
+    "p95": 0.3,
+    "p99": 0.3,
+    "max": 1.1
+   },
+   "unit sim": {
+    "avg": 0,
+    "p50": 0,
+    "p95": 0,
+    "p99": 0.1,
+    "max": 0.1
+   },
+   "unit draw": {
+    "avg": 0,
+    "p50": 0,
+    "p95": 0,
+    "p99": 0.1,
+    "max": 0.1
+   },
+   "shot sim": {
+    "avg": 0,
+    "p50": 0,
+    "p95": 0,
+    "p99": 0.1,
+    "max": 0.1
+   },
+   "shot draw": {
+    "avg": 0,
+    "p50": 0,
+    "p95": 0,
+    "p99": 0.1,
+    "max": 0.1
+   },
+   "debris sim": {
+    "avg": 0,
+    "p50": 0,
+    "p95": 0,
+    "p99": 0.1,
+    "max": 0.1
+   },
+   "debris draw": {
+    "avg": 0,
+    "p50": 0,
+    "p95": 0,
+    "p99": 0.1,
+    "max": 0.1
+   },
+   "sim particle sim": {
+    "avg": 0,
+    "p50": 0,
+    "p95": 0,
+    "p99": 0.1,
+    "max": 0.1
+   },
+   "sim particle draw": {
+    "avg": 0,
+    "p50": 0,
+    "p95": 0,
+    "p99": 0,
+    "max": 0.1
+   },
+   "target/fx": {
+    "avg": 0.1,
+    "p50": 0.1,
+    "p95": 0.2,
+    "p99": 0.3,
+    "max": 0.8
+   },
+   "scene other": {
+    "avg": 0.44,
+    "p50": 0.4,
+    "p95": 0.9,
+    "p99": 1.1,
+    "max": 1.3
+   }
+  },
+  "cpuOver": {
+   "ms16": 0,
+   "ms33": 0,
+   "ms50": 0
+  },
+  "intervalOver": {
+   "ms33": 0,
+   "ms50": 0
+  },
+  "longTasks": {
+   "count": 0,
+   "totalMs": 0,
+   "maxMs": 0
+  },
+  "heap": {
+   "allocMBps": 101.97,
+   "gcCount": 84,
+   "freedMB": 2442.52
+  },
+  "counts": {
+   "units": {
+    "avg": 0,
+    "max": 0
+   },
+   "liveUnits": {
+    "avg": 0,
+    "max": 0
+   },
+   "shots": {
+    "avg": 0,
+    "max": 0
+   },
+   "debris": {
+    "avg": 0,
+    "max": 0
+   },
+   "particles": {
+    "avg": 0,
+    "max": 0
+   }
+  }
+ }
+]
