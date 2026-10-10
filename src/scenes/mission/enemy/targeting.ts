@@ -1,6 +1,7 @@
 import Phaser from "phaser";
-import { remoteTargetable, unitIsAaEnemy } from "../../../sim/targetRules";
+import { remoteTargetable, unitIsAaEnemy, unitSightBase, weaponReach, type TargetDomain } from "../../../sim/targetRules";
 import { radius, type Shot, type Unit } from "../../../sim/combat";
+import { specOf, type WeaponSpec } from "../../../sim/roster";
 import { remoteHasPovHud, type RemoteCraft } from "../../../sim/remote";
 import { smokeCoverAt, smokeVisionMul } from "../../../sim/weaponRuntime";
 import { Craft, LOW_AGL } from "../../../sim/craft";
@@ -97,6 +98,36 @@ export class EnemyTargeting {
     return rem === this.combatFocusRemote() ? mul : mul * AUTONOMOUS_AWARE_MUL;
   }
 
+  /** Where a remote is: submerged ground hulls are underwater, other ground hulls ground, the rest air. */
+  remoteDomain(r: RemoteCraft): TargetDomain {
+    if (!r.spec.ground) return "air";
+    return this.s.nav.submerged(r.x, r.y) ? "underwater" : "ground";
+  }
+
+  /** Domain of a target craft (the host always flies). */
+  domainOf(c: Craft): TargetDomain {
+    const rem = this.remoteOfCraft(c);
+    return rem ? this.remoteDomain(rem) : "air";
+  }
+
+  /** Submerged remotes are invisible to everything without sonar. */
+  sees(u: Unit, r: RemoteCraft): boolean {
+    return !!specOf(u.kind).sonar || this.remoteDomain(r) !== "underwater";
+  }
+
+  /**
+   * How well `u` sees target craft `c` (0 = not at all): max sight range scaled for the target, terrain line of sight,
+   * then smoke. Cloak blinds everyone to the host; sonar picks up submerged hulls through the water (no terrain LOS).
+   */
+  visionOf(u: Unit, c: Craft): number {
+    if (this.s.countermeasures.cloakT > 0 && c === this.s.player) return 0;
+    const reach = this.enemyScaledReach(unitSightBase(u), 1, c);
+    const sonar = this.domainOf(c) === "underwater";
+    if (sonar && !specOf(u.kind).sonar) return 0;
+    if (sonar ? Math.hypot(c.x - u.x, c.y - u.y) > reach : !this.s.lineOfSight.sees(u, c, reach)) return 0;
+    return this.enemySmokeVision(u, c);
+  }
+
   /** Score-pick the craft a unit engages; lower score wins, player-controlled heavily favored. */
   pickEnemyTarget(u: Unit, aaUnit: boolean): RemoteCraft | undefined {
     const focusRem = this.combatFocusRemote();
@@ -108,7 +139,7 @@ export class EnemyTargeting {
       bestScore = focusRem ? d * HOST_WHILE_PILOTING_SCORE_MUL : d;
     }
     for (const r of this.s.remotes) {
-      if (!remoteTargetable(r)) continue;
+      if (!remoteTargetable(r) || !this.sees(u, r)) continue;
       if (aaUnit && r.spec.ground) continue;
       const d = Math.hypot(r.x - u.x, r.y - u.y);
       let score: number;
@@ -124,26 +155,48 @@ export class EnemyTargeting {
         best = r;
       }
     }
-    if (!best && !hostOk && focusRem && !(aaUnit && focusRem.spec.ground)) return focusRem;
+    if (!best && !hostOk && focusRem && !(aaUnit && focusRem.spec.ground) && this.sees(u, focusRem)) return focusRem;
     return best;
   }
 
   /**
-   * Craft an enemy weapon engages: AA / seekers are blind to a dirt-locked combat focus
-   * (HOUND) and take the host bird; everything else takes the combat focus.
+   * What one weapon of `u` engages: the unit's focus when the weapon reaches its domain, else the host (air weapons),
+   * else the nearest submerged remote it can see (torpedoes); undefined = nothing this weapon can hit.
    */
-  enemyTargetFor(aa: boolean, focus: Craft = this.combatFocus()): Craft {
-    return aa && focus !== this.s.player && this.remoteOfCraft(focus)?.spec.ground ? this.s.player : focus;
+  targetForWeapon(u: Unit, wpn: WeaponSpec, focus: Craft): Craft | undefined {
+    const reach = weaponReach(wpn);
+    if (reach.includes(this.domainOf(focus))) return focus;
+    if (reach.includes("air") && this.s.countermeasures.cloakT <= 0) return this.s.player;
+    if (!reach.includes("underwater")) return undefined;
+    let best: RemoteCraft | undefined;
+    let bestD = wpn.range;
+    for (const r of this.s.remotes) {
+      if (!remoteTargetable(r) || this.remoteDomain(r) !== "underwater" || !this.sees(u, r)) continue;
+      const d = Math.hypot(r.x - u.x, r.y - u.y);
+      if (d < bestD) {
+        bestD = d;
+        best = r;
+      }
+    }
+    return best ? this.remoteTargetCraft(best) : undefined;
   }
 
-  /** Craft an enemy seeker homes on — its launch remote while live (never dirt-locked), else the host. */
-  enemySeekerTarget(s: Shot): Craft {
-    if (s.homeRemoteId == null) return this.s.player;
-    const r = this.s.remotes.find((r) => r.id === s.homeRemoteId);
-    const c = r && !r.spec.ground && remoteTargetable(r) ? this.remoteTargetCraft(r) : undefined;
-    if (c) return c;
-    s.homeRemoteId = undefined;
-    return this.s.player;
+  /** A shot can strike this remote: torpedoes only submerged ones; others never submerged ones (seekers not dirt-locked). */
+  shotReaches(s: Shot, r: RemoteCraft): boolean {
+    const d = this.remoteDomain(r);
+    if (s.torpedo) return d === "underwater";
+    return d !== "underwater" && !(s.homePlayer && d === "ground");
+  }
+
+  /** What an enemy seeker homes on: its launch remote while it can still reach it, else the host (torpedoes: nothing). */
+  enemySeekerTarget(s: Shot): Craft | undefined {
+    if (s.homeRemoteId != null) {
+      const r = this.s.remotes.find((r) => r.id === s.homeRemoteId);
+      const c = r && remoteTargetable(r) && this.shotReaches(s, r) ? this.remoteTargetCraft(r) : undefined;
+      if (c) return c;
+      s.homeRemoteId = undefined;
+    }
+    return s.torpedo ? undefined : this.s.player;
   }
 
   /**
@@ -158,7 +211,7 @@ export class EnemyTargeting {
     }
     if (u.tgtRemoteId == null) return this.s.player;
     const rem = this.s.remotes.find((r) => r.id === u.tgtRemoteId);
-    const craft = rem && remoteTargetable(rem) ? this.remoteTargetCraft(rem) : undefined;
+    const craft = rem && remoteTargetable(rem) && this.sees(u, rem) ? this.remoteTargetCraft(rem) : undefined;
     if (craft) return craft;
     u.tgtRemoteId = undefined;
     u.tgtNextT = undefined;

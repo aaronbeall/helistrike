@@ -287,6 +287,11 @@ export interface RemoteCraft {
   nav?: EscortNav;
   /** Grid route toward the autopilot goal, owned by `world/nav`. */
   route?: UnitNav;
+  /** Destroyed by drowning: sinks quietly instead of detonating. */
+  drowned?: boolean;
+  /** Autopilot status for the HUD ("FOLLOWING", "ATTACKING", …) and what it follows (the reticle or the host). */
+  aiStatus?: string;
+  aiAnchor?: "mouse" | "host";
   /**
    * Skiff attack-pass FSM: `run` lines up fixed guns and fires;
    * `break` coasts outbound past the target, then turns for another pass.

@@ -306,6 +306,22 @@ export function shallowTint(theme: ThemeSpec, t: number): number {
   return (ch(c[0]) << 16) | (ch(c[1]) << 8) | ch(c[2]);
 }
 
+/** Water depth (z) at which a submerged hull reaches its full tint. */
+const UNDERWATER_TINT_DEPTH = 36;
+/** Most a submerged hull is tinted toward the water colour (it stays readable). */
+const UNDERWATER_TINT_MAX = 0.8;
+/** Tint the moment a hull goes under, so the change reads immediately. */
+const UNDERWATER_TINT_MIN = 0.15;
+
+/** Multiply tint for a hull under `depth` (z) of water: white → the theme's water colour, deeper = more. */
+export function underwaterTint(theme: ThemeSpec, depth: number): number {
+  if (depth <= 0) return 0xffffff;
+  const t = UNDERWATER_TINT_MIN + (UNDERWATER_TINT_MAX - UNDERWATER_TINT_MIN) * Math.min(1, depth / UNDERWATER_TINT_DEPTH);
+  const c = waterColor(theme);
+  const ch = (v: number) => Math.round(255 + (Math.min(255, v) - 255) * t);
+  return (ch(c[0]) << 16) | (ch(c[1]) << 8) | ch(c[2]);
+}
+
 /** Look color at t (extrapolates, like the original per-biome ramps). */
 export function lookColor(l: BiomeLook, t: number, ch: 0 | 1 | 2): number {
   return l.lo[ch] + (l.hi[ch] - l.lo[ch]) * t;

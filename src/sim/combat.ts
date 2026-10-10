@@ -586,6 +586,8 @@ export interface Unit {
   paintT?: number;
   /** HUD paint arc: painting the host (vs the piloted combat-focus remote). */
   paintHost?: boolean;
+  /** Lock is from an underwater weapon (sonar warning). */
+  paintTorpedo?: boolean;
   killDx?: number;
   killDy?: number;
   /** Killing-shot vz (same frame as killDx/Dy). */
@@ -902,6 +904,8 @@ export interface Shot {
   homePlayer?: boolean;
   /** Enemy seeker fired at a remote (id); undefined = homes on the host craft. */
   homeRemoteId?: number;
+  /** Torpedo: runs underwater (mid-depth), dies at the shore, only strikes submerged hulls, bubble trail. */
+  torpedo?: boolean;
   /** HUD lock arc: distance to the target when the arc first showed (arc narrows by closure). */
   lockD0?: number;
   motor?: number;

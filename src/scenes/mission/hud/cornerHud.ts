@@ -32,9 +32,12 @@ export class CornerHud {
   /** Top-left flight readout: ALT / ELV / SPD / time scale, phase, weapon + hover target. */
   syncReadoutHud(): void {
     const h = this.s.player;
-    const w = this.s.loadout[h.weapon]!;
-    const ammo = this.s.fireControl.ammo[h.weapon]!;
-    const ammoShown = this.s.remoteFleet.remotePoolDisplayAmmo(h.weapon, ammo);
+    // Flight numbers and weapon from the POV being flown (host or piloted remote).
+    const pov = this.s.camera.dominantSubject();
+    const fc = this.s.fireControl;
+    const slot = fc.hudWeapon();
+    const w = fc.hudLoadout()[slot]!;
+    const ammoShown = this.s.remoteFleet.povHudRemote() ? fc.hudAmmo()[slot]! : this.s.remoteFleet.remotePoolDisplayAmmo(slot, fc.ammo[slot]!);
     const ammoS =
       this.s.debugMenu.infAmmo && Number.isFinite(ammoShown)
         ? "∞"
@@ -50,15 +53,15 @@ export class CornerHud {
           ? "READY"
           : h.phase === "dead"
             ? "DOWN"
-            : this.s.remoteFleet.remoteView && this.s.remoteFleet.activeRemote()
-              ? "SPECTRE POV"
+            : pov.remote
+              ? `${pov.hull.name.toUpperCase()} POV`
               : "AIRBORNE";
     const ptr = this.s.worldPointer();
     const elv = groundZ(this.s.world, ptr.x, ptr.y) | 0;
     const over = this.s.fireControl.reticleUnit();
     const overLine = over ? `\n${unitHudName(this.s.world, over)}` : "";
     this.hud.setText(
-      `ALT ${castZ(this.s.world, h.x, h.y, h.z) | 0}   ELV ${elv}   SPD ${Math.hypot(h.vx, h.vy) | 0}   TIME ${this.s.liveSimScale.toFixed(2)}×\n${phase}\nWPN ${w.name}  ${ammoS}${overLine}`
+      `ALT ${castZ(this.s.world, pov.x, pov.y, pov.z) | 0}   ELV ${elv}   SPD ${Math.hypot(pov.vx, pov.vy) | 0}   TIME ${this.s.liveSimScale.toFixed(2)}×\n${phase}\nWPN ${w.name}  ${ammoS}${overLine}`
     );
   }
 

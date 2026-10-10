@@ -1,6 +1,6 @@
 import { steerUnitAngle } from "../../../sim/navigation";
 import { enemyMuzzle, enemyShellEjectSide, gunMountPos } from "../../../render/spritePose";
-import { enemyWeaponIsAa } from "../../../sim/targetRules";
+import { enemyWeaponIsAa, weaponUnderwater } from "../../../sim/targetRules";
 import Phaser from "phaser";
 import { enemyShotBeh, AI_LOCK_BASE, AI_AIM_NARROW_BASE, AI_AIM_WIDE_MUL, advanceAimHold, aimNarrowTime, aimPrecisionSpread, clampAimToStationArc, holdProgress, lockAcquireTime } from "../../../sim/weaponRuntime";
 import { heightOf, type Unit } from "../../../sim/combat";
@@ -56,7 +56,7 @@ export class EnemyFire {
     let holdMax = 0;
     let flashUsed = false;
     let engagedTgt: Craft | undefined;
-    const trackRate = 1.65 * aimMul * Math.max(0.12, vision);
+
     u.debugLockT = undefined;
     u.debugAimT = undefined;
     u.debugAimSpreadRad = undefined;
@@ -69,7 +69,17 @@ export class EnemyFire {
         (states[gi] = { cd: Math.random() * wpn.fireCd, burst: 0, lockT: 0, holdT: 0, tip: 0 });
       st.cd -= dt;
       const aa = enemyWeaponIsAa(wpn);
-      const tgt = this.s.targeting.enemyTargetFor(aa, focus);
+      const tgt = this.s.targeting.targetForWeapon(u, wpn, focus);
+      if (!tgt) {
+        // Nothing this weapon can reach (e.g. a torpedo with no submerged target).
+        st.lockT = 0;
+        st.burst = 0;
+        st.holdT = advanceAimHold(st.holdT, dt, false);
+        continue;
+      }
+      // Each turret sees its own target (it may not be the unit's focus).
+      const tv = tgt === focus ? vision : this.s.targeting.visionOf(u, tgt);
+      const trackRate = 1.65 * aimMul * Math.max(0.12, tv);
       const gp = gunMountPos(this.s.textures, u, gi);
       const dist = Math.hypot(tgt.x - gp.x, tgt.y - gp.y);
       const trav = guns[gi]!.traverse;
@@ -77,17 +87,17 @@ export class EnemyFire {
       if (trav) u.turrets[gi] = clampAimToStationArc(u.turrets[gi] ?? u.angle, u.angle, trav);
       const want = Math.atan2(tgt.y - gp.y, tgt.x - gp.x);
       // Slew slightly past fire range so the barrel is on target as it enters.
-      if (vision > 0 && dist < wpn.range * vision * 1.15) {
+      if (tv > 0 && dist < wpn.range * tv * 1.15) {
         // Out-of-arc targets park the barrel at the arc edge; the facing check then blocks fire.
         const slewTo = trav ? clampAimToStationArc(want, u.angle, trav) : want;
         u.turrets[gi] = steerUnitAngle(u.turrets[gi] ?? 0, slewTo, trackRate, dt);
         if (trav) u.turrets[gi] = clampAimToStationArc(u.turrets[gi]!, u.angle, trav);
       }
       const inRange =
-        dist < wpn.range * vision && dist > 40 && tgt.phase === "flight" && tgt.z - u.z < elevCeilFor(aa);
+        dist < wpn.range * tv && dist > 40 && tgt.phase === "flight" && tgt.z - u.z < elevCeilFor(aa);
       const barrelAng = u.turrets[gi] ?? u.turret;
       const facingOk = Math.abs(Phaser.Math.Angle.Wrap(want - barrelAng)) < 0.16;
-      const engaging = !holdFire && vision > 0 && inRange;
+      const engaging = !holdFire && tv > 0 && inRange;
       if (engaging && !engagedTgt) engagedTgt = tgt;
       st.holdT = advanceAimHold(st.holdT, dt, engaging);
       const seeker = wpn.kind === "lock-on-missile";
@@ -101,6 +111,7 @@ export class EnemyFire {
           if (p >= (u.paintT ?? -1) && this.s.targeting.hudThreatTarget(tgt)) {
             u.paintT = p;
             u.paintHost = tgt === this.s.player;
+            u.paintTorpedo = weaponUnderwater(wpn);
           }
         }
       } else if (engaging && gi === 0) {
@@ -217,6 +228,7 @@ export class EnemyFire {
       look: wpn.look,
       homePlayer: home,
       homeRemoteId: home ? this.s.targeting.remoteOfCraft(aimTgt)?.id : undefined,
+      torpedo: weaponUnderwater(wpn) || undefined,
       motor: home ? -0.06 : undefined,
       cruise: home ? wpn.speed : undefined,
       scale: wpn.scale,

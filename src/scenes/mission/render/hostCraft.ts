@@ -70,7 +70,8 @@ export class HostCraft {
     z: number,
     tex: string,
     rot: number,
-    scale = 1,
+    /** Uniform, or per texture axis. */
+    scale: number | { readonly x: number; readonly y: number } = 1,
     raycastInterval = 1,
     cacheOwner?: object,
     /** When set, use this screen rotation (keeps shadow locked to body drawRot). */
@@ -136,7 +137,10 @@ export class HostCraft {
           : projectHeading(rot, resolved.x, resolved.y, resolved.z)
       )
       .setAlpha(shadowAlpha(cast) * (1 - 0.2 * wet))
-      .setScale(scale * at.scale * (1 + 0.1 * wet));
+      .setScale(
+        (typeof scale === "number" ? scale : scale.x) * at.scale * (1 + 0.1 * wet),
+        (typeof scale === "number" ? scale : scale.y) * at.scale * (1 + 0.1 * wet)
+      );
     const depth = worldDepth(resolved.z, -12, resolved.y);
     if (sh.depth !== depth) sh.setDepth(depth);
   }
@@ -902,9 +906,10 @@ export class HostCraft {
     }
   }
 
+  /** Impact shock ring: dirt on land, the mist splash on water. */
   emitDustShock(x: number, y: number, power = 1): void {
-    if (isWater(this.s.world, x, y)) return;
-    this.shockRing(x, y, power, false);
+    if (isWater(this.s.world, x, y)) this.emitMistShock(x, y, power);
+    else this.shockRing(x, y, power, false);
   }
 
   /** Water death splash: the dust shock ring in white mist, plus mist puffs thrown outward. */

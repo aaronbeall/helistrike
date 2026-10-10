@@ -1,5 +1,6 @@
 import Phaser from "phaser";
-import { heightOf, radius } from "../../../sim/combat";
+import { heightOf } from "../../../sim/combat";
+import { footprintHalfX, footprintInto } from "../../../render/footprint";
 import { Layer } from "../../../render/depth";
 import { specOf } from "../../../sim/roster";
 import { groundZ, worldToScreen, cameraPointVisible, screenToWorldOnGround } from "../../../worldgen/world";
@@ -108,7 +109,7 @@ export class SideView {
     };
     for (const u of this.s.units) {
       if (u.dead) continue;
-      add(u.x, u.y, u.z, heightOf(u.kind), radius(u.kind), specOf(u.kind).building ? 0x8a8470 : 0xff4a2a);
+      add(u.x, u.y, u.z, heightOf(u.kind), footprintHalfX(footprintInto(u)), specOf(u.kind).building ? 0x8a8470 : 0xff4a2a);
     }
     for (const r of this.s.remotes) {
       if (r.detonate) continue;

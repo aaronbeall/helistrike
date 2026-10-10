@@ -156,7 +156,7 @@ export class MissionFlow {
     // Ease from current look / focus altitude (e.g. gunship AGL), never snap 2.5D scale.
     this.stingerCamFromX = this.s.camera.lookCamX;
     this.stingerCamFromY = this.s.camera.lookCamY;
-    this.stingerCamFromZ = this.s.camera.playerCamAnchor().z;
+    this.stingerCamFromZ = this.s.camera.camAnchor().z;
     this.stingerFocusZ = this.stingerCamFromZ;
     const kids: Phaser.GameObjects.GameObject[] = [];
     if (style === "dramatic") {

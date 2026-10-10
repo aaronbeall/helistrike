@@ -1,9 +1,10 @@
-import { circumRadiusOf, footprintInto, pointInFootprint } from "../../../render/footprint";
+import { footprintInto, pointInFootprint } from "../../../render/footprint";
 import { heightOf, type Unit } from "../../../sim/combat";
-import { NAV_CELL, NAV_N, NavGrid, type NavAgent, type NavLayer, type UnitNav } from "../../../sim/navGrid";
+import type { RemoteCraft } from "../../../sim/remote";
+import { NAV_CELL, NAV_N, NavGrid, navMode, WATER_MODE, type NavAgent, type NavMode, type UnitNav } from "../../../sim/navGrid";
 import { specOf } from "../../../sim/roster";
-import { bedZ } from "../../../worldgen/world";
-import { pickBoatWaypoint } from "../../../sim/navigation";
+import { bedZ, isDeepWater } from "../../../worldgen/world";
+import { groundHull, onGroundHull, pickBoatWaypoint } from "../../../sim/navigation";
 import type { MissionScene } from "../../missionScene";
 
 /** A* searches allowed per frame (the rest go direct until a later frame). */
@@ -31,6 +32,9 @@ const FLEE_HOLD = 2.2;
 /** Clearance at or below this pushes the steer target off shores / cliff lips. */
 const REPEL_CLEAR = 1;
 const REPEL_PUSH = 60;
+/** Deck footprint pad (world) for standing on it, and the stamping sample step (≤ pad, so no touched cell is missed). */
+const DECK_PAD = 2;
+const DECK_SAMPLE = 2;
 
 /** Unit navigation: the walkable grid, routes to targets (direct when clear, capped A* when not), flee picks, stuck recovery, bridge decks. */
 export class Nav {
@@ -72,12 +76,16 @@ export class Nav {
     if (i >= 0) this.grid.clearDeck(i);
   }
 
-  /** Live deck under this point (exact footprint), or undefined. */
+  /** Live deck under this point (exact footprint; the highest where segments overlap), or undefined. */
   deckAt(x: number, y: number): Unit | undefined {
-    const di = this.grid?.deck[this.grid.cellAt(x, y)] ?? -1;
-    if (di < 0) return undefined;
-    const d = this.s.units[di];
-    return d && !d.dead && pointInFootprint(x, y, footprintInto(d, 2, 1)) ? d : undefined;
+    if (!this.grid) return undefined;
+    let best: Unit | undefined;
+    for (const di of this.grid.decksAt(this.grid.cellAt(x, y))) {
+      const d = this.s.units[di];
+      if (!d || d.dead || !pointInFootprint(x, y, footprintInto(d, DECK_PAD, 1))) continue;
+      if (!best || d.z + heightOf(d.kind) > best.z + heightOf(best.kind)) best = d;
+    }
+    return best;
   }
 
   /** Ground unit standing height: deck top on a bridge, else the bed. */
@@ -88,19 +96,35 @@ export class Nav {
 
   readonly onDeck = (x: number, y: number): boolean => this.deckAt(x, y) != null;
 
+  /** Ground hull in deep water it can't survive (not underwater-capable, not on a deck): it drowns. Boats never do. */
+  drowns(a: Unit | RemoteCraft): boolean {
+    return onGroundHull(a) && !groundHull(a).underwater && this.submerged(a.x, a.y);
+  }
+
+  /** Under deep water (not on a deck): where underwater hulls drive, can't fire, and leave no surface splash. */
+  submerged(x: number, y: number): boolean {
+    return isDeepWater(this.s.world, x, y) && !this.onDeck(x, y);
+  }
+
+  /** Routing mode for a ground unit / ground remote: its hull's climb grade, seabed if it drives underwater. */
+  modeOf(u: Unit | RemoteCraft): NavMode {
+    const h = groundHull(u);
+    return navMode(h.underwater ? "seabed" : "land", h.maxGrade);
+  }
+
   /** Recovering from a jam while being routed (drivers pick the manoeuvre: see `turnsInPlace`). */
   stuck(u: NavAgent): boolean {
     const nav = u.route;
     return !!nav && nav.stuckT > 0 && nav.frame >= this.frame - 1;
   }
 
-  /** Way out for an agent standing where its layer can't be (ground unit in deep water, boat aground), or undefined. */
-  escapePoint(u: NavAgent, layer: NavLayer): { x: number; y: number } | undefined {
+  /** Way out for an agent standing where its layer can't be (a boat aground), or undefined. */
+  escapePoint(u: NavAgent, mode: NavMode): { x: number; y: number } | undefined {
     const g = this.grid;
     if (!g) return undefined;
     const c = g.cellAt(u.x, u.y);
-    if (g.passable(layer, c)) return undefined;
-    const e = g.nearestPassable(layer, c, ESCAPE_CELLS);
+    if (g.passable(mode, c)) return undefined;
+    const e = g.nearestPassable(mode, c, ESCAPE_CELLS);
     if (e < 0) return undefined;
     this.out.x = g.centerX(e);
     this.out.y = g.centerY(e);
@@ -112,7 +136,7 @@ export class Nav {
    * cached route; the target is first pulled into the unit's own connected region (nearest reachable cell, else the
    * reachable end of the approach).
    */
-  route(u: NavAgent, tx: number, ty: number, layer: NavLayer, dt: number): { x: number; y: number } {
+  route(u: NavAgent, tx: number, ty: number, mode: NavMode, dt: number): { x: number; y: number } {
     const g = this.grid;
     const o = this.out;
     o.x = tx;
@@ -121,22 +145,22 @@ export class Nav {
     const nav = (u.route ??= newNav(u));
     nav.frame = this.frame;
     const uc = g.cellAt(u.x, u.y);
-    const region = g.region(layer, uc);
+    const region = g.region(mode, uc);
     if (region < 0) return o;
     let goal = g.cellAt(tx, ty);
-    if (g.region(layer, goal) !== region) {
-      const near = g.nearestInRegion(layer, region, goal, CLAMP_CELLS);
-      goal = near >= 0 ? near : g.nearestAlong(layer, region, uc, goal);
+    if (g.region(mode, goal) !== region) {
+      const near = g.nearestInRegion(mode, region, goal, CLAMP_CELLS);
+      goal = near >= 0 ? near : g.nearestAlong(mode, region, uc, goal);
       o.x = g.centerX(goal);
       o.y = g.centerY(goal);
     }
     this.trackStuck(u, nav, dt, Math.hypot(o.x - u.x, o.y - u.y) < ARRIVE_DIST);
-    if (nav.stuckT > 0) return this.unstick(u, uc, layer);
+    if (nav.stuckT > 0) return this.unstick(u, uc, mode);
     nav.repathT -= dt;
     nav.checkT -= dt;
     if (nav.checkT <= 0) {
       nav.checkT = CHECK_EVERY * (0.8 + Math.random() * 0.4);
-      nav.direct = g.lineClear(layer, u.x, u.y, o.x, o.y);
+      nav.direct = g.lineClear(mode, u.x, u.y, o.x, o.y);
     }
     if (nav.direct || goal === uc) {
       nav.path.length = 0;
@@ -145,7 +169,7 @@ export class Nav {
     const drift = cellDist(goal, nav.goal);
     if ((!nav.path.length || nav.repathT <= 0 || drift > GOAL_DRIFT) && this.searchesLeft > 0) {
       this.searchesLeft--;
-      g.findPath(layer, uc, goal, nav.path);
+      g.findPath(mode, uc, goal, nav.path);
       nav.pi = 0;
       nav.goal = goal;
       nav.repathT = REPATH_EVERY * (0.8 + Math.random() * 0.4);
@@ -157,7 +181,7 @@ export class Nav {
     if (nav.pi < path.length - 1 && nav.checkT >= CHECK_EVERY * 0.75) {
       const nx = g.centerX(path[nav.pi + 1]!);
       const ny = g.centerY(path[nav.pi + 1]!);
-      if (g.lineClear(layer, u.x, u.y, nx, ny)) nav.pi++;
+      if (g.lineClear(mode, u.x, u.y, nx, ny)) nav.pi++;
     }
     const c = path[Math.min(nav.pi, path.length - 1)]!;
     if (c === goal) return o;
@@ -167,7 +191,7 @@ export class Nav {
   }
 
   /** Flee point: reachable, open ground roughly away from (fx, fy), held for a few seconds. */
-  fleePoint(u: NavAgent, fx: number, fy: number, layer: NavLayer, dt: number): { x: number; y: number } {
+  fleePoint(u: NavAgent, fx: number, fy: number, mode: NavMode, dt: number): { x: number; y: number } {
     const g = this.grid;
     const nav = (u.route ??= newNav(u));
     nav.fleeT -= dt;
@@ -185,15 +209,15 @@ export class Nav {
     let bx = u.x + Math.cos(away) * FLEE_DIST;
     let by = u.y + Math.sin(away) * FLEE_DIST;
     if (g) {
-      const region = g.region(layer, g.cellAt(u.x, u.y));
+      const region = g.region(mode, g.cellAt(u.x, u.y));
       let best = -Infinity;
       for (let k = 0; k < 9; k++) {
         const a = away + (k / 8 - 0.5) * 2 * FLEE_SPREAD;
         const px = u.x + Math.cos(a) * FLEE_DIST;
         const py = u.y + Math.sin(a) * FLEE_DIST;
         const c = g.cellAt(px, py);
-        if (g.region(layer, c) !== region) continue;
-        const score = g.clearAt(layer, c) * 40 + Math.cos(a - away) * 120 + Math.hypot(px - fx, py - fy) * 0.15;
+        if (g.region(mode, c) !== region) continue;
+        const score = g.clearAt(mode, c) * 40 + Math.cos(a - away) * 120 + Math.hypot(px - fx, py - fy) * 0.15;
         if (score > best) {
           best = score;
           bx = px;
@@ -213,13 +237,13 @@ export class Nav {
   pickWaterWaypoint(u: Unit): void {
     const g = this.grid;
     if (g) {
-      const region = g.region("water", g.cellAt(u.x, u.y));
+      const region = g.region(WATER_MODE, g.cellAt(u.x, u.y));
       if (region >= 0) {
         for (let i = 0; i < 16; i++) {
           const a = Math.random() * Math.PI * 2;
           const d = 180 + Math.random() * 520;
           const c = g.cellAt(u.x + Math.cos(a) * d, u.y + Math.sin(a) * d);
-          if (g.region("water", c) !== region || g.clearAt("water", c) < 2) continue;
+          if (g.region(WATER_MODE, c) !== region || g.clearAt(WATER_MODE, c) < 2) continue;
           u.aiTx = g.centerX(c);
           u.aiTy = g.centerY(c);
           return;
@@ -230,18 +254,18 @@ export class Nav {
   }
 
   /** Steer push off low-clearance cells (shores, cliff lips, map rim), along the clearance gradient. */
-  repel(u: NavAgent, wx: number, wy: number, layer: NavLayer): { x: number; y: number } {
+  repel(u: NavAgent, wx: number, wy: number, mode: NavMode): { x: number; y: number } {
     const g = this.grid;
     const o = this.out;
     o.x = wx;
     o.y = wy;
     if (!g) return o;
     const c = g.cellAt(u.x, u.y);
-    if (g.clearAt(layer, c) > REPEL_CLEAR) return o;
+    if (g.clearAt(mode, c) > REPEL_CLEAR) return o;
     const n = g.n;
     const cx = c % n;
     const cy = (c / n) | 0;
-    const at = (x: number, y: number) => (x < 0 || y < 0 || x >= n || y >= n ? 0 : g.clearAt(layer, y * n + x));
+    const at = (x: number, y: number) => (x < 0 || y < 0 || x >= n || y >= n ? 0 : g.clearAt(mode, y * n + x));
     const gx = at(cx + 1, cy) - at(cx - 1, cy);
     const gy = at(cx, cy + 1) - at(cx, cy - 1);
     const gl = Math.hypot(gx, gy);
@@ -286,7 +310,7 @@ export class Nav {
   }
 
   /** Recovery target: the most open neighbouring cell. */
-  private unstick(u: NavAgent, uc: number, layer: NavLayer): { x: number; y: number } {
+  private unstick(u: NavAgent, uc: number, mode: NavMode): { x: number; y: number } {
     const g = this.grid;
     const n = g.n;
     const cx = uc % n;
@@ -300,10 +324,10 @@ export class Nav {
         const y = cy + oy;
         if (x < 0 || y < 0 || x >= n || y >= n) continue;
         const j = y * n + x;
-        if (!g.passable(layer, j)) continue;
+        if (!g.passable(mode, j)) continue;
         // Prefer open cells behind the hull (backing out of the jam).
         const behind = -(ox * Math.cos(u.angle) + oy * Math.sin(u.angle));
-        const score = g.clearAt(layer, j) * 2 + behind * 0.6;
+        const score = g.clearAt(mode, j) * 2 + behind * 0.6;
         if (score > bestScore) {
           bestScore = score;
           best = j;
@@ -343,17 +367,31 @@ function cellDist(a: number, b: number): number {
 
 /** Nav cells under a deck's footprint (points over its bounding circle, kept when inside the footprint). */
 function deckCells(g: NavGrid, u: Unit): number[] {
-  const fp = footprintInto(u, 0, 1);
-  const r = circumRadiusOf(u.kind);
-  const step = NAV_CELL * 0.35;
+  // Same padded footprint `deckAt` tests, sampled finer than any sliver it could put in a cell.
+  const fp = footprintInto(u, DECK_PAD, 1);
   const out: number[] = [];
-  for (let oy = -r; oy <= r; oy += step) {
-    for (let ox = -r; ox <= r; ox += step) {
-      const x = u.x + ox;
-      const y = u.y + oy;
-      if (!pointInFootprint(x, y, fp)) continue;
-      const c = g.cellAt(x, y);
-      if (!out.includes(c)) out.push(c);
+  const add = (x: number, y: number) => {
+    const c = g.cellAt(x, y);
+    if (!out.includes(c)) out.push(c);
+  };
+  if (fp.shape === "circle") {
+    const step = DECK_SAMPLE;
+    for (let oy = -fp.r; oy <= fp.r; oy += step) {
+      for (let ox = -fp.r; ox <= fp.r; ox += step) if (ox * ox + oy * oy <= fp.r * fp.r) add(u.x + ox, u.y + oy);
+    }
+    return out;
+  }
+  // Rect: sample along / across in its own frame, both edges included.
+  const c = Math.cos(fp.angle);
+  const s = Math.sin(fp.angle);
+  const step = DECK_SAMPLE;
+  const nl = Math.ceil((fp.halfL * 2) / step);
+  const nw = Math.ceil((fp.halfW * 2) / step);
+  for (let i = 0; i <= nl; i++) {
+    const a = -fp.halfL + (i / nl) * fp.halfL * 2;
+    for (let j = 0; j <= nw; j++) {
+      const w = -fp.halfW + (j / nw) * fp.halfW * 2;
+      add(u.x + a * c - w * s, u.y + a * s + w * c);
     }
   }
   return out;

@@ -49,21 +49,35 @@ export class ThreatHud {
    */
   sync(): void {
     const show = this.s.player.phase === "flight" && !this.s.camera.mapView && !this.s.over;
-    const painted = show && this.s.units.some((u) => !u.dead && u.paintT != null);
-    const missileInbound =
-      show &&
-      this.s.shots.some(
-        (s) => !s.deadfall && s.from === "enemy" && s.homePlayer && this.s.targeting.hudThreatTarget(this.s.targeting.enemySeekerTarget(s))
-      );
-    this.paintTxt.setVisible(painted && !missileInbound);
-    if (painted && !missileInbound) {
-      const blink = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(this.s.time.now * 0.006));
-      this.paintTxt.setAlpha(blink);
+    let radarPaint = false;
+    let sonarPaint = false;
+    let missileInbound = false;
+    let torpedoInbound = false;
+    if (show) {
+      for (const u of this.s.units) {
+        if (u.dead || u.paintT == null) continue;
+        if (u.paintTorpedo) sonarPaint = true;
+        else radarPaint = true;
+      }
+      for (const shot of this.s.shots) {
+        if (shot.deadfall || shot.from !== "enemy" || !shot.homePlayer || shot.seekDisabled) continue;
+        const target = this.s.targeting.enemySeekerTarget(shot);
+        if (!target || !this.s.targeting.hudThreatTarget(target)) continue;
+        if (shot.torpedo) torpedoInbound = true;
+        else missileInbound = true;
+      }
     }
-    this.missileTxt.setVisible(missileInbound);
-    if (missileInbound) {
+    const painted = radarPaint || sonarPaint;
+    const inbound = missileInbound || torpedoInbound;
+    this.paintTxt.setVisible(painted && !inbound);
+    if (painted && !inbound) {
+      const blink = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(this.s.time.now * 0.006));
+      this.paintTxt.setText(sonarPaint ? radarPaint ? "◆ RADAR / SONAR PAINT" : "◆ SONAR PAINT" : "◆ RADAR PAINT").setAlpha(blink);
+    }
+    this.missileTxt.setVisible(inbound);
+    if (inbound) {
       const blink = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(this.s.time.now * 0.016));
-      this.missileTxt.setAlpha(blink);
+      this.missileTxt.setText(torpedoInbound ? missileInbound ? "▲ MISSILE / TORPEDO LOCK ▲" : "▲ TORPEDO LOCK ▲" : "▲ MISSILE LOCK ▲").setAlpha(blink);
     }
   }
 
@@ -94,9 +108,9 @@ export class ThreatHud {
     const lockA = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(now * 0.016));
     for (const s of this.s.shots) {
       if (s.deadfall || s.from !== "enemy" || !s.homePlayer || s.seekDisabled) continue;
-      if (this.s.countermeasures.closestFlare(s.x, s.y, s.z)) continue; // decoyed — not homing on us
+      if (!s.torpedo && this.s.countermeasures.closestFlare(s.x, s.y, s.z)) continue; // decoyed — not homing on us
       const seekTgt = this.s.targeting.enemySeekerTarget(s);
-      if (seekTgt !== this.s.player && seekTgt !== focus) continue;
+      if (!seekTgt || (seekTgt !== this.s.player && seekTgt !== focus)) continue;
       const { at, r } = ring(seekTgt);
       const st = worldToScreen(s.x, s.y, s.z);
       const dist = Math.hypot(s.x - seekTgt.x, s.y - seekTgt.y, s.z - seekTgt.z);

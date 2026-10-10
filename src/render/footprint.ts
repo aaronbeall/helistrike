@@ -101,6 +101,15 @@ export function localToWorld(
   return { x: x + along * c - side * s, y: y + along * s + side * c };
 }
 
+/** Axis-aligned half-extents of a footprint. */
+export function footprintHalfX(fp: Footprint): number {
+  return fp.shape === "circle" ? fp.r : Math.abs(fp.halfL * Math.cos(fp.angle)) + Math.abs(fp.halfW * Math.sin(fp.angle));
+}
+
+export function footprintHalfY(fp: Footprint): number {
+  return fp.shape === "circle" ? fp.r : Math.abs(fp.halfL * Math.sin(fp.angle)) + Math.abs(fp.halfW * Math.cos(fp.angle));
+}
+
 export function pointInFootprint(px: number, py: number, fp: Footprint): boolean {
   if (fp.shape === "circle") {
     return Math.hypot(px - fp.x, py - fp.y) <= fp.r;

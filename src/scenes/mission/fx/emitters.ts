@@ -1156,4 +1156,5 @@ export function createFxEmitters(scene: MissionScene): void {
   scene.fx.register("dust", scene.fx.heliDust);
   scene.fx.heliMist.setDepth(Layer.WORLD);
   scene.fx.register("dust", scene.fx.heliMist);
+
 }

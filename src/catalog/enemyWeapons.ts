@@ -1,7 +1,7 @@
 /** Shared named enemy weapons. */
 import type { WeaponSpec } from "../sim/roster";
 
-export type EnemyWpnId = "he" | "mg" | "arty" | "aa" | "seeker" | "tower_cannon";
+export type EnemyWpnId = "he" | "mg" | "arty" | "aa" | "seeker" | "tower_cannon" | "torpedo";
 
 /**
  * Shared named enemy weapons — combat rig iterates this list.
@@ -87,6 +87,21 @@ export const ENEMY_WPNS: { id: EnemyWpnId; label: string; w: WeaponSpec }[] = [
       trailScale: 0.55,
       jitter: 0.02,
       muzzleFire: "alternate",
+    },
+  },
+  {
+    id: "torpedo",
+    label: "TORPEDO",
+    w: {
+      kind: "lock-on-missile",
+      fireCd: 7,
+      range: 640,
+      speed: 115,
+      dmg: 34,
+      blast: 20,
+      look: "shot_torpedo",
+      scale: 0.85,
+      reach: ["underwater"],
     },
   },
   {

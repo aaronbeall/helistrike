@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { type Unit } from "./combat";
-import { specOf, isGroundVehicle, driveOf } from "./roster";
+import { specOf, isGroundVehicle, isInfantry, driveOf } from "./roster";
 import { bedZ, isWater, WORLD, type WorldData, isDeepWater } from "../worldgen/world";
 import { MAP_AIR_SOFT } from "./craft";
 import { craftOf } from "./crafts";
@@ -10,10 +10,71 @@ import { type RemoteCraft } from "./remote";
  * Sim yaw toward `want`. Caps hitch dt and per-tick step so units never
  * flip 180° in one frame even with high turn rates or large dt spikes.
  */
-/** Ground grade (z rise per world unit) at which a slope becomes an impassable cliff (~42°). */
+/** Ground grade (z rise per world unit) at which a slope becomes an impassable cliff (~42°) for a default hull. */
 export const CLIFF_GRADE = 0.9;
-/** Speed kept at the steepest climbable grade (uphill only; linear in between). */
+/** Speed kept climbing at CLIFF_GRADE or steeper (uphill only; linear in between), at `slopeSlow` 1. */
 const UPHILL_MIN_SPEED = 0.4;
+
+/** How steep a ground hull can drive: default = blocked by cliffs, max = any slope. */
+export type ClimbLevel = "default" | "medium" | "max";
+
+/** Ground hull terrain ability, on unit and craft specs (`terrain`); omitted = default hull. */
+export interface TerrainAbility {
+  climb?: ClimbLevel;
+  /** Climb slowdown scale: 1 = default, 0 = slopes never slow it. */
+  slopeSlow?: number;
+  /** Drives on the bed under deep water (tinted by depth; can't fire while submerged). */
+  underwater?: boolean;
+  /** Speed kept while submerged (default UNDERWATER_SPEED). */
+  underwaterSpeed?: number;
+  /** Speed kept wading shallows (default SHALLOW_SPEED). */
+  shallowSpeed?: number;
+}
+
+/** Default speed kept by an underwater hull while submerged: water drag stunts it. */
+const UNDERWATER_SPEED = 0.5;
+/** Default speed kept wading shallows: a light drag. */
+const SHALLOW_SPEED = 0.8;
+
+/** Steepest crossable grade per climb level. */
+export const CLIMB_GRADE: Record<ClimbLevel, number> = { default: CLIFF_GRADE, medium: 1.8, max: Infinity };
+
+/** A hull's resolved terrain ability (one shared object per spec). */
+export interface GroundHull {
+  maxGrade: number;
+  slopeSlow: number;
+  underwater: boolean;
+  underwaterSpeed: number;
+  shallowSpeed: number;
+}
+
+export const DEFAULT_HULL: GroundHull = { maxGrade: CLIFF_GRADE, slopeSlow: 1, underwater: false, underwaterSpeed: 1, shallowSpeed: SHALLOW_SPEED };
+const hulls = new WeakMap<object, GroundHull>();
+
+/** Drives / walks on the ground (vehicles, infantry, ground remotes): not boats, aircraft or structures. */
+export function onGroundHull(a: Unit | RemoteCraft): boolean {
+  return "spec" in a ? !!a.spec.ground : isGroundVehicle(a.kind) || isInfantry(a.kind);
+}
+
+/** Terrain ability of a ground unit or ground remote (its hull craft). */
+export function groundHull(a: Unit | RemoteCraft): GroundHull {
+  const spec = "spec" in a ? craftOf(a.spec.craftLook) : specOf(a.kind);
+  let h = hulls.get(spec);
+  if (!h) {
+    const t = spec.terrain;
+    h = t
+      ? {
+          maxGrade: CLIMB_GRADE[t.climb ?? "default"],
+          slopeSlow: t.slopeSlow ?? 1,
+          underwater: !!t.underwater,
+          underwaterSpeed: t.underwater ? (t.underwaterSpeed ?? UNDERWATER_SPEED) : 1,
+          shallowSpeed: t.shallowSpeed ?? SHALLOW_SPEED,
+        }
+      : DEFAULT_HULL;
+    hulls.set(spec, h);
+  }
+  return h;
+}
 
 /** Grade from (x0, y0) to (x1, y1) along the ground (positive = uphill). */
 export function groundGrade(world: WorldData, x0: number, y0: number, x1: number, y1: number): number {
@@ -178,19 +239,28 @@ export interface GroundMover {
 }
 
 /**
- * The one ground-step rule for every ground hull: wade shallows, never into deep water (bridge decks excepted), never
- * a cliff-steep step up or down (on / off a deck excepted). Stranded in deep water, any move is allowed (way out).
+ * The one ground-step rule for every ground hull: wade shallows, no deep water (decks excepted; underwater hulls drive
+ * the bed), no step steeper than the hull's climb grade up or down (on / off a deck excepted). A hull that ends up in
+ * deep water anyway drowns (`Nav.drowns`), so there's no way-out exception.
  */
-export function groundStepOk(world: WorldData, x0: number, y0: number, x1: number, y1: number, onDeck?: (x: number, y: number) => boolean): boolean {
+export function groundStepOk(
+  world: WorldData,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  onDeck?: (x: number, y: number) => boolean,
+  hull: GroundHull = DEFAULT_HULL
+): boolean {
   if (onDeck?.(x1, y1)) return true;
-  if (isDeepWater(world, x1, y1)) return isDeepWater(world, x0, y0) && !onDeck?.(x0, y0);
+  if (!hull.underwater && isDeepWater(world, x1, y1)) return false;
   if (onDeck?.(x0, y0)) return true;
-  return Math.abs(groundGrade(world, x0, y0, x1, y1)) < CLIFF_GRADE;
+  return Math.abs(groundGrade(world, x0, y0, x1, y1)) < hull.maxGrade;
 }
 
 /**
- * Step on preferred terrain only; slide on axes or brake if blocked. Ground: `groundStepOk`, plus slowing on climbs.
- * Boats (`preferWater`): water only.
+ * Step on preferred terrain only; slide on axes or brake if blocked. Ground: `groundStepOk`, plus slowing on climbs
+ * (scaled by the hull's `slopeSlow`). Boats (`preferWater`): water only.
  */
 export function stepOnTerrain(
   world: WorldData,
@@ -198,18 +268,25 @@ export function stepOnTerrain(
   dx: number,
   dy: number,
   preferWater: boolean,
-  onDeck?: (x: number, y: number) => boolean
+  onDeck?: (x: number, y: number) => boolean,
+  hull: GroundHull = DEFAULT_HULL
 ): void {
   const fromDeck = !preferWater && !!onDeck?.(u.x, u.y);
+  // Water drag: wading shallows slows a little, driving submerged a lot.
+  if (!preferWater && !fromDeck && isWater(world, u.x, u.y)) {
+    const k = isDeepWater(world, u.x, u.y) ? hull.underwaterSpeed : hull.shallowSpeed;
+    dx *= k;
+    dy *= k;
+  }
   if (!preferWater && !fromDeck) {
     const g = groundGrade(world, u.x, u.y, u.x + dx, u.y + dy);
     if (g > 0) {
-      const k = 1 - (1 - UPHILL_MIN_SPEED) * Math.min(1, g / CLIFF_GRADE);
+      const k = 1 - (1 - UPHILL_MIN_SPEED) * Math.min(1, g / CLIFF_GRADE) * hull.slopeSlow;
       dx *= k;
       dy *= k;
     }
   }
-  const ok = (px: number, py: number) => (preferWater ? isWater(world, px, py) : groundStepOk(world, u.x, u.y, px, py, onDeck));
+  const ok = (px: number, py: number) => (preferWater ? isWater(world, px, py) : groundStepOk(world, u.x, u.y, px, py, onDeck, hull));
   const nx = u.x + dx;
   const ny = u.y + dy;
   if (ok(nx, ny)) {
@@ -245,13 +322,20 @@ export function mapEdgeSteer(x: number, y: number, wantX: number, wantY: number)
 }
 
 /** A ground hull already integrated from (x0, y0) by its own physics: replay the move through `stepOnTerrain`. */
-export function settleGroundMove(world: WorldData, m: GroundMover, x0: number, y0: number, onDeck?: (x: number, y: number) => boolean): void {
+export function settleGroundMove(
+  world: WorldData,
+  m: GroundMover,
+  x0: number,
+  y0: number,
+  onDeck?: (x: number, y: number) => boolean,
+  hull: GroundHull = DEFAULT_HULL
+): void {
   const dx = m.x - x0;
   const dy = m.y - y0;
   if (Math.abs(dx) < 1e-4 && Math.abs(dy) < 1e-4) return;
   m.x = x0;
   m.y = y0;
-  stepOnTerrain(world, m, dx, dy, false, onDeck);
+  stepOnTerrain(world, m, dx, dy, false, onDeck, hull);
 }
 
 /** Zero-point turn (tracks, infantry, walker / hover remotes) vs car steering that needs rolling speed: rotate vs back out of a jam. */

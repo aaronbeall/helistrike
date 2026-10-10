@@ -83,6 +83,7 @@ export const PLAYER_ORDNANCE_SHOT_ART: readonly {
   { look: "shot_laser_guided", size: 36 },
   { look: "shot_guided", size: 34 },
   { look: "shot_missile", size: 26 },
+  { look: "shot_torpedo", size: 38 },
   { look: "shot_aam", size: 30 },
   { look: "shot_mini_rocket", size: 22 },
   { look: "shot_long", size: 34 },
@@ -2965,6 +2966,33 @@ export function ensureImpactGlow(textures: Phaser.Textures.TextureManager): void
   g.fillRect(0, 0, s, s);
   textures.addCanvas("fx_glow", c);
   registerArt("fx_glow", "generated");
+}
+
+/** Bubble: no outline, a radial fade from clear centre to 50% at the edge (edge-biased), soft highlight. */
+export function ensureBubbleTexture(textures: Phaser.Textures.TextureManager): void {
+  if (textures.exists("fx_bubble")) return;
+  const s = 64;
+  const c = document.createElement("canvas");
+  c.width = s;
+  c.height = s;
+  const g = c.getContext("2d", { willReadFrequently: true })!;
+  const r = s / 2 - 1;
+  const grd = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, r);
+  // Alpha ∝ t³: mostly clear, building up toward the rim.
+  for (let k = 0; k <= 8; k++) {
+    const t = k / 8;
+    grd.addColorStop(t, `rgba(225,242,255,${(0.5 * t * t * t).toFixed(3)})`);
+  }
+  g.fillStyle = grd;
+  g.beginPath();
+  g.arc(s / 2, s / 2, r, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = "rgba(255,255,255,0.35)";
+  g.beginPath();
+  g.arc(s * 0.36, s * 0.34, s * 0.11, 0, Math.PI * 2);
+  g.fill();
+  textures.addCanvas("fx_bubble", c);
+  registerArt("fx_bubble", "generated");
 }
 
 /** Soft engine glow: top-middle = nozzle; short soft wash behind the flame root. */

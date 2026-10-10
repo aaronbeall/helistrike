@@ -40,6 +40,19 @@ Cells that can reach each other form a **region** (one per island / landmass, on
 
 Instead of a point straight away from the threat (often in the sea or off the map), a fleeing unit picks the most open reachable point roughly away from the threat and commits to it for a couple of seconds.
 
+### Terrain ability (per hull)
+
+Every ground hull has one terrain profile (spec `terrain`; omitted = default):
+
+| Field | Meaning | Who |
+|---|---|---|
+| `climb` | `default`: blocked by cliffs (grade > 0.9) · `medium`: up to grade 1.8 · `max`: any slope | max: Hound, Wolf · medium: Humvee, tank, LAV, LAV-AA, SAM |
+| `slopeSlow` | how much climbing slows it: 1 = default (down to 40% speed at grade 0.9+), 0 = never | Motorcycle 0.25 |
+| `underwater` | drives along the bed under deep water; can't fire while submerged; tinted toward the water colour by depth | Hound, Wolf |
+| `underwaterSpeed` / `shallowSpeed` | speed kept submerged (default 0.5) / wading shallows (default 0.8) | all ground hulls wade at 0.8 |
+
+Hulls also squash slightly on slopes (shorter climbing, longer descending, narrower on a side slope).
+
 ### Getting unstuck (one rule for every ground hull)
 
 If an agent that's trying to move makes no progress (or is pressed into a solid) for about a second, it **recovers** for about a second: navigation points it at the most open nearby cell, preferring cells behind it. How it gets there depends only on the hull:
@@ -69,18 +82,19 @@ Per-cell arrays (all `NAV_N²`, typed arrays):
 |---|---|
 | `land` / `landBase` | `LAND_DRY`, `LAND_SHALLOW`, `LAND_BLOCKED`; `land` = base with live decks forced dry |
 | `water` | 1 = boat-navigable |
-| `cliff` | bit `d` set = crossing toward neighbour `d` is closed (8 directions, clockwise from east) |
-| `landRegion` / `waterRegion` | connected-region id, −1 = blocked |
-| `landClear` / `waterClear` | cells to the nearest blocked cell (cliff-edge cells count as 1), capped at 6 |
-| `deck` | unit index of the deck on this cell, −1 = none |
+| `grades` | bed grade of each crossing to the 4 forward neighbours (the other 4 read the neighbour's); `steep` = steepest crossing per cell |
+| per **mode** (lazy) | connected-region id (−1 = blocked) and clearance: cells to the nearest blocked cell (cells with a crossing too steep for the mode count as 1), capped at 6 |
+| `decks` | unit indices of every deck touching this cell (segments overlap at seams); `hasDeck` / `decksAt` |
 
 **Classification** samples at the cell centre: wet + deep (`isDeepWater`) → blocked, wet → shallow, else dry. For boats a cell is water if the centre **or any of four quarter points** is wet, so narrow rivers stay connected.
 
-**Cliffs**: for each crossing, the bed height (`bedZ`) at both centres and the midpoint; the steeper half's grade (Δz / distance) above `NAV_CLIFF_GRADE` (0.9, same as `CLIFF_GRADE` that `stepOnTerrain` enforces) closes the crossing both ways. Checking halves keeps a narrow drop from being averaged away. The grid therefore agrees with what the movement code allows.
+**Crossing grades**: for each crossing, the bed height (`bedZ`) at both centres and the midpoint; the steeper half's grade (Δz / distance) is stored. Checking halves keeps a narrow drop from being averaged away.
 
-**Regions**: 4-neighbour flood fill over passable cells through open crossings. **Clearance**: multi-source BFS from blocked cells. Both are rebuilt (`rebuildLand`, ~1–2 ms) whenever a deck is destroyed; `version` bumps.
+**Modes** (`NavMode`, interned by `navMode(layer, maxGrade)`): what a route is for. `layer` picks passable cells (`land`: not blocked · `seabed`: land + deep water · `water`: boats) and `maxGrade` closes crossings steeper than the hull may climb, the same limit the step rule enforces, so routes and movement agree. `Nav.modeOf(agent)` derives it from the hull's terrain profile; `LAND_MODE` (default hull) and `WATER_MODE` are the common ones. Regions + clearance are built per mode on first use.
 
-**Crossing open** (`open`): water is always open; land is open unless the cliff bit is set, but a crossing touching a deck cell is always open (bridges span ravines).
+**Regions**: 4-neighbour flood fill over passable cells through open crossings. **Clearance**: multi-source BFS from blocked cells. Every ground mode's are rebuilt (`rebuildLand`, ~1–2 ms each) whenever a deck is destroyed; `version` bumps.
+
+**Crossing open** (`open`): water is always open; ground is open when its grade ≤ the mode's `maxGrade`, and a crossing touching a deck cell is always open (bridges span ravines).
 
 ### Queries
 
@@ -129,13 +143,19 @@ Wheeled vs zero-point turn is one predicate for every hull, `turnsInPlace(agent)
 
 #### Bridge decks
 
-Decks are declared: `deck: true` on the bridge, steel bridge and pier specs (`catalog/settlementUnits.ts`). At build, each deck's footprint is rasterised into cells (`setDeck`), marking them dry with the deck's unit index. Movement:
+Decks are declared: `deck: true` on the bridge, steel bridge and pier specs (`catalog/settlementUnits.ts`). At build, each deck's padded footprint is sampled every 2 units, edges included, into cells (`setDeck`), marking them dry and adding the deck's unit index to each cell's list. Movement:
 
-- `onDeck(x, y)` (exact footprint test via the cell's deck index) is passed to the ground-step rule: deck points are walkable over deep water, and grade checks are skipped on and off a deck.
+- `onDeck(x, y)` (`deckAt`: exact footprint test against every deck in the cell; the highest top where segments overlap) is passed to the ground-step rule: deck points are walkable over deep water, and grade checks are skipped on and off a deck.
 - `surfaceZ(x, y)`: deck top (`deck.z + height`) on a deck, else the bed. Ground units and ground remotes stand at this height (wading shallows on the bed).
-- `onUnitDead` (from `destruction.destroyUnit`): `clearDeck` restores the cells and rebuilds land regions + clearance, so a destroyed bridge cuts its banks apart for routing.
+- `onUnitDead` (from `destruction.destroyUnit`): `clearDeck` drops the deck from its cells and restores those no other deck covers, and rebuilds land regions + clearance, so a destroyed bridge cuts its banks apart for routing.
+- Riders go down with the deck (`Destruction.deckRiders`, collected while it still stands): ground units and ground remotes on it that can't be in deep water die with the same kill credit, like crew with their host; underwater hulls just drop to the bed.
+- Where a unit dies decides its wreck, whatever killed it (`Destruction.placeHullWreck`): on a live deck it stays on the deck, in deep water it sinks (`sinkHull`, boats included), in shallows it splashes (boats float a surface wreck), on land it's stamped.
 
 Boats use the water layer, where deck cells are unaffected: they pass under bridges.
+
+Bridges come from roads: any water stretch of a road becomes a chain of deck segments (`placeBridges`): exactly one segment length apart, centred on the crossing (the ends run onto the banks); water stretches less than a segment of land apart become one straight span. Spur roads run to satellite sites listed in `ROAD_SPUR_SITES` (lookouts, AA towers, base heli pads), each with how much water its spur may bridge, ending at the site's edge, so an offshore base pad gets an access bridge from the shore when it's close enough.
+
+At world gen, each bridge starts with 0–max(3, sections / 3) ground units on random deck sections, one per section, facing along the span (`bridgeSpawns` in `worldgen/world.ts`): kinds already in the mission's forces that fit the deck width, from their own RNG stream so the rest of the map is unchanged per seed.
 
 ### Who calls it
 
@@ -143,7 +163,7 @@ Boats use the water layer, where deck cells are unaffected: they pass under brid
 |---|---|---|
 | Enemy ground vehicles (`orbit_attack_vehicle`, `flee_vehicle`) | orbit ring point around the player, or `fleePoint` | land |
 | Enemy infantry kiting / fleeing | kite ring point, or `fleePoint` | land |
-| Boats (`patrol_boat`) | waypoint from `pickWaterWaypoint` (random open cell in the boat's own water body, 180–700 out) | water |
+| Boats (`patrol_boat`) | waypoint from `pickWaterWaypoint` (random open cell in the boat's own water body, 180–700 out); with spec `boatReact`, on sight of its focus it pursues (the focus, clamped into its water) or retreats (`fleePoint`), sprinting; hurt → retreat | water |
 | Ground remote, reticle autopilot (`tickGroundGunAi`) | orbit point around its target, or the ring around the reticle | land |
 | Ground remote, escort (`driveGroundEscort` caller) | attack orbit point, or follow point behind the host | land |
 
@@ -151,17 +171,25 @@ Remote moves that are only a heading (backing off / strafing a target) route tow
 
 ### One ground-step rule
 
-`groundStepOk(world, x0, y0, x1, y1, onDeck)` (`sim/navigation`) decides every ground move, enemy or remote, AI or player-driven: onto a deck → yes; into deep water → no (unless already stranded in deep water: way out); off a deck → yes; else the grade must be under `CLIFF_GRADE`. `stepOnTerrain` applies it (sliding on one axis when the full step is refused, slowing on climbs) for enemy units; remotes, whose position comes from their craft physics, replay that move through it with `settleGroundMove`. The grid's passability and closed crossings are built from the same thresholds, so routes and movement agree.
+`groundStepOk(world, x0, y0, x1, y1, onDeck, hull)` (`sim/navigation`) decides every ground move, enemy or remote, AI or player-driven, with the hull's resolved terrain profile (`groundHull(agent)`, one shared object per spec): onto a deck → yes; into deep water → only underwater hulls; off a deck → yes; else the grade must be under the hull's climb grade. Climbing slows by the hull's `slopeSlow`. `stepOnTerrain` applies it (sliding on one axis when the full step is refused, slowing on climbs) for enemy units; remotes, whose position comes from their craft physics, replay that move through it with `settleGroundMove`. The grid's passability and closed crossings are built from the same thresholds, so routes and movement agree.
 
 ### Water handling around it
 
 - Every ground hull wades shallows and is blocked only by deep water (the step rule above).
 - Wading (`fx/ripples.wade`): every moving ground unit / ground remote in water makes splash spray + ring ripples; vehicles also leave a boat-style V wake (aircraft excluded from the wake).
-- Safety net: a ground unit that ends up in deep water off a deck (its bridge fell) steps toward `escapePoint` (nearest walkable cell); a boat aground steers toward the nearest water cell the same way.
+- A ground hull (vehicle, infantry, ground remote; never a boat or structure) that ends up in deep water anyway (dropped in, knocked in) and isn't underwater-capable drowns (`Nav.drowns`): enemy units die through `destroyUnit` (the hulk sinks), remotes are destroyed. A boat aground steers toward the nearest water cell (`escapePoint`).
+
+### Remotes on the ground
+
+Every ground remote, piloted or AI, collides with buildings, statics, vehicles and other remotes (`resolveGroundRemote` inside `driveRemoteCraft`; pressing into one feeds jam detection), and autopilots look ahead and turn away from them (`RemoteAi.avoidSolids`). Submerged remotes can't fire, trail bubbles, and are invisible to everything without `sonar` (boats see them and answer with torpedoes). Autopilot status (`FOLLOWING`, `ATTACKING`, `HOLDING`, `AVOIDING`, `STUCK`, `RETURNING`) shows as a blue diamond line under the reticle (mouse-following remotes) or the host craft (`hud/remoteStatusHud`).
+
+### Waypoint command (G)
+
+While piloting an escort-capable remote (Hound, Wolf: `hostEscort`), G sends the **host craft** to the mouse point (`RemoteFleet.placeWaypoint`): it flies there with `hostApproach` (the same yaw-then-thrust catch-up FOLLOW uses) and switches to HOLD on arrival; C cancels it. Hint: escort chip `· G WAYPOINT`; marker: `hud/waypointHud`.
 
 ### Debug & measurement
 
-- **Overlay** (debug menu → "Nav grid + routes"): red blocked (fainter = deep water), cyan shallow, yellow deck, faint white low clearance, orange ticks = closed crossings (one per blocked direction), green = live routes (red while recovering), pink = flee targets. HUD: grid size + version, region counts, routes / stuck counts, A* per frame.
+- **Overlay** (debug menu → "Nav grid + routes"): red blocked (fainter = deep water), cyan shallow, yellow deck, faint white low clearance, ticks = too-steep crossings (orange: blocks default hulls, red: blocks medium climbers too), green = live routes (red while recovering), pink = flee targets. HUD: grid size + version, region counts, routes / stuck counts, A* per frame.
 - **Test map** `?test=coast_nav`: Coastal Strike with generated forces + 100 ground units near the spawn.
 - **Bench** `npm run bench -- idle_coast` (plus `idle_cluster`, `idle_stress` for regressions).
 

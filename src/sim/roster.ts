@@ -1,3 +1,5 @@
+import type { TargetDomain } from "./targetRules";
+import type { TerrainAbility } from "./navigation";
 import { type Unit } from "./combat";
 import { CAMO_SUFFIX, type CamoRoll } from "../catalog/camo";
 import { ENEMY_WPNS } from "../catalog/enemyWeapons";
@@ -127,6 +129,8 @@ export interface WeaponSpec {
   burst?: number;
   burstGap?: number;
   jitter?: number;
+  /** Target domains it engages (default: AA / seekers air only, else air + ground). `underwater` = a torpedo. */
+  reach?: readonly TargetDomain[];
   /**
    * Explicit muzzle-tip firing pattern; omitted weapons fire from the first tip.
    * "alternate" cycles one tip per shot; "simultaneous" fires every tip at once.
@@ -183,6 +187,18 @@ export const HULL_MOUNT_COLOR: Record<HullMountRole, number> = {
   wingtip: 0xc8f0ff,
 };
 
+/** Boat reaction to its combat focus (see `UnitSpec.boatReact`). */
+export type BoatReact = {
+  /** On sight: close in, or run. */
+  seen?: "pursue" | "retreat";
+  /** Below `hurtBelow` health: run, overriding `seen`. */
+  hurt?: "retreat";
+  /** Health fraction that counts as hurt (default 0.5). */
+  hurtBelow?: number;
+  /** Speed multiplier while pursuing / retreating (default 1.5). */
+  sprint?: number;
+};
+
 export interface UnitSpec {
   /** Display name (roster / HUD). */
   label: string;
@@ -223,6 +239,8 @@ export interface UnitSpec {
   boatYaw?: number;
   /** Patrol boat cruise speed (ptboat 38; boat 22). */
   boatSpeed?: number;
+  /** How a boat reacts to its focus once seen: pursue or retreat (sprinting), and retreat once hurt. Omit = keeps patrolling. */
+  boatReact?: BoatReact;
   /** Rotor spin rad/s (drone 42; heli default 28). */
   rotorSpinRate?: number;
   /** Bake broken-apart variants of the wreck at load (`hulkBreak`); each death picks one at random. */
@@ -233,6 +251,8 @@ export interface UnitSpec {
   wreckScale?: number;
   /** Wheel debris draw scale range [lo, hi]. */
   wheelDebrisScale?: [number, number];
+  /** Ground hull terrain ability (climb, slope slowdown, underwater); omitted = default. */
+  terrain?: TerrainAbility;
   /** Walkable roof over water (bridge / pier deck): ground units drive on it; destroying it cuts the crossing. */
   deck?: boolean;
   /** Camo paint roll at spawn. Omit = no camo. */
@@ -243,6 +263,8 @@ export interface UnitSpec {
    * Fired by scenes from `mounts` (SPRITE `hardpoint` UVs) — not via SPECS.guns.
    */
   secondary?: SecondaryWpnSpec;
+  /** Sees submerged targets (boats); everything else can't see or target them. */
+  sonar?: boolean;
   guns: PartMount[];
   rotors: PartMount[];
   dish?: PartMount;

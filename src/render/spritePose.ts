@@ -6,7 +6,7 @@ import { gunWorldRot, lookupSpriteMuzzles, lookupSpriteOrigin, lookupSpritePoint
 import type { RemoteCraft } from "../sim/remote";
 import { craftGunScale, craftGunTex, craftHasLiftRotors, craftOrigin, craftRotorMounts, rotorDrawSpan, type CraftSpec } from "../sim/crafts";
 import { resolveSkin } from "./camo";
-import { worldToScreen, screenVelX, screenVelY, projectHeading } from "../worldgen/world";
+import { bedZ, worldToScreen, screenVelX, screenVelY, projectHeading, type WorldData } from "../worldgen/world";
 /** Shot sprite pose / orientation rules. */
 
 export function shotIsGunOrBeam(s: Shot): boolean {
@@ -326,6 +326,29 @@ export function mountAt(textures: Phaser.Textures.TextureManager, host: Unit, te
     x: host.x + mx * Math.cos(rot) - my * Math.sin(rot),
     y: host.y + mx * Math.sin(rot) + my * Math.cos(rot),
   };
+}
+
+/** Grade clamp for the slope squash (steeper climbs read the same: it stays subtle). */
+const SQUASH_GRADE = 1;
+/** Bed-slope sample half-span (world). */
+const SQUASH_SPAN = 14;
+const squash = { sx: 1, sy: 1 };
+
+/**
+ * Ground hull on a slope: hull length shortens climbing / stretches descending, width narrows on a side slope.
+ * Scale multipliers for a sprite whose local Y runs along `angle`. Returned object is reused.
+ */
+export function slopeSquash(world: WorldData, x: number, y: number, angle: number): { sx: number; sy: number } {
+  const e = SQUASH_SPAN;
+  const gx = (bedZ(world, x + e, y) - bedZ(world, x - e, y)) / (2 * e);
+  const gy = (bedZ(world, x, y + e) - bedZ(world, x, y - e)) / (2 * e);
+  const ca = Math.cos(angle);
+  const sa = Math.sin(angle);
+  const along = Math.max(-SQUASH_GRADE, Math.min(SQUASH_GRADE, gx * ca + gy * sa));
+  const across = Math.max(-SQUASH_GRADE, Math.min(SQUASH_GRADE, -gx * sa + gy * ca));
+  squash.sx = (1 + Math.abs(along) * 0.05) * (1 - Math.abs(across) * 0.1);
+  squash.sy = 1 - along * 0.12;
+  return squash;
 }
 
 /** World rotor disc: hub + radius. */

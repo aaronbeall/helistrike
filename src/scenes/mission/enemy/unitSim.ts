@@ -1,14 +1,15 @@
 import { resolveSkin } from "../../../render/camo";
-import { containOnMap, mapEdgeSteer, steerUnitAngle, stepOnTerrain, turnsInPlace } from "../../../sim/navigation";
+import { containOnMap, groundHull, mapEdgeSteer, steerUnitAngle, stepOnTerrain, turnsInPlace } from "../../../sim/navigation";
+import { WATER_MODE } from "../../../sim/navGrid";
 import { rollSoldierMood } from "../../../sim/units";
 import { troopSoftTurret } from "../../../sim/roster";
-import { enemyWeaponIsAa, REACT_DRONE, REACT_FLEE, REACT_INFANTRY, REACT_ORBIT, REACT_SCOUT, REACT_VEHICLE, unitSightBase } from "../../../sim/targetRules";
+import { enemyWeaponIsAa, REACT_DRONE, REACT_FLEE, REACT_INFANTRY, REACT_ORBIT, REACT_SCOUT, REACT_VEHICLE, weaponUnderwater } from "../../../sim/targetRules";
 import { craftRotorDiscs, mountAt, rotorDiscs, spriteHalf } from "../../../render/spritePose";
 import { trackPrintAlpha } from "../../../render/fxCurves";
 import { noteEnemyVolley } from "./enemyFire";
 import { textureOf, heightOf, radius, unitStunned, tickStunKinematics, recordUnitSpin, type Unit } from "../../../sim/combat";
 import { specOf, gunsOf, crewOf, isGroundVehicle, isInfantry, isNeutral, driveOf } from "../../../sim/roster";
-import { groundZ, worldToScreen, cameraPointVisible, isWater, isDeepWater } from "../../../worldgen/world";
+import { groundZ, worldToScreen, cameraPointVisible, isWater } from "../../../worldgen/world";
 import Phaser from "phaser";
 import { enemyShotBeh, AI_LOCK_BASE, AI_AIM_NARROW_BASE, AI_AIM_WIDE_MUL, advanceAimHold, aimNarrowTime, aimPrecisionSpread, holdProgress, lockAcquireTime } from "../../../sim/weaponRuntime";
 
@@ -42,6 +43,19 @@ const PREV_TURRETS: number[] = [];
 const KAMIKAZE_RAM = "ram";
 
 /** Enemy unit simulation: per-frame update loop, air/ground/boat drive, terrain + map-edge steering, stun, bleed-out, roadkill. */
+/** Boat sprint multiplier while pursuing / retreating (spec `boatReact.sprint` overrides). */
+const BOAT_SPRINT = 1.5;
+/** Pursuing boats drop back to cruise inside this range of their focus. */
+const BOAT_STANDOFF = 160;
+
+/** What a boat does about its focus right now (spec `boatReact`): needs sight of a flying focus; hurt overrides seen. */
+function boatReaction(u: Unit, h: Craft, vision: number): "pursue" | "retreat" | undefined {
+  const r = specOf(u.kind).boatReact;
+  if (!r || vision <= 0 || h.phase !== "flight") return undefined;
+  if (r.hurt && u.health < u.max * (r.hurtBelow ?? 0.5)) return r.hurt;
+  return r.seen;
+}
+
 export class UnitSim {
   /** Live unit id → unit (rebuilt each sim frame). */
   unitIdMap = new Map<number, Unit>();
@@ -288,6 +302,7 @@ export class UnitSim {
     return this.s.spatial.near(x, y, r, mask);
   }
 
+  /** Solids are skipped when dead, self, or the post a unit is pinned to (its platform, never an obstacle). */
   steerGround(u: Unit, wantX: number, wantY: number): { x: number; y: number } {
     let wx = wantX;
     let wy = wantY;
@@ -297,7 +312,7 @@ export class UnitSim {
     const near = this.solidsNear(u, u.x, u.y, uR + STEER_PAD, SP_SOLID);
     for (let i = 0; i < near.n; i++) {
       const o = near.at(i);
-      if (o === u || o.dead) continue;
+      if (o === u || o.dead || o.id === u.pinId) continue;
       const hard = near.mask(i) === SP_STATIC;
       const pad = hard ? 40 : 28;
       const maxR = uR + near.radius(i) + pad + 2;
@@ -325,7 +340,7 @@ export class UnitSim {
     const ahead = this.solidsNear(u, lx, ly, lookPad + 2, SP_STATIC | SP_VEHICLE);
     for (let i = 0; i < ahead.n; i++) {
       const o = ahead.at(i);
-      if (o === u || o.dead) continue;
+      if (o === u || o.dead || o.id === u.pinId) continue;
       const maxR = ahead.radius(i) + lookPad + 2;
       const odx = lx - o.x;
       const ody = ly - o.y;
@@ -339,7 +354,7 @@ export class UnitSim {
       }
     }
     ahead.done();
-    const dry = this.s.nav.repel(u, wx, wy, "land");
+    const dry = this.s.nav.repel(u, wx, wy, this.s.nav.modeOf(u));
     return mapEdgeSteer(u.x, u.y, dry.x, dry.y);
   }
 
@@ -350,7 +365,7 @@ export class UnitSim {
     let blocked = false;
     for (let i = 0; i < near.n; i++) {
       const o = near.at(i);
-      if (o === u || o.dead) continue;
+      if (o === u || o.dead || o.id === u.pinId) continue;
       // Buildings / statics: easier jam. Soft infantry brush needs a deeper press.
       const kind = near.mask(i);
       const solid = kind !== SP_INFANTRY;
@@ -389,7 +404,7 @@ export class UnitSim {
         if (i >= near.n) break;
       }
       const o = near.at(i);
-      if (o === u || o.dead) continue;
+      if (o === u || o.dead || o.id === u.pinId) continue;
       const hard = near.mask(i) === SP_STATIC;
       const pad = hard ? 8 : 4;
       const maxR = uR + near.radius(i) + pad + 2;
@@ -411,23 +426,20 @@ export class UnitSim {
     near.done();
   }
 
-  /** Ground unit left in deep water (e.g. its bridge deck fell): step toward the nearest walkable cell. */
-  private escapeDeepWater(u: Unit, step: number): void {
-    if (!isDeepWater(this.s.world, u.x, u.y) || this.s.nav.onDeck(u.x, u.y)) return;
-    const out = this.s.nav.escapePoint(u, "land");
-    if (!out) return;
-    const dx = out.x - u.x;
-    const dy = out.y - u.y;
-    const d = Math.hypot(dx, dy) || 1;
-    stepOnTerrain(this.s.world, u, (dx / d) * step, (dy / d) * step, false, this.s.nav.onDeck);
+  /** A ground hull that can't be in deep water dies there (normal death rules: it sinks). */
+  private drownIfDeep(u: Unit): boolean {
+    if (!this.s.nav.drowns(u)) return false;
+    // Quiet + intact: no explosion or blast, nothing thrown off; the wreck rule sinks the hull.
+    this.s.destruction.destroyUnit(u, true, true, true, false, true);
+    return true;
   }
 
-  driveBoat(u: Unit, dt: number): void {
+  driveBoat(u: Unit, dt: number, h: Craft, dist: number, vision: number): void {
     const sp = specOf(u.kind);
     const yaw = sp.boatYaw ?? 0.85;
-    const spd = sp.boatSpeed ?? 22;
+    let spd = sp.boatSpeed ?? 22;
     if (!isWater(this.s.world, u.x, u.y)) {
-      const out = this.s.nav.escapePoint(u, "water");
+      const out = this.s.nav.escapePoint(u, WATER_MODE);
       const want = out ? Math.atan2(out.y - u.y, out.x - u.x) : u.angle;
       u.angle = steerUnitAngle(u.angle, want, yaw * 1.4, dt);
       const step = spd * 0.35 * dt;
@@ -439,18 +451,31 @@ export class UnitSim {
       u.aiState = "SEEK WATER";
       return;
     }
-    if (u.aiTx == null || u.aiTy == null || Math.hypot((u.aiTx ?? 0) - u.x, (u.aiTy ?? 0) - u.y) < 40) {
+    const react = boatReaction(u, h, vision);
+    const sprint = sp.boatReact?.sprint ?? BOAT_SPRINT;
+    if (react === "retreat") {
+      const f = this.s.nav.fleePoint(u, h.x, h.y, WATER_MODE, dt);
+      u.aiTx = f.x;
+      u.aiTy = f.y;
+      spd *= sprint;
+    } else if (react === "pursue") {
+      u.aiTx = h.x;
+      u.aiTy = h.y;
+      if (dist > BOAT_STANDOFF) spd *= sprint;
+    } else if (u.reacting || u.aiTx == null || u.aiTy == null || Math.hypot(u.aiTx - u.x, u.aiTy - u.y) < 40) {
+      // Back to patrol (or the last leg is done): a fresh waypoint, not the threat's last position.
       this.s.nav.pickWaterWaypoint(u);
     }
-    const r = this.s.nav.route(u, u.aiTx ?? u.x, u.aiTy ?? u.y, "water", dt);
-    const steered = this.s.nav.repel(u, r.x, r.y, "water");
+    u.reacting = !!react;
+    const r = this.s.nav.route(u, u.aiTx ?? u.x, u.aiTy ?? u.y, WATER_MODE, dt);
+    const steered = this.s.nav.repel(u, r.x, r.y, WATER_MODE);
     const want = Math.atan2(steered.y - u.y, steered.x - u.x);
     u.angle = steerUnitAngle(u.angle, want, yaw, dt);
     const step = spd * dt;
     stepOnTerrain(this.s.world, u, Math.cos(u.angle) * step, Math.sin(u.angle) * step, true);
     u.vx = Math.cos(u.angle) * spd;
     u.vy = Math.sin(u.angle) * spd;
-    u.aiState = "PATROL";
+    u.aiState = react === "retreat" ? "RETREAT" : react === "pursue" ? "PURSUE" : "PATROL";
   }
 
   driveGroundVehicle(u: Unit, dt: number, h: Craft, dist: number, vision = 1): void {
@@ -484,7 +509,7 @@ export class UnitSim {
     ) {
       if (vision > 0) {
         u.reacting = true;
-        const flee = this.s.nav.fleePoint(u, h.x, h.y, "land", dt);
+        const flee = this.s.nav.fleePoint(u, h.x, h.y, this.s.nav.modeOf(u), dt);
         wantX = flee.x;
         wantY = flee.y;
         drive = true;
@@ -504,7 +529,7 @@ export class UnitSim {
       u.aiTy = undefined;
     }
     if (drive) {
-      const r = this.s.nav.route(u, wantX, wantY, "land", dt);
+      const r = this.s.nav.route(u, wantX, wantY, this.s.nav.modeOf(u), dt);
       wantX = r.x;
       wantY = r.y;
     } else if (u.route) u.route.path.length = 0;
@@ -582,9 +607,8 @@ export class UnitSim {
     u.vy = vy;
     const trackX0 = u.x;
     const trackY0 = u.y;
-    stepOnTerrain(this.s.world, u, vx * dt, vy * dt, false, this.s.nav.onDeck);
+    stepOnTerrain(this.s.world, u, vx * dt, vy * dt, false, this.s.nav.onDeck, groundHull(u));
     this.separateGround(u);
-    this.escapeDeepWater(u, 10);
     const step = Math.hypot(u.vx, u.vy) * dt;
     if (Math.hypot(u.vx, u.vy) > 6 && !isWater(this.s.world, u.x, u.y)) {
       const printGap = d.trackGap * 0.8;
@@ -647,9 +671,10 @@ export class UnitSim {
       stepOnTerrain(this.s.world, u, u.vx * dt, u.vy * dt, true);
       u.z = groundZ(this.s.world, u.x, u.y);
     } else if (isGroundVehicle(u.kind) || sp.behavior === "attack_infantry" || sp.behavior === "flee_infantry") {
-      stepOnTerrain(this.s.world, u, u.vx * dt, u.vy * dt, false, this.s.nav.onDeck);
+      stepOnTerrain(this.s.world, u, u.vx * dt, u.vy * dt, false, this.s.nav.onDeck, groundHull(u));
       this.separateGround(u);
       u.z = this.s.nav.surfaceZ(u.x, u.y);
+      if (this.drownIfDeep(u)) return;
     }
     containOnMap(u, dt);
     this.tickStunZapFx(u, dt);
@@ -826,11 +851,7 @@ export class UnitSim {
     const dist = Math.hypot(dx, dy);
     // Cloak: complete sensor blackout. Smoke: blinds all enemies when the player is covered.
     // Max sight range, then terrain line of sight, gate vision entirely: no sight, no pursuit / aim / fire.
-    const sightReach = this.s.targeting.enemyScaledReach(unitSightBase(u), 1, h);
-    const vision =
-      (this.s.countermeasures.cloakT > 0 && h === this.s.player) || !this.s.lineOfSight.sees(u, h, sightReach)
-        ? 0
-        : this.s.targeting.enemySmokeVision(u, h);
+    const vision = this.s.targeting.visionOf(u, h);
     if (this.s.countermeasures.cloakT > 0 && h === this.s.player && (u.reacting || u.aiMood || u.aiTx != null)) {
       u.reacting = false;
       u.aiMood = undefined;
@@ -914,7 +935,7 @@ export class UnitSim {
         u.z = Phaser.Math.Linear(u.z, cruise, 1 - Math.pow(0.1, dt));
       }
     } else {
-      if (sp.behavior === "patrol_boat") this.driveBoat(u, dt);
+      if (sp.behavior === "patrol_boat") this.driveBoat(u, dt, h, dist, vision);
       if (isGroundVehicle(u.kind)) {
         this.driveGroundVehicle(u, dt, h, dist, vision);
       }
@@ -980,11 +1001,11 @@ export class UnitSim {
           let ox = h.x + Math.cos(away + Math.sin(u.orbit) * weave) * ring;
           let oy = h.y + Math.sin(away + Math.sin(u.orbit) * weave) * ring;
           if (fleeing) {
-            const f = this.s.nav.fleePoint(u, h.x, h.y, "land", dt);
+            const f = this.s.nav.fleePoint(u, h.x, h.y, this.s.nav.modeOf(u), dt);
             ox = f.x;
             oy = f.y;
           }
-          const r = this.s.nav.route(u, ox, oy, "land", dt);
+          const r = this.s.nav.route(u, ox, oy, this.s.nav.modeOf(u), dt);
           const steered = this.steerGround(u, r.x, r.y);
           const twx = steered.x - u.x;
           const twy = steered.y - u.y;
@@ -1011,9 +1032,8 @@ export class UnitSim {
           const step = (limp ? 22 : base) * gait * align * dt;
           u.vx = Math.cos(u.angle) * (step / Math.max(dt, 1e-6));
           u.vy = Math.sin(u.angle) * (step / Math.max(dt, 1e-6));
-          stepOnTerrain(this.s.world, u, Math.cos(u.angle) * step, Math.sin(u.angle) * step, false, this.s.nav.onDeck);
+          stepOnTerrain(this.s.world, u, Math.cos(u.angle) * step, Math.sin(u.angle) * step, false, this.s.nav.onDeck, groundHull(u));
           this.separateGround(u);
-          this.escapeDeepWater(u, 8);
           if (limp) {
             u.track += step;
             if (u.track > 0) {
@@ -1043,18 +1063,22 @@ export class UnitSim {
       this.leashPinned(u);
       // Boats ride the water surface; land units stand on the bed (wading shallows).
       u.z = sp.water ? groundZ(this.s.world, u.x, u.y) : this.s.nav.surfaceZ(u.x, u.y);
+      if (this.drownIfDeep(u)) return;
     }
     containOnMap(u, dt);
     const guns = gunsOf(u);
     // Unit-level weapon / target are fixed-mount only; turret units target per turret below.
     const wpn = guns.length ? undefined : sp.weapon;
     const aaWpn = enemyWeaponIsAa(wpn);
-    const aimTgt = this.s.targeting.enemyTargetFor(aaWpn, h);
+    // The fixed weapon's own pick (it may not reach the unit's focus); nothing reachable → aim at the focus, hold fire.
+    const wpnTgt = wpn ? this.s.targeting.targetForWeapon(u, wpn, h) : h;
+    const aimTgt = wpnTgt ?? h;
+    const wpnVision = !wpnTgt ? 0 : wpnTgt === h ? vision : this.s.targeting.visionOf(u, wpnTgt);
     const aimDx = aimTgt.x - u.x;
     const aimDy = aimTgt.y - u.y;
     const aimDist = Math.hypot(aimDx, aimDy);
     const aim = Math.atan2(aimDy, aimDx);
-    const atkRange = (wpn?.range ?? 0) * vision;
+    const atkRange = (wpn?.range ?? 0) * wpnVision;
     const elev = aimTgt.z - u.z;
     // Elevation lob limit: troops stay low; tanks can reach jet cruise; dedicated
     // AA / seekers go higher. Reaper-class cruise (~620) sits above tank/building HE;
@@ -1072,6 +1096,7 @@ export class UnitSim {
               ? 360
               : 130;
     const inRange = !!(
+      wpnTgt &&
       atkRange &&
       aimDist < atkRange &&
       aimDist > 40 &&
@@ -1088,13 +1113,13 @@ export class UnitSim {
     if (softTurret) {
       // Aim like a turret: track player when engaging, otherwise point where the base is going.
       const aimTo =
-        vision > 0 && !hullFlee && (inRange || (u.burstLeft ?? 0) > 0 || (sp.organic && u.health <= 1 && u.health < u.max))
+        wpnVision > 0 && !hullFlee && (inRange || (u.burstLeft ?? 0) > 0 || (sp.organic && u.health <= 1 && u.health < u.max))
           ? aim
           : u.angle;
-      u.turret = steerUnitAngle(u.turret, aimTo, 2.4 * aimMul * Math.max(0.12, vision), dt);
+      u.turret = steerUnitAngle(u.turret, aimTo, 2.4 * aimMul * Math.max(0.12, wpnVision), dt);
     } else if (sp.fixedAim && !guns.length && wpn && inRange && !hullFlee && !strafeHeli) {
       const turn = (sp.behavior === "orbit_attack_heli" || sp.behavior === "kite_attack_heli") ? 1.7 : 2.2;
-      u.angle = steerUnitAngle(u.angle, aim, turn * aimMul * Math.max(0.12, vision), dt);
+      u.angle = steerUnitAngle(u.angle, aim, turn * aimMul * Math.max(0.12, wpnVision), dt);
     }
     const inf = sp.behavior === "attack_infantry";
     const soldierDown = inf && u.health <= 1 && u.health < u.max;
@@ -1120,7 +1145,7 @@ export class UnitSim {
       // Aim precision: jitter narrows the longer this unit has been continuously tracking its
       // target (reset the moment it stops engaging) — harder-to-spot target craft (enemyAwareMul)
       // narrow slower. Seeker weapons instead gate on a separate lock-on hold below.
-      const engaging = !!wpn && !soldierFlee && !scoutFlee && vision > 0 && (inRange || continueBurst);
+      const engaging = !!wpn && !soldierFlee && !scoutFlee && wpnVision > 0 && (inRange || continueBurst);
       u.aimHoldT = advanceAimHold(u.aimHoldT ?? 0, dt, engaging);
       const isSeekerWpn = wpn?.kind === "lock-on-missile";
       if (isSeekerWpn) {
@@ -1131,6 +1156,7 @@ export class UnitSim {
         if (tracking && this.s.targeting.hudThreatTarget(aimTgt)) {
           u.paintT = holdProgress(u.lockT, lockReq);
           u.paintHost = aimTgt === this.s.player;
+          u.paintTorpedo = weaponUnderwater(wpn!);
         }
       } else {
         u.debugLockT = undefined;
@@ -1145,7 +1171,7 @@ export class UnitSim {
       }
       const lockReady =
         !isSeekerWpn || (u.lockT ?? 0) >= lockAcquireTime(AI_LOCK_BASE, aimTgt.spec.enemySeekerMul ?? 1);
-      if (wpn && u.fireCd <= 0 && !soldierFlee && !scoutFlee && facingOk && vision > 0 && (inRange || continueBurst) && lockReady) {
+      if (wpn && u.fireCd <= 0 && !soldierFlee && !scoutFlee && facingOk && wpnVision > 0 && (inRange || continueBurst) && lockReady) {
         const burstN = wpn.burst ?? 0;
         const fxInterval = burstN > 0 ? (wpn.burstGap ?? 0.075) : wpn.fireCd;
         if (burstN) {
@@ -1175,17 +1201,18 @@ export class UnitSim {
       }
     }
     const sec = sp.secondary;
-    const secHomesPlayer = sec != null && sec.homePlayer !== false;
-    // Seeker secondaries are blind to dirt HOUND — lock the host bird instead.
-    const secTgt = this.s.targeting.enemyTargetFor(secHomesPlayer, h);
-    const secDx = secTgt.x - u.x;
-    const secDy = secTgt.y - u.y;
+    // The secondary's own pick: seekers take the host over a dirt-locked focus, torpedoes a submerged remote.
+    const secTgt = sec ? this.s.targeting.targetForWeapon(u, sec.wpn, h) : undefined;
+    // Its own target's visibility (it may not be the unit's focus).
+    const secVision = !secTgt ? 0 : secTgt === h ? vision : this.s.targeting.visionOf(u, secTgt);
+    const secDx = secTgt ? secTgt.x - u.x : 0;
+    const secDy = secTgt ? secTgt.y - u.y : 0;
     const secDist = Math.hypot(secDx, secDy);
-    if (sec?.mounts.length && (!sp.aerial || secTgt.phase === "flight")) {
+    if (sec?.mounts.length && secTgt && (!sp.aerial || secTgt.phase === "flight")) {
       const pw = sec.wpn;
       const minR = sec.minRange ?? 80;
       const aimCone = sec.aimCone ?? Math.PI / 2;
-      if (vision > 0 && secDist < pw.range * vision && secDist > minR) {
+      if (secVision > 0 && secDist < pw.range * secVision && secDist > minR) {
         const aimErr = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(secDy, secDx) - u.angle));
         const secTracking = aimErr < aimCone;
         u.secLockT = secTracking ? (u.secLockT ?? 0) + dt : 0;
@@ -1196,6 +1223,7 @@ export class UnitSim {
           if (p >= (u.paintT ?? -1) && this.s.targeting.hudThreatTarget(secTgt)) {
             u.paintT = p;
             u.paintHost = secTgt === this.s.player;
+            u.paintTorpedo = weaponUnderwater(sec.wpn);
           }
         }
         u.missileCd = (u.missileCd ?? (4 + Math.random() * 3)) - dt;
@@ -1222,7 +1250,9 @@ export class UnitSim {
             const py = u.y + mx * Math.sin(hullRot) + my * Math.cos(hullRot);
             const muzzleZ = u.z + heightOf(u.kind) * 0.5;
             const jit = pw.jitter ?? 0.04;
-            const fireAng = u.angle + (Math.random() - 0.5) * jit;
+            const torpedo = weaponUnderwater(pw);
+            // Torpedoes leave the tube toward the target (they steer underwater); missiles off the hull heading.
+            const fireAng = (torpedo ? Math.atan2(secDy, secDx) : u.angle) + (Math.random() - 0.5) * jit;
             const tgtZ = secTgt.z + secTgt.height * 0.5;
             const spawn = this.s.projectiles.shotSpawnXY(
               px,
@@ -1252,13 +1282,15 @@ export class UnitSim {
               look: pw.look,
               homePlayer: home,
               homeRemoteId: home ? this.s.targeting.remoteOfCraft(secTgt)?.id : undefined,
+              torpedo: torpedo || undefined,
               motor: sec.motor,
               cruise: pw.speed,
               scale: pw.scale * (sec.scale ?? 1),
               beh: enemyShotBeh(pw),
               fxInterval,
             });
-            this.s.fireControl.missileMuzzle(px, py, u.z, fireAng, projectileFxScale("enemy", fxInterval));
+            if (torpedo) this.s.ripples.splash(px, py, 16, 0.6);
+            else this.s.fireControl.missileMuzzle(px, py, u.z, fireAng, projectileFxScale("enemy", fxInterval));
           }
         }
       } else {

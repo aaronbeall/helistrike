@@ -1,6 +1,7 @@
 import Phaser from "phaser";
+import { footprintHalfY, footprintInto } from "../../../render/footprint";
 import { steerUnitAngle } from "../../../sim/navigation";
-import { enemyMuzzle, troopDrawAng } from "../../../render/spritePose";
+import { enemyMuzzle, slopeSquash, troopDrawAng } from "../../../render/spritePose";
 import { troopSoftTurret } from "../../../sim/roster";
 import { gunWorldRot, lookupSpriteOrigin } from "../../../art/spriteOrigin";
 import { thermalSignalTint, applyThermalHeat } from "../../../render/thermal";
@@ -12,7 +13,7 @@ import { isGroundVehicle, specOf, gunsOf, crewOf } from "../../../sim/roster";
 import { rotorMountsOf, rotorSpinSign } from "../../../sim/crafts";
 import { applyEdgeLight, clearEdgeLight } from "../../../render/edgeLight";
 import { spritePivot } from "../../../art/sprites";
-import { groundSlope, worldToScreen, cameraPointVisible, screenVelX, screenVelY, projectHeading } from "../../../worldgen/world";
+import { worldToScreen, cameraPointVisible, screenVelX, screenVelY, projectHeading } from "../../../worldgen/world";
 import { VIEW_PAD } from "../camera/camera";
 import type { MissionScene } from "../../missionScene";
 
@@ -31,6 +32,8 @@ interface SpriteBlock {
 }
 /** Buildings cast their shadow from this fraction of their height. */
 const BUILDING_SHADOW_HEIGHT = 0.25;
+/** Deck shadows: full length so spans join, inset width so the edges don't peek out. */
+const DECK_SHADOW_SCALE = { x: 1, y: 0.92 } as const;
 /** Ground vehicles cast their shadow from this fraction of their height. */
 const VEHICLE_SHADOW_HEIGHT = 0.5;
 
@@ -392,7 +395,7 @@ export class UnitSprites {
               : u.z,
         sp.roof?.tex ?? tex,
         rot,
-        sp.aerial ? 1 : 0.92,
+        sp.aerial ? 1 : sp.deck ? DECK_SHADOW_SCALE : 0.92,
         sp.aerial ? 2 : sp.building ? 8 : 1,
         u,
         drawRot
@@ -404,10 +407,8 @@ export class UnitSprites {
         .setRotation(drawRot);
       if (im.depth !== bodyDepth) im.setDepth(bodyDepth);
       if (isGroundVehicle(u.kind)) {
-        // Cheap pitch approx: squash hull length by slope along facing (same groundSlope sample as before).
-        const sl = groundSlope(this.s.world, u.x, u.y);
-        const grade = Phaser.Math.Clamp(sl.dx * Math.cos(u.angle) + sl.dy * Math.sin(u.angle), -0.4, 0.4);
-        im.setScale((1 + Math.abs(grade) * 0.05) * zs, (1 - grade * 0.12) * zs);
+        const sq = slopeSquash(this.s.world, u.x, u.y, u.angle);
+        im.setScale(sq.sx * zs, sq.sy * zs);
       } else im.setScale(zs);
       if (sp.building) clearEdgeLight(im);
       else applyEdgeLight(im, drawRot);
@@ -420,7 +421,8 @@ export class UnitSprites {
           .setPosition(roofScr.x, roofScr.y)
           .setRotation(drawRot)
           .setScale(roofScr.scale)
-          .setDepth(worldDepth(roofZ, ZOff.body + zBias, u.y));
+          // Decks sort from their far edge so anything standing on them draws above.
+          .setDepth(worldDepth(roofZ, ZOff.body + zBias, sp.deck ? u.y - footprintHalfY(footprintInto(u)) : u.y));
         clearEdgeLight(roofIm);
         applyThermalHeat(roofIm, this.s.thermal.on, bodyHeat);
       }

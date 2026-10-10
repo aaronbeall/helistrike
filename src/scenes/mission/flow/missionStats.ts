@@ -356,7 +356,7 @@ export class MissionStats {
     this.seekers.length = w;
   }
 
-  /** Close the run and save it (once). Without an outcome it's inferred: all objectives, crashed, or left early. */
+  /** Close the run and save it (once). Without an outcome it's inferred: all objectives, crashed, or left early (not saved if it never moved). */
   finish(outcome?: MissionOutcome): void {
     if (this.committed) return;
     this.committed = true;
@@ -364,6 +364,8 @@ export class MissionStats {
     const map = this.run.map;
     const hvTotal = s.world.hv.length;
     const done = outcome ?? (hvTotal > 0 && s.completedHv.size >= hvTotal ? "succeeded" : s.player.phase === "dead" ? "failed" : "abandoned");
+    // Left before ever moving (never flew, no remote time): not a sortie, nothing saved.
+    if (done === "abandoned" && this.timeFlown <= 0 && ![PLAYER, AI].some((c) => this.remoteTime[c].size)) return;
     const host = { craft: this.run.craft, control: PLAYER, map };
     bump(this.run.sorties, host, "started");
     bump(this.run.sorties, host, done);

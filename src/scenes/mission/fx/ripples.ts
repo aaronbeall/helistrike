@@ -43,6 +43,8 @@ export class Ripples {
   private ox = 0;
   private oy = 0;
   private wakeT = new WeakMap<object, number>();
+  /** Ground remotes' last submerged state (splash on change). */
+  private deep = new WeakMap<object, boolean>();
 
   constructor(readonly s: MissionScene) {}
 
@@ -50,6 +52,7 @@ export class Ripples {
     this.live = [];
     this.drawn = false;
     this.wakeT = new WeakMap();
+    this.deep = new WeakMap();
   }
 
   create(): void {
@@ -158,7 +161,19 @@ export class Ripples {
       });
     }
     for (const r of this.s.remotes) {
-      if (r.spec.ground && !r.airborne && !r.dock) this.wade(r, r.spec.radius, true, dt);
+      if (!r.spec.ground || r.dock) continue;
+      if (r.airborne) {
+        this.deep.delete(r);
+        continue;
+      }
+      // Driving into or out of deep water: splash + surface ring (landings splash in the landing thud).
+      const sub = this.s.nav.submerged(r.x, r.y);
+      const was = this.deep.get(r);
+      if (was !== undefined && was !== sub) {
+        this.s.destruction.waterSplash(r.x, r.y, groundZ(this.s.world, r.x, r.y), Math.min(1.2, r.spec.radius / 24));
+      }
+      this.deep.set(r, sub);
+      if (!sub) this.wade(r, r.spec.radius, true, dt);
     }
     const k = RIPPLE_TEX / RIPPLE_SPAN;
     // Idle: nothing to draw and the buffer is already empty — skip the clear and the shader reads.

@@ -4,6 +4,8 @@ import { stampDoodads, GroundMarks } from "./mission/fx/groundMarks";
 import { Ripples } from "./mission/fx/ripples";
 import Phaser from "phaser";
 import { FieldBars } from "./mission/hud/fieldBars";
+import { WaypointHud } from "./mission/hud/waypointHud";
+import { RemoteStatusHud } from "./mission/hud/remoteStatusHud";
 import { MissionFlow } from "./mission/flow/missionFlow";
 import { MissionStats } from "./mission/flow/missionStats";
 import { MissionCamera } from "./mission/camera/camera";
@@ -37,6 +39,7 @@ import { LineOfSight } from "./mission/enemy/lineOfSight";
 import { PowerLines } from "./mission/world/powerLines";
 import { SpatialIndex } from "./mission/world/spatial";
 import { Nav } from "./mission/world/nav";
+import { Bubbles } from "./mission/fx/bubbles";
 import { SpatialOverlay } from "./mission/debug/spatialOverlay";
 import { NavOverlay } from "./mission/debug/navOverlay";
 import { RemoteAi } from "./mission/remote/ai";
@@ -66,7 +69,7 @@ import { setShockPipeline } from "../render/shockFx";
 import { setWarpDistortPipeline } from "../render/warpDistort";
 import { setCloakFxPipeline } from "../render/cloakFx";
 import { createTerrain25D, type Terrain25D } from "../render/terrain25d";
-import { extractBiomeTiles, bakeHeliHudWireTexture, registerArt, nameGameTexture, muzzleGlowKey, ensureExhaustGlow, ensureImpactGlow, setSinkWater } from "../art/sprites";
+import { extractBiomeTiles, bakeHeliHudWireTexture, registerArt, nameGameTexture, muzzleGlowKey, ensureBubbleTexture, ensureExhaustGlow, ensureImpactGlow, setSinkWater } from "../art/sprites";
 import { themeOf, waterColor } from "../worldgen/theme";
 import { generateWorld, worldFromGen, groundZ, worldToScreen, setCamera25DFocus, screenToWorldOnGround, castZ, paintHeightMap, WORLD, WRECK_TEX, type WorldData } from "../worldgen/world";
 import { setTextColor } from "../render/textStyle";
@@ -88,6 +91,7 @@ export class MissionScene extends Phaser.Scene {
   powerLines = new PowerLines(this);
   spatial = new SpatialIndex(this);
   nav = new Nav(this);
+  bubbles = new Bubbles(this);
   unitSim = new UnitSim(this);
   unitLod = new UnitLod(this);
   enemyFire = new EnemyFire(this);
@@ -132,6 +136,8 @@ export class MissionScene extends Phaser.Scene {
   prompts = new PromptsHud(this);
   help = new HelpPanel(this);
   fieldBars = new FieldBars(this);
+  waypointHud = new WaypointHud(this);
+  remoteStatusHud = new RemoteStatusHud(this);
   // debug
   debugMenu = new DebugMenu(this);
   overlays = new DebugOverlays(this);
@@ -227,6 +233,7 @@ export class MissionScene extends Phaser.Scene {
     this.powerLines.reset();
     this.spatial.reset();
     this.nav.reset();
+    this.bubbles.reset();
     this.unitSprites.reset();
     this.spatialOverlay.reset();
     this.navOverlay.reset();
@@ -310,6 +317,7 @@ export class MissionScene extends Phaser.Scene {
     this.input.mouse?.disableContextMenu();
     ensureImpactGlow(this.textures);
     ensureExhaustGlow(this.textures);
+    ensureBubbleTexture(this.textures);
     ensureBlastRingGradient(this.textures);
     ensureAllArtGenAnims(this.anims, this.textures);
     this.input.setDefaultCursor("none");
@@ -344,6 +352,7 @@ export class MissionScene extends Phaser.Scene {
     (this.groundMarks.wreckLayer.texture as Phaser.Textures.DynamicTexture).setIsSpriteTexture(false);
     this.groundMarks.wreckLayer.clear();
     this.ripples.create();
+    this.bubbles.create();
     if (this.game.renderer instanceof Phaser.Renderer.WebGL.WebGLRenderer) {
       this.terrain25d = createTerrain25D(this, this.world, {
         terrain: "map_terrain",
@@ -577,6 +586,8 @@ export class MissionScene extends Phaser.Scene {
     const spawned = this.world.spawns.map((s) => {
       const u = makeUnit(this.world, s.kind, s.x, s.y);
       u.hv = s.hv;
+      if (s.z != null) u.z = s.z;
+      if (s.angle != null) u.angle = u.turret = s.angle;
       return u;
     });
     spawned.push(...makeSettlementUnits(this.world));
@@ -618,6 +629,11 @@ export class MissionScene extends Phaser.Scene {
     this.input.keyboard!.addKey("C").on("down", () => {
       if (this.relief.open || this.debugMenu.open || this.help.open || this.flow.exitOpen) return;
       if (this.remoteFleet.povHudRemote()?.spec.hostEscort) this.remoteFleet.toggleHostEscortMode();
+    });
+    // Waypoint: send the host craft somewhere while piloting a POV escort remote.
+    this.input.keyboard!.addKey("G").on("down", () => {
+      if (this.relief.open || this.debugMenu.open || this.help.open || this.flow.exitOpen) return;
+      this.remoteFleet.placeWaypoint(this.worldPointer());
     });
     this.input.keyboard!.addKey("ONE").on("down", () => {
       if (this.relief.open) this.relief.setBrush(0);
@@ -1001,6 +1017,8 @@ export class MissionScene extends Phaser.Scene {
     this.weaponHud.btHudLabel = cmMk("11px", "#a898d8", 1);
     this.weaponHud.btHudTime = cmMk("11px", "#a898d8", 0);
     this.fieldBars.hpGfx = this.add.graphics().setDepth(Layer.FIELD);
+    this.waypointHud.create();
+    this.remoteStatusHud.create();
     this.threatHud.arcGfx = this.add.graphics().setDepth(Layer.FIELD).setBlendMode(Phaser.BlendModes.ADD);
     this.statusHud.playerHud = this.add.graphics().setScrollFactor(0).setDepth(Layer.HUD + 12);
     this.statusHud.hurtVignette = this.add
@@ -1267,10 +1285,14 @@ export class MissionScene extends Phaser.Scene {
       stage(5, 6, () => this.projectiles.updateShots(dt));
       if (this.player.phase === "dead" && !this.destruction.playerCrashStarted) this.destruction.beginPlayerCrash();
       stage(7, 8, () => this.destruction.updateDebris(dt));
-      stage(9, 10, () => this.fx.updateSimParticles(dt));
+      stage(9, 10, () => {
+        this.fx.updateSimParticles(dt);
+        this.bubbles.update(dt);
+      });
       stage(11, undefined, () => {
         this.lockOn.update();
         this.fieldBars.draw();
+        this.waypointHud.draw();
         this.threatHud.drawArcs();
         this.fx.emitDamageFx();
         this.fx.emitHeliCrashDmgFlames();
@@ -1471,6 +1493,7 @@ export class MissionScene extends Phaser.Scene {
     this.cornerHud.layoutUpperRightHud();
     this.runStatsHud.sync();
     this.weaponHud.draw();
+    this.remoteStatusHud.draw();
   }
 
   /** Radar: yellow diamond for player remotes. */
@@ -1726,8 +1749,9 @@ export class MissionScene extends Phaser.Scene {
     this.statusHud.hurtVignettePulse.setPosition(0, 0);
     this.reticleHud.bindCameras();
     this.bindHud(this.camera.mapLabel);
+    this.bindHud(this.remoteStatusHud.mouseGfx);
     // World-anchored tracking HUD: lock boxes, unit HP — not thermalized.
-    for (const go of [this.lockOn.gfx, this.lockOn.txt, this.lockOn.inbdTxt, this.fieldBars.hpGfx, this.threatHud.arcGfx, this.prompts.remoteArmedTxt]) {
+    for (const go of [this.lockOn.gfx, this.lockOn.txt, this.lockOn.inbdTxt, this.fieldBars.hpGfx, this.waypointHud.gfx, this.remoteStatusHud.hostGfx, this.threatHud.arcGfx, this.prompts.remoteArmedTxt]) {
       this.bindFieldHud(go);
     }
     // TOW wire / Tesla / Refractor / energy ribbons stay on the main cam (world depth).
@@ -1832,16 +1856,13 @@ export class MissionScene extends Phaser.Scene {
     let wantX = 0;
     let wantY = 0;
     if (this.camera.mapBlend < 0.12 && !this.over && this.player.phase !== "dead") {
-      const heli = this.player;
-      const spdN = Phaser.Math.Clamp(Math.hypot(heli.vx, heli.vy) / 320, 0, 1);
-      const altN = Phaser.Math.Clamp(
-        castZ(this.world, heli.x, heli.y, heli.z) / heli.spec.maxAgl,
-        0,
-        1
-      );
+      // Follows the POV being flown (host or piloted remote), blended like the camera.
+      const cam = this.camera;
+      const spdN = cam.blendSubjects((c) => Phaser.Math.Clamp(Math.hypot(c.vx, c.vy) / 320, 0, 1));
+      const altN = cam.blendSubjects((c) => Phaser.Math.Clamp(castZ(this.world, c.x, c.y, c.z) / c.hull.maxAgl, 0, 1));
       wantS = Phaser.Math.Clamp(1 - spdN * 0.07 - altN * 0.08, 0.86, 1);
-      wantX = -heli.roll * 24;
-      wantY = -heli.pitch * 20;
+      wantX = -cam.blendSubjects((c) => c.roll) * 24;
+      wantY = -cam.blendSubjects((c) => c.pitch) * 20;
     }
     const k = 1 - Math.exp(-5.5 * dt);
     this.hudParS = Phaser.Math.Linear(this.hudParS, wantS, k);

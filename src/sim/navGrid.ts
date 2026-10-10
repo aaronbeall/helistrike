@@ -1,4 +1,5 @@
 import { bedZ, isDeepWater, isWater, WORLD, type WorldData } from "../worldgen/world";
+import { CLIFF_GRADE } from "./navigation";
 
 /** Nav cell size (world units) and cells per side. */
 export const NAV_CELL = 28;
@@ -13,11 +14,26 @@ export const LAND_DRY = 1;
 export const LAND_SHALLOW = 2;
 /** Route cost multiplier through shallow water (avoided, not blocked). */
 const SHALLOW_COST = 2.5;
-/** Grade (z per world unit) a crossing between cells may not exceed (matches navigation CLIFF_GRADE). */
-const NAV_CLIFF_GRADE = 0.9;
+/** Passable cells — land: every ground unit (wades shallows, walks decks) · seabed: underwater hulls (+ deep water) · water: boats. */
+export type NavLayer = "land" | "seabed" | "water";
 
-/** land: every ground unit (wades shallows, walks decks) · water: boats. */
-export type NavLayer = "land" | "water";
+/** What a route is for: which cells are passable, and the steepest crossing (grade) it may take. Interned per pair. */
+export interface NavMode {
+  readonly layer: NavLayer;
+  readonly maxGrade: number;
+  readonly key: string;
+}
+
+const modes = new Map<string, NavMode>();
+export function navMode(layer: NavLayer, maxGrade: number): NavMode {
+  const key = `${layer}:${maxGrade}`;
+  let m = modes.get(key);
+  if (!m) modes.set(key, (m = { layer, maxGrade, key }));
+  return m;
+}
+/** Default ground hull, and boats. */
+export const LAND_MODE = navMode("land", CLIFF_GRADE);
+export const WATER_MODE = navMode("water", Infinity);
 
 /** Anything that can be routed: a unit or a ground remote. */
 export interface NavAgent {
@@ -56,7 +72,9 @@ const DX = [1, 1, 0, -1, -1, -1, 0, 1];
 const DY = [0, 1, 1, 1, 0, -1, -1, -1];
 const STEP = [1, Math.SQRT2, 1, Math.SQRT2, 1, Math.SQRT2, 1, Math.SQRT2];
 
-/** Coarse walkable grid: land / water passability, closed cliff crossings, connected regions, clearance, bridge decks, capped A*. */
+const NO_DECKS: readonly number[] = [];
+
+/** Coarse walkable grid: land / water passability, crossing grades, connected regions + clearance per mode, bridge decks, capped A*. */
 export class NavGrid {
   readonly n = NAV_N;
   /** LAND_BLOCKED / LAND_DRY / LAND_SHALLOW, with live decks as dry. */
@@ -65,15 +83,14 @@ export class NavGrid {
   private readonly landBase = new Uint8Array(NAV_N * NAV_N);
   /** 1 = navigable water. */
   readonly water = new Uint8Array(NAV_N * NAV_N);
-  /** Land crossings closed per neighbour direction (bit d), from cliffs. */
-  readonly cliff = new Uint8Array(NAV_N * NAV_N);
-  readonly landRegion = new Int32Array(NAV_N * NAV_N);
-  readonly waterRegion = new Int32Array(NAV_N * NAV_N);
-  /** Cells to the nearest blocked cell / cliff edge (capped). */
-  readonly landClear = new Uint8Array(NAV_N * NAV_N);
-  readonly waterClear = new Uint8Array(NAV_N * NAV_N);
-  /** Deck unit index on this cell, or -1. */
-  readonly deck = new Int32Array(NAV_N * NAV_N).fill(-1);
+  /** Bed grade of each crossing to neighbours 0–3 (E, SE, S, SW; the other four read the neighbour's), per cell. */
+  private readonly grades = new Float32Array(NAV_N * NAV_N * 4);
+  /** Steepest crossing touching each cell. */
+  private readonly steep = new Float32Array(NAV_N * NAV_N);
+  /** Per mode: region id per cell (−1 blocked) and cells to the nearest blocked cell / too-steep edge (capped). */
+  private readonly modeData = new Map<string, { mode: NavMode; region: Int32Array; clear: Uint8Array }>();
+  /** Deck unit indices touching each cell (segments overlap at seams), or undefined. */
+  private readonly decks: (number[] | undefined)[] = new Array(NAV_N * NAV_N);
   /** Bumped whenever passability changes (deck destroyed). */
   version = 0;
   /** A* searches run since the last `takeSearches`. */
@@ -110,7 +127,7 @@ export class NavGrid {
       }
     }
     this.land.set(this.landBase);
-    // Cliffs: steepest half of each crossing (centre → midpoint → centre), so a narrow drop isn't averaged away.
+    // Crossing grade: steepest half (centre → midpoint → centre), so a narrow drop isn't averaged away.
     for (let cy = 0; cy < n; cy++) {
       for (let cx = 0; cx < n; cx++) {
         const c = cy * n + cx;
@@ -122,16 +139,12 @@ export class NavGrid {
           const half = (STEP[d]! * NAV_CELL) / 2;
           const zm = bedZ(world, (cx + 0.5 + DX[d]! / 2) * NAV_CELL, (cy + 0.5 + DY[d]! / 2) * NAV_CELL);
           const grade = Math.max(Math.abs(zm - z[c]!), Math.abs(z[j]! - zm)) / half;
-          if (grade > NAV_CLIFF_GRADE) {
-            this.cliff[c]! |= 1 << d;
-            this.cliff[j]! |= 1 << ((d + 4) & 7);
-          }
+          this.grades[c * 4 + d] = grade;
+          if (grade > this.steep[c]!) this.steep[c] = grade;
+          if (grade > this.steep[j]!) this.steep[j] = grade;
         }
       }
     }
-    this.rebuildLand();
-    this.labelRegions("water", this.waterRegion);
-    this.clearance("water", this.waterClear);
   }
 
   cellAt(x: number, y: number): number {
@@ -148,57 +161,102 @@ export class NavGrid {
     return (((c / NAV_N) | 0) + 0.5) * NAV_CELL;
   }
 
-  passable(layer: NavLayer, c: number): boolean {
-    return layer === "land" ? this.land[c]! !== LAND_BLOCKED : this.water[c] === 1;
+  passable(mode: NavMode, c: number): boolean {
+    if (mode.layer === "water") return this.water[c] === 1;
+    return this.land[c]! !== LAND_BLOCKED || (mode.layer === "seabed" && this.water[c] === 1);
   }
 
-  region(layer: NavLayer, c: number): number {
-    return layer === "land" ? this.landRegion[c]! : this.waterRegion[c]!;
+  region(mode: NavMode, c: number): number {
+    return this.data(mode).region[c]!;
   }
 
-  clearAt(layer: NavLayer, c: number): number {
-    return layer === "land" ? this.landClear[c]! : this.waterClear[c]!;
+  clearAt(mode: NavMode, c: number): number {
+    return this.data(mode).clear[c]!;
   }
 
-  /** Crossing from c in direction d is open (land: no cliff, unless either side is a deck). */
-  private open(layer: NavLayer, c: number, d: number, j: number): boolean {
-    if (layer === "water") return true;
-    return ((this.cliff[c]! >> d) & 1) === 0 || this.deck[c]! >= 0 || this.deck[j]! >= 0;
+  /** Number of connected regions for `mode`. */
+  regionCount(mode: NavMode): number {
+    let n = 0;
+    for (const r of this.data(mode).region) if (r + 1 > n) n = r + 1;
+    return n;
+  }
+
+  /** Bed grade of the crossing from cell c toward neighbour direction d (0 off the map). */
+  crossingGrade(c: number, d: number): number {
+    if (d < 4) return this.grades[c * 4 + d]!;
+    const x = (c % NAV_N) + DX[d]!;
+    const y = ((c / NAV_N) | 0) + DY[d]!;
+    if (x < 0 || y < 0 || x >= NAV_N || y >= NAV_N) return 0;
+    return this.grades[(y * NAV_N + x) * 4 + d - 4]!;
+  }
+
+  /** Crossing from c in direction d to j is open: water always; ground if no steeper than the mode allows (decks always). */
+  private open(mode: NavMode, c: number, d: number, j: number): boolean {
+    if (mode.layer === "water") return true;
+    return this.hasDeck(c) || this.hasDeck(j) || this.crossingGrade(c, d) <= mode.maxGrade;
+  }
+
+  /** Regions + clearance for `mode`, built on first use. */
+  private data(mode: NavMode): { mode: NavMode; region: Int32Array; clear: Uint8Array } {
+    let d = this.modeData.get(mode.key);
+    if (!d) {
+      d = { mode, region: new Int32Array(NAV_N * NAV_N), clear: new Uint8Array(NAV_N * NAV_N) };
+      this.labelRegions(mode, d.region);
+      this.clearance(mode, d.clear);
+      this.modeData.set(mode.key, d);
+    }
+    return d;
+  }
+
+  /** A live deck touches this cell. */
+  hasDeck(c: number): boolean {
+    return !!this.decks[c]?.length;
+  }
+
+  /** Deck unit indices touching this cell (empty when none). */
+  decksAt(c: number): readonly number[] {
+    return this.decks[c] ?? NO_DECKS;
   }
 
   /** Mark cells as a walkable deck for unit `index`. */
   setDeck(cells: readonly number[], index: number): void {
     for (const c of cells) {
-      this.deck[c] = index;
+      (this.decks[c] ??= []).push(index);
       this.land[c] = LAND_DRY;
     }
   }
 
-  /** Deck `index` gone: its cells fall back to their base class; land regions + clearance rebuilt. */
+  /** Deck `index` gone: cells no other deck covers fall back to their base class; land regions + clearance rebuilt. */
   clearDeck(index: number): boolean {
     let hit = false;
-    for (let c = 0; c < this.deck.length; c++) {
-      if (this.deck[c] !== index) continue;
-      this.deck[c] = -1;
-      this.land[c] = this.landBase[c]!;
+    for (let c = 0; c < this.decks.length; c++) {
+      const list = this.decks[c];
+      const k = list ? list.indexOf(index) : -1;
+      if (k < 0) continue;
+      list!.splice(k, 1);
+      if (!list!.length) this.land[c] = this.landBase[c]!;
       hit = true;
     }
     if (hit) this.rebuildLand();
     return hit;
   }
 
+  /** Ground passability changed (decks): rebuild every ground mode's regions + clearance. */
   rebuildLand(): void {
-    this.labelRegions("land", this.landRegion);
-    this.clearance("land", this.landClear);
+    for (const d of this.modeData.values()) {
+      if (d.mode.layer === "water") continue;
+      this.labelRegions(d.mode, d.region);
+      this.clearance(d.mode, d.clear);
+    }
     this.version++;
   }
 
-  private labelRegions(layer: NavLayer, out: Int32Array): void {
+  private labelRegions(mode: NavMode, out: Int32Array): void {
     out.fill(-1);
     const q = this.queue;
     let id = 0;
     for (let s = 0; s < out.length; s++) {
-      if (out[s]! >= 0 || !this.passable(layer, s)) continue;
+      if (out[s]! >= 0 || !this.passable(mode, s)) continue;
       let qh = 0;
       let qt = 0;
       q[qt++] = s;
@@ -212,7 +270,7 @@ export class NavGrid {
           const ny = cy + DY[d]!;
           if (nx < 0 || ny < 0 || nx >= NAV_N || ny >= NAV_N) continue;
           const j = ny * NAV_N + nx;
-          if (out[j]! >= 0 || !this.passable(layer, j) || !this.open(layer, c, d, j)) continue;
+          if (out[j]! >= 0 || !this.passable(mode, j) || !this.open(mode, c, d, j)) continue;
           out[j] = id;
           q[qt++] = j;
         }
@@ -221,14 +279,14 @@ export class NavGrid {
     }
   }
 
-  private clearance(layer: NavLayer, out: Uint8Array): void {
+  private clearance(mode: NavMode, out: Uint8Array): void {
     const q = this.queue;
     let qt = 0;
     for (let c = 0; c < out.length; c++) {
-      if (!this.passable(layer, c)) {
+      if (!this.passable(mode, c)) {
         out[c] = 0;
         q[qt++] = c;
-      } else if (layer === "land" && this.cliff[c] && this.deck[c]! < 0) {
+      } else if (mode.layer !== "water" && this.steep[c]! > mode.maxGrade && !this.hasDeck(c)) {
         out[c] = 1;
         q[qt++] = c;
       } else out[c] = CLEAR_CAP;
@@ -253,7 +311,7 @@ export class NavGrid {
   }
 
   /** Straight walk from a to b stays on passable cells through open crossings. */
-  lineClear(layer: NavLayer, x0: number, y0: number, x1: number, y1: number): boolean {
+  lineClear(mode: NavMode, x0: number, y0: number, x1: number, y1: number): boolean {
     const dist = Math.hypot(x1 - x0, y1 - y0);
     const steps = Math.ceil(dist / (NAV_CELL * 0.5));
     let prev = this.cellAt(x0, y0);
@@ -261,10 +319,10 @@ export class NavGrid {
       const t = k / steps;
       const c = this.cellAt(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
       if (c === prev) continue;
-      if (!this.passable(layer, c)) return false;
-      if (layer !== "water") {
+      if (!this.passable(mode, c)) return false;
+      if (mode.layer !== "water") {
         const d = dirOf(prev, c);
-        if (d >= 0 && !this.open(layer, prev, d, c)) return false;
+        if (d >= 0 && !this.open(mode, prev, d, c)) return false;
       }
       prev = c;
     }
@@ -272,8 +330,8 @@ export class NavGrid {
   }
 
   /** Nearest cell to `c` in `region` (ring search up to `maxR` cells), or -1. */
-  nearestInRegion(layer: NavLayer, region: number, c: number, maxR: number): number {
-    if (this.region(layer, c) === region) return c;
+  nearestInRegion(mode: NavMode, region: number, c: number, maxR: number): number {
+    if (this.region(mode, c) === region) return c;
     const cx = c % NAV_N;
     const cy = (c / NAV_N) | 0;
     for (let r = 1; r <= maxR; r++) {
@@ -286,8 +344,8 @@ export class NavGrid {
           const y = cy + oy;
           if (x < 0 || y < 0 || x >= NAV_N || y >= NAV_N) continue;
           const j = y * NAV_N + x;
-          if (this.region(layer, j) !== region) continue;
-          const cl = this.clearAt(layer, j);
+          if (this.region(mode, j) !== region) continue;
+          const cl = this.clearAt(mode, j);
           if (cl > bestClear) {
             bestClear = cl;
             best = j;
@@ -300,7 +358,7 @@ export class NavGrid {
   }
 
   /** First cell in `region` walking from cell `to` back toward cell `from` (the reachable end of the approach), or `from`. */
-  nearestAlong(layer: NavLayer, region: number, from: number, to: number): number {
+  nearestAlong(mode: NavMode, region: number, from: number, to: number): number {
     const x0 = this.centerX(to);
     const y0 = this.centerY(to);
     const x1 = this.centerX(from);
@@ -309,14 +367,14 @@ export class NavGrid {
     for (let k = 1; k <= steps; k++) {
       const t = k / steps;
       const c = this.cellAt(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
-      if (this.region(layer, c) === region) return c;
+      if (this.region(mode, c) === region) return c;
     }
     return from;
   }
 
   /** Nearest passable cell to `c` (ring search up to `maxR`), preferring open ones, or -1. */
-  nearestPassable(layer: NavLayer, c: number, maxR: number): number {
-    if (this.passable(layer, c)) return c;
+  nearestPassable(mode: NavMode, c: number, maxR: number): number {
+    if (this.passable(mode, c)) return c;
     const cx = c % NAV_N;
     const cy = (c / NAV_N) | 0;
     for (let r = 1; r <= maxR; r++) {
@@ -329,8 +387,8 @@ export class NavGrid {
           const y = cy + oy;
           if (x < 0 || y < 0 || x >= NAV_N || y >= NAV_N) continue;
           const j = y * NAV_N + x;
-          if (!this.passable(layer, j)) continue;
-          const cl = this.clearAt(layer, j);
+          if (!this.passable(mode, j)) continue;
+          const cl = this.clearAt(mode, j);
           if (cl > bestClear) {
             bestClear = cl;
             best = j;
@@ -346,7 +404,7 @@ export class NavGrid {
    * Capped A* from `from` to `to`; fills `out` with cells start → goal (or toward the closest cell reached when
    * capped). Shallow water costs more; low clearance costs a little more (keeps routes off shores / cliff lips).
    */
-  findPath(layer: NavLayer, from: number, to: number, out: number[], maxExpand = 1600): boolean {
+  findPath(mode: NavMode, from: number, to: number, out: number[], maxExpand = 1600): boolean {
     this.searches++;
     out.length = 0;
     if (from === to) {
@@ -392,12 +450,12 @@ export class NavGrid {
         const ny = cy + DY[d]!;
         if (nx < 0 || ny < 0 || nx >= NAV_N || ny >= NAV_N) continue;
         const j = ny * NAV_N + nx;
-        if (this.closed[j] === st || !this.passable(layer, j) || !this.open(layer, c, d, j)) continue;
+        if (this.closed[j] === st || !this.passable(mode, j) || !this.open(mode, c, d, j)) continue;
         // Diagonals need both side cells passable (no corner cutting).
-        if (d & 1 && (!this.passable(layer, cy * NAV_N + nx) || !this.passable(layer, ny * NAV_N + cx))) continue;
+        if (d & 1 && (!this.passable(mode, cy * NAV_N + nx) || !this.passable(mode, ny * NAV_N + cx))) continue;
         let cost = STEP[d]!;
-        if (layer === "land" && this.land[j] === LAND_SHALLOW) cost *= SHALLOW_COST;
-        if (this.clearAt(layer, j) <= 1) cost *= 1.6;
+        if (mode.layer !== "water" && this.land[j] === LAND_SHALLOW) cost *= SHALLOW_COST;
+        if (this.clearAt(mode, j) <= 1) cost *= 1.6;
         const ng = this.g[c]! + cost;
         if (this.seen[j] === st && ng >= this.g[j]!) continue;
         this.seen[j] = st;

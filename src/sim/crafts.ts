@@ -1,3 +1,4 @@
+import type { TerrainAbility } from "./navigation";
 import { CRAFTS } from "../catalog/crafts";
 import { CAMO_SUFFIX } from "../catalog/camo";
 import { lookupSpriteMuzzles, lookupSpriteOrigin, lookupSpritePoints, mountsOf, spritePointLabel } from "../art/spriteOrigin";
@@ -218,6 +219,8 @@ export interface CraftSpec {
   gunOverlayScale?: number;
   /** Ground hull steers like a wheeled car: yaw rate scales with signed forward speed (no pivoting in place). */
   vehicleSteering?: boolean;
+  /** Ground hull terrain ability (climb, slope slowdown, underwater); omitted = default. */
+  terrain?: TerrainAbility;
   /** Forward speed (u/s) at which `vehicleSteering` reaches full `yawRate`. */
   steerSpeedRef?: number;
   /**

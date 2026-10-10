@@ -6,34 +6,56 @@ import Phaser from "phaser";
 import { Layer, worldDepth } from "../../../render/depth";
 import { range } from "../../../util/rng";
 import { MAP_AIR_SOFT, MAX_AGL, craftCameraEdgeLocked } from "../../../sim/craft";
+import { remoteSpecOf } from "../../../sim/remote";
 import { type ThermalPalette } from "../../../render/thermal";
 import type { MissionScene } from "../../missionScene";
 import { missionOf } from "../../../sim/mission";
 import { setTextColor } from "../../../render/textStyle";
 
-/** Framing zoom for a craft at altitude / speed (host or remote hull). */
-export function craftPlayZoom(
-  spec: ReturnType<typeof craftOf>,
-  z: number,
-  vx: number,
-  vy: number
-): number {
+/** Speed pullback: `CAM_PULL_REF` at `CAM_SPEED_REF` (world / s), growing as speed^`CAM_PULL_EXP`, capped at `CAM_PULL_MAX`. */
+export const CAM_SPEED_REF = 760;
+export const CAM_PULL_REF = 0.4;
+export const CAM_PULL_EXP = 2;
+export const CAM_PULL_MAX = 0.45;
+
+/** Framing zoom for a hull at a speed (host or remote): its size, then pullback by absolute speed (same scale for every craft). */
+export function craftPlayZoom(spec: ReturnType<typeof craftOf>, z: number, vx: number, vy: number): number {
   // Perspective keeps chase-focus scale stable; Phaser zoom is framing only.
-  const base = camZoomAt(z) * craftCameraScale(spec);
-  const spdN = Phaser.Math.Clamp(Math.hypot(vx, vy) / Math.max(1, spec.maxSpeed), 0, 1);
-  const planeScheme = craftControlScheme(spec) === "plane";
-  const planeish = spec.flightModel === "plane" || spec.flightModel === "vtol";
-  const speedClass = Math.sqrt(spec.maxSpeed / 340);
-  if (planeScheme) {
-    // Jets: slightly wider baseline + modest speed pullback (not theater-map zoom).
-    const baseMul = 0.9;
-    const maxPullback = Phaser.Math.Clamp(0.26 * speedClass, 0.22, 0.34);
-    return base * baseMul * (1 - spdN * maxPullback);
+  const pull = Math.min(CAM_PULL_MAX, CAM_PULL_REF * Math.pow(Math.hypot(vx, vy) / CAM_SPEED_REF, CAM_PULL_EXP));
+  return camZoomAt(z) * craftCameraScale(spec) * (1 - pull);
+}
+
+/** What the camera frames: a hull at a pose, and the weapon its look-ahead follows. */
+export type CamSubject = {
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  roll: number;
+  pitch: number;
+  hull: ReturnType<typeof craftOf>;
+  weapon: PlayerWpnSpec;
+  /** A piloted remote, not the host. */
+  remote: boolean;
+};
+
+type AimLook = { x: number; y: number; rate: number };
+
+/** Look-ahead toward the pointer (projected at the subject's altitude), per its weapon + hull. */
+function aimLook(s: MissionScene, c: CamSubject, out: AimLook): AimLook {
+  const p = s.pointerScreen();
+  const aim = screenToWorldAtZ(p.x, p.y, c.z);
+  const look = planeLookCam(c.weapon, craftControlScheme(c.hull) === "plane");
+  out.x = (aim.x - c.x) * look.pull;
+  out.y = (aim.y - c.y) * look.pull;
+  const len = Math.hypot(out.x, out.y);
+  if (len > look.max) {
+    out.x *= look.max / len;
+    out.y *= look.max / len;
   }
-  const maxPullback = planeish
-    ? Phaser.Math.Clamp(0.22 * speedClass, 0.2, 0.42)
-    : Phaser.Math.Clamp(0.1 * speedClass, 0.08, 0.16);
-  return base * (1 - spdN * maxPullback);
+  out.rate = look.rate;
+  return out;
 }
 
 /** Pad (projected px) around the view that unit sprites still draw in; far-unit LOD treats the same padded view as on screen. */
@@ -56,6 +78,10 @@ export class MissionCamera {
   follow = false;
   lookCamX = 0;
   lookCamY = 0;
+  private hostCam = {} as CamSubject;
+  private povCam = {} as CamSubject;
+  private hostLook: AimLook = { x: 0, y: 0, rate: 0 };
+  private povLook: AimLook = { x: 0, y: 0, rate: 0 };
   /** Fixed-wing altitude cloud sprites (scroll-factor parallax). */
   planeClouds: {
     im: Phaser.GameObjects.Image;
@@ -160,7 +186,7 @@ export class MissionCamera {
 
   /** World point the play camera is looking at (heli, povCam chase, or stinger). */
   camLookWorld(): { x: number; y: number; z: number } {
-    const a = this.playerCamAnchor();
+    const a = this.camAnchor();
     return {
       x: a.x + this.lookCamX,
       y: a.y + this.lookCamY,
@@ -228,7 +254,8 @@ export class MissionCamera {
     this.leaveTheaterClouds = [];
     this.leaveTheaterPeaks = [];
     // Outside-map sky is only visible when the chase cam can leave the playable rect.
-    if (craftCameraEdgeLocked(this.s.player.spec)) return;
+    const hulls = [this.s.player.spec, ...this.s.loadout.flatMap((w) => (w.payload?.remote ? [craftOf(remoteSpecOf(w.payload.remote.kind).craftLook)] : []))];
+    if (hulls.every(craftCameraEdgeLocked)) return;
 
     const keys = ["fx_cloud_1", "fx_cloud_2", "fx_cloud_3", "fx_cloud_4"].filter((k) =>
       this.s.textures.exists(k)
@@ -612,17 +639,11 @@ export class MissionCamera {
   }
 
   playZoom(): number {
-    const h = this.s.player;
-    const hostZoom = craftPlayZoom(h.spec, h.z, h.vx, h.vy);
-    const remote = this.s.remoteFleet.activeRemote();
-    if (!remote || this.s.remoteFleet.remoteCamT < 0.001 || !remote.spec.craftLook) return hostZoom;
-    const hull = craftOf(remote.spec.craftLook);
-    const remZoom = craftPlayZoom(hull, remote.z, remote.vx, remote.vy);
-    return Phaser.Math.Linear(hostZoom, remZoom, this.s.remoteFleet.remoteCamT);
+    return this.blendSubjects((c) => craftPlayZoom(c.hull, c.z, c.vx, c.vy));
   }
 
   syncProjectionPose(): void {
-    const anchor = this.playerCamAnchor();
+    const anchor = this.camAnchor();
     const focusX = anchor.x + this.lookCamX;
     const focusY = anchor.y + this.lookCamY;
     const focusZ =
@@ -664,8 +685,8 @@ export class MissionCamera {
     const width = this.s.scale.width;
     const height = this.s.scale.height;
     const lerp = 0.12;
-    const fx = this.s.hostCraft.body.x;
-    const fy = this.s.hostCraft.body.y;
+    const a = this.camAnchor();
+    const { x: fx, y: fy } = worldToScreen(a.x, a.y, a.z);
     let sx = this.playScrollX;
     let sy = this.playScrollY;
     const midX = sx + width * 0.5;
@@ -685,7 +706,7 @@ export class MissionCamera {
     const bw = Math.max(bx, bx + WORLD - dw);
     const bh = Math.max(by, by + WORLD - dh);
     // Helis / VTOL: clamp scroll to the map. Planes track freely (forced U-turn craft).
-    if (craftCameraEdgeLocked(this.s.player.spec)) {
+    if (craftCameraEdgeLocked(this.subjectHull())) {
       sx = Phaser.Math.Clamp(sx, bx, bw);
       sy = Phaser.Math.Clamp(sy, by, bh);
     }
@@ -720,10 +741,8 @@ export class MissionCamera {
         this.follow = false;
       }
       cam.useBounds = false;
-      cam.centerOn(
-        Phaser.Math.Linear(this.s.player.x, WORLD / 2, ease),
-        Phaser.Math.Linear(this.s.player.y, WORLD / 2, ease)
-      );
+      const a = this.camAnchor();
+      cam.centerOn(Phaser.Math.Linear(a.x, WORLD / 2, ease), Phaser.Math.Linear(a.y, WORLD / 2, ease));
       this.mapView = true;
       this.s.reticleHud.hideAimChrome();
       if (!this.mapWant && this.mapBlend < 0.08) this.mapLabel.setVisible(false);
@@ -731,7 +750,7 @@ export class MissionCamera {
     } else {
       this.mapView = false;
       this.mapLabel.setVisible(false);
-      if (craftCameraEdgeLocked(this.s.player.spec)) {
+      if (craftCameraEdgeLocked(this.subjectHull())) {
         cam.setBounds(0, 0, WORLD, WORLD);
         cam.useBounds = true;
       } else {
@@ -753,7 +772,7 @@ export class MissionCamera {
         return u * u * (3 - 2 * u);
       };
       const arrive = ease(elapsed / 0.55);
-      const anchor = this.playerCamAnchor();
+      const anchor = this.camAnchor();
       const fullOx = this.s.flow.stingerTarget.x - anchor.x;
       const fullOy = this.s.flow.stingerTarget.y - anchor.y;
       // If impact linger is still on (near) this site, don't ease back to the player mid-stinger.
@@ -767,23 +786,10 @@ export class MissionCamera {
       const targetZ = this.s.flow.stingerTarget.z ?? anchor.z;
       let focusZ = Phaser.Math.Linear(this.s.flow.stingerCamFromZ, targetZ, arrive);
       if (leave < 1) {
-        // Default leave collapses toward heli (0,0). In Spectre view, ease back to the drone
-        // so we don't flash the bird before remoteCamT reclaims the look.
-        let restX = 0;
-        let restY = 0;
-        let restZ = anchor.z;
-        if (this.s.remoteFleet.remoteView) {
-          const drone = this.s.remoteFleet.activeRemote();
-          if (drone) {
-            const seek = this.s.remoteFleet.remoteLookOffset(drone);
-            restX = seek.x;
-            restY = seek.y;
-            restZ = drone.z;
-          }
-        }
-        ox = Phaser.Math.Linear(restX, ox, leave);
-        oy = Phaser.Math.Linear(restY, oy, leave);
-        focusZ = Phaser.Math.Linear(restZ, focusZ, leave);
+        // Leave collapses back onto the camera subject.
+        ox *= leave;
+        oy *= leave;
+        focusZ = Phaser.Math.Linear(anchor.z, focusZ, leave);
       }
       this.s.flow.stingerFocusZ = focusZ;
       const k = 1 - Math.exp(-5.5 * dt);
@@ -794,7 +800,7 @@ export class MissionCamera {
     }
     if (this.s.player.phase === "dead") {
       // Resting focus = mid(last live, hulk); mouse pulls away from that center.
-      const anchor = this.playerCamAnchor();
+      const anchor = this.camAnchor();
       const p = this.s.pointerScreen();
       const pointerAtFocus = screenToWorldAtZ(p.x, p.y, anchor.z);
       const pull = 0.32;
@@ -813,13 +819,13 @@ export class MissionCamera {
       return;
     }
     this.s.remoteFleet.tickRemoteCamBlend(dt);
-    const remote = this.s.remoteFleet.activeRemote();
+    const anchor = this.camAnchor();
+    const hx = anchor.x;
+    const hy = anchor.y;
     const sensor = this.s.thermal.activeSensorShot();
     if (sensor) {
-      const hx = this.s.player.x;
-      const hy = this.s.player.y;
       const p = this.s.pointerScreen();
-      const aim = screenToWorldAtZ(p.x, p.y, this.s.player.z);
+      const aim = screenToWorldAtZ(p.x, p.y, anchor.z);
       // Keep the pre-fire aim look-ahead until the missile has cleared the bird.
       const aimPull = 0.55;
       const aimMax = 210;
@@ -861,27 +867,9 @@ export class MissionCamera {
       this.syncProjectionPose();
       return;
     }
-    const p = this.s.pointerScreen();
-    const pointerAtFocus = screenToWorldAtZ(p.x, p.y, this.s.player.z);
-    // While remote POV is active, look pull follows the HUD weapon (not host slot).
-    const wpnSpec =
-      remote && this.s.remoteFleet.remoteCamT > 0.2
-        ? this.s.fireControl.hudLoadout()[this.s.fireControl.hudWeapon()]!
-        : this.s.loadout[this.s.player.weapon]!;
-    const lookPlane =
-      remote && this.s.remoteFleet.remoteCamT > 0.2 && remote.spec.craftLook
-        ? craftControlScheme(craftOf(remote.spec.craftLook)) === "plane"
-        : craftControlScheme(this.s.player.spec) === "plane";
-    const look = planeLookCam(wpnSpec, lookPlane);
-    const pull = look.pull;
-    const max = look.max;
-    let ox = (pointerAtFocus.x - this.s.player.x) * pull;
-    let oy = (pointerAtFocus.y - this.s.player.y) * pull;
-    const len = Math.hypot(ox, oy);
-    if (len > max) {
-      ox *= max / len;
-      oy *= max / len;
-    }
+    const look = this.subjectLook();
+    let ox = look.x;
+    let oy = look.y;
     let rate = look.rate;
     let pov: Shot | undefined;
     for (let i = this.s.shots.length - 1; i >= 0; i--) {
@@ -898,21 +886,15 @@ export class MissionCamera {
       this.povCamLookY = pov.y;
       // Live follow — don't accumulate linger while the shot is still airborne.
       this.povCamLookHold = 0;
-      ox += (pov.x - this.s.player.x) * 0.82;
-      oy += (pov.y - this.s.player.y) * 0.82;
+      ox += (pov.x - hx) * 0.82;
+      oy += (pov.y - hy) * 0.82;
       rate = 5.4;
     } else if (this.povCamLookHold > 0) {
-      ox += (this.povCamLookX - this.s.player.x) * 0.82;
-      oy += (this.povCamLookY - this.s.player.y) * 0.82;
+      ox += (this.povCamLookX - hx) * 0.82;
+      oy += (this.povCamLookY - hy) * 0.82;
       rate = 5.4;
     } else if (this.s.thermal.sensorLingerT <= 0) {
       this.s.thermal.sensorLingerPalette = null;
-    }
-    if (remote && this.s.remoteFleet.remoteCamT > 0.001) {
-      const seek = this.s.remoteFleet.remoteLookOffset(remote);
-      ox = Phaser.Math.Linear(ox, seek.x, this.s.remoteFleet.remoteCamT);
-      oy = Phaser.Math.Linear(oy, seek.y, this.s.remoteFleet.remoteCamT);
-      rate = Phaser.Math.Linear(rate, 3.2, this.s.remoteFleet.remoteCamT);
     }
     const k = 1 - Math.exp(-rate * dt);
     this.lookCamX = Phaser.Math.Linear(this.lookCamX, ox, k);
@@ -930,8 +912,9 @@ export class MissionCamera {
     const pz = this.playZoom();
     const pw = this.playViewW || w / pz;
     const ph = this.playViewH || h / pz;
-    const vx = this.playViewW ? this.playViewX : this.s.player.x - pw / 2;
-    const vy = this.playViewH ? this.playViewY : this.s.player.y - ph / 2;
+    const a = this.camAnchor();
+    const vx = this.playViewW ? this.playViewX : a.x - pw / 2;
+    const vy = this.playViewH ? this.playViewY : a.y - ph / 2;
     const bx = vx + pw;
     const by = vy + ph;
     const tick = Math.max(u(10), Math.min(pw, ph) * 0.18);
@@ -1010,20 +993,88 @@ export class MissionCamera {
     }
   }
 
-  /** Camera follow point: mid(last live, hulk) when dead, else heli. */
-  playerCamAnchor(): { x: number; y: number; z: number } {
-    if (this.s.player.phase === "dead") {
-      const hulk = this.s.destruction.playerCrashDebris;
-      const cx = hulk?.x ?? this.s.player.x;
-      const cy = hulk?.y ?? this.s.player.y;
-      const cz = hulk?.z ?? this.s.player.z;
-      return {
-        x: (this.s.destruction.playerDeathLiveX + cx) * 0.5,
-        y: (this.s.destruction.playerDeathLiveY + cy) * 0.5,
-        z: (this.s.destruction.playerDeathLiveZ + cz) * 0.5,
-      };
+  /** Camera follow point: the subject's position (host ↔ piloted remote by the POV blend). */
+  camAnchor(): { x: number; y: number; z: number } {
+    return {
+      x: this.blendSubjects((c) => c.x),
+      y: this.blendSubjects((c) => c.y),
+      z: this.blendSubjects((c) => c.z),
+    };
+  }
+
+  /** The POV being flown, for discrete reads (edge lock, HUD readouts): whichever subject dominates the blend. */
+  dominantSubject(): CamSubject {
+    const pov = this.povSubject();
+    return pov && this.s.remoteFleet.remoteCamT >= 0.5 ? pov : this.hostSubject();
+  }
+
+  /** Hull whose camera rules (edge lock) apply. */
+  subjectHull(): ReturnType<typeof craftOf> {
+    return this.dominantSubject().hull;
+  }
+
+  /** Any per-subject camera value, blended host → piloted remote by the POV blend. */
+  blendSubjects(f: (c: CamSubject) => number): number {
+    const host = f(this.hostSubject());
+    const pov = this.povSubject();
+    return pov ? Phaser.Math.Linear(host, f(pov), this.s.remoteFleet.remoteCamT) : host;
+  }
+
+  /** Host craft; when dead, mid(last live, hulk). */
+  private hostSubject(): CamSubject {
+    const h = this.s.player;
+    const c = this.hostCam;
+    c.hull = h.spec;
+    c.weapon = this.s.loadout[h.weapon]!;
+    c.remote = false;
+    c.vx = h.vx;
+    c.vy = h.vy;
+    c.roll = h.roll;
+    c.pitch = h.pitch;
+    if (h.phase === "dead") {
+      const d = this.s.destruction;
+      const hulk = d.playerCrashDebris;
+      c.x = (d.playerDeathLiveX + (hulk?.x ?? h.x)) * 0.5;
+      c.y = (d.playerDeathLiveY + (hulk?.y ?? h.y)) * 0.5;
+      c.z = (d.playerDeathLiveZ + (hulk?.z ?? h.z)) * 0.5;
+    } else {
+      c.x = h.x;
+      c.y = h.y;
+      c.z = h.z;
     }
-    return { x: this.s.player.x, y: this.s.player.y, z: this.s.player.z };
+    return c;
+  }
+
+  /** Remote in POV view while the blend is in (never once the host is dead). */
+  private povSubject(): CamSubject | undefined {
+    const fleet = this.s.remoteFleet;
+    const r = fleet.activeRemote();
+    if (!r || fleet.remoteCamT < 0.001 || this.s.player.phase === "dead") return undefined;
+    const c = this.povCam;
+    c.hull = craftOf(r.spec.craftLook);
+    c.remote = true;
+    c.weapon = r.loadout?.[r.weapon ?? 0] ?? this.s.loadout[this.s.player.weapon]!;
+    c.x = r.x;
+    c.y = r.y;
+    c.z = r.z;
+    c.vx = r.vx;
+    c.vy = r.vy;
+    c.roll = r.roll ?? 0;
+    c.pitch = r.pitch ?? 0;
+    return c;
+  }
+
+  /** Aim look-ahead (offset from the anchor + follow rate), blended like the anchor. */
+  private subjectLook(): AimLook {
+    const host = aimLook(this.s, this.hostSubject(), this.hostLook);
+    const pov = this.povSubject();
+    if (!pov) return host;
+    const t = this.s.remoteFleet.remoteCamT;
+    const l = aimLook(this.s, pov, this.povLook);
+    l.x = Phaser.Math.Linear(host.x, l.x, t);
+    l.y = Phaser.Math.Linear(host.y, l.y, t);
+    l.rate = Phaser.Math.Linear(host.rate, l.rate, t);
+    return l;
   }
 }
 

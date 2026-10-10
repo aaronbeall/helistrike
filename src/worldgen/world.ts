@@ -31,6 +31,10 @@ export interface Spawn {
   x: number;
   y: number;
   hv?: string;
+  /** Start height (e.g. on a bridge deck); default = ground. */
+  z?: number;
+  /** Start heading; default = the kind's spawn angle. */
+  angle?: number;
 }
 
 export type DoodadKind =
@@ -151,7 +155,7 @@ export interface WorldGenProfile {
   /** Patrols weighted toward water (0 = no boats at all). */
   waterPatrolBias: number;
   forceMix: "mixed" | "naval" | "heavy";
-  /** Roads: 0 = none; otherwise trunks between objectives + spurs to lookouts/towers within roadDensity × ROAD_SPUR_MAX. */
+  /** Roads: 0 = none; otherwise trunks between objectives + spurs to satellite sites (`ROAD_SPUR_SITES`) within roadDensity × ROAD_SPUR_MAX. */
   roadDensity: number;
   /** Settlement density (0 = none … 2 = dense): towns, plus a port / airfield / dam where the terrain suits. */
   settlement: number;
@@ -894,7 +898,9 @@ export function generateWorld(
   });
   const roads = makeRoads(hv, spawns, height, biome, rng, profile.roadDensity, settlements);
   roads.push(...townStreets(settlements, water));
-  settlements.push(...placeBridges(roads, height, water));
+  const bridges = placeBridges(roads, height, water);
+  settlements.push(...bridges);
+  spawns.push(...bridgeSpawns(bridges, spawns, seed));
   // Road sprites stamp on the main-thread canvas (worker has no document canvas).
   // Keep trees / rocks off settlement footprints.
   const doodads = placeDoodads(biome, rng, theme).filter(
@@ -2597,8 +2603,13 @@ const ROAD_NODE_STEP = 4.5;
 const ROAD_SPUR_MAX = 420;
 /** Max route cost (≈ world units over easy ground) for a settlement's road to the network. */
 const ROAD_SETTLEMENT_REACH = 4200;
-/** Spur only to permanent satellite hard-sites near the network (not tents). */
-const ROAD_SPUR_KINDS = new Set<UnitKind>(["lookout", "tower"]);
+/** Spur-road sites (permanent satellite hard-sites, not tents) → water the spur may bridge (world units) beyond the land reach. */
+const ROAD_SPUR_SITES = new Map<UnitKind, { water: number }>([
+  ["lookout", { water: 0 }],
+  ["tower", { water: 0 }],
+  ["military_heli_platform", { water: 0 }],
+  ["military_heli_platform_sea", { water: 300 }],
+]);
 
 /**
  * MST between HV objectives, then spur roads to secondary building installs.
@@ -2671,14 +2682,18 @@ function makeRoads(
   const spurMax = ROAD_SPUR_MAX * density;
   let siteN = 0;
   for (const s of spawns) {
-    if (s.hv || !ROAD_SPUR_KINDS.has(s.kind)) continue;
+    const site = ROAD_SPUR_SITES.get(s.kind);
+    if (s.hv || !site) continue;
     const hitch = nearestTrunkAttach(roads, hv, s.x, s.y);
-    if (!hitch || hitch.dist > spurMax) continue;
+    if (!hitch || hitch.dist > spurMax + site.water) continue;
     if (hitch.dist < 28) continue;
-    // From the site to wherever the network is cheapest to reach (not just the nearest point).
-    const nodes = grid.routeToNetwork(s.x, s.y, spurMax * 1.6);
+    // From the site to wherever the network is cheapest to reach (not just the nearest point); water stretches become bridges.
+    const nodes = grid.routeToNetwork(s.x, s.y, spurMax * 1.6 + site.water * (ROAD_WATER + 2));
     if (!nodes) continue;
     nodes.reverse();
+    // End at the site's edge, not under it (a sea pad's bridge meets the platform).
+    const edge = footprintR(s.kind);
+    while (nodes.length > 2 && Math.hypot(nodes[nodes.length - 1]!.x - s.x, nodes[nodes.length - 1]!.y - s.y) < edge) nodes.pop();
     roads.push({
       nodes,
       width: rng.range(6.5, 9.5),
@@ -2960,7 +2975,14 @@ function placeBridges(roads: Road[], height: Float32Array, water: Float32Array):
     for (let i = 0; i < n.length; i++) {
       if (!n[i]!.water || (i > 0 && n[i - 1]!.water)) continue;
       let j = i;
-      while (j + 1 < n.length && n[j + 1]!.water) j++;
+      for (;;) {
+        while (j + 1 < n.length && n[j + 1]!.water) j++;
+        // Less than a segment of land before the next water run: one straight span, not two overlapping ones.
+        let k = j + 1;
+        while (k < n.length && !n[k]!.water) k++;
+        if (k >= n.length || Math.hypot(n[k]!.x - n[j]!.x, n[k]!.y - n[j]!.y) >= segL) break;
+        j = k;
+      }
       // Bank to bank: the land nodes either side of the water run.
       const a = n[Math.max(0, i - 1)]!;
       const b = n[Math.min(n.length - 1, j + 1)]!;
@@ -2969,13 +2991,15 @@ function placeBridges(roads: Road[], height: Float32Array, water: Float32Array):
       const rot = Math.atan2(b.y - a.y, b.x - a.x);
       const za = topZ(a.x, a.y);
       const zb = topZ(b.x, b.y);
+      // End to end at exactly one segment length, centred on the crossing (the ends run onto the banks).
       const count = Math.max(1, Math.ceil(len / segL));
       const parts: Structure[] = [];
       for (let k = 0; k < count; k++) {
-        const t = (k + 0.5) / count;
+        const t = 0.5 + ((k + 0.5 - count / 2) * segL) / len;
         const x = a.x + (b.x - a.x) * t;
         const y = a.y + (b.y - a.y) * t;
-        const deck = Math.max(za + (zb - za) * t, topZ(x, y) + BRIDGE_CLEAR);
+        const tz = Math.min(1, Math.max(0, t));
+        const deck = Math.max(za + (zb - za) * tz, topZ(x, y) + BRIDGE_CLEAR);
         parts.push({ kind, x, y, rot, w: box.halfW * 2, l: segL, z: deck - spec.height });
       }
       out.push({ kind: "bridge", x: a.x, y: a.y, parts });
@@ -2983,6 +3007,41 @@ function placeBridges(roads: Road[], height: Float32Array, water: Float32Array):
     }
   }
   return out;
+}
+
+/** Each bridge starts with 0 … max(this, sections / BRIDGE_SECTIONS_PER_UNIT) ground units on its deck. */
+const BRIDGE_SPAWN_MAX = 3;
+const BRIDGE_SECTIONS_PER_UNIT = 3;
+
+/**
+ * Bridges start with 0–max(3, sections / 3) ground units on random deck sections (one per section): kinds already in this
+ * mission's forces that fit the deck width, facing along the span. Own RNG stream, so the rest of the map is unchanged per seed.
+ */
+function bridgeSpawns(bridges: Settlement[], spawns: Spawn[], seed: number): Spawn[] {
+  const rng = new Rng((seed ^ 0x6b1d93) >>> 0);
+  const pool = [...new Set(spawns.filter((s) => !s.hv && groundMover(s.kind)).map((s) => s.kind))];
+  const out: Spawn[] = [];
+  if (!pool.length) return out;
+  for (const b of bridges) {
+    const sections = b.parts.slice();
+    const max = Math.max(BRIDGE_SPAWN_MAX, Math.floor(sections.length / BRIDGE_SECTIONS_PER_UNIT));
+    let left = Math.min(sections.length, Math.floor(rng.next() * (max + 1)));
+    while (left-- > 0) {
+      const p = sections.splice(Math.floor(rng.next() * sections.length), 1)[0]!;
+      if (p.kind !== "bridge" && p.kind !== "bridge_steel") continue;
+      const fits = pool.filter((k) => (UNIT_SPECS[k].box?.halfW ?? UNIT_SPECS[k].radius) <= p.w / 2 + 4);
+      if (!fits.length) continue;
+      const kind = fits[Math.floor(rng.next() * fits.length)]!;
+      out.push({ kind, x: p.x, y: p.y, z: (p.z ?? 0) + UNIT_SPECS[p.kind].height, angle: p.rot + (rng.next() < 0.5 ? 0 : Math.PI) });
+    }
+  }
+  return out;
+}
+
+/** Ground units that drive / walk (not statics, boats, aircraft). */
+function groundMover(kind: UnitKind): boolean {
+  const b = UNIT_SPECS[kind].behavior;
+  return b === "orbit_attack_vehicle" || b === "flee_vehicle" || b === "attack_infantry" || b === "flee_infantry";
 }
 
 /** Bridge deck clearance over the water (z). */

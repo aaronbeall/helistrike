@@ -1,13 +1,12 @@
 import Phaser from "phaser";
-import { settleGroundMove } from "../../../sim/navigation";
+import { groundHull, settleGroundMove } from "../../../sim/navigation";
 import { remoteAiStickAim, tickRemoteIdle } from "../../../sim/remoteRules";
-import { planeLookCam } from "../camera/camera";
 import { payloadIsRemote } from "../../../sim/payload";
 import { nextId, PLAYER_WPNS, type PlayerWpnSpec, type WpnId } from "../../../sim/combat";
 import { initRemoteLoadout, remoteHasPovHud, remoteRotorParts, remoteSpecOf, type RemoteCraft, type BayRemote, type RemoteSpec } from "../../../sim/remote";
 import { Craft } from "../../../sim/craft";
 import { craftAimsWithTurret, craftGunId, craftGunPreferOffset, craftControlScheme, craftOf, craftSocketPoints, craftSocketStartingAmmo } from "../../../sim/crafts";
-import { groundZ, screenToWorldAtZ, castZ } from "../../../worldgen/world";
+import { groundZ, castZ } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
 
 /** Host AGL a ground remote's dock bay must be under to actually dock (can't reel a ground vehicle up mid-air). */
@@ -19,6 +18,9 @@ const ESCORT_MOVING_SPEED = 14;
 const ESCORT_RING_BAND = 12;
 /** Follow escort: extra host speed per unit of distance beyond the inner ring. */
 const ESCORT_RING_GAIN = 1.4;
+/** Host waypoint reached within this (world): host switches to HOLD there. */
+const HOST_WAYPOINT_ARRIVE = 40;
+
 
 /** Launch order: most battery first, then most health. */
 function bayRemoteRank(a: BayRemote, b: BayRemote): number {
@@ -42,6 +44,8 @@ export class RemoteFleet {
   hostEscortMode: "hold" | "follow" = "hold";
   /** Follow leash hysteresis — true while closing to the inner ring after breaking outer. */
   hostEscortSeeking = false;
+  /** Host-craft waypoint set from a POV escort remote; only valid while piloting that remote (`pilotId`). */
+  hostWaypoint?: { x: number; y: number; pilotId: number };
   /** 0 = heli cam, 1 = remote cam. Eased when entering / leaving Spectre view. */
   remoteCamT = 0;
   /** Per-slot docked dockable remotes (life/health), kept in step with `ammo`. */
@@ -57,6 +61,7 @@ export class RemoteFleet {
     this.remoteCamT = 0;
     this.hostEscortMode = "hold";
     this.hostEscortSeeking = false;
+    this.hostWaypoint = undefined;
     this.bayRemotes = this.s.loadout.map(() => []);
   }
 
@@ -247,6 +252,21 @@ export class RemoteFleet {
     if (!pilot?.spec.hostEscort) return;
     this.hostEscortMode = this.hostEscortMode === "hold" ? "follow" : "hold";
     this.hostEscortSeeking = false;
+    this.hostWaypoint = undefined;
+  }
+
+  /** Waypoint key: from a POV escort remote, send the host craft to `at` (it HOLDs there on arrival). */
+  placeWaypoint(at: { x: number; y: number }): void {
+    const pilot = this.povHudRemote();
+    if (!pilot?.spec.hostEscort) return;
+    this.hostWaypoint = { x: at.x, y: at.y, pilotId: pilot.id };
+    this.hostEscortSeeking = false;
+  }
+
+  /** Host waypoint while it applies (piloting the remote it was set from). */
+  activeHostWaypoint(): { x: number; y: number } | undefined {
+    const wp = this.hostWaypoint;
+    return wp && this.povHudRemote()?.id === wp.pilotId ? wp : undefined;
   }
 
   /**
@@ -292,6 +312,17 @@ export class RemoteFleet {
       return undefined;
     }
 
+    // Waypoint: fly there, then HOLD.
+    const wp = this.activeHostWaypoint();
+    if (wp) {
+      const d = Math.hypot(wp.x - h.x, wp.y - h.y);
+      if (d > HOST_WAYPOINT_ARRIVE) {
+        return this.hostApproach(wp.x, wp.y, true, Math.min(h.spec.maxSpeed, Math.max(h.spec.maxSpeed * 0.42, d * ESCORT_RING_GAIN)));
+      }
+      this.hostWaypoint = undefined;
+      this.hostEscortMode = "hold";
+    }
+
     // Hold heading by aiming ahead of the nose (turrets use worldPointer separately).
     const parkAimX = h.x + Math.cos(h.angle) * 80;
     const parkAimY = h.y + Math.sin(h.angle) * 80;
@@ -323,24 +354,27 @@ export class RemoteFleet {
       return { stick: zero, aimX: parkAimX, aimY: parkAimY, brake: !moving };
     }
 
-    // Catch-up: turn toward the remote, thrust only once the nose is close enough.
     // Steer at the remote itself: the ring point flips behind the host once inside the ring.
-    const want = Math.atan2(pilot.y - h.y, pilot.x - h.x);
-    const err = Math.abs(Phaser.Math.Angle.Wrap(want - h.angle));
-    // ~28° — yaw first, then crawl; avoids thrusting off-axis.
-    const aligned = err < 0.49;
-    // Inside the band: track heading but coast, so it settles on the ring.
-    const outside = dist > innerRadius;
     // Match the remote's pace plus a gain on ring error; leash breaks keep the old crawl floor.
     const pace = pilotSpd + Math.max(0, dist - innerRadius) * ESCORT_RING_GAIN;
     const cap = Math.min(
       h.spec.maxSpeed,
       this.hostEscortSeeking ? Math.max(h.spec.maxSpeed * 0.42, pace) : pace
     );
+    // Inside the band: track heading but coast, so it settles on the ring.
+    return this.hostApproach(pilot.x, pilot.y, dist > innerRadius, cap);
+  }
+
+  /** Host catch-up toward a point: yaw first, thrust (speed-capped) only once lined up, brake while turning. */
+  private hostApproach(tx: number, ty: number, outside: boolean, cap: number) {
+    const h = this.s.player;
+    const err = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(ty - h.y, tx - h.x) - h.angle));
+    // ~28° — yaw first, then crawl; avoids thrusting off-axis.
+    const aligned = err < 0.49;
     return {
       stick: { up: aligned && outside, down: false, left: false, right: false },
-      aimX: pilot.x,
-      aimY: pilot.y,
+      aimX: tx,
+      aimY: ty,
       // Kill residual speed while lining up so it doesn't coast the wrong way.
       brake: !aligned && outside,
       speedCap: aligned && outside ? cap : undefined,
@@ -495,8 +529,8 @@ export class RemoteFleet {
       drone.spec.ground ? false : !!opts?.space,
       drone.spec.ground ? false : !!opts?.shift
     );
-    // Ground remotes follow the shared ground-step rule (wade shallows, no deep water or cliffs; decks OK).
-    if (drone.spec.ground && !drone.airborne) settleGroundMove(this.s.world, craft, trackX0, trackY0, this.s.nav.onDeck);
+    // Ground remotes follow the shared ground-step rule with their hull's terrain ability (climb, slope slowdown, underwater).
+    if (drone.spec.ground && !drone.airborne) settleGroundMove(this.s.world, craft, trackX0, trackY0, this.s.nav.onDeck, groundHull(drone));
     drone.x = craft.x;
     drone.y = craft.y;
     drone.z = craft.z;
@@ -507,6 +541,11 @@ export class RemoteFleet {
     drone.roll = craft.roll;
     drone.pitch = craft.pitch;
     drone.rotor = craft.rotor;
+    // Every ground remote (piloted or AI) collides with buildings, statics and vehicles; pressing into one is a jam.
+    if (drone.spec.ground && !drone.airborne) {
+      const pen = this.s.remoteAi.resolveGroundRemote(drone);
+      if (pen > 0.5 && (stick.up || stick.down)) this.s.nav.noteJam(drone, dt);
+    }
     this.remoteCraftDriven.add(drone.id);
 
     if (opts?.syncGun !== false) {
@@ -695,10 +734,15 @@ export class RemoteFleet {
         r.x += r.vx * dt;
         r.y += r.vy * dt;
         r.z += r.vz * dt;
-        if (r.spec.ground && !r.airborne) settleGroundMove(this.s.world, r, trackX0, trackY0, this.s.nav.onDeck);
+        if (r.spec.ground && !r.airborne) settleGroundMove(this.s.world, r, trackX0, trackY0, this.s.nav.onDeck, groundHull(r));
       }
       const docking = r.dock || !!r.dockPending;
       if (!docking) this.snapRemoteGround(r, dt);
+      // Ground remotes that can't go underwater drown in deep water (normal remote destruction).
+      if (r.spec.ground && !r.airborne && !docking && !r.detonate && this.s.nav.drowns(r)) {
+        r.drowned = true;
+        this.s.targeting.damageRemote(r, r.health + 1);
+      }
       // Craft-driven remotes stamp tracks inside driveRemoteCraft.
       if (r.spec.track && !r.airborne && !this.remoteCraftDriven.has(r.id)) {
         this.s.remoteBody.stampRemoteTracks(r, dt, trackX0, trackY0);
@@ -723,6 +767,19 @@ export class RemoteFleet {
         this.releaseRemotePilotCraft(r.id);
         this.stowDockedRemote(r);
         if (!r.spec.ai || r.spec.pilotable) this.exitRemoteView();
+        continue;
+      }
+      if (r.detonate && r.drowned) {
+        // Drowned: no detonation, the hull sinks (same as a drowned unit).
+        this.releaseRemotePilotCraft(r.id);
+        const hull = craftOf(r.spec.craftLook);
+        const key = this.s.textures.exists(hull.hulk ?? "") ? hull.hulk! : r.spec.body;
+        this.s.destruction.sinkWreck(r, r.spec.radius, key, r.angle + (hull.rotOff ?? Math.PI / 2), r.spec.scale);
+        const turret = r.spec.sockets.findIndex((sk) => sk.class === "turret");
+        if (turret >= 0) {
+          const parts = this.s.destruction.turretWreckParts(r.spec, [{ im: this.s.remoteBody.remoteGunImage(r), slot: turret }], r.z, r.gunAngle ?? r.angle);
+          this.s.destruction.sinkParts(parts, r);
+        }
         continue;
       }
       if (r.detonate) {
@@ -779,48 +836,6 @@ export class RemoteFleet {
     const rate = want > this.remoteCamT ? 3.1 : 4.6;
     this.remoteCamT = Phaser.Math.Linear(this.remoteCamT, want, 1 - Math.exp(-rate * dt));
     if (want === 0 && this.remoteCamT < 0.012) this.remoteCamT = 0;
-  }
-
-  remoteLookOffset(drone: RemoteCraft): { x: number; y: number } {
-    const hx = this.s.player.x;
-    const hy = this.s.player.y;
-    const p = this.s.pointerScreen();
-    const aim = screenToWorldAtZ(p.x, p.y, drone.z);
-    const toAx = aim.x - drone.x;
-    const toAy = aim.y - drone.y;
-    const aLen = Math.hypot(toAx, toAy);
-    const remSlot = drone.weapon ?? 0;
-    const remSpec =
-      drone.loadout?.[remSlot] ?? this.s.fireControl.hudLoadout()[this.s.fireControl.hudWeapon()];
-    const hull = drone.spec.craftLook ? craftOf(drone.spec.craftLook) : undefined;
-    const isPlane = !!hull && craftControlScheme(hull) === "plane";
-    let pull: number;
-    let max: number;
-    if (remSpec) {
-      const look = planeLookCam(remSpec, isPlane);
-      pull = look.pull;
-      max = look.max;
-    } else {
-      // Spectre / no-HUD remotes — speed-based lead (legacy).
-      const spd = Math.hypot(drone.vx, drone.vy);
-      max = Phaser.Math.Clamp(100 + spd * 0.28, 100, 220);
-      pull = 0.7;
-    }
-    let lx = 0;
-    let ly = 0;
-    if (aLen > 12) {
-      lx = toAx * pull;
-      ly = toAy * pull;
-      const len = Math.hypot(lx, ly);
-      if (len > max) {
-        lx *= max / len;
-        ly *= max / len;
-      }
-    } else {
-      lx = Math.cos(drone.angle) * max * 0.55;
-      ly = Math.sin(drone.angle) * max * 0.55;
-    }
-    return { x: drone.x + lx - hx, y: drone.y + ly - hy };
   }
 
   remoteDetonateArmed(): boolean {

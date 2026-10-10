@@ -76,6 +76,11 @@ export class Trails {
 
   emitShotTrail(s: Shot, x0: number, y0: number, z0: number): void {
     if (s.deadfall) return;
+    // Torpedoes run underwater: a bubble wake instead of exhaust smoke.
+    if (s.torpedo) {
+      if (Math.random() < 0.15) this.s.bubbles.spawn(x0, y0, z0);
+      return;
+    }
     const exhaust = s.beh?.exhaust;
     const cyanSpark = exhaustIsGunSpark(exhaust);
     if (shotIsGunOrBeam(s) && !cyanSpark) return;

@@ -806,6 +806,7 @@ const CRAFTS_DEFS: Record<CraftKind, Omit<CraftSpec, "kind">> = {
     playable: false,
     // Heading-locked tank drive (A/D yaw, W/S along nose — no slide).
     flightModel: "ground",
+    terrain: { climb: "max", underwater: true },
     controlScheme: "orbit",
     crushesInfantry: true,
     sizeM: 4.2,
@@ -876,6 +877,7 @@ const CRAFTS_DEFS: Record<CraftKind, Omit<CraftSpec, "kind">> = {
     description: "A manned fire-support escort deployed in pairs from the Chinook, holding tight to the flank and engaging hostiles at danger-close range.",
     playable: false,
     flightModel: "ground",
+    terrain: { climb: "medium" },
     controlScheme: "orbit",
     crushesInfantry: true,
     sizeM: 3.6,
@@ -927,6 +929,7 @@ const CRAFTS_DEFS: Record<CraftKind, Omit<CraftSpec, "kind">> = {
     description: "A heavily-armored tracked UGV, manned or autonomous, built around a lean chaingun-and-missile fit for direct firepower.",
     playable: false,
     flightModel: "ground",
+    terrain: { climb: "max", underwater: true },
     controlScheme: "orbit",
     crushesInfantry: true,
     sizeM: 4.0,

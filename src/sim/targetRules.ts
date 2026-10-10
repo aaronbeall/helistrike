@@ -1,6 +1,21 @@
 import { type Unit } from "./combat";
 import { type RemoteCraft } from "./remote";
-import { specOf, gunsOf, isNeutral, weaponIsAa, isGroundVehicle, partsRollOf, type UnitKind } from "./roster";
+import { specOf, gunsOf, isNeutral, weaponIsAa, isGroundVehicle, partsRollOf, type UnitKind, type WeaponSpec } from "./roster";
+
+/** What a target is, for who can see / hit it: the host and air remotes fly; ground remotes are on land or submerged. */
+export type TargetDomain = "air" | "ground" | "underwater";
+
+/** Domains a weapon engages: explicit `reach`, else AA / seekers air only, everything else air + ground. */
+export function weaponReach(wpn: WeaponSpec): readonly TargetDomain[] {
+  return wpn.reach ?? (weaponIsAa(wpn) ? AIR_ONLY : AIR_GROUND);
+}
+const AIR_ONLY: readonly TargetDomain[] = ["air"];
+const AIR_GROUND: readonly TargetDomain[] = ["air", "ground"];
+
+/** Weapon that runs underwater (torpedo): stays below the surface, dies at the shore. */
+export function weaponUnderwater(wpn: WeaponSpec): boolean {
+  return weaponReach(wpn).includes("underwater");
+}
 
 /** Base react radii by role: how close a sighted target must be to be pursued / fled (scaled by `targeting.enemyScaledReach`). */
 export const REACT_DRONE = 1400;

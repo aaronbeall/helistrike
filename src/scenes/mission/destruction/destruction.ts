@@ -2,6 +2,8 @@ import Phaser from "phaser";
 import { debrisStampOrigin, debrisTrailLifeMul, softCapBlastCraterScale, wreckDrawScale } from "../../../render/fxCurves";
 import { debrisMountAt, gunMountPos, mountAt, troopDrawAng } from "../../../render/spritePose";
 import { bounceDebrisSlope, deathBurstImpulse } from "../../../sim/physics";
+import { groundHull, onGroundHull } from "../../../sim/navigation";
+import type { RemoteCraft } from "../../../sim/remote";
 import { biasedDir } from "../../../util/vec";
 import { range } from "../../../util/rng";
 import { applyThermalHeat } from "../../../render/thermal";
@@ -76,6 +78,9 @@ function debrisWillBounce(f: Debris): boolean {
   return f.bounces > 0 && f.vz < -50 && Math.hypot(f.vx, f.vy, f.vz) > 120;
 }
 
+/** A wreck piece: art, world spot, draw rotation and scale. */
+type WreckPart = { key: string; x: number; y: number; rot: number; scale: number };
+
 /** Destruction: unit death, vehicle/heli crashes, boat sinking, player crash, rotor hulks, debris sim + settle + trails + sprites. */
 export class Destruction {
   debrisG!: Phaser.GameObjects.Group;
@@ -128,8 +133,11 @@ export class Destruction {
     return true;
   }
 
-  destroyUnit(u: Unit, quiet = false, skipSplash = false, skipAirCrash = false, freefall = false): void {
+  /** `intact`: the hull goes down whole (drowning): nothing thrown off, no crash arc, just the location-based wreck. */
+  destroyUnit(u: Unit, quiet = false, skipSplash = false, skipAirCrash = false, freefall = false, intact = false): void {
     if (u.dead) return;
+    // Riders of a bridge deck (found while it still stands) go down with it, like crew with their host.
+    const riders = specOf(u.kind).deck ? this.deckRiders(u) : undefined;
     u.dead = true;
     this.s.stats.kill(u);
     this.s.nav.onUnitDead(u);
@@ -138,6 +146,13 @@ export class Destruction {
       // Crew go down with their host: same kill credit.
       crew.statBy ??= u.statBy;
       this.destroyUnit(crew);
+    }
+    if (riders) {
+      for (const r of riders.units) {
+        r.statBy ??= u.statBy;
+        this.destroyUnit(r);
+      }
+      for (const r of riders.remotes) this.s.targeting.damageRemote(r, r.health + 1);
     }
     const sp = specOf(u.kind);
     const building = !!sp.building;
@@ -330,10 +345,7 @@ export class Destruction {
     }
     const guns = gunsOf(u);
     // Helis and drones: spinning hull falls then impacts — not on suicide/kamikaze pops.
-    // Ships sink in deep water (patrol boats, battleships); in shallows they leave a surface wreck like anything else.
-    if ((sp.behavior === "patrol_boat" || (sp.water && !sp.building)) && isDeepWater(this.s.world, u.x, u.y)) {
-      this.spawnBoatSink(u);
-    } else if (((sp.behavior === "orbit_attack_heli" || sp.behavior === "kite_attack_heli") || sp.behavior === "suicide_attack_heli") && !skipAirCrash) {
+    if (((sp.behavior === "orbit_attack_heli" || sp.behavior === "kite_attack_heli") || sp.behavior === "suicide_attack_heli") && !skipAirCrash) {
       this.spawnHeliCrash({
         x: u.x,
         y: u.y,
@@ -351,7 +363,7 @@ export class Destruction {
         freefall,
       });
     } else {
-      const throwGuns = !!(sp.throwGuns && guns.length > 0);
+      const throwGuns = !intact && !!(sp.throwGuns && guns.length > 0);
       const throwRotors = sp.rotors.length > 0;
       const throwDish = !!sp.dish;
       if (throwGuns || throwRotors || throwDish) {
@@ -359,18 +371,10 @@ export class Destruction {
         const throwOff = (key: string, ang: number, x: number, y: number, scale = 1, extra: Partial<Debris> = {}) =>
           this.throwPart(key, ang, x, y, u.z + 18, scale, extra);
         if (throwGuns) {
-          guns.forEach((g, gi) => {
-            const raw = this.s.textures.exists(g.hulk ?? "") ? g.hulk! : g.tex;
-            const turretKey = resolveSkin(this.s.textures, raw, u.camo);
-            const liveKey = resolveSkin(this.s.textures, g.tex, u.camo);
-            const liveSpan = this.s.unitSprites.texSpan(liveKey);
-            const hulkSpan = this.s.unitSprites.texSpan(turretKey);
-            // Slightly under live gun size so pop hulks read as wreckage, not spare parts.
-            const scale = (g.scale ?? 1) * (liveSpan / Math.max(hulkSpan, 1)) * 0.86;
-            const at = gunMountPos(this.s.textures, u, gi);
+          this.gunWreckParts(u).forEach((part) => {
             // Turret hulks are large textures; don't inherit full debris trailR bump.
-            throwOff(turretKey, (u.turrets[gi] ?? u.turret) + Math.PI / 2, at.x, at.y, scale, {
-              trailR: this.s.trails.texTrailR(turretKey) * scale * 0.38,
+            throwOff(part.key, part.rot, part.x, part.y, part.scale, {
+              trailR: this.s.trails.texTrailR(part.key) * part.scale * 0.38,
               turretPop: true,
             });
           });
@@ -438,7 +442,7 @@ export class Destruction {
             bounces: 0,
           });
         }
-      } else if (sp.crashPop) {
+      } else if (sp.crashPop && !intact) {
         this.spawnLightVehicleCrash(u);
         if (hasSoftBlood(u.kind) && this.s.textures.exists("fx_dirt") && !isWater(this.s.world, u.x, u.y)) {
           const kdx = u.killDx ?? 0;
@@ -475,6 +479,8 @@ export class Destruction {
           ? broken[(Math.random() * broken.length) | 0]!
           : resolveSkin(this.s.textures, hulkOf(u.kind), u.camo);
         this.placeHullWreck(u, hulkKey, u.angle + Math.PI / 2 + (sp.wreckJitter ? range(-sp.wreckJitter, sp.wreckJitter) : 0));
+        // Whole-hull deaths (drowning): the guns go down with it instead of popping off.
+        if (intact && this.hullSinksAt(u)) this.sinkParts(this.gunWreckParts(u), u);
         if (hasSoftBlood(u.kind) && this.s.textures.exists("fx_dirt") && !isWater(this.s.world, u.x, u.y)) {
           const kdx = u.killDx ?? 0;
           const kdy = u.killDy ?? 0;
@@ -518,7 +524,7 @@ export class Destruction {
         ...tossVel(ROOF_THROW_MIN, ROOF_THROW_MAX, ROOF_LOFT_MIN, ROOF_LOFT_MAX),
       });
     }
-    this.spawnWheelDebris(u);
+    if (!intact) this.spawnWheelDebris(u);
   }
 
   /**
@@ -594,17 +600,43 @@ export class Destruction {
    * Position + size come from the live turret sprite (screen → world), so it matches what was on screen.
    */
   popCraftTurrets(spec: CraftSpec, guns: { im: Phaser.GameObjects.Image | undefined; slot: number }[], z: number, gunAngle: number): void {
+    for (const part of this.turretWreckParts(spec, guns, z, gunAngle)) {
+      this.throwPart(part.key, part.rot, part.x, part.y, z + 18, part.scale, {
+        trailR: this.s.trails.texTrailR(part.key) * part.scale * 0.38,
+        turretPop: true,
+      });
+    }
+  }
+
+  /** A craft's turret wreck pieces (hulk art at the live turret's spot and size): thrown on a kill, sunk on a drowning. */
+  turretWreckParts(spec: CraftSpec, guns: { im: Phaser.GameObjects.Image | undefined; slot: number }[], z: number, gunAngle: number): WreckPart[] {
+    const out: WreckPart[] = [];
     for (const { im, slot } of guns) {
       const hulk = spec.sockets[slot]?.gunHulk;
       if (!hulk || !im || !im.visible || !this.s.textures.exists(hulk)) continue;
       const at = screenToWorldAtZ(im.x, im.y, z);
       // Hulk is the same size as the live turret; slightly under so it reads as wreckage (like enemies).
-      const scale = (im.scaleX / Math.max(zScale(z, at.y), 1e-3)) * 0.86;
-      this.throwPart(hulk, gunAngle + Math.PI / 2, at.x, at.y, z + 18, scale, {
-        trailR: this.s.trails.texTrailR(hulk) * scale * 0.38,
-        turretPop: true,
-      });
+      out.push({ key: hulk, x: at.x, y: at.y, rot: gunAngle + Math.PI / 2, scale: (im.scaleX / Math.max(zScale(z, at.y), 1e-3)) * 0.86 });
     }
+    return out;
+  }
+
+  /** A unit's gun wreck pieces (hulk art, else live art, at each mount and aim): thrown on a kill, sunk on a drowning. */
+  gunWreckParts(u: Unit): WreckPart[] {
+    return gunsOf(u).map((g, gi) => {
+      const raw = this.s.textures.exists(g.hulk ?? "") ? g.hulk! : g.tex;
+      const key = resolveSkin(this.s.textures, raw, u.camo);
+      const liveSpan = this.s.unitSprites.texSpan(resolveSkin(this.s.textures, g.tex, u.camo));
+      const hulkSpan = this.s.unitSprites.texSpan(key);
+      const at = gunMountPos(this.s.textures, u, gi);
+      // Slightly under live gun size so pop hulks read as wreckage, not spare parts.
+      return { key, x: at.x, y: at.y, rot: (u.turrets[gi] ?? u.turret) + Math.PI / 2, scale: (g.scale ?? 1) * (liveSpan / Math.max(hulkSpan, 1)) * 0.86 };
+    });
+  }
+
+  /** Wreck pieces going down with their hull (no splash of their own). */
+  sinkParts(parts: readonly WreckPart[], at: { vx: number; vy: number }): void {
+    for (const p of parts) this.sinkWreck({ x: p.x, y: p.y, vx: at.vx, vy: at.vy }, 8, p.key, p.rot, p.scale, false);
   }
 
   spawnWheelDebris(u: Unit): void {
@@ -655,15 +687,33 @@ export class Destruction {
     return (this.liveRotorDrawPx(liveTex, partScale) * 0.6) / Math.max(this.s.unitSprites.texSpan(hulkKey), 1);
   }
 
+  /** Where a dead unit's hull sinks (deep water, off any deck; water buildings stay afloat). */
+  hullSinksAt(u: Unit): boolean {
+    const d = this.s.nav.deckAt(u.x, u.y);
+    return !(d && d !== u) && !specOf(u.kind).building && isDeepWater(this.s.world, u.x, u.y);
+  }
+
   /**
-   * A dead unit's hull wreck: water units over water float it on the surface (roofed decks keep it up at the roof);
-   * everything else stamps it into the ground (+ thermal mark).
+   * A dead unit's hull wreck, decided by where it died (whatever killed it): on a bridge deck it stays on the deck;
+   * in deep water it sinks (water buildings excepted: they stay afloat); in shallows it splashes, water units then
+   * float it on the surface (roofed decks at the roof); on land (and shallows) it's stamped into the ground + thermal mark.
    */
   placeHullWreck(u: Unit, key: string, rot: number): void {
     const sp = specOf(u.kind);
     const tex = this.s.textures.exists(key) ? key : "fx_hulk_crater";
     const hp = spritePivot(key);
-    if (sp.water && isWater(this.s.world, u.x, u.y)) {
+    const deck = this.s.nav.deckAt(u.x, u.y);
+    if (deck && deck !== u) {
+      this.s.groundMarks.addSurfaceWreck(tex, u.x, u.y, deck.z + heightOf(deck.kind), rot, hp.x, hp.y);
+      return;
+    }
+    if (this.hullSinksAt(u)) {
+      this.sinkHull(u, tex, rot);
+      return;
+    }
+    const wet = isWater(this.s.world, u.x, u.y);
+    if (wet && !sp.building) this.waterSplash(u.x, u.y, groundZ(this.s.world, u.x, u.y), Math.min(1.2, radius(u.kind) / 30));
+    if (sp.water && wet) {
       this.s.groundMarks.addSurfaceWreck(tex, u.x, u.y, u.z + (sp.roof ? heightOf(u.kind) : 0), rot, hp.x, hp.y);
       return;
     }
@@ -672,65 +722,47 @@ export class Destruction {
     if (!hasSoftBlood(u.kind)) this.s.groundMarks.addThermalWreckMark(tex, u.x, u.y, rot, hs.sx, hs.sy, hp.x, hp.y, undefined, "hulk");
   }
 
-  /** Hull sinks below the waterline; guns still pop off as normal debris. */
-  spawnBoatSink(u: Unit): void {
-    const sp = specOf(u.kind);
-    const guns = gunsOf(u);
-    const hullKey = resolveSkin(this.s.textures, this.s.textures.exists(sp.hulk) ? sp.hulk : textureOf(u.kind), u.camo);
-    if (sp.throwGuns && guns.length) {
-      guns.forEach((g, gi) => {
-        const raw = this.s.textures.exists(g.hulk ?? "") ? g.hulk! : g.tex;
-        const turretKey = resolveSkin(this.s.textures, raw, u.camo);
-        const liveKey = resolveSkin(this.s.textures, g.tex, u.camo);
-        const liveSpan = this.s.unitSprites.texSpan(liveKey);
-        const hulkSpan = this.s.unitSprites.texSpan(turretKey);
-        const scale = (g.scale ?? 1) * (liveSpan / Math.max(hulkSpan, 1)) * 0.86;
-        const at = gunMountPos(this.s.textures, u, gi);
-        const a = Math.random() * Math.PI * 2;
-        const throwSp = range(70, 160);
-        this.admitDebris({
-          x: at.x,
-          y: at.y,
-          z: u.z + 14,
-          vx: Math.cos(a) * throwSp,
-          vy: Math.sin(a) * throwSp,
-          vz: range(120, 210),
-          angle: (u.turrets[gi] ?? u.turret) + Math.PI / 2,
-          spin: spinBetween(POP_SPIN_MIN, POP_SPIN_MAX),
-          minSpin: POP_SPIN_MIN,
-          life: 5,
-          key: turretKey,
-          settled: false,
-          gravity: true,
-          bounces: Math.random() < 1 / 3 ? 2 + ((Math.random() * 2) | 0) : 0,
-          trailR: this.s.trails.texTrailR(turretKey) * scale * 0.38,
-          scale,
-          debrisClass: "critical",
-        });
-      });
+  /**
+   * Who falls when a deck goes: ground units / ground remotes standing on it that can't be in deep water
+   * (underwater hulls just drop to the bed).
+   */
+  deckRiders(deck: Unit): { units: Unit[]; remotes: RemoteCraft[] } {
+    const on = (x: number, y: number) => this.s.nav.deckAt(x, y) === deck;
+    return {
+      units: this.s.units.filter((o) => !o.dead && o !== deck && onGroundHull(o) && !groundHull(o).underwater && on(o.x, o.y)),
+      remotes: this.s.remotes.filter((r) => r.spec.ground && !r.airborne && !r.detonate && !groundHull(r).underwater && on(r.x, r.y)),
+    };
+  }
+
+  /** A dead unit's hull going down in deep water. */
+  sinkHull(u: Unit, key: string, rot: number): void {
+    this.sinkWreck(u, radius(u.kind), key, rot);
+  }
+
+  /** A hull (unit or remote) going down in deep water at its draw `scale`: splash + ripple, then it sinks to the bed tinting blue. */
+  sinkWreck(at: { x: number; y: number; vx: number; vy: number }, r: number, key: string, rot: number, scale = 1, splash = true): void {
+    const sinkKey = ensureSinkTexture(this.s.textures, key);
+    if (splash) {
+      this.s.ripples.splash(at.x, at.y, r * 2.6, 1);
+      this.waterSplash(at.x, at.y, groundZ(this.s.world, at.x, at.y), Math.min(1.4, r / 30));
     }
-    const baseKey = this.s.textures.exists(hullKey) ? hullKey : textureOf(u.kind);
-    const sinkKey = `${baseKey}_sink`;
-    const key = this.s.textures.exists(sinkKey) ? sinkKey : baseKey;
-    const surface = groundZ(this.s.world, u.x, u.y);
-    this.s.ripples.splash(u.x, u.y, radius(u.kind) * 2.6, 1);
     this.admitDebris({
-      x: u.x,
-      y: u.y,
-      z: surface,
-      vx: u.vx * 0.35 + range(-14, 14),
-      vy: u.vy * 0.35 + range(-14, 14),
+      x: at.x,
+      y: at.y,
+      z: groundZ(this.s.world, at.x, at.y),
+      vx: at.vx * 0.35 + range(-14, 14),
+      vy: at.vy * 0.35 + range(-14, 14),
       vz: 0,
-      angle: u.angle + Math.PI / 2,
+      angle: rot,
       // Big hulls turn slower as they go down.
-      spin: (range(0.18, 0.42) * (Math.random() < 0.5 ? -1 : 1)) / Math.max(1, radius(u.kind) / 40),
+      spin: (range(0.18, 0.42) * (Math.random() < 0.5 ? -1 : 1)) / Math.max(1, r / 40),
       life: 22,
-      key,
+      key: sinkKey,
       settled: false,
       gravity: false,
       bounces: 0,
-      trailR: this.s.trails.texTrailR(key) * 0.45,
-      scale: 1,
+      trailR: this.s.trails.texTrailR(sinkKey) * 0.45 * scale,
+      scale,
       boatSink: true,
       sinkT: 0,
       sinkMax: range(5.2, 7.5),
@@ -1151,6 +1183,8 @@ export class Destruction {
               }
               this.beginWaterSink(f);
             } else {
+              // Shallows: the normal land death below, plus the water impact (spray + ripple) deep water gets.
+              if (!f.trailOnly && isWater(this.s.world, f.x, f.y)) this.waterSplash(f.x, f.y, f.z, Math.min(1.4, 0.3 + (f.scale ?? 1) * 0.7));
               if (!f.linger) this.s.groundMarks.stampDirtSmears(f.x, f.y, f.vx, f.vy);
               if (f.turretPop) this.turretTouchdown(f);
               if (f.heliCrash) {

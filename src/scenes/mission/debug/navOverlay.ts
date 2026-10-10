@@ -1,7 +1,8 @@
 import type Phaser from "phaser";
 import { Layer } from "../../../render/depth";
 import { DomText } from "../../../ui/domText";
-import { LAND_BLOCKED, LAND_SHALLOW, NAV_CELL } from "../../../sim/navGrid";
+import { LAND_BLOCKED, LAND_MODE, LAND_SHALLOW, NAV_CELL, WATER_MODE } from "../../../sim/navGrid";
+import { CLIMB_GRADE } from "../../../sim/navigation";
 import { Camera25D, groundZ, worldToScreen, type ScreenPos } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
 
@@ -62,18 +63,17 @@ export class NavOverlay {
           const c = cy * n + cx;
           const x0 = cx * NAV_CELL;
           const y0 = cy * NAV_CELL;
-          if (grid.deck[c]! >= 0) this.quad(x0, y0, DECK_RGB, 0.4);
+          if (grid.hasDeck(c)) this.quad(x0, y0, DECK_RGB, 0.4);
           else if (grid.land[c] === LAND_BLOCKED) this.quad(x0, y0, BLOCKED_RGB, grid.water[c] ? 0.14 : 0.32);
           else if (grid.land[c] === LAND_SHALLOW) this.quad(x0, y0, SHALLOW_RGB, 0.22);
-          else if (grid.landClear[c]! <= 1) this.quad(x0, y0, 0xffffff, 0.08);
-          const cl = grid.cliff[c]!;
-          if (!cl) continue;
-          // Closed crossings: a tick from the cell centre toward each blocked neighbour.
-          g.lineStyle(1.5, CLIFF_RGB, 0.85);
+          else if (grid.clearAt(LAND_MODE, c) <= 1) this.quad(x0, y0, 0xffffff, 0.08);
+          // Too-steep crossings: a tick toward each neighbour — orange blocks default hulls, red blocks medium climbers too.
           const mx = (cx + 0.5) * NAV_CELL;
           const my = (cy + 0.5) * NAV_CELL;
           for (let d = 0; d < 8; d++) {
-            if (!((cl >> d) & 1)) continue;
+            const gr = grid.crossingGrade(c, d);
+            if (gr <= CLIMB_GRADE.default) continue;
+            g.lineStyle(1.5, gr > CLIMB_GRADE.medium ? BLOCKED_RGB : CLIFF_RGB, 0.85);
             const a = (d * Math.PI) / 4;
             this.line(mx, my, mx + Math.cos(a) * NAV_CELL * 0.45, my + Math.sin(a) * NAV_CELL * 0.45);
           }
@@ -108,18 +108,14 @@ export class NavOverlay {
       if (u.route.path.length) routed++;
       if (u.route.stuckT > 0) stuck++;
     }
-    let landRegions = 0;
-    let waterRegions = 0;
-    for (let c = 0; c < grid.landRegion.length; c++) {
-      landRegions = Math.max(landRegions, grid.landRegion[c]! + 1);
-      waterRegions = Math.max(waterRegions, grid.waterRegion[c]! + 1);
-    }
+    const landRegions = grid.regionCount(LAND_MODE);
+    const waterRegions = grid.regionCount(WATER_MODE);
     this.hud!.setText(
       [
         `NAV GRID  cell ${NAV_CELL}  ${grid.n}x${grid.n}  v${grid.version}`,
         `regions  land ${landRegions}  water ${waterRegions}`,
         `routes ${routed}  stuck ${stuck}  A* ${searches}/frame`,
-        "red blocked · cyan shallow · yellow deck · orange cliff · green route · pink flee",
+        "red blocked · cyan shallow · yellow deck · orange/red tick: too steep (default / medium) · green route · pink flee",
       ].join("\n")
     );
   }

@@ -19,6 +19,9 @@ import { flameDensityMul } from "../../../render/fxCurves";
 
 /** Damaged-unit fire: spawn disc radius (screen px) per unit of flame scale. */
 const DMG_FIRE_AREA = 2.4;
+/** Underwater hurt site: bubbles per frame at 1× (× site scale), and max bubble size (0..1 of the bubble range). */
+const HURT_BUBBLE_RATE = 0.12;
+const HURT_BUBBLE_SIZE = 0.45;
 
 /** Ejected shell casings: minimum tumble (rad/s) at ejection; bounces keep at least 60% of it. */
 const CASING_SPIN_MIN = 16;
@@ -1355,6 +1358,7 @@ export class Fx {
     const airMul = f.heliCrash ? 1.65 : 1;
     for (const s of f.dmgFlames) {
       const p = spriteUvPos(spr, s.u, s.v);
+      if (this.hurtBubbles(p.x, p.y, f.z, s.scale * dim * airMul)) continue;
       this.withDmgFlameScale(s.scale * dim * airMul, () => {
         const nFire = this.emitCount(0.72 * dim);
         const nSmoke = this.emitCount(0.35 * dim);
@@ -1532,6 +1536,15 @@ export class Fx {
    * Continuous FX rate → particle count, scaled by sim timeScale so slow-mo
    * spawns fewer particles per wall frame (same count per sim-second).
    */
+  /** Hurt site under the water surface: a small bubble stream instead of flames + smoke. False = above water (burn as usual). */
+  hurtBubbles(sx: number, sy: number, z: number, scale: number): boolean {
+    const at = screenToWorldAtZ(sx, sy, z);
+    if (z >= groundZ(this.s.world, at.x, at.y)) return false;
+    const n = this.emitCount(HURT_BUBBLE_RATE * scale);
+    for (let i = 0; i < n; i++) this.s.bubbles.spawn(at.x, at.y, z, Math.pow(Math.random(), 3.4) * HURT_BUBBLE_SIZE * scale);
+    return true;
+  }
+
   emitCount(ratePerFrameAt1x: number): number {
     const s = this.s.lastSimScale;
     if (!Number.isFinite(s) || s <= 0 || ratePerFrameAt1x <= 0) return 0;
@@ -1577,6 +1590,7 @@ export class Fx {
     const h = this.s.player;
     this.emitUnitDamageFx();
     this.s.remoteBody.emitRemoteDamageFx();
+    this.s.remoteBody.emitUnderwaterBubbles();
     const hp = h.health / h.spec.health;
     if (h.phase !== "dead" && hp < 0.98) {
       const want = hp < 0.25 ? 3 : hp < 0.45 ? 2 : hp < 0.75 ? 1 : 0;
@@ -1638,6 +1652,7 @@ export class Fx {
       for (const s of u.dmgSites) {
         const mount = mountAt(this.s.textures, u, tex, { x: s.u, y: s.v });
         const base = worldToScreen(mount.x, mount.y, u.z);
+        if (this.hurtBubbles(base.x, base.y, u.z, s.scale * sizeMul)) continue;
         const area = DMG_FIRE_AREA * s.scale * sizeMul;
         this.withDmgFlameScale(s.scale * sizeMul, () => {
           const nFire = this.emitCount(0.45 * flameDensityMul(s.scale * sizeMul));

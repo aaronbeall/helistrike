@@ -143,7 +143,8 @@ export class WeaponHud {
       const socket = pov ? pov.spec.sockets?.[i] : h.spec.sockets[i];
       const auto = !pov && socket?.controller === "automatic";
       const gunner = auto && !sel;
-      const disabled = pov ? false : this.s.fireControl.weaponSlotDisabled(i);
+      // POV remote: its weapons are dead while it's submerged.
+      const disabled = pov ? !this.s.remoteBody.canFire(pov) : this.s.fireControl.weaponSlotDisabled(i);
       const x = x0 + i * (slotW + gap);
 
       // Slot chrome — disabled is a shared visual (cloak today; other gates later).
@@ -353,7 +354,7 @@ export class WeaponHud {
       setTextColor(this.escortHudSlot.name, follow ? "#7ad0ff" : "#f0d56a")
         .setVisible(true)
         .setPosition(nameLp.x, nameLp.y)
-        .setText(follow ? "FOLLOW" : "HOLD")
+        .setText(this.s.remoteFleet.activeHostWaypoint() ? "WAYPOINT" : follow ? "FOLLOW" : "HOLD")
         .setStroke("#12100c", 3)
         .setFontSize("13px")
         .setAlpha(0.95);
@@ -361,7 +362,7 @@ export class WeaponHud {
       setTextColor(this.escortHudSlot.status, follow ? "#7ad0ff" : "#c4b48a")
         .setVisible(true)
         .setPosition(statusLp.x, statusLp.y)
-        .setText(h.spec.name.toUpperCase())
+        .setText(`${h.spec.name.toUpperCase()} · G WAYPOINT`)
         .setStroke("#12100c", 2)
         .setFontSize("10px")
         .setAlpha(0.9);

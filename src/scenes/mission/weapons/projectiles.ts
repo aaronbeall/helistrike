@@ -20,7 +20,8 @@ import { Craft } from "../../../sim/craft";
 import { isAerial, isOrganic, hasSoftBlood, specOf, type ShotKind, type ShotLook } from "../../../sim/roster";
 import { circumRadiusOf, distToFootprint, footprintInto, pointInFootprint } from "../../../render/footprint";
 import { craftHardpointMounts } from "../../../sim/crafts";
-import { groundZ, worldToScreen, cameraPointVisible, castZ, isWater } from "../../../worldgen/world";
+import { bedZ, groundZ, worldToScreen, cameraPointVisible, castZ, isDeepWater, isWater, type WorldData } from "../../../worldgen/world";
+import { themeOf, underwaterTint } from "../../../worldgen/theme";
 import { ENVIRONMENT, UNKNOWN_WEAPON } from "../../../sim/stats";
 import type { DamageSource, StatBy } from "../flow/missionStats";
 import type { MissionScene } from "../../missionScene";
@@ -119,6 +120,13 @@ export class Projectiles {
     s.x += nudge.x;
     s.y += nudge.y;
     if (!s.look) s.look = look;
+    if (s.torpedo) {
+      // Launch just below the surface; homing takes it down toward the target.
+      s.z = groundZ(this.s.world, s.x, s.y) - 2;
+      s.vz = 0;
+      constrainTorpedoDepth(this.s.world, s);
+      s.tint = underwaterTint(themeOf(this.s.world.theme), groundZ(this.s.world, s.x, s.y) - s.z);
+    }
     this.s.shots.push(s);
     if (s.from === "enemy" && s.homePlayer) this.s.stats.seekerFired(s, this.shotFrame);
   }
@@ -267,11 +275,12 @@ export class Projectiles {
         }
         if (stingerHome) {
           const cur = Math.hypot(s.vx, s.vy, s.vz);
-          const decoy = this.s.countermeasures.closestFlare(s.x, s.y, s.z);
+          const decoy = s.torpedo ? undefined : this.s.countermeasures.closestFlare(s.x, s.y, s.z);
           const seekTgt = this.s.targeting.enemySeekerTarget(s);
-          const tx = decoy ? decoy.x : seekTgt.x;
-          const ty = decoy ? decoy.y : seekTgt.y;
-          const tz = decoy ? decoy.z : seekTgt.z + seekTgt.height * 0.45;
+          // Lost target (torpedo): hold course.
+          const tx = decoy ? decoy.x : seekTgt ? seekTgt.x : s.x + s.vx;
+          const ty = decoy ? decoy.y : seekTgt ? seekTgt.y : s.y + s.vy;
+          const tz = decoy ? decoy.z : seekTgt ? seekTgt.z + seekTgt.height * 0.45 : s.z;
           const home = norm3(tx - s.x, ty - s.y, tz - s.z);
           const dir0 =
             cur < 8
@@ -357,7 +366,10 @@ export class Projectiles {
       s.x += s.vx * moveDt;
       s.y += s.vy * moveDt;
       s.z += s.vz * moveDt;
-      if (s.homePlayer && s.from !== "player") {
+      if (s.torpedo) {
+        constrainTorpedoDepth(this.s.world, s);
+        s.tint = underwaterTint(themeOf(this.s.world.theme), groundZ(this.s.world, s.x, s.y) - s.z);
+      } else if (s.homePlayer && s.from !== "player") {
         const ceil = this.enemyShotCeilZ(96);
         if (s.z > ceil) {
           s.z = ceil;
@@ -410,7 +422,10 @@ export class Projectiles {
         payloadIsCluster(beh?.payload);
       const openAge = clusterOpen ? st!.openAge : undefined;
 
-      if (preIgnite && a1 > 0) {
+      if (s.torpedo) {
+        // Underwater only: runs aground where the water stops being deep.
+        hit = !isDeepWater(this.s.world, s.x, s.y);
+      } else if (preIgnite && a1 > 0) {
         /* skip ground collision during pre-ignition repel */
       } else if (openAge != null && (st!.age ?? 0) >= openAge && a1 > 4) {
         // Mid-air dispense at authored fraction of predicted flight time.
@@ -451,9 +466,9 @@ export class Projectiles {
           }
           return true;
         };
-        // Any live remote can be struck; AA seekers ignore dirt-locked ones.
+        // Remotes the shot can reach (torpedoes: only submerged; others: never submerged; seekers: not dirt-locked).
         for (const r of this.s.remotes) {
-          if (!remoteTargetable(r) || (s.homePlayer && r.spec.ground)) continue;
+          if (!remoteTargetable(r) || !this.s.targeting.shotReaches(s, r)) continue;
           const c = this.s.targeting.remoteTargetCraft(r);
           if (c && tryHit(c, false)) {
             hit = true;
@@ -461,7 +476,7 @@ export class Projectiles {
             break;
           }
         }
-        if (!hitPlayer && this.s.countermeasures.cloakT <= 0 && tryHit(this.s.player, true)) {
+        if (!hitPlayer && !s.torpedo && this.s.countermeasures.cloakT <= 0 && tryHit(this.s.player, true)) {
           hit = true;
           hitPlayer = true;
         }
@@ -2006,4 +2021,18 @@ function damageSourceOf(shot: Shot | undefined): DamageSource {
   if (!shot) return { enemy: ENVIRONMENT, weapon: "explosion" };
   if (shot.from === "player") return { enemy: SELF_DAMAGE, weapon: shot.wpnId ?? UNKNOWN_WEAPON };
   return { enemy: shot.srcKind ?? UNKNOWN_WEAPON, weapon: shot.srcWpn ?? UNKNOWN_WEAPON };
+}
+
+/** Keep homing inside the water column without cancelling its vertical steering. */
+function constrainTorpedoDepth(world: WorldData, s: Shot): void {
+  if (!isDeepWater(world, s.x, s.y)) return;
+  const bottom = bedZ(world, s.x, s.y) + 0.1;
+  const top = groundZ(world, s.x, s.y) - 0.1;
+  if (s.z < bottom) {
+    s.z = bottom;
+    if (s.vz < 0) s.vz = 0;
+  } else if (s.z > top) {
+    s.z = top;
+    if (s.vz > 0) s.vz = 0;
+  }
 }

@@ -1,7 +1,7 @@
 import { heightOf, COUNTERMEASURES, craftCountermeasure, nextId, shotBehaviorOf, exhaustIsEnergy, exhaustRibbons, PLAYER_WPNS, wpnIdOf, type Shot, type Unit, type PlayerWpnSpec, type WeaponPayload, type EnergyTrailNode } from "../../../sim/combat";
 import { tickWhipAntenna, whipAntennaRest } from "../../../sim/physics";
 import { remoteHostAmmoWeapon, remoteSocketPoints } from "../../../sim/remoteRules";
-import { poseRemoteGun, remoteBodyDrawPose, shellEjectSide } from "../../../render/spritePose";
+import { poseRemoteGun, remoteBodyDrawPose, shellEjectSide, slopeSquash } from "../../../render/spritePose";
 import { estimateBombFallTime, remoteBombReleaseVelocity } from "../../../sim/ballistics";
 import { trackPrintAlpha } from "../../../render/fxCurves";
 import { drawWhipAntennaStroke } from "../../../render/ribbons";
@@ -17,6 +17,8 @@ import { range, jitterDisk } from "../../../util/rng";
 import { lookupSpriteMuzzles, lookupSpritePoints, lookupSpriteOrigin } from "../../../art/spriteOrigin";
 import { spriteUvPos, FX_VARIANTS } from "../../../art/sprites";
 import { groundZ, worldToScreen, screenToWorldAtZ, cameraPointVisible, projectHeading, isWater, sampleBiome } from "../../../worldgen/world";
+import { themeOf, underwaterTint } from "../../../worldgen/theme";
+import { groundHull } from "../../../sim/navigation";
 import type { MissionScene } from "../../missionScene";
 import { simParticleTexKey, simParticleLook } from "../../../render/simParticleLook";
 import { applyThermalHeat } from "../../../render/thermal";
@@ -60,12 +62,18 @@ export class RemoteBody {
   }
 
   /** Onboard remote gun — hold-fire in POV, or AI auto-fire toward aim. */
+  /** Weapons are dead while the hull is submerged. */
+  canFire(drone: RemoteCraft): boolean {
+    return !(drone.spec.ground && this.s.nav.submerged(drone.x, drone.y));
+  }
+
   fireRemoteGun(
     drone: RemoteCraft,
     dt: number,
     aimAt?: { x: number; y: number },
     targetId = drone.aiTargetId
   ): void {
+    if (!this.canFire(drone)) return;
     const gunId = craftGunId(drone.spec);
     if (!gunId) return;
     const spec = PLAYER_WPNS[gunId];
@@ -265,6 +273,7 @@ export class RemoteBody {
     drone.weapon = slot;
     const spec = loadout[slot]!;
     drone.fireCd = Math.max(0, (drone.fireCd ?? 0) - dt);
+    if (!this.canFire(drone)) return;
 
     let wantFire = false;
     if (spec.control.mode === "hold_mouse_down") wantFire = down;
@@ -316,6 +325,7 @@ export class RemoteBody {
     spec: PlayerWpnSpec,
     ptr: { x: number; y: number }
   ): void {
+    if (!this.canFire(drone)) return;
     const socket = drone.spec.sockets?.[slot];
     const hull = drone.spec.craftLook ? craftOf(drone.spec.craftLook) : undefined;
     const planeFixed =
@@ -488,6 +498,7 @@ export class RemoteBody {
     spec: PlayerWpnSpec,
     ptr: { x: number; y: number }
   ): void {
+    if (!this.canFire(drone)) return;
     const launch = spec.launch;
     if (launch.mode !== "drop") return;
     const tip = this.remoteFireTips(drone, slot)[0] ?? {
@@ -861,7 +872,12 @@ export class RemoteBody {
 
   /** Dirt puff + smear when a dropped HOUND hits the ground. */
   emitHoundLandingThud(drone: RemoteCraft): void {
-    if (isWater(this.s.world, drone.x, drone.y)) return;
+    if (isWater(this.s.world, drone.x, drone.y)) {
+      // Water landing: splash spray + ripple and the mist shock (the water side of the dust thud).
+      this.s.destruction.waterSplash(drone.x, drone.y, groundZ(this.s.world, drone.x, drone.y), Math.min(1.2, drone.spec.radius / 22));
+      this.s.hostCraft.emitMistShock(drone.x, drone.y, 0.8);
+      return;
+    }
     const gnd = groundZ(this.s.world, drone.x, drone.y);
     this.s.fx.heliDust.setDepth(worldDepth(gnd, 0.25, drone.y));
     for (let i = 0; i < 10; i++) {
@@ -1186,13 +1202,17 @@ export class RemoteBody {
           .setDepth(bodyDepth);
         im.setVisible(true).setPosition(0, 0).setRotation(0).setScale(1);
       } else {
+        const sq = r.spec.ground && !r.airborne ? slopeSquash(this.s.world, r.x, r.y, r.angle) : undefined;
         im.setVisible(true)
           .setPosition(at.x, at.y)
           .setRotation(bodyRot)
-          .setScale(bodyScale)
+          .setScale(bodyScale * (sq?.sx ?? 1), bodyScale * (sq?.sy ?? 1))
           .setDepth(bodyDepth);
       }
-      applyThermalHeat(im, this.s.thermal.on, 0.72);
+      // Underwater hulls take on the water colour by how far below the surface they are (none while above it, e.g. dropping).
+      const below = isWater(this.s.world, r.x, r.y) ? groundZ(this.s.world, r.x, r.y) - r.z : 0;
+      const waterTint = r.spec.ground && groundHull(r).underwater && below > 0 ? underwaterTint(themeOf(this.s.world.theme), below) : undefined;
+      applyThermalHeat(im, this.s.thermal.on, 0.72, waterTint);
       const bodyPose = remoteBodyDrawPose(im);
       const rotorParts = remoteRotorParts(r.spec);
       for (let ri = 0; ri < rotorParts.length; ri++) {
@@ -1230,9 +1250,20 @@ export class RemoteBody {
       if (craftGunId(r.spec) && gunIm) {
         poseRemoteGun(this.s.textures, r, bodyPose, key, gunIm);
         gunIm.setDepth(worldDepth(r.z, ZOff.body + 0.4, r.y));
-        applyThermalHeat(gunIm, this.s.thermal.on, 0.55);
+        applyThermalHeat(gunIm, this.s.thermal.on, 0.55, waterTint);
       }
     });
+  }
+
+  /** Submerged ground remotes release bubbles from the hull while moving (more the faster they go). */
+  emitUnderwaterBubbles(): void {
+    for (const r of this.s.remotes) {
+      if (!r.spec.ground || r.airborne || r.dock || r.detonate || !this.s.nav.submerged(r.x, r.y)) continue;
+      const spd = Math.hypot(r.vx, r.vy);
+      if (Math.random() >= 0.03 + Math.min(0.15, spd / 360)) continue;
+      const k = r.spec.radius * 0.6;
+      this.s.bubbles.spawn(r.x + range(-k, k), r.y + range(-k, k), r.z + range(2, 8));
+    }
   }
 
   emitRemoteDamageFx(): void {
@@ -1257,6 +1288,7 @@ export class RemoteBody {
       for (const site of r.dmgSites) {
         const base = spriteUvPos(body, site.u, site.v);
         const p = jitterDisk(base.x, base.y, 0.5 + site.scale * 0.4);
+        if (this.s.fx.hurtBubbles(p.x, p.y, r.z, site.scale * sizeMul)) continue;
         this.s.fx.withDmgFlameScale(site.scale * sizeMul, () => {
           const nFire = this.s.fx.emitCount(0.45);
           const nSmoke = this.s.fx.emitCount(0.26);

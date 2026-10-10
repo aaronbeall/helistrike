@@ -286,4 +286,5 @@ Candidates for the stats system (`sim/stats` fact tables). **Additive** = new me
   * Buzzcut -- rotor kill a troop with the Murder Hornet
   * Surgical -- beat a mission with 0% collateral damage
   * Oopsie Daisy -- beat a mission with 100% collateral damage
-  * SHocking Habit -- destroy 1000 powerlines
+  * Shocking Habit -- destroy 1000 powerlines
+  * Swim Like a Rock -- drop a vehicle in water
