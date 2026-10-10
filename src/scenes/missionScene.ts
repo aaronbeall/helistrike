@@ -1303,6 +1303,7 @@ export class MissionScene extends Phaser.Scene {
     this.groundMarks.updateThermalWreckMarks(dt);
     this.groundMarks.updateEmberGlows(dt);
     this.groundMarks.updateSurfaceWrecks();
+    this.groundMarks.flushStamps();
     this.ripples.update(dt);
     this.overlays.tickBlast(wallDt);
 

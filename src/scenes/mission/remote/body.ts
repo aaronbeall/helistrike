@@ -1078,7 +1078,7 @@ export class RemoteBody {
       const back = r.spec.radius * 0.55;
       const px = Phaser.Math.Linear(x0, r.x, t) - Math.cos(r.angle) * back;
       const py = Phaser.Math.Linear(y0, r.y, t) - Math.sin(r.angle) * back;
-      this.s.groundMarks.stampWreck(
+      this.s.groundMarks.stampTrack(
         this.s.textures.exists(key) ? key : "fx_track_mono",
         px,
         py,

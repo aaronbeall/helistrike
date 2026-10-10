@@ -619,7 +619,7 @@ export class UnitSim {
         const back = specOf(u.kind).radius * 0.72;
         const px = Phaser.Math.Linear(trackX0, u.x, t) - Math.cos(u.angle) * back;
         const py = Phaser.Math.Linear(trackY0, u.y, t) - Math.sin(u.angle) * back;
-        this.s.groundMarks.stampWreck(
+        this.s.groundMarks.stampTrack(
           this.s.textures.exists(key) ? key : "fx_track_mono",
           px,
           py,

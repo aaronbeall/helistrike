@@ -145,6 +145,25 @@ function emberGlowFade(g: EmberGlow): number {
   return Math.max(0, 1 - (g.age - g.hold) / g.fadeDur);
 }
 
+/** Lazy stamps (tracks) flush at least this often (ms); fewer flushes = fewer full wreck-layer passes. */
+const TRACK_FLUSH_MS = 100;
+
+/** A queued wreck-layer stamp (pooled; drawn by `flushStamps`). */
+interface PendingStamp {
+  key: string;
+  frame: string | number | undefined;
+  x: number;
+  y: number;
+  rotation: number;
+  sx: number;
+  sy: number;
+  alpha: number;
+  ox: number;
+  oy: number;
+  tint: number | undefined;
+  mulTint: number | undefined;
+}
+
 /** Ground marks: wreck/doodad stamps on the decal layer, craters, embers, thermal wreck marks, scorch / blood / tracks. */
 export class GroundMarks {
   wreckLayer!: Phaser.GameObjects.RenderTexture;
@@ -153,6 +172,12 @@ export class GroundMarks {
   /** Warm ember patches over fresh craters / hulks (ADD, flicker-fade). */
   emberGlows: EmberGlow[] = [];
   private surfaceWrecks: SurfaceWreck[] = [];
+  /** Stamps queued this frame: one wreck-layer draw per frame, not per stamp (each draw clears + blits the whole layer). */
+  private pending: PendingStamp[] = [];
+  private pendingN = 0;
+  /** A queued stamp must show this frame (it replaces a visible object). */
+  private urgent = false;
+  private flushedAt = 0;
 
   constructor(readonly s: MissionScene) {}
 
@@ -161,6 +186,9 @@ export class GroundMarks {
     this.thermalWreckMarks = [];
     this.emberGlows = [];
     this.surfaceWrecks = [];
+    this.pendingN = 0;
+    this.urgent = false;
+    this.flushedAt = 0;
   }
 
   addSurfaceWreck(key: string, x: number, y: number, z: number, rotation: number, ox = 0.5, oy = 0.5): void {
@@ -204,31 +232,8 @@ export class GroundMarks {
     /** Multiply tint (keeps detail), e.g. wrecks lying in shallows; `tint` is a solid fill. */
     mulTint?: number
   ): void {
-    if (!this.s.textures.exists(key)) return;
-    const k = WRECK_TEX / WORLD;
-    const sy = (scaleY ?? scale) * k;
-    this.stampBrush.setCrop();
-    if (frame != null) this.stampBrush.setTexture(key, frame);
-    else this.stampBrush.setTexture(key);
-    this.stampBrush
-      .setOrigin(ox, oy)
-      .setRotation(rotation)
-      .setAlpha(alpha)
-      .setScale(scale * k, sy)
-      .setPosition(x * k, y * k);
-    if (tint != null) {
-      this.stampBrush.setTintFill(tint);
-      this.stampBrush.setBlendMode(Phaser.BlendModes.NORMAL);
-    } else if (mulTint != null) {
-      this.stampBrush.setTint(mulTint);
-      this.stampBrush.setBlendMode(Phaser.BlendModes.NORMAL);
-    } else {
-      this.stampBrush.clearTint();
-      this.stampBrush.setBlendMode(Phaser.BlendModes.NORMAL);
-    }
-    this.wreckLayer.draw(this.stampBrush);
-    this.stampBrush.clearTint();
-    this.stampBrush.setBlendMode(Phaser.BlendModes.NORMAL);
+    if (!this.queue(key, x, y, rotation, scale, scaleY ?? scale, alpha, ox, oy, frame, tint, mulTint)) return;
+    this.urgent = true;
     if (thermal && (key.startsWith("fx_blast_") || (key === "fx_dirt" && tint != null))) {
       this.addThermalWreckMark(
         key,
@@ -243,6 +248,81 @@ export class GroundMarks {
         key === "fx_dirt" ? "blood" : "blast"
       );
     }
+  }
+
+  /** Tread / tire prints: may draw a few frames late (they land behind the vehicle), so they don't force a flush. */
+  stampTrack(key: string, x: number, y: number, rotation: number, scale: number, alpha: number, scaleY = scale): void {
+    this.queue(key, x, y, rotation, scale, scaleY, alpha, 0.5, 0.5, undefined, undefined, undefined);
+  }
+
+  private queue(
+    key: string,
+    x: number,
+    y: number,
+    rotation: number,
+    scale: number,
+    scaleY: number,
+    alpha: number,
+    ox: number,
+    oy: number,
+    frame: string | number | undefined,
+    tint: number | undefined,
+    mulTint: number | undefined
+  ): boolean {
+    if (!this.s.textures.exists(key)) return false;
+    const k = WRECK_TEX / WORLD;
+    const p = (this.pending[this.pendingN++] ??= {
+      key,
+      frame: undefined,
+      x: 0,
+      y: 0,
+      rotation: 0,
+      sx: 1,
+      sy: 1,
+      alpha: 1,
+      ox: 0.5,
+      oy: 0.5,
+      tint: undefined,
+      mulTint: undefined,
+    });
+    p.key = key;
+    p.frame = frame;
+    p.x = x * k;
+    p.y = y * k;
+    p.rotation = rotation;
+    p.sx = scale * k;
+    p.sy = scaleY * k;
+    p.alpha = alpha;
+    p.ox = ox;
+    p.oy = oy;
+    p.tint = tint;
+    p.mulTint = mulTint;
+    return true;
+  }
+
+  /** Draw queued stamps in one wreck-layer batch: every frame with a stamp that must show now, else every TRACK_FLUSH_MS. */
+  flushStamps(): void {
+    if (!this.pendingN) return;
+    const now = this.s.time.now;
+    if (!this.urgent && now - this.flushedAt < TRACK_FLUSH_MS) return;
+    this.flushedAt = now;
+    this.urgent = false;
+    const b = this.stampBrush;
+    b.setCrop().setBlendMode(Phaser.BlendModes.NORMAL);
+    this.wreckLayer.beginDraw();
+    for (let i = 0; i < this.pendingN; i++) {
+      const p = this.pending[i]!;
+      if (p.frame != null) b.setTexture(p.key, p.frame);
+      else b.setTexture(p.key);
+      b.setOrigin(p.ox, p.oy).setRotation(p.rotation).setAlpha(p.alpha).setScale(p.sx, p.sy).setPosition(p.x, p.y);
+      if (p.tint != null) b.setTintFill(p.tint);
+      else if (p.mulTint != null) b.setTint(p.mulTint);
+      else b.clearTint();
+      this.wreckLayer.batchDraw(b);
+    }
+    this.wreckLayer.endDraw();
+    b.clearTint();
+    this.pendingN = 0;
   }
 
   addThermalWreckMark(
@@ -681,17 +761,7 @@ export class GroundMarks {
     const yaw = ang + range(-0.28, 0.28);
     const ox = range(-2.2, 2.2);
     const oy = range(-2.2, 2.2);
-    this.stampWreck(
-      key,
-      x + ox,
-      y + oy,
-      yaw + Math.PI / 2,
-      sc * range(0.75, 1.05),
-      Phaser.Math.Clamp(a, 0.12, 0.55),
-      0.5,
-      0.5,
-      sc * range(0.95, 1.45)
-    );
+    this.stampTrack(key, x + ox, y + oy, yaw + Math.PI / 2, sc * range(0.75, 1.05), Phaser.Math.Clamp(a, 0.12, 0.55), sc * range(0.95, 1.45));
   }
 
   stampSoldierBlood(u: Unit, ox: number, oy: number, ang: number): void {
