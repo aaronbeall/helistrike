@@ -15,7 +15,7 @@ import { ZOff, worldDepth } from "../../../render/depth";
 import { range } from "../../../util/rng";
 import { Craft, JET_GUN_MAX_DEPRESS, JET_GUN_MAX_ELEV } from "../../../sim/craft";
 import { isAerial } from "../../../sim/roster";
-import { closestOnFootprint, footprintOf, pointInFootprint } from "../../../render/footprint";
+import { closestOnFootprint, footprintInto, footprintOf, pointInFootprint } from "../../../render/footprint";
 import { lookupSpriteMuzzles } from "../../../art/spriteOrigin";
 import { craftBombDrop, craftCrewHudTag, craftGunId, craftGunMount, craftGunMounts, craftGunPreferDegrees, craftGunPreferOffset, craftHardpointMounts, craftControlScheme, craftOf, craftOrigin, craftSocketBarrelCount, craftSocketFireCd, craftSocketIsPrimary, craftSocketPoints, socketHullPlacement, craftSocketStartingAmmo, type CraftSpec } from "../../../sim/crafts";
 import { groundZ, worldToScreen, cameraPointVisible, screenToWorldAtZ, screenToWorldOnGround, castZ } from "../../../worldgen/world";
@@ -38,7 +38,14 @@ const AUTO_GUN_SPEED_REF = 400;
 const AUTO_GUN_WIDE_MUL = 3;
 
 /** Player fire control: trigger handling, muzzle/kick/drop fire, salvos, hardpoints, ammo + slot select, host + automatic crew stations, aim gathering. */
+/** Scratch for `reticleUnit`'s scan. */
+const RETICLE_AT = { x: 0, y: 0, scale: 1 };
+const RETICLE_HIT = { x: 0, y: 0, z: 0 };
+
 export class FireControl {
+  /** `reticleUnit` result for `reticleFrame` (computed once per frame). */
+  private reticleHit: Unit | undefined;
+  private reticleFrame = -1;
   /** Per-slot ammo (set from the loadout in the scene's init). */
   ammo: number[] = [];
   /** Per-slot shots fired while ammo doesn't count down (infinite), so pylons still cycle. */
@@ -1949,16 +1956,19 @@ specIsShellGun(spec)
 
   /** Unit under reticle (footprint tested in projected screen space). */
   reticleUnit(): Unit | undefined {
+    const frame = this.s.game.loop.frame;
+    if (frame === this.reticleFrame && !this.reticleHit?.dead) return this.reticleHit;
+    this.reticleFrame = frame;
     const pt = this.s.pointerScreen();
     let best: Unit | undefined;
     let bd = Infinity;
-    const hit = { x: 0, y: 0, z: 0 };
+    const hit = RETICLE_HIT;
     for (const u of this.s.units) {
       if (u.dead) continue;
       if (!cameraPointVisible(u.z, u.y)) continue;
-      const at = worldToScreen(u.x, u.y, u.z);
+      const at = worldToScreen(u.x, u.y, u.z, RETICLE_AT);
       screenToWorldAtZ(pt.x, pt.y, u.z, hit);
-      const fp = footprintOf(u, 12 / Math.max(at.scale, 0.01));
+      const fp = footprintInto(u, 12 / Math.max(at.scale, 0.01));
       if (!pointInFootprint(hit.x, hit.y, fp)) continue;
       const d = Math.hypot(at.x - pt.x, at.y - pt.y);
       if (d < bd) {
@@ -1966,6 +1976,7 @@ specIsShellGun(spec)
         best = u;
       }
     }
+    this.reticleHit = best;
     return best;
   }
 

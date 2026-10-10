@@ -1,0 +1,1385 @@
+[
+ [
+  {
+   "id": "gun_cluster",
+   "label": "Chain gun into 120-unit cluster",
+   "frames": 964,
+   "cpu": {
+    "avg": 5.94,
+    "p50": 6,
+    "p95": 7.5,
+    "p99": 8,
+    "max": 8.3
+   },
+   "interval": {
+    "avg": 10.4,
+    "p50": 8.4,
+    "p95": 16.9,
+    "p99": 17.5,
+    "max": 17.7
+   },
+   "render": {
+    "avg": 3.23,
+    "p50": 3.2,
+    "p95": 4.2,
+    "p99": 4.6,
+    "max": 4.9
+   },
+   "stages": {
+    "scene": {
+     "avg": 2.71,
+     "p50": 2.7,
+     "p95": 3.6,
+     "p99": 3.9,
+     "max": 4.9
+    },
+    "player": {
+     "avg": 0.24,
+     "p50": 0.2,
+     "p95": 0.4,
+     "p99": 0.5,
+     "max": 0.7
+    },
+    "unit sim": {
+     "avg": 0.88,
+     "p50": 0.9,
+     "p95": 1.2,
+     "p99": 1.3,
+     "max": 1.5
+    },
+    "unit draw": {
+     "avg": 0.43,
+     "p50": 0.4,
+     "p95": 0.6,
+     "p99": 0.7,
+     "max": 1.3
+    },
+    "shot sim": {
+     "avg": 0.1,
+     "p50": 0.1,
+     "p95": 0.3,
+     "p99": 0.4,
+     "max": 0.8
+    },
+    "shot draw": {
+     "avg": 0.09,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.2,
+     "max": 0.3
+    },
+    "debris sim": {
+     "avg": 0.15,
+     "p50": 0.1,
+     "p95": 0.3,
+     "p99": 0.4,
+     "max": 0.7
+    },
+    "debris draw": {
+     "avg": 0.16,
+     "p50": 0.2,
+     "p95": 0.3,
+     "p99": 0.3,
+     "max": 0.5
+    },
+    "sim particle sim": {
+     "avg": 0.02,
+     "p50": 0,
+     "p95": 0.1,
+     "p99": 0.1,
+     "max": 0.2
+    },
+    "sim particle draw": {
+     "avg": 0.05,
+     "p50": 0,
+     "p95": 0.2,
+     "p99": 0.2,
+     "max": 0.2
+    },
+    "target/fx": {
+     "avg": 0.06,
+     "p50": 0.1,
+     "p95": 0.1,
+     "p99": 0.2,
+     "max": 0.8
+    },
+    "scene other": {
+     "avg": 0.51,
+     "p50": 0.5,
+     "p95": 0.9,
+     "p99": 1.3,
+     "max": 2.2
+    }
+   },
+   "cpuOver": {
+    "ms16": 0,
+    "ms33": 0,
+    "ms50": 0
+   },
+   "intervalOver": {
+    "ms33": 0,
+    "ms50": 0
+   },
+   "longTasks": {
+    "count": 0,
+    "totalMs": 0,
+    "maxMs": 0
+   },
+   "heap": {
+    "allocMBps": 250.95,
+    "gcCount": 105,
+    "freedMB": 2490.27
+   },
+   "counts": {
+    "units": {
+     "avg": 128,
+     "max": 128
+    },
+    "liveUnits": {
+     "avg": 116,
+     "max": 120
+    },
+    "shots": {
+     "avg": 39,
+     "max": 62
+    },
+    "debris": {
+     "avg": 171,
+     "max": 220
+    },
+    "particles": {
+     "avg": 70,
+     "max": 270
+    }
+   }
+  },
+  {
+   "id": "tow_cluster",
+   "label": "TOW wire-guided missiles into the cluster",
+   "frames": 899,
+   "cpu": {
+    "avg": 7.64,
+    "p50": 7.6,
+    "p95": 9,
+    "p99": 9.6,
+    "max": 11
+   },
+   "interval": {
+    "avg": 11.24,
+    "p50": 8.4,
+    "p95": 16.8,
+    "p99": 17.5,
+    "max": 33.3
+   },
+   "render": {
+    "avg": 4.63,
+    "p50": 4.6,
+    "p95": 5.7,
+    "p99": 6,
+    "max": 6.8
+   },
+   "stages": {
+    "scene": {
+     "avg": 3.01,
+     "p50": 3,
+     "p95": 3.9,
+     "p99": 4.3,
+     "max": 4.9
+    },
+    "player": {
+     "avg": 0.3,
+     "p50": 0.3,
+     "p95": 0.5,
+     "p99": 0.6,
+     "max": 0.7
+    },
+    "unit sim": {
+     "avg": 0.8,
+     "p50": 0.8,
+     "p95": 1.1,
+     "p99": 1.3,
+     "max": 1.5
+    },
+    "unit draw": {
+     "avg": 0.42,
+     "p50": 0.4,
+     "p95": 0.6,
+     "p99": 0.7,
+     "max": 0.7
+    },
+    "shot sim": {
+     "avg": 0.15,
+     "p50": 0.1,
+     "p95": 0.4,
+     "p99": 0.7,
+     "max": 1
+    },
+    "shot draw": {
+     "avg": 0.1,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.3,
+     "max": 0.3
+    },
+    "debris sim": {
+     "avg": 0.22,
+     "p50": 0.2,
+     "p95": 0.4,
+     "p99": 0.5,
+     "max": 0.6
+    },
+    "debris draw": {
+     "avg": 0.2,
+     "p50": 0.2,
+     "p95": 0.3,
+     "p99": 0.4,
+     "max": 0.5
+    },
+    "sim particle sim": {
+     "avg": 0.02,
+     "p50": 0,
+     "p95": 0.1,
+     "p99": 0.1,
+     "max": 0.2
+    },
+    "sim particle draw": {
+     "avg": 0.05,
+     "p50": 0,
+     "p95": 0.1,
+     "p99": 0.2,
+     "max": 0.2
+    },
+    "target/fx": {
+     "avg": 0.14,
+     "p50": 0.1,
+     "p95": 0.3,
+     "p99": 0.4,
+     "max": 1.1
+    },
+    "scene other": {
+     "avg": 0.61,
+     "p50": 0.5,
+     "p95": 1.1,
+     "p99": 1.7,
+     "max": 1.9
+    }
+   },
+   "cpuOver": {
+    "ms16": 0,
+    "ms33": 0,
+    "ms50": 0
+   },
+   "intervalOver": {
+    "ms33": 1,
+    "ms50": 0
+   },
+   "longTasks": {
+    "count": 0,
+    "totalMs": 0,
+    "maxMs": 0
+   },
+   "heap": {
+    "allocMBps": 281.77,
+    "gcCount": 118,
+    "freedMB": 2814.03
+   },
+   "counts": {
+    "units": {
+     "avg": 128,
+     "max": 128
+    },
+    "liveUnits": {
+     "avg": 102,
+     "max": 117
+    },
+    "shots": {
+     "avg": 34,
+     "max": 78
+    },
+    "debris": {
+     "avg": 189,
+     "max": 246
+    },
+    "particles": {
+     "avg": 54,
+     "max": 230
+    }
+   }
+  },
+  {
+   "id": "idle_stress",
+   "label": "Idle, cluster in a town + ~1,600 units map-wide",
+   "frames": 750,
+   "cpu": {
+    "avg": 9.3,
+    "p50": 9.3,
+    "p95": 10.7,
+    "p99": 11.3,
+    "max": 12
+   },
+   "interval": {
+    "avg": 13.44,
+    "p50": 16.6,
+    "p95": 17.1,
+    "p99": 17.7,
+    "max": 25.1
+   },
+   "render": {
+    "avg": 3.73,
+    "p50": 3.7,
+    "p95": 4.6,
+    "p99": 5.1,
+    "max": 5.5
+   },
+   "stages": {
+    "scene": {
+     "avg": 5.57,
+     "p50": 5.5,
+     "p95": 6.4,
+     "p99": 6.7,
+     "max": 7.4
+    },
+    "player": {
+     "avg": 0.52,
+     "p50": 0.5,
+     "p95": 0.8,
+     "p99": 0.8,
+     "max": 1
+    },
+    "unit sim": {
+     "avg": 2.12,
+     "p50": 2.1,
+     "p95": 2.6,
+     "p99": 2.8,
+     "max": 3
+    },
+    "unit draw": {
+     "avg": 1.29,
+     "p50": 1.3,
+     "p95": 1.6,
+     "p99": 1.8,
+     "max": 1.9
+    },
+    "shot sim": {
+     "avg": 0.11,
+     "p50": 0.1,
+     "p95": 0.3,
+     "p99": 0.3,
+     "max": 0.4
+    },
+    "shot draw": {
+     "avg": 0.11,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.3,
+     "max": 0.4
+    },
+    "debris sim": {
+     "avg": 0.12,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.3,
+     "max": 0.4
+    },
+    "debris draw": {
+     "avg": 0.15,
+     "p50": 0.1,
+     "p95": 0.3,
+     "p99": 0.3,
+     "max": 0.4
+    },
+    "sim particle sim": {
+     "avg": 0,
+     "p50": 0,
+     "p95": 0,
+     "p99": 0.1,
+     "max": 0.1
+    },
+    "sim particle draw": {
+     "avg": 0.02,
+     "p50": 0,
+     "p95": 0.1,
+     "p99": 0.1,
+     "max": 0.1
+    },
+    "target/fx": {
+     "avg": 0.18,
+     "p50": 0.2,
+     "p95": 0.3,
+     "p99": 0.4,
+     "max": 0.5
+    },
+    "scene other": {
+     "avg": 0.96,
+     "p50": 0.9,
+     "p95": 1.3,
+     "p99": 1.6,
+     "max": 1.8
+    }
+   },
+   "cpuOver": {
+    "ms16": 0,
+    "ms33": 0,
+    "ms50": 0
+   },
+   "intervalOver": {
+    "ms33": 0,
+    "ms50": 0
+   },
+   "longTasks": {
+    "count": 0,
+    "totalMs": 0,
+    "maxMs": 0
+   },
+   "heap": {
+    "allocMBps": 283.83,
+    "gcCount": 119,
+    "freedMB": 2767.94
+   },
+   "counts": {
+    "units": {
+     "avg": 1748,
+     "max": 1748
+    },
+    "liveUnits": {
+     "avg": 1745,
+     "max": 1745
+    },
+    "shots": {
+     "avg": 41,
+     "max": 73
+    },
+    "debris": {
+     "avg": 148,
+     "max": 184
+    },
+    "particles": {
+     "avg": 1,
+     "max": 50
+    }
+   }
+  }
+ ],
+ [
+  {
+   "id": "gun_cluster",
+   "label": "Chain gun into 120-unit cluster",
+   "frames": 887,
+   "cpu": {
+    "avg": 7.2,
+    "p50": 7.2,
+    "p95": 8.6,
+    "p99": 9.3,
+    "max": 12.1
+   },
+   "interval": {
+    "avg": 11.28,
+    "p50": 8.4,
+    "p95": 16.8,
+    "p99": 17.5,
+    "max": 25.4
+   },
+   "render": {
+    "avg": 4.12,
+    "p50": 4.1,
+    "p95": 5.2,
+    "p99": 5.8,
+    "max": 6.8
+   },
+   "stages": {
+    "scene": {
+     "avg": 3.07,
+     "p50": 3.1,
+     "p95": 3.8,
+     "p99": 4.3,
+     "max": 5.3
+    },
+    "player": {
+     "avg": 0.29,
+     "p50": 0.3,
+     "p95": 0.5,
+     "p99": 0.6,
+     "max": 1.8
+    },
+    "unit sim": {
+     "avg": 0.93,
+     "p50": 0.9,
+     "p95": 1.3,
+     "p99": 1.5,
+     "max": 1.8
+    },
+    "unit draw": {
+     "avg": 0.45,
+     "p50": 0.4,
+     "p95": 0.6,
+     "p99": 0.7,
+     "max": 0.8
+    },
+    "shot sim": {
+     "avg": 0.13,
+     "p50": 0.1,
+     "p95": 0.3,
+     "p99": 0.5,
+     "max": 0.8
+    },
+    "shot draw": {
+     "avg": 0.13,
+     "p50": 0.1,
+     "p95": 0.3,
+     "p99": 0.3,
+     "max": 0.4
+    },
+    "debris sim": {
+     "avg": 0.21,
+     "p50": 0.2,
+     "p95": 0.4,
+     "p99": 0.5,
+     "max": 0.6
+    },
+    "debris draw": {
+     "avg": 0.2,
+     "p50": 0.2,
+     "p95": 0.3,
+     "p99": 0.4,
+     "max": 0.5
+    },
+    "sim particle sim": {
+     "avg": 0.02,
+     "p50": 0,
+     "p95": 0.1,
+     "p99": 0.1,
+     "max": 0.2
+    },
+    "sim particle draw": {
+     "avg": 0.06,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.2,
+     "max": 0.3
+    },
+    "target/fx": {
+     "avg": 0.07,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.2,
+     "max": 1.2
+    },
+    "scene other": {
+     "avg": 0.58,
+     "p50": 0.5,
+     "p95": 1,
+     "p99": 1.4,
+     "max": 1.8
+    }
+   },
+   "cpuOver": {
+    "ms16": 0,
+    "ms33": 0,
+    "ms50": 0
+   },
+   "intervalOver": {
+    "ms33": 0,
+    "ms50": 0
+   },
+   "longTasks": {
+    "count": 0,
+    "totalMs": 0,
+    "maxMs": 0
+   },
+   "heap": {
+    "allocMBps": 239.89,
+    "gcCount": 101,
+    "freedMB": 2418.51
+   },
+   "counts": {
+    "units": {
+     "avg": 128,
+     "max": 128
+    },
+    "liveUnits": {
+     "avg": 112,
+     "max": 119
+    },
+    "shots": {
+     "avg": 42,
+     "max": 71
+    },
+    "debris": {
+     "avg": 187,
+     "max": 246
+    },
+    "particles": {
+     "avg": 75,
+     "max": 305
+    }
+   }
+  },
+  {
+   "id": "tow_cluster",
+   "label": "TOW wire-guided missiles into the cluster",
+   "frames": 1013,
+   "cpu": {
+    "avg": 6.47,
+    "p50": 6.5,
+    "p95": 8,
+    "p99": 8.6,
+    "max": 10.3
+   },
+   "interval": {
+    "avg": 9.87,
+    "p50": 8.4,
+    "p95": 16.7,
+    "p99": 17.2,
+    "max": 17.6
+   },
+   "render": {
+    "avg": 3.86,
+    "p50": 3.9,
+    "p95": 4.9,
+    "p99": 5.3,
+    "max": 7.7
+   },
+   "stages": {
+    "scene": {
+     "avg": 2.61,
+     "p50": 2.6,
+     "p95": 3.5,
+     "p99": 4,
+     "max": 4.6
+    },
+    "player": {
+     "avg": 0.25,
+     "p50": 0.2,
+     "p95": 0.5,
+     "p99": 0.5,
+     "max": 0.9
+    },
+    "unit sim": {
+     "avg": 0.72,
+     "p50": 0.7,
+     "p95": 1,
+     "p99": 1.2,
+     "max": 1.4
+    },
+    "unit draw": {
+     "avg": 0.39,
+     "p50": 0.4,
+     "p95": 0.6,
+     "p99": 0.7,
+     "max": 0.7
+    },
+    "shot sim": {
+     "avg": 0.11,
+     "p50": 0.1,
+     "p95": 0.3,
+     "p99": 0.4,
+     "max": 0.8
+    },
+    "shot draw": {
+     "avg": 0.08,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.2,
+     "max": 0.3
+    },
+    "debris sim": {
+     "avg": 0.18,
+     "p50": 0.2,
+     "p95": 0.3,
+     "p99": 0.4,
+     "max": 0.5
+    },
+    "debris draw": {
+     "avg": 0.18,
+     "p50": 0.2,
+     "p95": 0.3,
+     "p99": 0.4,
+     "max": 0.6
+    },
+    "sim particle sim": {
+     "avg": 0.02,
+     "p50": 0,
+     "p95": 0.1,
+     "p99": 0.1,
+     "max": 0.2
+    },
+    "sim particle draw": {
+     "avg": 0.05,
+     "p50": 0,
+     "p95": 0.1,
+     "p99": 0.2,
+     "max": 0.2
+    },
+    "target/fx": {
+     "avg": 0.12,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.5,
+     "max": 1.1
+    },
+    "scene other": {
+     "avg": 0.51,
+     "p50": 0.5,
+     "p95": 1,
+     "p99": 1.2,
+     "max": 1.8
+    }
+   },
+   "cpuOver": {
+    "ms16": 0,
+    "ms33": 0,
+    "ms50": 0
+   },
+   "intervalOver": {
+    "ms33": 0,
+    "ms50": 0
+   },
+   "longTasks": {
+    "count": 0,
+    "totalMs": 0,
+    "maxMs": 0
+   },
+   "heap": {
+    "allocMBps": 317.77,
+    "gcCount": 135,
+    "freedMB": 3175.6
+   },
+   "counts": {
+    "units": {
+     "avg": 128,
+     "max": 128
+    },
+    "liveUnits": {
+     "avg": 100,
+     "max": 115
+    },
+    "shots": {
+     "avg": 37,
+     "max": 74
+    },
+    "debris": {
+     "avg": 195,
+     "max": 259
+    },
+    "particles": {
+     "avg": 70,
+     "max": 216
+    }
+   }
+  },
+  {
+   "id": "idle_stress",
+   "label": "Idle, cluster in a town + ~1,600 units map-wide",
+   "frames": 821,
+   "cpu": {
+    "avg": 7.52,
+    "p50": 7.5,
+    "p95": 8.9,
+    "p99": 9.4,
+    "max": 10
+   },
+   "interval": {
+    "avg": 12.24,
+    "p50": 9.1,
+    "p95": 17.1,
+    "p99": 17.5,
+    "max": 17.6
+   },
+   "render": {
+    "avg": 2.92,
+    "p50": 2.9,
+    "p95": 3.6,
+    "p99": 3.9,
+    "max": 4.2
+   },
+   "stages": {
+    "scene": {
+     "avg": 4.6,
+     "p50": 4.6,
+     "p95": 5.4,
+     "p99": 5.8,
+     "max": 6.4
+    },
+    "player": {
+     "avg": 0.38,
+     "p50": 0.4,
+     "p95": 0.5,
+     "p99": 0.6,
+     "max": 0.7
+    },
+    "unit sim": {
+     "avg": 1.85,
+     "p50": 1.8,
+     "p95": 2.2,
+     "p99": 2.3,
+     "max": 3.1
+    },
+    "unit draw": {
+     "avg": 1.11,
+     "p50": 1.1,
+     "p95": 1.4,
+     "p99": 1.5,
+     "max": 1.6
+    },
+    "shot sim": {
+     "avg": 0.08,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.2,
+     "max": 0.8
+    },
+    "shot draw": {
+     "avg": 0.08,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.2,
+     "max": 0.3
+    },
+    "debris sim": {
+     "avg": 0.1,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.3,
+     "max": 0.3
+    },
+    "debris draw": {
+     "avg": 0.13,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.3,
+     "max": 0.4
+    },
+    "sim particle sim": {
+     "avg": 0,
+     "p50": 0,
+     "p95": 0,
+     "p99": 0.1,
+     "max": 0.1
+    },
+    "sim particle draw": {
+     "avg": 0.01,
+     "p50": 0,
+     "p95": 0.1,
+     "p99": 0.1,
+     "max": 0.1
+    },
+    "target/fx": {
+     "avg": 0.13,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.3,
+     "max": 1.1
+    },
+    "scene other": {
+     "avg": 0.74,
+     "p50": 0.7,
+     "p95": 1,
+     "p99": 1.1,
+     "max": 1.2
+    }
+   },
+   "cpuOver": {
+    "ms16": 0,
+    "ms33": 0,
+    "ms50": 0
+   },
+   "intervalOver": {
+    "ms33": 0,
+    "ms50": 0
+   },
+   "longTasks": {
+    "count": 0,
+    "totalMs": 0,
+    "maxMs": 0
+   },
+   "heap": {
+    "allocMBps": 309.8,
+    "gcCount": 136,
+    "freedMB": 3121
+   },
+   "counts": {
+    "units": {
+     "avg": 1748,
+     "max": 1748
+    },
+    "liveUnits": {
+     "avg": 1744,
+     "max": 1745
+    },
+    "shots": {
+     "avg": 39,
+     "max": 75
+    },
+    "debris": {
+     "avg": 150,
+     "max": 203
+    },
+    "particles": {
+     "avg": 0,
+     "max": 30
+    }
+   }
+  }
+ ],
+ [
+  {
+   "id": "gun_cluster",
+   "label": "Chain gun into 120-unit cluster",
+   "frames": 1046,
+   "cpu": {
+    "avg": 5.57,
+    "p50": 5.6,
+    "p95": 6.8,
+    "p99": 7.2,
+    "max": 8
+   },
+   "interval": {
+    "avg": 9.61,
+    "p50": 8.3,
+    "p95": 16.7,
+    "p99": 17.1,
+    "max": 17.6
+   },
+   "render": {
+    "avg": 3.1,
+    "p50": 3.1,
+    "p95": 3.8,
+    "p99": 4.1,
+    "max": 4.4
+   },
+   "stages": {
+    "scene": {
+     "avg": 2.46,
+     "p50": 2.4,
+     "p95": 3.2,
+     "p99": 3.6,
+     "max": 3.9
+    },
+    "player": {
+     "avg": 0.21,
+     "p50": 0.2,
+     "p95": 0.3,
+     "p99": 0.4,
+     "max": 0.5
+    },
+    "unit sim": {
+     "avg": 0.85,
+     "p50": 0.8,
+     "p95": 1.1,
+     "p99": 1.2,
+     "max": 1.4
+    },
+    "unit draw": {
+     "avg": 0.39,
+     "p50": 0.4,
+     "p95": 0.5,
+     "p99": 0.6,
+     "max": 0.7
+    },
+    "shot sim": {
+     "avg": 0.08,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.3,
+     "max": 0.6
+    },
+    "shot draw": {
+     "avg": 0.09,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.2,
+     "max": 0.3
+    },
+    "debris sim": {
+     "avg": 0.13,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.3,
+     "max": 0.5
+    },
+    "debris draw": {
+     "avg": 0.15,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.3,
+     "max": 0.4
+    },
+    "sim particle sim": {
+     "avg": 0.01,
+     "p50": 0,
+     "p95": 0.1,
+     "p99": 0.1,
+     "max": 0.2
+    },
+    "sim particle draw": {
+     "avg": 0.06,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.2,
+     "max": 0.2
+    },
+    "target/fx": {
+     "avg": 0.05,
+     "p50": 0,
+     "p95": 0.1,
+     "p99": 0.2,
+     "max": 0.5
+    },
+    "scene other": {
+     "avg": 0.43,
+     "p50": 0.4,
+     "p95": 0.9,
+     "p99": 1.1,
+     "max": 1.3
+    }
+   },
+   "cpuOver": {
+    "ms16": 0,
+    "ms33": 0,
+    "ms50": 0
+   },
+   "intervalOver": {
+    "ms33": 0,
+    "ms50": 0
+   },
+   "longTasks": {
+    "count": 0,
+    "totalMs": 0,
+    "maxMs": 0
+   },
+   "heap": {
+    "allocMBps": 277.86,
+    "gcCount": 116,
+    "freedMB": 2774.86
+   },
+   "counts": {
+    "units": {
+     "avg": 128,
+     "max": 128
+    },
+    "liveUnits": {
+     "avg": 116,
+     "max": 119
+    },
+    "shots": {
+     "avg": 40,
+     "max": 65
+    },
+    "debris": {
+     "avg": 173,
+     "max": 211
+    },
+    "particles": {
+     "avg": 97,
+     "max": 291
+    }
+   }
+  },
+  {
+   "id": "tow_cluster",
+   "label": "TOW wire-guided missiles into the cluster",
+   "frames": 1040,
+   "cpu": {
+    "avg": 6.01,
+    "p50": 6.1,
+    "p95": 7.4,
+    "p99": 8.1,
+    "max": 9.1
+   },
+   "interval": {
+    "avg": 9.64,
+    "p50": 8.4,
+    "p95": 16.7,
+    "p99": 17.2,
+    "max": 33.3
+   },
+   "render": {
+    "avg": 3.6,
+    "p50": 3.6,
+    "p95": 4.5,
+    "p99": 4.9,
+    "max": 5.5
+   },
+   "stages": {
+    "scene": {
+     "avg": 2.41,
+     "p50": 2.4,
+     "p95": 3.1,
+     "p99": 3.6,
+     "max": 4.3
+    },
+    "player": {
+     "avg": 0.22,
+     "p50": 0.2,
+     "p95": 0.4,
+     "p99": 0.4,
+     "max": 0.5
+    },
+    "unit sim": {
+     "avg": 0.67,
+     "p50": 0.7,
+     "p95": 0.9,
+     "p99": 1,
+     "max": 1.2
+    },
+    "unit draw": {
+     "avg": 0.39,
+     "p50": 0.4,
+     "p95": 0.6,
+     "p99": 0.6,
+     "max": 0.7
+    },
+    "shot sim": {
+     "avg": 0.1,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.4,
+     "max": 0.9
+    },
+    "shot draw": {
+     "avg": 0.06,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.2,
+     "max": 0.3
+    },
+    "debris sim": {
+     "avg": 0.17,
+     "p50": 0.2,
+     "p95": 0.3,
+     "p99": 0.3,
+     "max": 0.5
+    },
+    "debris draw": {
+     "avg": 0.16,
+     "p50": 0.2,
+     "p95": 0.3,
+     "p99": 0.3,
+     "max": 0.5
+    },
+    "sim particle sim": {
+     "avg": 0.02,
+     "p50": 0,
+     "p95": 0.1,
+     "p99": 0.1,
+     "max": 0.2
+    },
+    "sim particle draw": {
+     "avg": 0.04,
+     "p50": 0,
+     "p95": 0.1,
+     "p99": 0.2,
+     "max": 0.2
+    },
+    "target/fx": {
+     "avg": 0.14,
+     "p50": 0.1,
+     "p95": 0.3,
+     "p99": 0.5,
+     "max": 0.9
+    },
+    "scene other": {
+     "avg": 0.45,
+     "p50": 0.4,
+     "p95": 0.8,
+     "p99": 1.1,
+     "max": 1.6
+    }
+   },
+   "cpuOver": {
+    "ms16": 0,
+    "ms33": 0,
+    "ms50": 0
+   },
+   "intervalOver": {
+    "ms33": 1,
+    "ms50": 0
+   },
+   "longTasks": {
+    "count": 0,
+    "totalMs": 0,
+    "maxMs": 0
+   },
+   "heap": {
+    "allocMBps": 319.01,
+    "gcCount": 133,
+    "freedMB": 3188.51
+   },
+   "counts": {
+    "units": {
+     "avg": 128,
+     "max": 128
+    },
+    "liveUnits": {
+     "avg": 100,
+     "max": 115
+    },
+    "shots": {
+     "avg": 30,
+     "max": 93
+    },
+    "debris": {
+     "avg": 176,
+     "max": 231
+    },
+    "particles": {
+     "avg": 52,
+     "max": 258
+    }
+   }
+  },
+  {
+   "id": "idle_stress",
+   "label": "Idle, cluster in a town + ~1,600 units map-wide",
+   "frames": 895,
+   "cpu": {
+    "avg": 7.49,
+    "p50": 7.5,
+    "p95": 8.4,
+    "p99": 8.9,
+    "max": 9.6
+   },
+   "interval": {
+    "avg": 11.23,
+    "p50": 8.4,
+    "p95": 16.8,
+    "p99": 17.5,
+    "max": 25
+   },
+   "render": {
+    "avg": 2.77,
+    "p50": 2.7,
+    "p95": 3.3,
+    "p99": 3.6,
+    "max": 3.8
+   },
+   "stages": {
+    "scene": {
+     "avg": 4.73,
+     "p50": 4.7,
+     "p95": 5.3,
+     "p99": 5.7,
+     "max": 6.8
+    },
+    "player": {
+     "avg": 0.39,
+     "p50": 0.4,
+     "p95": 0.6,
+     "p99": 0.7,
+     "max": 0.8
+    },
+    "unit sim": {
+     "avg": 1.91,
+     "p50": 1.9,
+     "p95": 2.2,
+     "p99": 2.3,
+     "max": 3.1
+    },
+    "unit draw": {
+     "avg": 1.15,
+     "p50": 1.1,
+     "p95": 1.4,
+     "p99": 1.6,
+     "max": 2.4
+    },
+    "shot sim": {
+     "avg": 0.07,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.2,
+     "max": 0.4
+    },
+    "shot draw": {
+     "avg": 0.09,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.2,
+     "max": 0.3
+    },
+    "debris sim": {
+     "avg": 0.1,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.2,
+     "max": 0.3
+    },
+    "debris draw": {
+     "avg": 0.11,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.2,
+     "max": 0.5
+    },
+    "sim particle sim": {
+     "avg": 0,
+     "p50": 0,
+     "p95": 0,
+     "p99": 0.1,
+     "max": 0.1
+    },
+    "sim particle draw": {
+     "avg": 0.01,
+     "p50": 0,
+     "p95": 0.1,
+     "p99": 0.1,
+     "max": 0.1
+    },
+    "target/fx": {
+     "avg": 0.13,
+     "p50": 0.1,
+     "p95": 0.2,
+     "p99": 0.2,
+     "max": 0.3
+    },
+    "scene other": {
+     "avg": 0.77,
+     "p50": 0.8,
+     "p95": 1,
+     "p99": 1.1,
+     "max": 1.3
+    }
+   },
+   "cpuOver": {
+    "ms16": 0,
+    "ms33": 0,
+    "ms50": 0
+   },
+   "intervalOver": {
+    "ms33": 0,
+    "ms50": 0
+   },
+   "longTasks": {
+    "count": 0,
+    "totalMs": 0,
+    "maxMs": 0
+   },
+   "heap": {
+    "allocMBps": 332.34,
+    "gcCount": 142,
+    "freedMB": 3359.42
+   },
+   "counts": {
+    "units": {
+     "avg": 1748,
+     "max": 1748
+    },
+    "liveUnits": {
+     "avg": 1745,
+     "max": 1745
+    },
+    "shots": {
+     "avg": 39,
+     "max": 68
+    },
+    "debris": {
+     "avg": 149,
+     "max": 191
+    },
+    "particles": {
+     "avg": 0,
+     "max": 29
+    }
+   }
+  }
+ ]
+]
