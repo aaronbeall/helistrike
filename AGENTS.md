@@ -137,7 +137,22 @@ export class RemoteFleet {
 - **Per-mission state is reset in each module's `reset()`.** A field that isn't reset there persists across missions — make that a deliberate choice.
 - **Phaser reuses the scene instance** across restarts; don't rely on constructor-time state.
 - **`s.units` is append-only.** Add units only through `MissionScene.addUnits`; never remove, splice, filter or reassign it mid-mission (dead units stay with `dead` set). The spatial index, unit LOD and sprite blocks key state by list index; dev builds log if this breaks.
-- **Hot paths:** `update()` runs every frame for dozens of units/shots. Avoid per-frame allocations (arrays/objects in loops) in shot, trail and particle code.
+- **Hot paths:** see Performance below.
+
+## Performance (hot paths)
+
+`update()` runs every frame for hundreds of units, shots and particles. Mistakes we've made and fixed:
+
+- **No per-frame allocations** in unit, shot, trail, particle or HUD code: no new arrays / objects / closures, and no `filter` / `map` in loops. Reuse scratch arrays (`list.length = 0`) and pooled results.
+- **No string keys per call.** Never build `` `${a}:${b}` `` to look something up every frame. Resolve once and cache it on the resolved object (`WeakMap<spec | hull, …>`).
+- **Resolve derived spec data once per spec** (hull ability, nav mode, weapon reach), not per unit per frame.
+- **Cache a per-frame fact once per frame.** When a pair loop (unit × remote) recomputes something that depends on one side only (a remote's domain, submerged or not), cache it keyed by `game.loop.frame`.
+- **Key a cache by everything it depends on.** A one-entry-per-unit cache read with different targets thrashes: every switch resets it, budgeted work runs every frame, and other users of the budget starve. Key by (unit, target) or give it slots.
+- **Never scan all of `s.units` per event**, and never loop it twice per frame. Use `s.spatial.near` for anything local; for ordered drawing, do one pass and defer the rest to a scratch list.
+- **Phaser `Text`:** `setColor` / `setStyle` re-render and re-upload the texture even when nothing changed. Use `setTextColor` (`render/textStyle`). `setText` already skips unchanged text.
+- **Inner loops (A\*, region labelling, grid scans) read typed arrays**, not sparse arrays of arrays or optional chains. Keep a parallel `Uint8Array` / count for the hot check.
+- **Expensive lazy builds happen at load** (`build()` / `create()`): per-mode nav data, baked textures. Never on first use mid-frame, which causes a hitch.
+- **Measure:** `npm run bench -- --compare <json>`, only on the scenarios the change can affect.
 
 ## Conventions
 
