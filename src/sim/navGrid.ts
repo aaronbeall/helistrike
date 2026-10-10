@@ -319,10 +319,11 @@ export class NavGrid {
     }
   }
 
-  /** Straight walk from a to b stays on passable cells through open crossings. */
+  /** Straight walk from a to b stays on passable cells through open crossings; ground modes also keep out of shallows (ends excepted). */
   lineClear(mode: NavMode, x0: number, y0: number, x1: number, y1: number): boolean {
     const dist = Math.hypot(x1 - x0, y1 - y0);
     const steps = Math.ceil(dist / (NAV_CELL * 0.5));
+    const end = this.cellAt(x1, y1);
     let prev = this.cellAt(x0, y0);
     for (let k = 1; k <= steps; k++) {
       const t = k / steps;
@@ -330,6 +331,7 @@ export class NavGrid {
       if (c === prev) continue;
       if (!this.passable(mode, c)) return false;
       if (mode.layer !== "water") {
+        if (this.land[c] === LAND_SHALLOW && c !== end) return false;
         const d = dirOf(prev, c);
         if (d >= 0 && !this.open(mode, prev, d, c)) return false;
       }

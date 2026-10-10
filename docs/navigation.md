@@ -32,7 +32,7 @@ Cells that can reach each other form a **region** (one per island / landmass, on
 
 ### How a unit heads to a target
 
-1. **Go straight if you can.** A few times a second the unit checks whether a straight drive to the target crosses only open cells and crossings. Almost always it does, and it just drives there.
+1. **Go straight if you can.** A few times a second the unit checks whether a straight drive to the target crosses only open, dry cells and crossings. Almost always it does, and it just drives there. A straight line through shallows doesn't count: the route decides whether wading is worth it.
 2. **Otherwise follow a route.** A shortest path around the obstacle is computed on the grid, avoiding shallows and cliff edges where reasonable, and followed corner to corner. Routes are reused for a few seconds; the unit skips ahead whenever it can already see a later corner, so it cuts corners instead of zig-zagging.
 3. **Keep off edges.** Next to a shore, cliff lip or the map rim, the steer point is nudged toward open ground.
 
@@ -98,7 +98,7 @@ Per-cell arrays (all `NAV_N²`, typed arrays):
 
 ### Queries
 
-- `lineClear(layer, x0, y0, x1, y1)`: walks the segment in half-cell steps; every new cell must be passable and the crossing into it open.
+- `lineClear(layer, x0, y0, x1, y1)`: walks the segment in half-cell steps; every new cell must be passable and the crossing into it open. Ground modes also reject shallow cells, except the end cell, so wading is only taken when A* finds it cheapest.
 - `nearestInRegion(layer, region, c, maxR)`: ring search outward, prefers the highest-clearance cell in the first ring that has one.
 - `findPath(layer, from, to, out, maxExpand = 1600)`: A*, 8-neighbour, octile heuristic. Step cost 1 / √2, ×2.5 into shallow (`SHALLOW_COST`), ×1.6 into clearance ≤ 1. Diagonals need both side cells passable (no corner cutting). Reuses typed buffers with a search stamp (no clearing, no per-search allocation beyond heap growth). When capped, returns the path to the cell closest to the goal. ~0.26 ms worst case.
 
