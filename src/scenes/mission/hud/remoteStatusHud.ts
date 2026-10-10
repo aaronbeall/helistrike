@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { Layer } from "../../../render/depth";
+import { setTextColor } from "../../../render/textStyle";
 import { craftOf } from "../../../sim/crafts";
 import { worldToScreen } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
@@ -76,11 +77,7 @@ export class RemoteStatusHud {
         continue;
       }
       row.name.setVisible(true).setText(line.name).setScale(scale);
-      row.state
-        .setVisible(true)
-        .setText(line.state)
-        .setColor(STATE_COLOR[line.state] ?? "#7ad0ff")
-        .setScale(scale);
+      setTextColor(row.state.setVisible(true).setText(line.state), STATE_COLOR[line.state] ?? "#7ad0ff").setScale(scale);
       const lead = (DIAMOND * 2 + 5) * scale;
       const w = lead + (row.name.width + row.state.width) * scale;
       const left = x - w / 2;

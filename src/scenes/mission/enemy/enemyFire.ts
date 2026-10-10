@@ -56,7 +56,6 @@ export class EnemyFire {
     let holdMax = 0;
     let flashUsed = false;
     let engagedTgt: Craft | undefined;
-
     u.debugLockT = undefined;
     u.debugAimT = undefined;
     u.debugAimSpreadRad = undefined;

@@ -25,6 +25,7 @@ const HOST_WHILE_PILOTING_SCORE_MUL = 1.6;
 
 /** Who enemies engage: combat focus (host / piloted POV), autonomous-remote picks, awareness + smoke vision, damage routing. */
 export class EnemyTargeting {
+  private domains = new WeakMap<RemoteCraft, { frame: number; domain: TargetDomain }>();
 
   constructor(readonly s: MissionScene) {}
 
@@ -98,10 +99,17 @@ export class EnemyTargeting {
     return rem === this.combatFocusRemote() ? mul : mul * AUTONOMOUS_AWARE_MUL;
   }
 
-  /** Where a remote is: submerged ground hulls are underwater, other ground hulls ground, the rest air. */
+  /** Where a remote is: submerged ground hulls are underwater, other ground hulls ground, the rest air. Cached per frame. */
   remoteDomain(r: RemoteCraft): TargetDomain {
     if (!r.spec.ground) return "air";
-    return this.s.nav.submerged(r.x, r.y) ? "underwater" : "ground";
+    const frame = this.s.game.loop.frame;
+    let c = this.domains.get(r);
+    if (!c) this.domains.set(r, (c = { frame: -1, domain: "ground" }));
+    if (c.frame !== frame) {
+      c.frame = frame;
+      c.domain = this.s.nav.submerged(r.x, r.y) ? "underwater" : "ground";
+    }
+    return c.domain;
   }
 
   /** Domain of a target craft (the host always flies). */

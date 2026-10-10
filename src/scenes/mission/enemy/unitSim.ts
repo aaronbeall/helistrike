@@ -42,7 +42,6 @@ const PREV_TURRETS: number[] = [];
 /** Stats weapon key for a kamikaze drone ramming the player. */
 const KAMIKAZE_RAM = "ram";
 
-/** Enemy unit simulation: per-frame update loop, air/ground/boat drive, terrain + map-edge steering, stun, bleed-out, roadkill. */
 /** Boat sprint multiplier while pursuing / retreating (spec `boatReact.sprint` overrides). */
 const BOAT_SPRINT = 1.5;
 /** Pursuing boats drop back to cruise inside this range of their focus. */
@@ -56,6 +55,7 @@ function boatReaction(u: Unit, h: Craft, vision: number): "pursue" | "retreat" |
   return r.seen;
 }
 
+/** Enemy unit simulation: per-frame update loop, air/ground/boat drive, terrain + map-edge steering, stun, bleed-out, roadkill. */
 export class UnitSim {
   /** Live unit id → unit (rebuilt each sim frame). */
   unitIdMap = new Map<number, Unit>();

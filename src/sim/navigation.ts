@@ -58,7 +58,11 @@ export function onGroundHull(a: Unit | RemoteCraft): boolean {
 
 /** Terrain ability of a ground unit or ground remote (its hull craft). */
 export function groundHull(a: Unit | RemoteCraft): GroundHull {
-  const spec = "spec" in a ? craftOf(a.spec.craftLook) : specOf(a.kind);
+  return hullOf("spec" in a ? craftOf(a.spec.craftLook) : specOf(a.kind));
+}
+
+/** Resolved terrain ability of a unit / craft spec. */
+export function hullOf(spec: { terrain?: TerrainAbility }): GroundHull {
   let h = hulls.get(spec);
   if (!h) {
     const t = spec.terrain;

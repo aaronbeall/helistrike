@@ -19,6 +19,8 @@ const LOS_END_SKIP = 40;
 const LOS_CLEAR = 3;
 /** Debug view only draws units within this range of the target. */
 const LOS_DEBUG_RANGE = 1800;
+/** Sight lines cached per unit: its focus + one other weapon target. */
+const SIGHT_SLOTS = 2;
 
 interface Sight {
   target: object;
@@ -27,6 +29,8 @@ interface Sight {
   inReach: boolean;
   /** Next recheck time (ms). */
   due: number;
+  /** Frame last queried (least recent slot is reused). */
+  used: number;
   /** World point where terrain blocked the line (debug). */
   bx: number;
   by: number;
@@ -39,7 +43,7 @@ interface Sight {
 export class LineOfSight {
   debugOn = false;
   private gfx!: Phaser.GameObjects.Graphics;
-  private sights = new WeakMap<Unit, Sight>();
+  private sights = new WeakMap<Unit, Sight[]>();
   private frame = -1;
   private spent = 0;
 
@@ -59,24 +63,22 @@ export class LineOfSight {
    * unsighted; budgeted terrain checks then set it and keep it current. A check overdue this long skips the budget.
    */
   sees(u: Unit, target: Craft, reach: number): boolean {
-    let sight = this.sights.get(u);
-    if (!sight) this.sights.set(u, (sight = { target, ok: false, inReach: false, due: 0, bx: 0, by: 0 }));
+    const frame = this.s.game.loop.frame;
+    if (frame !== this.frame) {
+      this.frame = frame;
+      this.spent = 0;
+    }
+    const sight = this.slot(u, target, frame);
     if (Math.hypot(target.x - u.x, target.y - u.y) > reach) {
       sight.ok = false;
       sight.inReach = false;
       return false;
     }
     const now = this.s.time.now;
-    if (!sight.inReach || sight.target !== target) {
+    if (!sight.inReach) {
       sight.inReach = true;
-      sight.target = target;
       sight.ok = false;
       sight.due = now;
-    }
-    const frame = this.s.game.loop.frame;
-    if (frame !== this.frame) {
-      this.frame = frame;
-      this.spent = 0;
     }
     if (now >= sight.due && (this.spent < LOS_BUDGET || now >= sight.due + LOS_OVERDUE_MS)) {
       this.spent++;
@@ -86,9 +88,34 @@ export class LineOfSight {
     return sight.ok;
   }
 
-  /** Cached result only (no trace): false when `u`'s last check was out of sight range or blocked by terrain; true otherwise / unknown. */
+  /** Cached result only (no trace): false when every cached sight of `u` is out of range or blocked; true otherwise / unknown. */
   lastSaw(u: Unit): boolean {
-    return this.sights.get(u)?.ok ?? true;
+    const list = this.sights.get(u);
+    return !list || list.some((s) => s.ok);
+  }
+
+  /** `u`'s cached sight of `target`; a new target takes a free or the least recently used slot, unsighted. */
+  private slot(u: Unit, target: object, frame: number): Sight {
+    let list = this.sights.get(u);
+    if (!list) this.sights.set(u, (list = []));
+    let lru: Sight | undefined;
+    for (const s of list) {
+      if (s.target === target) {
+        s.used = frame;
+        return s;
+      }
+      if (!lru || s.used < lru.used) lru = s;
+    }
+    if (list.length < SIGHT_SLOTS || !lru) {
+      const s: Sight = { target, ok: false, inReach: false, due: 0, used: frame, bx: 0, by: 0 };
+      list.push(s);
+      return s;
+    }
+    lru.target = target;
+    lru.ok = false;
+    lru.inReach = false;
+    lru.used = frame;
+    return lru;
   }
 
   /** Ray from the unit's eye to the target; blocked where the ground rises above it. */
@@ -130,25 +157,29 @@ export class LineOfSight {
     if (!this.debugOn || this.s.camera.mapWorldHidden) return;
     for (const u of this.s.units) {
       if (u.dead) continue;
-      const sight = this.sights.get(u);
-      if (!sight?.inReach) continue;
-      const t = sight.target as Craft;
-      if (Math.hypot(t.x - u.x, t.y - u.y) > LOS_DEBUG_RANGE) continue;
-      const a = worldToScreen(u.x, u.y, u.z + heightOf(u.kind) * 0.8);
-      const b = worldToScreen(t.x, t.y, t.z);
-      if (sight.ok) {
-        this.gfx.lineStyle(1, 0x6dff8a, 0.45);
-        this.gfx.lineBetween(a.x, a.y, b.x, b.y);
-      } else {
-        const hz = groundZ(this.s.world, sight.bx, sight.by);
-        const h = worldToScreen(sight.bx, sight.by, hz);
-        this.gfx.lineStyle(1, 0xff4a3a, 0.75);
-        this.gfx.lineBetween(a.x, a.y, h.x, h.y);
-        this.gfx.lineStyle(1, 0xff4a3a, 0.2);
-        this.gfx.lineBetween(h.x, h.y, b.x, b.y);
-        this.gfx.fillStyle(0xff4a3a, 0.9);
-        this.gfx.fillCircle(h.x, h.y, 2.5);
-      }
+      const list = this.sights.get(u);
+      if (list) for (const sight of list) this.drawSight(u, sight);
+    }
+  }
+
+  private drawSight(u: Unit, sight: Sight): void {
+    if (!sight.inReach) return;
+    const t = sight.target as Craft;
+    if (Math.hypot(t.x - u.x, t.y - u.y) > LOS_DEBUG_RANGE) return;
+    const a = worldToScreen(u.x, u.y, u.z + heightOf(u.kind) * 0.8);
+    const b = worldToScreen(t.x, t.y, t.z);
+    if (sight.ok) {
+      this.gfx.lineStyle(1, 0x6dff8a, 0.45);
+      this.gfx.lineBetween(a.x, a.y, b.x, b.y);
+    } else {
+      const hz = groundZ(this.s.world, sight.bx, sight.by);
+      const h = worldToScreen(sight.bx, sight.by, hz);
+      this.gfx.lineStyle(1, 0xff4a3a, 0.75);
+      this.gfx.lineBetween(a.x, a.y, h.x, h.y);
+      this.gfx.lineStyle(1, 0xff4a3a, 0.2);
+      this.gfx.lineBetween(h.x, h.y, b.x, b.y);
+      this.gfx.fillStyle(0xff4a3a, 0.9);
+      this.gfx.fillCircle(h.x, h.y, 2.5);
     }
   }
 }

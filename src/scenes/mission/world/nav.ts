@@ -1,10 +1,12 @@
 import { footprintInto, pointInFootprint } from "../../../render/footprint";
 import { heightOf, type Unit } from "../../../sim/combat";
 import type { RemoteCraft } from "../../../sim/remote";
-import { NAV_CELL, NAV_N, NavGrid, navMode, WATER_MODE, type NavAgent, type NavMode, type UnitNav } from "../../../sim/navGrid";
+import { LAND_MODE, NAV_CELL, NAV_N, NavGrid, navMode, WATER_MODE, type NavAgent, type NavMode, type UnitNav } from "../../../sim/navGrid";
 import { specOf } from "../../../sim/roster";
 import { bedZ, isDeepWater } from "../../../worldgen/world";
-import { groundHull, onGroundHull, pickBoatWaypoint } from "../../../sim/navigation";
+import { groundHull, hullOf, onGroundHull, pickBoatWaypoint, type GroundHull } from "../../../sim/navigation";
+import { allRemoteKinds, remoteSpecOf } from "../../../sim/remote";
+import { craftOf } from "../../../sim/crafts";
 import type { MissionScene } from "../../missionScene";
 
 /** A* searches allowed per frame (the rest go direct until a later frame). */
@@ -36,6 +38,14 @@ const REPEL_PUSH = 60;
 const DECK_PAD = 2;
 const DECK_SAMPLE = 2;
 
+const hullModes = new WeakMap<GroundHull, NavMode>();
+/** Routing mode for a hull: its climb grade, seabed if it drives underwater. */
+function hullMode(h: GroundHull): NavMode {
+  let m = hullModes.get(h);
+  if (!m) hullModes.set(h, (m = navMode(h.underwater ? "seabed" : "land", h.maxGrade)));
+  return m;
+}
+
 /** Unit navigation: the walkable grid, routes to targets (direct when clear, capped A* when not), flee picks, stuck recovery, bridge decks. */
 export class Nav {
   grid!: NavGrid;
@@ -62,6 +72,14 @@ export class Nav {
       decks++;
     }
     if (decks) this.grid.rebuildLand();
+    // Prebuild every mode in play, so the first router of a mode doesn't build it mid-frame.
+    const modes = new Set<NavMode>([LAND_MODE, WATER_MODE]);
+    for (const u of units) if (onGroundHull(u)) modes.add(this.modeOf(u));
+    for (const k of allRemoteKinds()) {
+      const spec = remoteSpecOf(k);
+      if (spec.ground) modes.add(hullMode(hullOf(craftOf(spec.craftLook))));
+    }
+    for (const m of modes) this.grid.prepare(m);
   }
 
   beginFrame(): void {
@@ -108,8 +126,7 @@ export class Nav {
 
   /** Routing mode for a ground unit / ground remote: its hull's climb grade, seabed if it drives underwater. */
   modeOf(u: Unit | RemoteCraft): NavMode {
-    const h = groundHull(u);
-    return navMode(h.underwater ? "seabed" : "land", h.maxGrade);
+    return hullMode(groundHull(u));
   }
 
   /** Recovering from a jam while being routed (drivers pick the manoeuvre: see `turnsInPlace`). */

@@ -728,8 +728,15 @@ export class Destruction {
    */
   deckRiders(deck: Unit): { units: Unit[]; remotes: RemoteCraft[] } {
     const on = (x: number, y: number) => this.s.nav.deckAt(x, y) === deck;
+    const units: Unit[] = [];
+    const near = this.s.spatial.near(deck.x, deck.y, circumRadiusOf(deck.kind));
+    for (let i = 0; i < near.n; i++) {
+      const o = near.at(i);
+      if (o !== deck && onGroundHull(o) && !groundHull(o).underwater && on(o.x, o.y)) units.push(o);
+    }
+    near.done();
     return {
-      units: this.s.units.filter((o) => !o.dead && o !== deck && onGroundHull(o) && !groundHull(o).underwater && on(o.x, o.y)),
+      units,
       remotes: this.s.remotes.filter((r) => r.spec.ground && !r.airborne && !r.detonate && !groundHull(r).underwater && on(r.x, r.y)),
     };
   }

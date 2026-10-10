@@ -14,7 +14,6 @@ const PYLON_DOT_R = 1;
 const MIN_BLIP_R = 1.25;
 /** Units (not buildings) mark at this multiple of their radius so they read at radar scale. */
 const UNIT_BLIP_SCALE = 2;
-const STRUCTURES_FIRST = [true, false] as const;
 /** HV target arrows (px): gap past the blip, length, half-width. */
 const HV_ARROW_GAP = 2;
 const HV_ARROW_LEN = 6.5;
@@ -48,6 +47,7 @@ export class Minimap {
   mask!: Phaser.GameObjects.Graphics;
 
   private hv: Unit[] = [];
+  private mobile: Unit[] = [];
 
   constructor(readonly s: MissionScene) {}
 
@@ -73,18 +73,16 @@ export class Minimap {
     const mark = 0xe8b84a;
     // Structures first so units (e.g. on bridge decks) mark above them; HV arrows over everything.
     const hv = this.hv;
+    const mobile = this.mobile;
     hv.length = 0;
-    for (const pass of STRUCTURES_FIRST) {
-      for (const u of this.s.units) {
-        if (u.dead || !!specOf(u.kind).building !== pass) continue;
-        const mx = cx + (u.x - px) * s;
-        const my = cy + (u.y - py) * s;
-        if (Math.hypot(mx - cx, my - cy) > mapR) continue;
-        g.fillStyle(u.hv ? 0xff5a3a : isNeutral(u.kind) ? NEUTRAL_MARK : 0xc45c28, 1);
-        this.blip(u, mx, my, s);
-        if (u.hv) hv.push(u);
-      }
+    mobile.length = 0;
+    for (const u of this.s.units) {
+      if (u.dead) continue;
+      if (Math.hypot(u.x - px, u.y - py) * s > mapR) continue;
+      if (specOf(u.kind).building) this.mark(u, cx, cy, px, py, s);
+      else mobile.push(u);
     }
+    for (const u of mobile) this.mark(u, cx, cy, px, py, s);
     for (const u of hv) this.hvArrows(u, cx + (u.x - px) * s, cy + (u.y - py) * s, s);
     for (const r of this.s.remotes) {
       if (r.detonate || r.dock) continue;
@@ -108,6 +106,12 @@ export class Minimap {
     g.fillStyle(0xe8b84a, 1);
     fillCircleFast(g, cx, cy, 3);
     lineFast(g, cx, cy, cx + Math.cos(this.s.player.angle) * 12, cy + Math.sin(this.s.player.angle) * 12, 1.5, 0xe8b84a, 1);
+  }
+
+  private mark(u: Unit, cx: number, cy: number, px: number, py: number, s: number): void {
+    this.gfx.fillStyle(u.hv ? 0xff5a3a : isNeutral(u.kind) ? NEUTRAL_MARK : 0xc45c28, 1);
+    this.blip(u, cx + (u.x - px) * s, cy + (u.y - py) * s, s);
+    if (u.hv) this.hv.push(u);
   }
 
   /** Buildings mark their footprint (rotated rect or circle); units a circle at their scaled radius. */

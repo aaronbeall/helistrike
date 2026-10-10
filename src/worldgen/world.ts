@@ -3,7 +3,7 @@ import { baseHeight, makeShape, type MapShape, type ShapeField } from "./shape";
 import { applyDunes, applyLandforms, type Landforms } from "./landforms";
 import { lookColor, themedTiles, themeOf, waterBandLooks, type TerrainTheme, type ThemeSpec } from "./theme";
 import { Rng } from "../util/rng";
-import { pickTroop, type UnitKind } from "../sim/roster";
+import { isGroundVehicle, isInfantry, pickTroop, type UnitKind } from "../sim/roster";
 import { UNIT_SPECS } from "../catalog/units";
 import { drawRoadStamp } from "../art/artGen";
 import { roadImage } from "../art/roadArt";
@@ -3019,7 +3019,7 @@ const BRIDGE_SECTIONS_PER_UNIT = 3;
  */
 function bridgeSpawns(bridges: Settlement[], spawns: Spawn[], seed: number): Spawn[] {
   const rng = new Rng((seed ^ 0x6b1d93) >>> 0);
-  const pool = [...new Set(spawns.filter((s) => !s.hv && groundMover(s.kind)).map((s) => s.kind))];
+  const pool = [...new Set(spawns.filter((s) => !s.hv && (isGroundVehicle(s.kind) || isInfantry(s.kind))).map((s) => s.kind))];
   const out: Spawn[] = [];
   if (!pool.length) return out;
   for (const b of bridges) {
@@ -3036,12 +3036,6 @@ function bridgeSpawns(bridges: Settlement[], spawns: Spawn[], seed: number): Spa
     }
   }
   return out;
-}
-
-/** Ground units that drive / walk (not statics, boats, aircraft). */
-function groundMover(kind: UnitKind): boolean {
-  const b = UNIT_SPECS[kind].behavior;
-  return b === "orbit_attack_vehicle" || b === "flee_vehicle" || b === "attack_infantry" || b === "flee_infantry";
 }
 
 /** Bridge deck clearance over the water (z). */

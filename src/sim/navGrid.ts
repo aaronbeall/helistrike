@@ -91,6 +91,8 @@ export class NavGrid {
   private readonly modeData = new Map<string, { mode: NavMode; region: Int32Array; clear: Uint8Array }>();
   /** Deck unit indices touching each cell (segments overlap at seams), or undefined. */
   private readonly decks: (number[] | undefined)[] = new Array(NAV_N * NAV_N);
+  /** Live decks per cell (hot-loop check). */
+  private readonly deckCount = new Uint8Array(NAV_N * NAV_N);
   /** Bumped whenever passability changes (deck destroyed). */
   version = 0;
   /** A* searches run since the last `takeSearches`. */
@@ -196,6 +198,11 @@ export class NavGrid {
     return this.hasDeck(c) || this.hasDeck(j) || this.crossingGrade(c, d) <= mode.maxGrade;
   }
 
+  /** Build `mode`'s regions + clearance now (at load) instead of on first use. */
+  prepare(mode: NavMode): void {
+    this.data(mode);
+  }
+
   /** Regions + clearance for `mode`, built on first use. */
   private data(mode: NavMode): { mode: NavMode; region: Int32Array; clear: Uint8Array } {
     let d = this.modeData.get(mode.key);
@@ -210,7 +217,7 @@ export class NavGrid {
 
   /** A live deck touches this cell. */
   hasDeck(c: number): boolean {
-    return !!this.decks[c]?.length;
+    return this.deckCount[c]! > 0;
   }
 
   /** Deck unit indices touching this cell (empty when none). */
@@ -222,6 +229,7 @@ export class NavGrid {
   setDeck(cells: readonly number[], index: number): void {
     for (const c of cells) {
       (this.decks[c] ??= []).push(index);
+      this.deckCount[c]!++;
       this.land[c] = LAND_DRY;
     }
   }
@@ -234,6 +242,7 @@ export class NavGrid {
       const k = list ? list.indexOf(index) : -1;
       if (k < 0) continue;
       list!.splice(k, 1);
+      this.deckCount[c] = list!.length;
       if (!list!.length) this.land[c] = this.landBase[c]!;
       hit = true;
     }
