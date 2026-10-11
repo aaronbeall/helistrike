@@ -1,13 +1,19 @@
 import type Phaser from "phaser";
-import type { Biome } from "../worldgen/world";
 import { registerArt, type ArtSource } from "../art/sprites";
 import { UNIT_SPECS } from "../catalog/units";
+import { TERRAIN_THEMES } from "../worldgen/theme";
 
-import { stripCamoSuffix, type CamoKind } from "../catalog/camo";
+import { CAMO_NAMES, stripCamoSuffix, type CamoKind } from "../catalog/camo";
 export { stripCamoSuffix, type CamoKind } from "../catalog/camo";
 
-/** Biome-linked patterns. */
-export const CAMO_KINDS: CamoKind[] = ["woodland", "desert", "urban", "snow"];
+/** Patterns any theme can paint ("theater" / "biome" units). */
+const THEME_CAMO_KINDS: readonly CamoKind[] = [
+  ...new Set(
+    Object.values(TERRAIN_THEMES)
+      .flatMap((t) => [t.camo.theater, ...Object.values(t.camo.biome)])
+      .filter((k): k is CamoKind => k !== "none")
+  ),
+];
 
 const PATTERNS: Record<Exclude<CamoKind, "digital" | "dazzle">, { seed: number; colors: string[] }> = {
   woodland: { seed: 11029, colors: ["#3a5230", "#2a3a22", "#5a6a38", "#4a3a24"] },
@@ -40,13 +46,6 @@ export function camoPatternKey(kind: CamoKind): string {
 
 export function skinnedKey(base: string, camo?: CamoKind): string {
   return camo ? `${base}__${camo}` : base;
-}
-
-export function camoForBiome(biome: Biome): CamoKind {
-  if (biome === "woods" || biome === "lowland") return "woodland";
-  if (biome === "highland") return "urban";
-  if (biome === "summit") return "snow";
-  return "desert";
 }
 
 /**
@@ -316,7 +315,7 @@ export function camoSkinBases(): Map<string, CamoKind[]> {
     out.set(tex, have);
   };
   for (const sp of Object.values(UNIT_SPECS)) {
-    const kinds = sp.camo === "biome" ? CAMO_KINDS : (sp.camo ?? []).filter((k) => k !== "none");
+    const kinds = sp.camo === "theater" || sp.camo === "biome" ? THEME_CAMO_KINDS : (sp.camo ?? []).filter((k) => k !== "none");
     if (!kinds.length) continue;
     add(sp.texture, kinds);
     for (const g of sp.guns) add(g.tex, kinds);
@@ -326,6 +325,6 @@ export function camoSkinBases(): Map<string, CamoKind[]> {
 }
 
 export function bakeCamo(textures: Phaser.Textures.TextureManager): void {
-  for (const kind of [...CAMO_KINDS, "digital", "naval", "dazzle"] as const) put(textures, camoPatternKey(kind), drawCamo(kind), "generated");
+  for (const kind of CAMO_NAMES) put(textures, camoPatternKey(kind), drawCamo(kind), "generated");
   for (const [base, kinds] of camoSkinBases()) bakeBaseKinds(textures, [base], kinds);
 }

@@ -57,7 +57,8 @@ import {
   spritePointLabel,
 } from "../art/spriteOrigin";
 import { footprintOf, strokeFootprint } from "../render/footprint";
-import { CAMO_KINDS, resolveSkin, skinnedKey, type CamoKind } from "../render/camo";
+import { resolveSkin, skinnedKey, type CamoKind } from "../render/camo";
+import { CAMO_NAMES } from "../catalog/camo";
 import { nameGameTexture, spritePivot } from "../art/sprites";
 import {
   RIG_INFO,
@@ -87,7 +88,7 @@ const SHOT_SLOTS = 6;
 type Filter = "all" | "ground" | "air" | "water" | "building" | "troop" | "remote";
 const FILTERS: Filter[] = ["all", "ground", "air", "water", "building", "troop", "remote"];
 /** Every camo pattern, in rig cycle order. */
-const ALL_CAMOS: readonly CamoKind[] = [...CAMO_KINDS, "digital", "naval", "dazzle"];
+const ALL_CAMOS: readonly CamoKind[] = CAMO_NAMES;
 
 type Composition = "assembled" | "separated";
 

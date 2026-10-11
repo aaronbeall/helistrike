@@ -1,9 +1,10 @@
 import { mountAt } from "../render/spritePose";
 import Phaser from "phaser";
-import { camoForBiome, resolveSkin, type CamoKind } from "../render/camo";
+import { resolveSkin, type CamoKind } from "../render/camo";
 import { nextId, stats, textureOf, type Unit } from "./combat";
 import { specOf, spawnAngle, pickTroop, gunsOf, rollParts, crewOf, type UnitKind } from "./roster";
 import { groundZ, sampleBiome, type WorldData } from "../worldgen/world";
+import { themeOf } from "../worldgen/theme";
 import { isUnitStructure } from "../worldgen/settlements";
 import { CRUISE_AGL } from "./craft";
 
@@ -45,8 +46,12 @@ export function makeUnit(world: WorldData, kind: Unit["kind"], x: number, y: num
 /** Camo a unit wears where it spawns (none unless its spec asks for it). */
 function unitCamo(kind: UnitKind, world: WorldData, x: number, y: number): CamoKind | undefined {
   const camo = specOf(kind).camo;
-  if (camo === "biome") return camoForBiome(sampleBiome(world, x, y));
-  const pick = camo?.[Math.floor(Math.random() * camo.length)];
+  const pick =
+    camo === "theater"
+      ? themeOf(world.theme).camo.theater
+      : camo === "biome"
+        ? themeOf(world.theme).camo.biome[sampleBiome(world, x, y)]
+        : camo?.[Math.floor(Math.random() * camo.length)];
   return pick === "none" ? undefined : pick;
 }
 
