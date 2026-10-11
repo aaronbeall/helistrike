@@ -26,7 +26,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
   * [x] Current / river
   * [x] Islands
   * [x] Highland / rugged-ish
-  * [ ] Coastal theater pack
+  * [x] Coastal theater pack
   * [x] Urban (roads + buildings heavy): towns, ports, airfields, dams, farms, oil fields, power lines
     * [x] Civilian buildings + boats are destructible neutral units (no HP bar, gray on minimap, never auto-targeted)
     * [x] Oil rigs: chained inferno deaths; pylons: electrical short (tesla zaps) + live wires
@@ -100,14 +100,14 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [x] Mission briefing screen (light: mission briefing copy on menu — not a dedicated scene)
 * [x] Mission outcome screen (MISSION COMPLETE / AIRCRAFT DOWN)
 * [x] Water wreckage should sink
-* [ ] Water ripples and wakes
-* [ ] Water surface animation (waves, shimmer, shoreline foam)
+* [x] Water ripples and wakes
+* [x] Water surface animation (waves, shimmer, shoreline foam)
 * [ ] Lava: glowing volcano summit crater, lava flows down the flanks (damaging / impassable)
 * [x] Laser sight ray should collide with terrain
 * [x] Landform stamps (mesas + buttes, craters, volcanoes, dunes) and trunk rivers with carved valleys
   * [x] Lakes/dams
   * [ ] Escarpments, canyons (removed: smooth faces, seams at bends, biome banding — rebuild with a continuous signed distance, rough strata faces, post-biome stamping)
-* [ ] Settlement structures as real buildings (volumetric, destructible, collision) + final art
+* [x] Settlement structures as real buildings (volumetric, destructible, collision) + final art
 * [ ] Designed maps (seed + brush + placements)
 * More enemy targets:
   * [ ] HV: missile silo
@@ -116,7 +116,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
   * [ ] VTOL aircraft
   * [ ] HV: nuclear weapons facility
   * [ ] Jet
-  * [ ] Fast attack heli
+  * [ ] Advanced attack heli
   * [ ] Runway/heli pad with takeoffs
   * [ ] Drone swarm truck
   * [ ] APC Troop truck
@@ -127,6 +127,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
   * [ ] Destroyer
   * [ ] Carrier
   * [ ] Trains
+  * [ ] Flak cannon (close range scatter shot)
 * More doodads:
   * [ ] destroyed buildings
   * [ ] Pre-baked crashed vehicles
@@ -147,7 +148,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [ ] Improve toon blast with volume bubbling
 * [ ] Weather effects (rain, lightning, thunder)
 * [ ] Time of day lighting effects
-  * [ ] Night rendering (lights)
+  * [ ] Night rendering with lights
 * [ ] Steam achievements
 * [x] Shell ejecta
 * [ ] Generated art height map
@@ -162,7 +163,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [x] Roadkill organic units with rotors (rotor blades + crushing hulls)
 * [x] Units affected by cliffs/slope -- slow travel uphill, slope limit; AI paths around cliffs or is blocked by them instead of driving through
 * [x] Player craft blocked by cliffs while holding Shift
-* [ ] Pathfinding units: route around terrain/water instead of local steering; prefer roads when available
+* [x] Pathfinding units: route around terrain/water instead of local steering; prefer roads when available
 * [ ] Tail rotor (with tilt)
 * [ ] Pseudo 3d tilt graphic (jets/gunship props partial)
 * [x] Clouds
