@@ -1777,6 +1777,7 @@ export class Projectiles {
       this.s.destruction.destroyUnit(u, false, fromBlast);
       return;
     }
+    if (by) this.s.targeting.alertOnHit(u);
     if (isOrganic(u.kind) && specOf(u.kind).weapon && u.health > 1) {
       u.reacting = true;
       rollSoldierMood(u, true);

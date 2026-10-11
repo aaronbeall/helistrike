@@ -5,8 +5,13 @@ import { Layer } from "../../../render/depth";
 import type { Craft } from "../../../sim/craft";
 import type { MissionScene } from "../../missionScene";
 
-/** Re-check each unit's sight line about this often (ms), jittered per unit so checks spread across frames. */
+/** Re-check a clear sight line about this often (ms), jittered per unit so checks spread across frames. */
 const LOS_REFRESH_MS = 350;
+/** Re-check a blocked (or newly in-range) line after a random wait in this range (ms): staggered noticing, fewer rays. */
+const LOS_BLOCKED_MIN_MS = 800;
+const LOS_BLOCKED_MAX_MS = 1500;
+/** Spotting: vision ramps 0 → 1 over this long (ms) once the line clears; a hit skips it. */
+const SPOT_MS = 1200;
 /** Most sight checks per frame (the rest keep their current state). */
 const LOS_BUDGET = 24;
 /** A check this late (ms past due) skips the budget, so no unit starves. */
@@ -31,6 +36,10 @@ interface Sight {
   due: number;
   /** Frame last queried (least recent slot is reused). */
   used: number;
+  /** When the line last turned clear (ms): the spotting ramp starts here. */
+  seenAt: number;
+  /** Last terrain trace (ms). */
+  checkedAt: number;
   /** World point where terrain blocked the line (debug). */
   bx: number;
   by: number;
@@ -38,7 +47,8 @@ interface Sight {
 
 /**
  * Enemy line of sight: cheap terrain-occlusion rays from units to their combat focus (player craft / piloted
- * remote), refreshed on a staggered budget rather than every frame. A blocked line zeroes the unit's vision.
+ * remote), refreshed on a staggered budget rather than every frame, and only inside sight range. A blocked line
+ * zeroes the unit's vision; a clear one ramps it up over the spotting time.
  */
 export class LineOfSight {
   debugOn = false;
@@ -59,10 +69,11 @@ export class LineOfSight {
   }
 
   /**
-   * Has `u` sight of `target`? Out of `reach` (max sight range): never. Entering range or switching target starts
-   * unsighted; budgeted terrain checks then set it and keep it current. A check overdue this long skips the budget.
+   * How well `u` has spotted `target` (0 = not at all, 1 = fully). Out of `reach` (max sight range): 0, no ray.
+   * Entering range or switching target starts unsighted with a staggered first check; budgeted terrain checks then
+   * keep it current. A check overdue this long skips the budget.
    */
-  sees(u: Unit, target: Craft, reach: number): boolean {
+  sight(u: Unit, target: Craft, reach: number): number {
     const frame = this.s.game.loop.frame;
     if (frame !== this.frame) {
       this.frame = frame;
@@ -72,20 +83,43 @@ export class LineOfSight {
     if (Math.hypot(target.x - u.x, target.y - u.y) > reach) {
       sight.ok = false;
       sight.inReach = false;
-      return false;
+      return 0;
     }
     const now = this.s.time.now;
     if (!sight.inReach) {
       sight.inReach = true;
       sight.ok = false;
-      sight.due = now;
+      sight.due = now + Math.random() * LOS_BLOCKED_MAX_MS;
     }
     if (now >= sight.due && (this.spent < LOS_BUDGET || now >= sight.due + LOS_OVERDUE_MS)) {
       this.spent++;
-      this.trace(u, target, sight);
-      sight.due = now + LOS_REFRESH_MS * (0.75 + Math.random() * 0.5);
+      this.check(u, target, sight, now);
     }
-    return sight.ok;
+    return sight.ok ? Math.min(1, (now - sight.seenAt) / SPOT_MS) : 0;
+  }
+
+  /** `u` was hit: inside sight range, check the line now (no budget, unless just checked); clear = fully spotted at once. */
+  alert(u: Unit, target: Craft, reach: number): void {
+    if (Math.hypot(target.x - u.x, target.y - u.y) > reach) return;
+    const now = this.s.time.now;
+    const sight = this.slot(u, target, this.s.game.loop.frame);
+    if (!sight.inReach) {
+      sight.inReach = true;
+      sight.ok = false;
+    }
+    if (now - sight.checkedAt >= LOS_REFRESH_MS) this.check(u, target, sight, now);
+    if (sight.ok) sight.seenAt = now - SPOT_MS;
+  }
+
+  /** Trace now and schedule the next check: soon while clear, later while blocked. */
+  private check(u: Unit, target: Craft, sight: Sight, now: number): void {
+    const was = sight.ok;
+    this.trace(u, target, sight);
+    if (sight.ok && !was) sight.seenAt = now;
+    sight.checkedAt = now;
+    sight.due = sight.ok
+      ? now + LOS_REFRESH_MS * (0.75 + Math.random() * 0.5)
+      : now + LOS_BLOCKED_MIN_MS + Math.random() * (LOS_BLOCKED_MAX_MS - LOS_BLOCKED_MIN_MS);
   }
 
   /** Cached result only (no trace): false when every cached sight of `u` is out of range or blocked; true otherwise / unknown. */
@@ -107,7 +141,7 @@ export class LineOfSight {
       if (!lru || s.used < lru.used) lru = s;
     }
     if (list.length < SIGHT_SLOTS || !lru) {
-      const s: Sight = { target, ok: false, inReach: false, due: 0, used: frame, bx: 0, by: 0 };
+      const s: Sight = { target, ok: false, inReach: false, due: 0, used: frame, seenAt: 0, checkedAt: -Infinity, bx: 0, by: 0 };
       list.push(s);
       return s;
     }
@@ -115,6 +149,7 @@ export class LineOfSight {
     lru.ok = false;
     lru.inReach = false;
     lru.used = frame;
+    lru.checkedAt = -Infinity;
     return lru;
   }
 

@@ -124,16 +124,24 @@ export class EnemyTargeting {
   }
 
   /**
-   * How well `u` sees target craft `c` (0 = not at all): max sight range scaled for the target, terrain line of sight,
-   * then smoke. Cloak blinds everyone to the host; sonar picks up submerged hulls through the water (no terrain LOS).
+   * How well `u` sees target craft `c` (0 = not at all): max sight range scaled for the target, terrain line of sight
+   * (ramping up while spotting), then smoke. Cloak blinds everyone to the host; sonar picks up submerged hulls
+   * through the water (no terrain LOS, no spotting ramp).
    */
   visionOf(u: Unit, c: Craft): number {
     if (this.s.countermeasures.cloakT > 0 && c === this.s.player) return 0;
     const reach = this.enemyScaledReach(unitSightBase(u), 1, c);
     const sonar = this.domainOf(c) === "underwater";
     if (sonar && !specOf(u.kind).sonar) return 0;
-    if (sonar ? Math.hypot(c.x - u.x, c.y - u.y) > reach : !this.s.lineOfSight.sees(u, c, reach)) return 0;
-    return this.enemySmokeVision(u, c);
+    const seen = sonar ? (Math.hypot(c.x - u.x, c.y - u.y) > reach ? 0 : 1) : this.s.lineOfSight.sight(u, c, reach);
+    return seen > 0 ? seen * this.enemySmokeVision(u, c) : 0;
+  }
+
+  /** `u` took player-side damage: it reacts at once if its focus is in sight range and the line is clear. */
+  alertOnHit(u: Unit): void {
+    const c = this.unitCombatFocus(u);
+    if ((this.s.countermeasures.cloakT > 0 && c === this.s.player) || this.domainOf(c) === "underwater") return;
+    this.s.lineOfSight.alert(u, c, this.enemyScaledReach(unitSightBase(u), 1, c));
   }
 
   /** Score-pick the craft a unit engages; lower score wins, player-controlled heavily favored. */
