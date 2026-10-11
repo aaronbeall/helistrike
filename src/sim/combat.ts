@@ -1110,6 +1110,8 @@ export interface Debris {
   /** Spin floor (rad/s) that bounce damping can't drop below while airborne — tumbling parts and casings. */
   minSpin?: number;
   impactDust?: number;
+  /** Crash impact damage at the center (heli crashes). */
+  crashDmg?: number;
   dmgFlames?: { u: number; v: number; scale: number }[];
   simmer?: number;
   /** Local burn points on a thrown part (e.g. radar dish), in unrotated debris space. */

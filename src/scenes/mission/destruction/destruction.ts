@@ -21,8 +21,16 @@ import { hulkBreakKeys } from "../../../art/hulkBreak";
 
 /** Wrecks settled in shallow water: how far their tint leans to the theme's shallow-water colour. */
 const SHALLOW_WRECK_MIX = 0.5;
-/** Heli crash impact damage per unit of `impactDust` (hull size, ~0.32 drone … 0.72 heavy). */
-const CRASH_DMG = 120;
+/** Heli crash impact damage per unit of hull size (radius / 48, CRASH_SIZE_MIN … 0.72). */
+const CRASH_DMG = 220;
+const CRASH_SIZE_MIN = 0.15;
+/** Crash blast radius × the fireball size. */
+const CRASH_BLAST_MUL = 1.17;
+/** Building death splash damage per √HP (vehicles: VEHICLE_DEATH_DMG × HP). */
+const BUILDING_DEATH_DMG = 6;
+const VEHICLE_DEATH_DMG = 0.1;
+/** "inferno" deaths (oil rigs): flat splash damage over 5× radius. */
+const INFERNO_DEATH_DMG = 140;
 /** Collapse deaths: dirt/bit throw speed and spark size, vs the full HE blast. */
 const COLLAPSE_DIRT_SPEED = 0.5;
 const COLLAPSE_SPARK_SCALE = 0.5;
@@ -248,12 +256,12 @@ export class Destruction {
         );
       }
       this.s.camera.shake = Math.min(10, this.s.camera.shake + (zap ? 1.2 : collapse ? 1.8 : 3));
-      // Buildings/vehicles: weak splash at ~3× body radius (FX blast can be larger).
-      if (!skipSplash && !sp.organic) {
+      // Buildings/vehicles: splash at ~3× body radius (FX blast can be larger); aircraft splash on impact instead.
+      if (!skipSplash && !sp.organic && !sp.aerial) {
         if (mech) {
           const inferno = sp.deathFx === "inferno";
           const splashR = radius(u.kind) * (inferno ? 5 : 3);
-          const deathDmg = inferno ? 90 : u.max * (building ? 0.05 : 0.1);
+          const deathDmg = inferno ? INFERNO_DEATH_DMG : building ? BUILDING_DEATH_DMG * Math.sqrt(u.max) : u.max * VEHICLE_DEATH_DMG;
           this.s.projectiles.applyBlastDamage(
             u.x,
             u.y,
@@ -835,6 +843,7 @@ export class Destruction {
       playerCrash: player,
       debrisClass: "critical",
       impactDust: Phaser.Math.Clamp(opts.radius / 48, 0.32, 0.72),
+      crashDmg: Phaser.Math.Clamp(opts.radius / 48, CRASH_SIZE_MIN, 0.72) * CRASH_DMG,
       dmgFlames,
       simmer: 0,
     };
@@ -1391,7 +1400,7 @@ export class Destruction {
     const blast = 38 + (f.impactDust ?? 0.5) * 36;
     this.s.fx.heFireBurst(f.x, f.y, f.z + 6, 0, 0, 1, blast, false, 1.15, 0.42);
     // Crash splash: kills troops, dents vehicles, flattens light buildings.
-    this.s.projectiles.applyBlastDamage(f.x, f.y, f.z, blast * 0.9, (f.impactDust ?? 0.5) * CRASH_DMG, undefined, f.vx, f.vy, 1);
+    this.s.projectiles.applyBlastDamage(f.x, f.y, f.z, blast * CRASH_BLAST_MUL, f.crashDmg ?? 0.5 * CRASH_DMG, undefined, f.vx, f.vy, 1);
     this.s.hostCraft.emitDustShock(f.x, f.y, f.impactDust ?? 0.5);
     this.s.camera.shake = Math.min(10, this.s.camera.shake + 2.4);
     let sc = Phaser.Math.Linear(0.85, 1.45, f.impactDust ?? 0.5) * range(0.9, 1.2);
