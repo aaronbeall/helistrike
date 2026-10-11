@@ -43,9 +43,9 @@ export function skinnedKey(base: string, camo?: CamoKind): string {
 }
 
 export function camoForBiome(biome: Biome): CamoKind {
-  if (biome === "forest" || biome === "grass") return "woodland";
-  if (biome === "rock") return "urban";
-  if (biome === "peak") return "snow";
+  if (biome === "woods" || biome === "lowland") return "woodland";
+  if (biome === "highland") return "urban";
+  if (biome === "summit") return "snow";
   return "desert";
 }
 

@@ -14,7 +14,7 @@ export type TerrainTheme =
   | "alien";
 export type RGB = [number, number, number];
 
-/** Biome slot order matches world BIOME_ID: water, river, sand, grass, forest, rock, peak. */
+/** Biome slot order matches world BIOME_ID: water, river, shore, lowland, woods, highland, summit. */
 export interface BiomeLook {
   /** Base color at t = 0 (shallow water, dry sand, low ground, snow line). */
   lo: RGB;

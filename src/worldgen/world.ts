@@ -14,7 +14,8 @@ import { SCALE, TEX, WORLD } from "./dims";
 export { SCALE, TEX, WORLD } from "./dims";
 export const WRECK_TEX = 4096;
 
-export type Biome = "water" | "river" | "sand" | "grass" | "forest" | "rock" | "peak";
+/** Terrain roles by height / moisture (themes restyle them): water, river, shore, lowland, woods, highland, summit. */
+export type Biome = "water" | "river" | "shore" | "lowland" | "woods" | "highland" | "summit";
 
 export type HvKind = "bunker" | "radar" | "tower" | "fob" | "lookout" | "officer";
 
@@ -199,11 +200,11 @@ function lerp(a: number, b: number, t: number): number {
 const BIOME_ID: Record<Biome, number> = {
   water: 0,
   river: 1,
-  sand: 2,
-  grass: 3,
-  forest: 4,
-  rock: 5,
-  peak: 6,
+  shore: 2,
+  lowland: 3,
+  woods: 4,
+  highland: 5,
+  summit: 6,
 };
 
 const H_WATER = 0.34;
@@ -373,12 +374,12 @@ function riverMouthBlend(biome: Uint8Array): Float32Array {
   }
   return out;
 }
-const H_SAND = 0.4;
+const H_SHORE = 0.4;
 /** Underwater shelf edge: shallow band [H_SHELF, H_WATER), deep below. Paint + terrace only (still water). */
 const H_SHELF = 0.305;
-const H_ROCK = 0.62;
-const H_PEAK = 0.72;
-/** Moisture field at normalized coords (drives forest). */
+const H_HIGHLAND = 0.62;
+const H_SUMMIT = 0.72;
+/** Moisture field at normalized coords (drives woods). */
 export function moistureAt(nx: number, ny: number, seed: number): number {
   return fbm(nx * 5.4 + 40, ny * 5.4, seed + 17, 4);
 }
@@ -386,11 +387,11 @@ export function moistureAt(nx: number, ny: number, seed: number): number {
 /** Biome id from pre-terrace height + moisture (rivers/lakes are stamped separately). */
 export function classifyBiome(h: number, m: number): number {
   if (h < H_WATER) return BIOME_ID.water;
-  if (h < H_SAND) return BIOME_ID.sand;
-  if (h > H_PEAK) return BIOME_ID.peak;
-  if (h > H_ROCK) return BIOME_ID.rock;
-  if (m > 0.58 && h < 0.58) return BIOME_ID.forest;
-  return BIOME_ID.grass;
+  if (h < H_SHORE) return BIOME_ID.shore;
+  if (h > H_SUMMIT) return BIOME_ID.summit;
+  if (h > H_HIGHLAND) return BIOME_ID.highland;
+  if (m > 0.58 && h < 0.58) return BIOME_ID.woods;
+  return BIOME_ID.lowland;
 }
 
 /** Terrain base color for a biome before tiles + lighting. `wet` = river-bank wetness (sand), `n` = fine color noise. */
@@ -407,9 +408,9 @@ export function baseTerrainColor(theme: ThemeSpec, b: number, h: number, wet = 0
       lk = bands.deep;
       t = clamp((H_SHELF - h) * 4, 0, 1);
     }
-  } else if (b === BIOME_ID.sand) t = wet;
-  else if (b === BIOME_ID.peak) t = (h - 0.74) * 8;
-  else if (b === BIOME_ID.grass || b === BIOME_ID.forest) t = h;
+  } else if (b === BIOME_ID.shore) t = wet;
+  else if (b === BIOME_ID.summit) t = (h - 0.74) * 8;
+  else if (b === BIOME_ID.lowland || b === BIOME_ID.woods) t = h;
   const shade = 0.82 + h * 0.35;
   return [
     clamp((lookColor(lk, t, 0) + n * lk.nz[0]) * shade, 0, 255),
@@ -442,13 +443,13 @@ export const RIVER_BANK_MIN = 6.5;
 /** Lake shore width range (texels): low-frequency noise picks sharp vs gradual per stretch of shoreline. */
 const LAKE_SHORE_MIN = 3;
 const LAKE_SHORE_MAX = 29;
-/** Shore fraction (near the water) that becomes sand beach; the rest keeps its ground biome. */
+/** Shore fraction (near the water) that becomes shore biome; the rest keeps its ground biome. */
 const LAKE_BEACH = 0.35;
 
 /**
  * Lake shores: distance out from the water, normalized by a shore width that varies along the shoreline
  * (some stretches drop sharply, some shelve gently). Returns t (0 at the water → 1 at the shore's outer
- * edge, -1 = not shore); the nearest band becomes sand. Rock / peak shores stay as they are.
+ * edge, -1 = not shore); the nearest band becomes shore. Highland / summit shores stay as they are.
  */
 function stampLakeShores(biome: Uint8Array, lake: Float32Array, seed: number): { t: Float32Array; near: Int32Array } {
   const out = new Float32Array(TEX * TEX).fill(-1);
@@ -499,7 +500,7 @@ function stampLakeShores(biome: Uint8Array, lake: Float32Array, seed: number): {
     const t = d / width;
     out[i] = t;
     const b = biome[i]!;
-    if (t < LAKE_BEACH && (b === BIOME_ID.grass || b === BIOME_ID.forest)) biome[i] = BIOME_ID.sand;
+    if (t < LAKE_BEACH && (b === BIOME_ID.lowland || b === BIOME_ID.woods)) biome[i] = BIOME_ID.shore;
   }
   return { t: out, near };
 }
@@ -512,10 +513,10 @@ export const RIVER_BANK_ROUGH = 0.038;
 const HEIGHT_BANDS: { lo: number; hi: number; k: number }[] = [
   { lo: 0, hi: H_SHELF, k: 2.7 },
   { lo: H_SHELF, hi: H_WATER, k: 2.4 },
-  { lo: H_WATER, hi: H_SAND, k: 2.35 },
-  { lo: H_SAND, hi: H_ROCK, k: 2.9 },
-  { lo: H_ROCK, hi: H_PEAK, k: 2.55 },
-  { lo: H_PEAK, hi: 1.08, k: 2.45 },
+  { lo: H_WATER, hi: H_SHORE, k: 2.35 },
+  { lo: H_SHORE, hi: H_HIGHLAND, k: 2.9 },
+  { lo: H_HIGHLAND, hi: H_SUMMIT, k: 2.55 },
+  { lo: H_SUMMIT, hi: 1.08, k: 2.45 },
 ];
 
 export interface Relief {
@@ -579,7 +580,7 @@ export function paintTerrainPreview(seed: number, profile: WorldGenProfile, n: n
     biome[i] = classifyBiome(raw[i]!, moistureAt((i % n) / n, ((i / n) | 0) / n, seed));
     height[i] = remapBand(raw[i]!);
   }
-  applyDunes(height, n, profile.landforms.dunes, seed, hint, (i) => biome[i] === BIOME_ID.sand || biome[i] === BIOME_ID.grass);
+  applyDunes(height, n, profile.landforms.dunes, seed, hint, (i) => biome[i] === BIOME_ID.shore || biome[i] === BIOME_ID.lowland);
   const theme = themeOf(profile.theme);
   const img = new ImageData(n, n);
   const d = img.data;
@@ -870,7 +871,7 @@ export function generateWorld(
   }
   applyDunes(height, TEX, profile.landforms.dunes, seed, hint, (i) => {
     const b = biome[i]!;
-    return (b === BIOME_ID.sand || b === BIOME_ID.grass) && bankT[i]! < 0 && shore[i]! < 0;
+    return (b === BIOME_ID.shore || b === BIOME_ID.lowland) && bankT[i]! < 0 && shore[i]! < 0;
   });
 
   onProgress?.(0.82, "terrain paint");
@@ -886,8 +887,8 @@ export function generateWorld(
     height,
     water,
     seaLevel: H_WATER,
-    buildable: (i) => water[i]! < 0 && (biome[i] === BIOME_ID.grass || biome[i] === BIOME_ID.sand || biome[i] === BIOME_ID.forest),
-    fertile: (i) => water[i]! < 0 && biome[i] === BIOME_ID.grass,
+    buildable: (i) => water[i]! < 0 && (biome[i] === BIOME_ID.lowland || biome[i] === BIOME_ID.shore || biome[i] === BIOME_ID.woods),
+    fertile: (i) => water[i]! < 0 && biome[i] === BIOME_ID.lowland,
     river: (i) => biome[i] === BIOME_ID.river,
     riverRad,
     rng,
@@ -1005,7 +1006,7 @@ export function isWater(world: WorldData, x: number, y: number): boolean {
 export function sampleBiome(world: WorldData, x: number, y: number): Biome {
   const id = sampleBiomeId(world, x, y);
   return (
-    (["water", "river", "sand", "grass", "forest", "rock", "peak"] as const)[id] ?? "grass"
+    (["water", "river", "shore", "lowland", "woods", "highland", "summit"] as const)[id] ?? "lowland"
   );
 }
 
@@ -2012,7 +2013,7 @@ function stampRiverBanks(biome: Uint8Array, riverRad: Float32Array, seed: number
           if (xx < 0 || yy < 0 || xx >= TEX || yy >= TEX) continue;
           const j = yy * TEX + xx;
           const b = biome[j]!;
-          if (b === BIOME_ID.river || b === BIOME_ID.water || b === BIOME_ID.peak) continue;
+          if (b === BIOME_ID.river || b === BIOME_ID.water || b === BIOME_ID.summit) continue;
           if (d < dist[j]!) {
             dist[j] = d;
             wid[j] = base;
@@ -2033,7 +2034,7 @@ function stampRiverBanks(biome: Uint8Array, riverRad: Float32Array, seed: number
     const localW = wid[i]! * (1 + (wob * 2 - 1) * RIVER_BANK_WOBBLE + (scallop - 0.5) * 0.4);
     if (dist[i]! > localW) continue;
     tOut[i] = dist[i]! / Math.max(localW, 1e-6);
-    biome[i] = BIOME_ID.sand;
+    biome[i] = BIOME_ID.shore;
   }
   return { t: tOut, near };
 }
@@ -2089,12 +2090,12 @@ function shadeTerrainTexel(
   const depth = lakeDepth && lakeDepth[i]! > 0 ? Math.max(1e-4, lakeDepth[i]! - raw0) : 0;
   const h = b === BIOME_ID.water && depth > 0 ? H_WATER - depth * LAKE_SHADE_DEPTH : raw0;
   const n = fbm(x * 0.08, y * 0.08, seed + 99, 2) * 18 - 9;
-  const wet = b === BIOME_ID.sand && bankT && bankT[i]! >= 0 ? 1 - bankT[i]! : 0;
+  const wet = b === BIOME_ID.shore && bankT && bankT[i]! >= 0 ? 1 - bankT[i]! : 0;
   let rgb = baseTerrainColor(theme, b, h, wet, n);
   const tile = tiles?.[b];
   const riverBed = b === BIOME_ID.river && tile;
   const bank = !!(bankT && bankT[i]! >= 0);
-  const sandTile = tiles?.[BIOME_ID.sand];
+  const sandTile = tiles?.[BIOME_ID.shore];
   if (riverBed) {
     const tw = tile.width;
     const th = tile.height;
@@ -2144,7 +2145,7 @@ function shadeTerrainTexel(
   if (st >= 0 && b !== BIOME_ID.water && b !== BIOME_ID.river) {
     const k = 1 - smooth01(0, 0.6, st);
     if (k > 0) {
-      const wetSand = baseTerrainColor(theme, BIOME_ID.sand, h, 1, n);
+      const wetSand = baseTerrainColor(theme, BIOME_ID.shore, h, 1, n);
       rgb = [lerp(rgb[0], wetSand[0], k * 0.85), lerp(rgb[1], wetSand[1], k * 0.85), lerp(rgb[2], wetSand[2], k * 0.85)];
     }
   }
@@ -2322,25 +2323,25 @@ function placeDoodads(biome: Uint8Array, rng: Rng, theme: ThemeSpec): Doodad[] {
   const u = TEX / 1400;
   const room = new DecorSpacing(8 * u);
   for (let i = 0; i < 52; i++)
-    pushGroup(out, biome, rng, BIOME_ID.forest, ["tree", "tree", "pine", "bush"], 6 + rng.int(0, 5), 7 * u, 5.5 * u, 13 * u, undefined, theme.doodads, room);
+    pushGroup(out, biome, rng, BIOME_ID.woods, ["tree", "tree", "pine", "bush"], 6 + rng.int(0, 5), 7 * u, 5.5 * u, 13 * u, undefined, theme.doodads, room);
   for (let i = 0; i < 22; i++)
-    pushGroup(out, biome, rng, BIOME_ID.grass, ["tree", "bush", "shrub"], 4 + rng.int(0, 4), 9 * u, 4.5 * u, 10 * u, undefined, theme.doodads, room);
+    pushGroup(out, biome, rng, BIOME_ID.lowland, ["tree", "bush", "shrub"], 4 + rng.int(0, 4), 9 * u, 4.5 * u, 10 * u, undefined, theme.doodads, room);
   for (let i = 0; i < 18; i++)
-    pushGroup(out, biome, rng, BIOME_ID.grass, ["shrub", "bush", "rock"], 5 + rng.int(0, 3), 6 * u, 3.5 * u, 7 * u, undefined, theme.doodads, room);
+    pushGroup(out, biome, rng, BIOME_ID.lowland, ["shrub", "bush", "rock"], 5 + rng.int(0, 3), 6 * u, 3.5 * u, 7 * u, undefined, theme.doodads, room);
   for (let i = 0; i < 24; i++)
-    pushGroup(out, biome, rng, BIOME_ID.sand, ["cactus", "cactus2", "shrub"], 3 + rng.int(0, 4), 8 * u, 4 * u, 9.5 * u, undefined, theme.doodads, room);
+    pushGroup(out, biome, rng, BIOME_ID.shore, ["cactus", "cactus2", "shrub"], 3 + rng.int(0, 4), 8 * u, 4 * u, 9.5 * u, undefined, theme.doodads, room);
   for (let i = 0; i < 10; i++)
-    pushGroup(out, biome, rng, BIOME_ID.sand, ["rock", "boulder"], 3 + rng.int(0, 2), 7 * u, 4 * u, 8 * u, undefined, theme.doodads, room);
+    pushGroup(out, biome, rng, BIOME_ID.shore, ["rock", "boulder"], 3 + rng.int(0, 2), 7 * u, 4 * u, 8 * u, undefined, theme.doodads, room);
   for (let i = 0; i < 8; i++)
-    pushGroup(out, biome, rng, BIOME_ID.sand, ["palm"], 3 + rng.int(0, 2), 11 * u, 6 * u, 12 * u, undefined, theme.doodads, room);
+    pushGroup(out, biome, rng, BIOME_ID.shore, ["palm"], 3 + rng.int(0, 2), 11 * u, 6 * u, 12 * u, undefined, theme.doodads, room);
   for (let i = 0; i < 26; i++)
-    pushGroup(out, biome, rng, BIOME_ID.rock, ["boulder", "rock", "rock"], 3 + rng.int(0, 3), 6 * u, 4.5 * u, 9 * u, undefined, theme.doodads, room);
+    pushGroup(out, biome, rng, BIOME_ID.highland, ["boulder", "rock", "rock"], 3 + rng.int(0, 3), 6 * u, 4.5 * u, 9 * u, undefined, theme.doodads, room);
   for (let i = 0; i < 8; i++)
-    pushGroup(out, biome, rng, BIOME_ID.rock, ["pine", "dead"], 3 + rng.int(0, 2), 10 * u, 5 * u, 11 * u, undefined, theme.doodads, room);
+    pushGroup(out, biome, rng, BIOME_ID.highland, ["pine", "dead"], 3 + rng.int(0, 2), 10 * u, 5 * u, 11 * u, undefined, theme.doodads, room);
   for (let i = 0; i < 16; i++)
-    pushGroup(out, biome, rng, BIOME_ID.peak, ["snowrock", "boulder"], 3 + rng.int(0, 3), 7 * u, 4 * u, 8.5 * u, undefined, theme.doodads, room);
+    pushGroup(out, biome, rng, BIOME_ID.summit, ["snowrock", "boulder"], 3 + rng.int(0, 3), 7 * u, 4 * u, 8.5 * u, undefined, theme.doodads, room);
   for (let i = 0; i < 14; i++) {
-    const c = pickBiomeTexel(biome, rng, BIOME_ID.sand);
+    const c = pickBiomeTexel(biome, rng, BIOME_ID.shore);
     if (!c) continue;
     let shore = false;
     for (let oy = -3; oy <= 3 && !shore; oy++) {
@@ -2350,7 +2351,7 @@ function placeDoodads(biome: Uint8Array, rng: Rng, theme: ThemeSpec): Doodad[] {
       }
     }
     if (!shore) continue;
-    pushGroup(out, biome, rng, BIOME_ID.sand, ["reed", "shrub"], 5 + rng.int(0, 4), 5 * u, 3.2 * u, 6.5 * u, c, theme.doodads, room);
+    pushGroup(out, biome, rng, BIOME_ID.shore, ["reed", "shrub"], 5 + rng.int(0, 4), 5 * u, 3.2 * u, 6.5 * u, c, theme.doodads, room);
   }
   return out;
 }
@@ -2500,7 +2501,7 @@ function assignBiomeFromHeight(biome: Uint8Array, height: Float32Array, water: F
   const h = height[i]!;
   // Still under its own water surface (lake / river / sea): stays water.
   if (water[i]! >= 0 && h < water[i]!) return;
-  if (biome[i] === BIOME_ID.river && h < H_SAND) return;
+  if (biome[i] === BIOME_ID.river && h < H_SHORE) return;
   biome[i] = classifyBiome(h, moistureAt(x / TEX, y / TEX, seed));
 }
 
@@ -2569,7 +2570,7 @@ function findSpawn(
     const ty = rng.int(TEX * (cy - 0.085), TEX * (cy + 0.085));
     const b = biome[ty * TEX + tx]!;
     const h = height[ty * TEX + tx]!;
-    if (b === BIOME_ID.grass || b === BIOME_ID.sand) {
+    if (b === BIOME_ID.lowland || b === BIOME_ID.shore) {
       if (h > 0.4 && h < 0.55)
         return { spawnX: (tx + 0.5) * SCALE, spawnY: (ty + 0.5) * SCALE };
     }
@@ -2584,7 +2585,7 @@ function findSpawn(
       const i = ty * TEX + tx;
       const b = biome[i]!;
       const h = height[i]!;
-      if (b !== BIOME_ID.grass && b !== BIOME_ID.sand) continue;
+      if (b !== BIOME_ID.lowland && b !== BIOME_ID.shore) continue;
       if (h <= 0.4 || h >= 0.55) continue;
       const d = Math.hypot(tx - prefX, ty - prefY);
       if (d < bestD) {
@@ -2819,7 +2820,7 @@ class RoadGrid {
     const len = (diag ? Math.SQRT2 : 1) * ROAD_CELL * SCALE;
     const grade = (Math.abs(this.h[b]! - this.h[a]!) * GROUND_Z_SCALE) / len;
     const hb = this.h[b]!;
-    let c = len * (this.wobble[b]! + (grade * ROAD_GRADE) ** 2 + (hb > H_ROCK ? (hb - H_ROCK) * 40 : 0));
+    let c = len * (this.wobble[b]! + (grade * ROAD_GRADE) ** 2 + (hb > H_HIGHLAND ? (hb - H_HIGHLAND) * 40 : 0));
     if (this.wet[b]) c += ROAD_WATER * len;
     if (this.built[b]) c += ROAD_BUILDING * len;
     return this.used[b] ? c * ROAD_REUSE : c;
@@ -3301,7 +3302,7 @@ interface SiteGrid {
   prom: Float32Array;
   slope: Float32Array;
   shore: Float32Array;
-  forest: Float32Array;
+  woods: Float32Array;
   comp: Int32Array;
   compSize: Int32Array;
   largestComp: number;
@@ -3313,7 +3314,7 @@ interface SiteGrid {
 
 const SITE_STEP = 6;
 const SITE_PROM_R = 16;
-const SITE_FOREST_R = 3;
+const SITE_WOODS_R = 3;
 /** Smallest landmass (cells) worth an objective + garrison. */
 const SITE_MIN_COMP = 160;
 const SITE_MAX_SLOPE = 0.05;
@@ -3346,7 +3347,7 @@ function buildSiteGrid(height: Float32Array, biome: Uint8Array): SiteGrid {
   const N = n * n;
   const h = new Float32Array(N);
   const land = new Uint8Array(N);
-  const forestF = new Float32Array(N);
+  const woodsF = new Float32Array(N);
   const slope = new Float32Array(N);
   let hasWater = false;
   for (let cy = 0; cy < n; cy++) {
@@ -3359,7 +3360,7 @@ function buildSiteGrid(height: Float32Array, biome: Uint8Array): SiteGrid {
       const b = biome[i]!;
       land[c] = b === BIOME_ID.water || b === BIOME_ID.river ? 0 : 1;
       if (!land[c]) hasWater = true;
-      forestF[c] = b === BIOME_ID.forest ? 1 : 0;
+      woodsF[c] = b === BIOME_ID.woods ? 1 : 0;
       const xa = clamp(tx - SITE_STEP, 0, TEX - 1);
       const xb = clamp(tx + SITE_STEP, 0, TEX - 1);
       const ya = clamp(ty - SITE_STEP, 0, TEX - 1);
@@ -3410,17 +3411,17 @@ function buildSiteGrid(height: Float32Array, biome: Uint8Array): SiteGrid {
   const landTotal = sizes.reduce((a, b) => a + b, 0);
   const compSize = new Int32Array(N);
   for (let c = 0; c < N; c++) compSize[c] = comp[c]! >= 0 ? sizes[comp[c]!]! : 0;
-  const forest = boxMean(forestF, n, SITE_FOREST_R);
+  const woods = boxMean(woodsF, n, SITE_WOODS_R);
   const compAt = (x: number, y: number) => {
     const cx = clamp(Math.floor(x / SCALE / SITE_STEP), 0, n - 1);
     const cy = clamp(Math.floor(y / SCALE / SITE_STEP), 0, n - 1);
     return comp[cy * n + cx]!;
   };
-  return { n, h, prom, slope, shore, forest, comp, compSize, largestComp, mainland: largestComp > landTotal * 0.6, hasWater, compAt };
+  return { n, h, prom, slope, shore, woods, comp, compSize, largestComp, mainland: largestComp > landTotal * 0.6, hasWater, compAt };
 }
 
 function siteScore(g: SiteGrid, c: number, role: SiteRole, spawnN: number): number {
-  const hN = clamp((g.h[c]! - H_SAND) / (H_PEAK - H_SAND), 0, 1);
+  const hN = clamp((g.h[c]! - H_SHORE) / (H_SUMMIT - H_SHORE), 0, 1);
   const promN = clamp(g.prom[c]! / 0.08, -1, 1);
   const flat = 1 - clamp(g.slope[c]! / SITE_MAX_SLOPE, 0, 1);
   const shoreN = g.hasWater ? Math.exp(-g.shore[c]! / 6) : 0;
@@ -3432,7 +3433,7 @@ function siteScore(g: SiteGrid, c: number, role: SiteRole, spawnN: number): numb
     case "shore":
       return (g.hasWater ? 1.1 * shoreN : 0) + 0.5 * flat + 0.6 * (1 - Math.abs(spawnN - 0.4) * 2);
     case "hidden":
-      return 1.2 * g.forest[c]! - 0.4 * promN + 0.3 * spawnN;
+      return 1.2 * g.woods[c]! - 0.4 * promN + 0.3 * spawnN;
   }
 }
 
@@ -3458,7 +3459,7 @@ function pickSite(
     for (let cx = margin; cx < n - margin; cx++) {
       const c = cy * n + cx;
       if (g.comp[c]! < 0 || g.compSize[c]! < SITE_MIN_COMP) continue;
-      if (g.h[c]! > H_PEAK || g.slope[c]! > SITE_MAX_SLOPE || g.shore[c]! < 2) continue;
+      if (g.h[c]! > H_SUMMIT || g.slope[c]! > SITE_MAX_SLOPE || g.shore[c]! < 2) continue;
       const x = (cx * SITE_STEP + SITE_STEP * 0.5) * SCALE;
       const y = (cy * SITE_STEP + SITE_STEP * 0.5) * SCALE;
       const spawnD = Math.hypot(x - spawnX, y - spawnY);
@@ -3485,7 +3486,7 @@ const SPAWN_TRIES = 6;
 /** Chance an objective base gets a military heli pad (land) or platform (water). */
 const BASE_PAD_CHANCE = 0.5;
 
-/** Original siting: first random dry, non-peak spot clear of spawn + other objectives. */
+/** Original siting: first random dry, non-summit spot clear of spawn + other objectives. */
 function scatterSite(
   height: Float32Array,
   biome: Uint8Array,
@@ -3572,7 +3573,7 @@ function placeForces(
         for (let tx = 60; tx < TEX - 60; tx += 18) {
           const b = biome[ty * TEX + tx]!;
           const h = height[ty * TEX + tx]!;
-          if (b === BIOME_ID.water || b === BIOME_ID.river || b === BIOME_ID.peak || h > 0.78) continue;
+          if (b === BIOME_ID.water || b === BIOME_ID.river || b === BIOME_ID.summit || h > 0.78) continue;
           const wx = (tx + 0.5) * SCALE;
           const wy = (ty + 0.5) * SCALE;
           const spawnD = Math.hypot(wx - spawnX, wy - spawnY);
@@ -3659,7 +3660,7 @@ function placeForces(
         const wk = pickWater(rng);
         if (placeable(wk, x, y)) spawns.push({ kind: wk, x, y });
       }
-    } else if (b !== BIOME_ID.peak) {
+    } else if (b !== BIOME_ID.summit) {
       if (rng.chance(Math.min(1, 1 / Math.max(0.1, profile.waterPatrolBias)))) {
         const pk = pickPatrol(rng, profile.forceMix);
         if (placeable(pk, x, y)) spawns.push({ kind: pk, x, y });

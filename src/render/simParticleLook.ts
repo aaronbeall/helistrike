@@ -14,11 +14,11 @@ export function simParticleLook(_kind: SimParticleKind, biome: Biome, blood = fa
   const dirt: Record<Biome, number[]> = {
     water: [0x3a3a32, 0x2a2c28],
     river: [0x4a4638, 0x2e322c],
-    sand: [0xc4a06a, 0x8a6a40, 0x3a3228],
-    grass: [0x6b5a32, 0x4a3c24, 0x2a2418],
-    forest: [0x3d3a28, 0x2a281c, 0x1a1810],
-    rock: [0x6a6860, 0x4a4844, 0x2c2c28],
-    peak: [0x9a9890, 0x6e6c66, 0x3a3a38],
+    shore: [0xc4a06a, 0x8a6a40, 0x3a3228],
+    lowland: [0x6b5a32, 0x4a3c24, 0x2a2418],
+    woods: [0x3d3a28, 0x2a281c, 0x1a1810],
+    highland: [0x6a6860, 0x4a4844, 0x2c2c28],
+    summit: [0x9a9890, 0x6e6c66, 0x3a3a38],
   };
   const pal = dirt[biome];
   return { tint: pal[(Math.random() * pal.length) | 0]!, add: false };

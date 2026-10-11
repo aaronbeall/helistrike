@@ -40,7 +40,7 @@ Maps are seeded and procedurally generated:
 
 * Overall map shape and features define a macro feel (islands, valleys, mountains, etc)
 * Fractal noise builds topographical looking height field
-* Biomes are classified at levels (water, sand, grass, rocks, peaks, etc)
+* Biomes are classified at levels (water, shore, lowland, woods, highland, summit); themes restyle them
 * Biomes are remapped to bias the elevation change near their boundaries, creating more flat biomes with steep edges rather than a continuous height change
 * Special land features are added to height map
 * Biome doodads are placed randomly and in clusters
