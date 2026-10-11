@@ -322,7 +322,7 @@ export const SPRITE_SPECS: Record<string, SpriteSpec> = {
       { role: "muzzle", x: 0.452, y: 0.107 },
       { role: "muzzle", x: 0.54, y: 0.107 },
       // Nose tip (sprite nose-up).
-      { role: "prop", x: 0.5, y: 0.162, id: "prop" },
+      { role: "prop", x: 0.498, y: 0.022, id: "prop" },
       // Lower-wing forward hardpoints.
       { role: "hardpoint", x: 0.18, y: 0.40, id: "wing_l" },
       { role: "hardpoint", x: 0.82, y: 0.40, id: "wing_r" },
