@@ -6,6 +6,14 @@ import { isNeutral, specOf } from "../../../sim/roster";
 import { footprintHalfX, footprintHalfY, footprintInto } from "../../../render/footprint";
 import { fillCircleFast, lineFast, strokeCircleFast } from "../../../render/fastShapes";
 
+/** Map disc radius (px) and the world diameter it shows (larger = zoomed out). */
+const MAP_R = 84;
+const MAP_SPAN = 2600;
+/** Screen px per world unit. */
+const MAP_SCALE = (MAP_R * 2) / MAP_SPAN;
+/** Minimap terrain texture (topographic, built at mission start), sized 1:1 with the screen so its lines stay crisp. */
+export const MINIMAP_TEX = "map_topo";
+export const MINIMAP_TEX_PX = Math.ceil(WORLD * MAP_SCALE);
 /** Civilian structures: gray, not hostile red. */
 const NEUTRAL_MARK = 0x9a9890;
 /** Power pylons: tiny dots so a line reads as a dotted trace, not a row of buildings. */
@@ -40,12 +48,11 @@ function shotShowsOnRadar(s: Shot): boolean {
   return /missile|guided|rocket|aam|photon|mini_rocket|artillery/i.test(look);
 }
 
-/** Corner radar: terrain + wreck layers under live unit / remote / shot blips. */
+/** Corner radar: topographic terrain under live unit / remote / shot blips. */
 export class Minimap {
   gfx!: Phaser.GameObjects.Graphics;
   bg!: Phaser.GameObjects.Graphics;
   terrain!: Phaser.GameObjects.Image;
-  wrecks!: Phaser.GameObjects.Image;
   mask!: Phaser.GameObjects.Graphics;
 
   private hv: Unit[] = [];
@@ -56,15 +63,12 @@ export class Minimap {
   draw(): void {
     const cx = 18 + 88;
     const cy = this.s.scale.height - 18 - 88;
-    const mapR = 84;
-    // World diameter shown in the ring (larger = zoomed out / wider coverage).
-    const span = 2600;
-    const s = (mapR * 2) / span;
+    const mapR = MAP_R;
+    const s = MAP_SCALE;
     this.terrain.setDisplaySize(WORLD * s, WORLD * s);
     const tp = this.s.hudLocal(cx - (this.s.player.x - WORLD / 2) * s, cy - (this.s.player.y - WORLD / 2) * s);
-    this.terrain.setPosition(tp.x, tp.y);
-    this.wrecks.setDisplaySize(WORLD * s, WORLD * s);
-    this.wrecks.setPosition(this.terrain.x, this.terrain.y);
+    // Whole pixels: the 1:1 texture's lines stay sharp instead of smearing between texels.
+    this.terrain.setPosition(Math.round(tp.x), Math.round(tp.y));
     this.gfx.clear();
     const rimR = 90;
     const g = this.gfx;

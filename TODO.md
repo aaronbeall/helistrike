@@ -225,8 +225,8 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [x] Sustained Starscream fire causes big framerate drops and short freezes (GC?) -- energy ribbons allocate per frame across dozens of live shots + bomblets; reuse buffers, profile explosion cost (pre-existing)
 * [ ] Map edge shows for helis -- out-of-bounds cloud mountains don't hide the seam everywhere (e.g. top of the plane map)
 * [ ] Out-of-bounds cloud mountains have a lot of pink/magenta contamination
-* [ ] Optimize minimap -- don't render from the live terrain
-    * [ ] Try a topographic render (contour lines / height bands) instead of the terrain image
+* [x] Optimize minimap -- don't render from the live terrain
+    * [x] Try a topographic render (contour lines / height bands) instead of the terrain image
 
 ## Stats
 

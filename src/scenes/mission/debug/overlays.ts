@@ -8,6 +8,7 @@ import { footprintOf } from "../../../render/footprint";
 import { craftGunId } from "../../../sim/crafts";
 import { groundZ, worldToScreen, WORLD } from "../../../worldgen/world";
 import type { MissionScene } from "../../missionScene";
+import { MINIMAP_TEX } from "../hud/minimap";
 
 export function escortNavLabel(r: RemoteCraft, fallback: string): string {
   const nav = r.nav;
@@ -495,7 +496,7 @@ export class DebugOverlays {
     const key = this.showHeightMap ? "map_height" : "map_terrain";
     this.s.ground.setTexture(key).setDisplaySize(WORLD, WORLD);
     this.s.ground.setVisible(!this.s.terrainMesh);
-    this.s.minimap.terrain.setTexture(key);
+    this.s.minimap.terrain.setTexture(this.showHeightMap ? key : MINIMAP_TEX);
     if (this.s.terrain25d) {
       this.s.terrain25d
         .setTerrainTexture(key)
@@ -505,7 +506,6 @@ export class DebugOverlays {
       this.s.groundMarks.wreckLayer.setVisible(!this.showHeightMap);
     }
     this.s.flatWreckage.setVisible(!!this.s.terrain25d && !this.s.terrainMesh && !this.showHeightMap);
-    this.s.minimap.wrecks.setVisible(!this.showHeightMap && this.s.minimap.terrain.visible);
     this.s.debugMenu.sync();
   }
 }

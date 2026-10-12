@@ -44,7 +44,8 @@ import { SpatialOverlay } from "./mission/debug/spatialOverlay";
 import { NavOverlay } from "./mission/debug/navOverlay";
 import { RemoteAi } from "./mission/remote/ai";
 import { ReticleHud } from "./mission/hud/reticleHud";
-import { Minimap } from "./mission/hud/minimap";
+import { Minimap, MINIMAP_TEX, MINIMAP_TEX_PX } from "./mission/hud/minimap";
+import { renderTopoMap } from "../worldgen/topoMap";
 import { StatusHud } from "./mission/hud/statusHud";
 import { WeaponHud } from "./mission/hud/weaponHud";
 import { ThreatHud } from "./mission/hud/threatHud";
@@ -1117,10 +1118,14 @@ export class MissionScene extends Phaser.Scene {
     this.minimap.mask = this.add.graphics().setScrollFactor(0);
     this.minimap.mask.fillStyle(0xffffff);
     fillCircleFast(this.minimap.mask, cx, cy, 88);
+    const topo = renderTopoMap(this.world, MINIMAP_TEX_PX);
+    if (this.textures.exists(MINIMAP_TEX)) this.textures.remove(MINIMAP_TEX);
+    this.textures.addCanvas(MINIMAP_TEX, topo.canvas);
+    registerArt(MINIMAP_TEX, "generated");
     this.minimap.bg = this.add.graphics().setScrollFactor(0).setDepth(Layer.HUD - 1);
-    this.minimap.bg.fillStyle(minimapTerrainBgColor(this.world.canvas), 1);
+    this.minimap.bg.fillStyle(topo.edge, 1);
     fillCircleFast(this.minimap.bg, cx, cy, 90);
-    this.minimap.terrain = this.add.image(cx, cy, "map_terrain").setScrollFactor(0).setDepth(Layer.HUD);
+    this.minimap.terrain = this.add.image(cx, cy, MINIMAP_TEX).setScrollFactor(0).setDepth(Layer.HUD);
     this.minimap.terrain.setMask(this.minimap.mask.createGeometryMask());
     if (this.textures.exists("map_wrecks")) this.textures.remove("map_wrecks");
     this.groundMarks.wreckLayer.saveTexture("map_wrecks");
@@ -1132,9 +1137,6 @@ export class MissionScene extends Phaser.Scene {
       .setDisplaySize(WORLD, WORLD)
       .setDepth(Layer.WRECK)
       .setVisible(false);
-    this.minimap.wrecks = this.add.image(cx, cy, "map_wrecks").setScrollFactor(0).setDepth(Layer.HUD);
-    if (this.terrain25d) this.minimap.wrecks.setFlipY(true);
-    this.minimap.wrecks.setMask(this.minimap.mask.createGeometryMask());
     this.minimap.mask.setVisible(false);
   }
 
@@ -1708,7 +1710,6 @@ export class MissionScene extends Phaser.Scene {
     const chrome: (Phaser.GameObjects.GameObject & { x: number; y: number })[] = [
       this.minimap.bg,
       this.minimap.terrain,
-      this.minimap.wrecks,
       this.minimap.gfx,
       this.cornerHud.hud,
       this.postFx.hud,
@@ -1922,7 +1923,6 @@ export class MissionScene extends Phaser.Scene {
     this.minimap.gfx.setVisible(on);
     this.minimap.bg.setVisible(on);
     this.minimap.terrain.setVisible(on);
-    this.minimap.wrecks.setVisible(on && !this.overlays.showHeightMap);
     this.hudRoot.setVisible(on);
     if (this.relief.root) this.relief.root.setVisible(this.relief.open && (on || this.camera.mapBlend > 0.12));
     this.fieldBars.hpGfx.setVisible(on);
@@ -1948,40 +1948,3 @@ export class MissionScene extends Phaser.Scene {
     }
   }
 }
-
-/** Muted average of the terrain canvas — minimap fill past the playable map edge. */
-function minimapTerrainBgColor(canvas: HTMLCanvasElement): number {
-  const g = canvas.getContext("2d", { willReadFrequently: true });
-  if (!g) return 0x2a2e28;
-  const w = canvas.width;
-  const h = canvas.height;
-  if (w < 1 || h < 1) return 0x2a2e28;
-  const step = Math.max(12, Math.floor(Math.min(w, h) / 48));
-  const pix = g.getImageData(0, 0, w, h).data;
-  let r = 0;
-  let gg = 0;
-  let b = 0;
-  let n = 0;
-  for (let y = 0; y < h; y += step) {
-    for (let x = 0; x < w; x += step) {
-      const o = (y * w + x) * 4;
-      r += pix[o]!;
-      gg += pix[o + 1]!;
-      b += pix[o + 2]!;
-      n++;
-    }
-  }
-  if (!n) return 0x2a2e28;
-  r /= n;
-  gg /= n;
-  b /= n;
-  const lum = 0.299 * r + 0.587 * gg + 0.114 * b;
-  // Desaturate toward terrain luminance, then darken so the map disc still reads.
-  const mute = 0.45;
-  const dark = 0.58;
-  const nr = Math.round(Math.min(255, Math.max(0, (r * (1 - mute) + lum * mute) * dark)));
-  const ng = Math.round(Math.min(255, Math.max(0, (gg * (1 - mute) + lum * mute) * dark)));
-  const nb = Math.round(Math.min(255, Math.max(0, (b * (1 - mute) + lum * mute) * dark)));
-  return (nr << 16) | (ng << 8) | nb;
-}
-
