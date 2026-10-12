@@ -8,10 +8,10 @@ import type { MissionScene } from "../../missionScene";
 /** Re-check a clear sight line about this often (ms), jittered per unit so checks spread across frames. */
 const LOS_REFRESH_MS = 350;
 /** Re-check a blocked (or newly in-range) line after a random wait in this range (ms): staggered noticing, fewer rays. */
-const LOS_BLOCKED_MIN_MS = 800;
-const LOS_BLOCKED_MAX_MS = 1500;
+const LOS_BLOCKED_MIN_MS = 450;
+const LOS_BLOCKED_MAX_MS = 850;
 /** Spotting: vision ramps 0 → 1 over this long (ms) once the line clears; a hit skips it. */
-const SPOT_MS = 1200;
+const SPOT_MS = 600;
 /** Most sight checks per frame (the rest keep their current state). */
 const LOS_BUDGET = 24;
 /** A check this late (ms past due) skips the budget, so no unit starves. */
