@@ -95,7 +95,8 @@ export function steerUnitAngle(angle: number, want: number, rate: number, dt: nu
   const stepDt = Math.min(Math.max(0, dt), 1 / 20);
   // ~10°/tick hard cap — turns always take multiple frames, never axis snaps.
   const maxStep = Math.min(Math.abs(rate) * stepDt, 0.18);
-  return Phaser.Math.Angle.RotateTo(angle, want, maxStep);
+  // RotateTo snaps when the raw gap is within a step of 2π, so un-wrapped hull angles would jump.
+  return Phaser.Math.Angle.RotateTo(Phaser.Math.Angle.Wrap(angle), Phaser.Math.Angle.Wrap(want), maxStep);
 }
 
 /** 0 at inland → 1 deep in the map rim. */
