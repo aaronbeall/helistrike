@@ -31,6 +31,9 @@ const BUILDING_DEATH_DMG = 6;
 const VEHICLE_DEATH_DMG = 0.1;
 /** "inferno" deaths (oil rigs): flat splash damage over 5× radius. */
 const INFERNO_DEATH_DMG = 140;
+/** Popped turret landing: center damage (kills a troop, breaks a house) and radius per unit of turret scale. */
+const TURRET_LAND_DMG = 45;
+const TURRET_LAND_R = 28;
 /** Collapse deaths: dirt/bit throw speed and spark size, vs the full HE blast. */
 const COLLAPSE_DIRT_SPEED = 0.5;
 const COLLAPSE_SPARK_SCALE = 0.5;
@@ -1379,8 +1382,9 @@ export class Destruction {
   /** First touchdown of a popped-off turret: a small version of the heli-crash dust kick. */
   turretTouchdown(f: Debris): void {
     f.turretPop = false;
-    if (isWater(this.s.world, f.x, f.y)) return;
     const s = Phaser.Math.Clamp(f.scale ?? 1, 0.4, 1.4);
+    this.s.projectiles.applyBlastDamage(f.x, f.y, f.z, TURRET_LAND_R * s, TURRET_LAND_DMG, undefined, f.vx, f.vy, f.vz);
+    if (isWater(this.s.world, f.x, f.y)) return;
     this.s.hostCraft.emitDustShock(f.x, f.y, 0.22 * s);
     // Skipping off: dirt sprays along the travel. Thudding to rest: it kicks straight up.
     const skip = debrisWillBounce(f);

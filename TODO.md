@@ -172,7 +172,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [x] Hulk break-apart effect (dynamic splitting of hulk graphics into individual parts)
 * [ ] Predictive firing (enemy units and craft gunners, fire at predicted location, accuracy of prediction falls off with range and speed), scales with difficulty level
 * [ ] Automatic turrets prioritize targets by their weapon damage multipliers (e.g. anti-armor stations pick vehicles, flak picks troops)
-* [ ] Popped turrets should do a little damage on landing -- enough to kill a troop or break a house
+* [x] Popped turrets should do a little damage on landing -- enough to kill a troop or break a house
 * [ ] Lens flare
 * [x] Stats (mission, all time)
 * [ ] Score
