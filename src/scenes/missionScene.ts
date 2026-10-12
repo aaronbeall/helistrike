@@ -837,7 +837,8 @@ export class MissionScene extends Phaser.Scene {
       .text(this.scale.width / 2, 12, "", {
         fontFamily: "Share Tech Mono, monospace",
         fontSize: "12px",
-        color: "#8a8470",
+        // Lavender: a hue no other HUD text uses.
+        color: "#b4a2e4",
         align: "center",
       })
       .setOrigin(0.5, 0)
