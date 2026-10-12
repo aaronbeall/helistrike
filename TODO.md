@@ -184,7 +184,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 
 ## Fix
 
-* [ ] Don't save mission stats when quitting a mission without any action (no shots, kills, damage or objectives)
+* [x] Don't save mission stats when quitting a mission without any action (no shots, kills, damage or objectives)
 * [ ] Art build step: prepare all sprites ahead of time so the runtime only scales for camera effects
     * [ ] Full-res masters (magenta and all) live in `assets-src/`; a prep script writes the shipped files into `public/`
     * [ ] Key magenta to real transparency once (soft alpha from color distance + spill removal) and drop runtime keying -- fixes pink edge fringes (radar, lookout), hard edges, and `magenta` mode punching out whites
@@ -198,17 +198,17 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [ ] Bomb reticle drop path doesn't show in thermal view
 * [ ] Ground units and buildings spawn under the out-of-bounds edge clouds (keep spawns clear of the cloud margin)
 * [ ] Exiting a piloted Spectre remote (other drones too?) leaves it flying in the last input direction
-* [ ] HV targets on the minimap need a more distinct marker
+* [x] HV targets on the minimap need a more distinct marker
 * [ ] Remote <-> host off-screen indicators should show in every context
 * [ ] Mission select should launch with the preview's seed (the map you see is the map you get)
 * [ ] Space to release the focus cam should also return time scale to normal
 * [ ] Focus cam should pause or scale cooldowns (whichever is simpler and less fragile)
-* [ ] Low flying shooting just immediately hits ground
-* [ ] Enemies should not leave map
-* [ ] Enemy collision/avoidance sucks/doesn't work -- should avoid unit-to-unit collisions and buildings
+* [x] Low flying shooting just immediately hits ground
+* [x] Enemies should not leave map
+* [x] Enemy collision/avoidance sucks/doesn't work -- should avoid unit-to-unit collisions and buildings
 * [x] Building placement should avoid overlaps
 * [x] Unit/building spawns should not overlap water or cliffs (check the footprint, not just the center point)
-* [ ] Ground units should avoid water -- partially implemented but it sucks
+* [x] Ground units should avoid water -- partially implemented but it sucks
 * [ ] Z-ordering is not ideal -- debris/missiles flicker above and below their flame trail (trail smoke-over-flame across depth bands fixed; debris still open)
 * [x] Mech debris should not include vehicle type specific parts (rotors, treads, wheels)
   * [x] Add wheels to wheeled vehicle debris
@@ -222,7 +222,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
 * [ ] Switching from thermal to normal reveals pink graphics
 * [ ] Dropship artillery strike should not follow the player reticle while active -- it messes it up
 * [ ] Map/theater view draws the current-view frame in the wrong location -- likely the captured play-camera view vs the map's zoom/projection pose (pre-existing)
-* [ ] Sustained Starscream fire causes big framerate drops and short freezes (GC?) -- energy ribbons allocate per frame across dozens of live shots + bomblets; reuse buffers, profile explosion cost (pre-existing)
+* [x] Sustained Starscream fire causes big framerate drops and short freezes (GC?) -- energy ribbons allocate per frame across dozens of live shots + bomblets; reuse buffers, profile explosion cost (pre-existing)
 * [ ] Map edge shows for helis -- out-of-bounds cloud mountains don't hide the seam everywhere (e.g. top of the plane map)
 * [ ] Out-of-bounds cloud mountains have a lot of pink/magenta contamination
 * [ ] Optimize minimap -- don't render from the live terrain
