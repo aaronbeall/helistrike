@@ -1,5 +1,5 @@
 import { themeOf, shallowTint } from "../../../worldgen/theme";
-import { applyTerrainLight, SCALE, doodadTex, groundZ, worldToScreen, cameraPointVisible, projectHeading, isWater, WORLD, WRECK_TEX, type WorldData } from "../../../worldgen/world";
+import { SCALE, groundZ, worldToScreen, cameraPointVisible, projectHeading, isWater, WORLD, WRECK_TEX } from "../../../worldgen/world";
 import { softCapBlastCraterScale } from "../../../render/fxCurves";
 import Phaser from "phaser";
 import { applyThermalHeat } from "../../../render/thermal";
@@ -113,26 +113,6 @@ function thermalWreckTiming(kind: ThermalWreckKind, scaleX: number, scaleY: numb
     return { hold: 1.5, fadeDur: 9 + Math.min(6, span * 2.5), peak: 0.6 };
   }
   return { hold: 0.35, fadeDur: 6 + Math.min(7, span * 2.4) };
-}
-
-export function stampDoodads(world: WorldData, textures: Phaser.Textures.TextureManager): void {
-  const g = world.canvas.getContext("2d", { willReadFrequently: true })!;
-  g.imageSmoothingEnabled = true;
-  for (const d of world.doodads) {
-    const tex = doodadTex(d.kind);
-    const skin = tex;
-    if (!textures.exists(skin)) continue;
-    const img = textures.get(skin).getSourceImage() as CanvasImageSource;
-    const s = d.size;
-    g.save();
-    g.globalAlpha = 0.9;
-    g.translate(d.x / SCALE, d.y / SCALE);
-    g.rotate(d.rot * 0.15);
-    g.drawImage(img, -s / 2, -s / 2, s, s);
-    g.restore();
-  }
-  g.globalAlpha = 1;
-  applyTerrainLight(world.canvas, world.height);
 }
 
 function thermalWreckFade(mark: ThermalWreckMark): number {

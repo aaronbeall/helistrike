@@ -42,6 +42,8 @@ export interface ThemeSpec {
   description: string;
   looks: BiomeLook[];
   camo: ThemeCamo;
+  /** Foliage amount (1 = base): fewer / more live foliage objects, and undergrowth printed around them. */
+  foliage: number;
   /** Doodad substitutions (picked at random when several). */
   doodads: Partial<Record<DoodadKind, DoodadKind[]>>;
 }
@@ -60,6 +62,7 @@ export const TERRAIN_THEMES: Record<TerrainTheme, ThemeSpec> = {
     label: "TEMPERATE",
     description: "Green grassland and forest, rocky highlands and snow-capped peaks.",
     camo: camo("none", { shore: "desert", lowland: "woodland", woods: "woodland", highland: "urban", summit: "snow" }),
+    foliage: 1,
     looks: [
       look([28, 72, 92], [28, 50, 82], [0.3, 0, 0], 0),
       look([48, 52, 40], [48, 52, 40], [0.25, 0.2, 0], 1),
@@ -76,6 +79,7 @@ export const TERRAIN_THEMES: Record<TerrainTheme, ThemeSpec> = {
     label: "AUTUMN",
     description: "Golden grass, rust and amber woods, bare trees and evergreens, cool grey water and rugged bare peaks.",
     camo: camo("none", { shore: "desert", lowland: "desert", woods: "desert", highland: "urban", summit: "urban" }),
+    foliage: 1,
     looks: [
       look([34, 64, 78], [24, 46, 66], [0.3, 0.1, 0], 0),
       look([52, 50, 40], [52, 50, 40], [0.25, 0.2, 0], 1),
@@ -99,6 +103,7 @@ export const TERRAIN_THEMES: Record<TerrainTheme, ThemeSpec> = {
     label: "ARCTIC",
     description: "Snowfields and pine taiga, icy shores, cold dark water and frozen summits.",
     camo: camo("snow", { shore: "snow", lowland: "snow", woods: "woodland", highland: "urban", summit: "snow" }),
+    foliage: 0.5,
     looks: [
       look([46, 80, 100], [28, 54, 78], [0.3, 0.3, 0.3], 0, [72, 104, 124]),
       look([62, 80, 92], [62, 80, 92], [0.25, 0.25, 0.25], 1, [90, 112, 124]),
@@ -124,6 +129,7 @@ export const TERRAIN_THEMES: Record<TerrainTheme, ThemeSpec> = {
     label: "DESERT",
     description: "Dunes and sun-baked hardpan, oasis scrub, red rock and pale caprock.",
     camo: camo("desert", { shore: "desert", lowland: "desert", woods: "woodland", highland: "desert", summit: "desert" }),
+    foliage: 0.35,
     looks: [
       look([44, 112, 114], [30, 80, 94], [0.3, 0.2, 0], 0),
       look([70, 92, 80], [70, 92, 80], [0.25, 0.2, 0], 1),
@@ -146,6 +152,7 @@ export const TERRAIN_THEMES: Record<TerrainTheme, ThemeSpec> = {
     label: "TROPIC",
     description: "Turquoise water, white beaches, dense jungle and dark volcanic peaks.",
     camo: camo("woodland", { shore: "desert", lowland: "woodland", woods: "woodland", highland: "urban", summit: "urban" }),
+    foliage: 1.8,
     looks: [
       look([36, 128, 130], [20, 72, 104], [0.3, 0.2, 0], 0),
       look([52, 86, 62], [52, 86, 62], [0.25, 0.2, 0], 1),
@@ -169,6 +176,7 @@ export const TERRAIN_THEMES: Record<TerrainTheme, ThemeSpec> = {
     label: "COASTAL",
     description: "Sandy beaches, green hills, olive woods and pale limestone ridges.",
     camo: camo("woodland", { shore: "desert", lowland: "woodland", woods: "woodland", highland: "urban", summit: "urban" }),
+    foliage: 1.1,
     looks: [
       look([30, 92, 112], [20, 58, 90], [0.3, 0.2, 0], 0),
       look([46, 62, 52], [46, 62, 52], [0.25, 0.2, 0], 1),
@@ -190,6 +198,7 @@ export const TERRAIN_THEMES: Record<TerrainTheme, ThemeSpec> = {
     label: "SAVANNA",
     description: "Golden grassland, red earth, lone olive-green trees, dry scrub and rust-red rock.",
     camo: camo("desert", { shore: "desert", lowland: "desert", woods: "woodland", highland: "desert", summit: "desert" }),
+    foliage: 0.7,
     looks: [
       look([52, 92, 88], [36, 66, 70], [0.3, 0.2, 0], 0),
       look([70, 78, 56], [70, 78, 56], [0.25, 0.2, 0], 1),
@@ -215,6 +224,7 @@ export const TERRAIN_THEMES: Record<TerrainTheme, ThemeSpec> = {
     label: "SWAMP",
     description: "Murky green water, mudflats and reed beds, drooping dark woods and mossy stone.",
     camo: camo("woodland", { shore: "woodland", lowland: "woodland", woods: "woodland", highland: "urban", summit: "urban" }),
+    foliage: 1.7,
     looks: [
       look([56, 72, 50], [34, 48, 36], [0.2, 0.3, 0], 0, [60, 76, 52]),
       look([56, 64, 44], [56, 64, 44], [0.25, 0.2, 0], 1, [62, 70, 48]),
@@ -240,6 +250,7 @@ export const TERRAIN_THEMES: Record<TerrainTheme, ThemeSpec> = {
     label: "VOLCANIC",
     description: "Molten seas, black sand, ash plains, dead and scorched woods, basalt ridges and smouldering summits.",
     camo: camo("urban"),
+    foliage: 0.4,
     looks: [
       // Lava-coloured water: looks only, still behaves as water.
       look([148, 50, 12], [96, 22, 8], [0.4, 0.2, 0], 0, [170, 64, 18]),
@@ -267,6 +278,7 @@ export const TERRAIN_THEMES: Record<TerrainTheme, ThemeSpec> = {
     label: "ALIEN",
     description: "Glowing teal seas, violet plains, magenta fronds, indigo rock and crystal peaks.",
     camo: camo("digital", { shore: "urban", lowland: "digital", woods: "digital", highland: "urban", summit: "snow" }),
+    foliage: 1.3,
     looks: [
       look([24, 110, 120], [18, 50, 90], [0.3, 0.3, 0.3], 0, [40, 120, 130]),
       look([40, 60, 80], [40, 60, 80], [0.25, 0.25, 0.25], 1, [52, 72, 96]),

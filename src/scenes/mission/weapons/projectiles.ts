@@ -1616,6 +1616,7 @@ export class Projectiles {
     shot?: Shot
   ): void {
     this.pushBlastRing(x, y, z, blast);
+    this.s.doodads.blast(x, y, blast, dmg);
     const stunDur = shot?.beh?.payload.stun;
     const by = this.statBy(shot);
     const nearby = this.s.spatial.near(x, y, blast);

@@ -1,6 +1,6 @@
 import { heightOf, radius, playerLoadoutFromSockets, type Unit, type Debris, type Shot, type PlayerWpnSpec } from "../sim/combat";
 import { makeSettlementUnits, makeUnit, spawnCrewFor } from "../sim/units";
-import { stampDoodads, GroundMarks } from "./mission/fx/groundMarks";
+import { GroundMarks } from "./mission/fx/groundMarks";
 import { Ripples } from "./mission/fx/ripples";
 import Phaser from "phaser";
 import { FieldBars } from "./mission/hud/fieldBars";
@@ -39,6 +39,7 @@ import { LineOfSight } from "./mission/enemy/lineOfSight";
 import { PowerLines } from "./mission/world/powerLines";
 import { SpatialIndex } from "./mission/world/spatial";
 import { Nav } from "./mission/world/nav";
+import { Doodads, printDecor } from "./mission/world/doodads";
 import { Bubbles } from "./mission/fx/bubbles";
 import { SpatialOverlay } from "./mission/debug/spatialOverlay";
 import { NavOverlay } from "./mission/debug/navOverlay";
@@ -72,7 +73,7 @@ import { setCloakFxPipeline } from "../render/cloakFx";
 import { createTerrain25D, type Terrain25D } from "../render/terrain25d";
 import { extractBiomeTiles, bakeHeliHudWireTexture, registerArt, nameGameTexture, muzzleGlowKey, ensureBubbleTexture, ensureExhaustGlow, ensureImpactGlow, setSinkWater } from "../art/sprites";
 import { themeOf, waterColor } from "../worldgen/theme";
-import { generateWorld, worldFromGen, groundZ, worldToScreen, setCamera25DFocus, screenToWorldOnGround, castZ, paintHeightMap, WORLD, WRECK_TEX, type WorldData } from "../worldgen/world";
+import { applyTerrainLight, generateWorld, worldFromGen, groundZ, worldToScreen, setCamera25DFocus, screenToWorldOnGround, castZ, paintHeightMap, WORLD, WRECK_TEX, type WorldData } from "../worldgen/world";
 import { setTextColor } from "../render/textStyle";
 
 /** How far aircraft may overshoot before a soft cap (jets / enemy air) — see craft.MAP_AIR_SOFT. */
@@ -92,6 +93,7 @@ export class MissionScene extends Phaser.Scene {
   powerLines = new PowerLines(this);
   spatial = new SpatialIndex(this);
   nav = new Nav(this);
+  doodads = new Doodads(this);
   bubbles = new Bubbles(this);
   unitSim = new UnitSim(this);
   unitLod = new UnitLod(this);
@@ -234,6 +236,7 @@ export class MissionScene extends Phaser.Scene {
     this.powerLines.reset();
     this.spatial.reset();
     this.nav.reset();
+    this.doodads.reset();
     this.bubbles.reset();
     this.unitSprites.reset();
     this.spatialOverlay.reset();
@@ -306,7 +309,8 @@ export class MissionScene extends Phaser.Scene {
     ensureEdgeLightPipeline(this.game);
     // Sunk wrecks take on this theme's water colour.
     setSinkWater(this.textures, waterColor(themeOf(this.world.theme)));
-    stampDoodads(this.world, this.textures);
+    printDecor(this.world, this.textures);
+    applyTerrainLight(this.world.canvas, this.world.height);
     if (this.textures.exists("map_terrain")) this.textures.remove("map_terrain");
     this.textures.addCanvas("map_terrain", this.world.canvas);
     registerArt("map_terrain", "generated");
@@ -597,6 +601,7 @@ export class MissionScene extends Phaser.Scene {
     this.addUnits(spawned);
     this.addUnits(posted);
     this.nav.build();
+    this.doodads.create();
   }
 
   /** The only way units enter `s.units`: append-only, never removed (dead units stay, `dead` set); index-keyed modules rely on it. */
@@ -1306,6 +1311,7 @@ export class MissionScene extends Phaser.Scene {
     this.groundMarks.updateThermalWreckMarks(dt);
     this.groundMarks.updateEmberGlows(dt);
     this.groundMarks.updateSurfaceWrecks();
+    this.doodads.sync();
     this.groundMarks.flushStamps();
     this.ripples.update(dt);
     this.overlays.tickBlast(wallDt);

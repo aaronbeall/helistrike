@@ -100,7 +100,7 @@ Per-cell arrays (all `NAV_N²`, typed arrays):
 
 - `lineClear(layer, x0, y0, x1, y1)`: walks the segment in half-cell steps; every new cell must be passable and the crossing into it open. Ground modes also reject shallow cells, except the end cell, so wading is only taken when A* finds it cheapest.
 - `nearestInRegion(layer, region, c, maxR)`: ring search outward, prefers the highest-clearance cell in the first ring that has one.
-- `findPath(layer, from, to, out, maxExpand = 1600)`: A*, 8-neighbour, octile heuristic. Step cost 1 / √2, ×2.5 into shallow (`SHALLOW_COST`), ×1.6 into clearance ≤ 1. Diagonals need both side cells passable (no corner cutting). Reuses typed buffers with a search stamp (no clearing, no per-search allocation beyond heap growth). When capped, returns the path to the cell closest to the goal. ~0.26 ms worst case.
+- `findPath(layer, from, to, out, maxExpand = 1600)`: A*, 8-neighbour, octile heuristic. Step cost 1 / √2, ×2.5 into shallow (`SHALLOW_COST`), ×1.3 into ground without foliage cover (`OPEN_COST`; cover counts come from live foliage, `addCover`), ×1.6 into clearance ≤ 1. Diagonals need both side cells passable (no corner cutting). Reuses typed buffers with a search stamp (no clearing, no per-search allocation beyond heap growth). When capped, returns the path to the cell closest to the goal. ~0.26 ms worst case.
 
 ### The module (`Nav`, `world/nav.ts`)
 

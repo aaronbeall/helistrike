@@ -30,8 +30,8 @@ interface SpriteBlock {
   /** Dish tilt container, once a part has been wrapped. */
   wrap?: Phaser.GameObjects.Container;
 }
-/** Buildings cast their shadow from this fraction of their height. */
-const BUILDING_SHADOW_HEIGHT = 0.25;
+/** Roofless buildings draw (and cast their shadow) at this fraction of their height; render only, physics keep `u.z`. */
+const BUILDING_DRAW_HEIGHT = 0.5;
 /** Deck shadows: full length so spans join, inset width so the edges don't peek out. */
 const DECK_SHADOW_SCALE = { x: 1, y: 0.92 } as const;
 /** Ground vehicles cast their shadow from this fraction of their height. */
@@ -335,13 +335,14 @@ export class UnitSprites {
       }
       const sp = specOf(u.kind);
       const roofZ = u.z + heightOf(u.kind);
-      if (!cameraPointVisible(u.z, u.y) && !(sp.roof && cameraPointVisible(roofZ, u.y))) {
+      const drawZ = sp.building && !sp.roof ? u.z + heightOf(u.kind) * BUILDING_DRAW_HEIGHT : u.z;
+      if (!cameraPointVisible(drawZ, u.y) && !(sp.roof && cameraPointVisible(roofZ, u.y))) {
         if (held >= 0) this.releaseBlock(ui);
         continue;
       }
       const tex = resolveSkin(this.s.textures, textureOf(u.kind), u.camo);
       const rot = troopDrawAng(u) + sp.rotOff;
-      const scr = worldToScreen(u.x, u.y, u.z);
+      const scr = worldToScreen(u.x, u.y, drawZ);
       const scrX = scr.x;
       const scrY = scr.y;
       const roofScr = sp.roof ? worldToScreen(u.x, u.y, roofZ) : undefined;
@@ -362,7 +363,7 @@ export class UnitSprites {
       const ox = pivot.x;
       const oy = pivot.y;
       const zBias = u.pinId != null ? ZOff.posted : 0;
-      const bodyDepth = worldDepth(u.z, ZOff.body + zBias, u.y);
+      const bodyDepth = worldDepth(drawZ, ZOff.body + zBias, u.y);
       const damageHeat = Phaser.Math.Clamp(1 - u.health / Math.max(1, u.max), 0, 1) * 0.14;
       const bodyHeat = Phaser.Math.Clamp(
         (sp.organic
@@ -389,7 +390,7 @@ export class UnitSprites {
         sp.roof
           ? roofZ
           : sp.building
-            ? u.z + heightOf(u.kind) * BUILDING_SHADOW_HEIGHT
+            ? drawZ
             : isGroundVehicle(u.kind)
               ? u.z + heightOf(u.kind) * VEHICLE_SHADOW_HEIGHT
               : u.z,
@@ -448,7 +449,7 @@ export class UnitSprites {
           : aimKey
             ? this.unitAimDrawRot(u, aimKey, worldRot)
             : drawRot;
-        const pd = worldDepth(u.z, depth + zBias, u.y);
+        const pd = worldDepth(drawZ, depth + zBias, u.y);
         part.setVisible(true);
         if (part.texture.key !== texKey) part.setTexture(texKey);
         part
@@ -521,7 +522,7 @@ export class UnitSprites {
             part.setData("tiltWrap", wrap);
           }
           blk.wrap = wrap;
-          const dishDepth = worldDepth(u.z, ZOff.turret + zBias, u.y);
+          const dishDepth = worldDepth(drawZ, ZOff.turret + zBias, u.y);
           wrap
             .setVisible(true)
             .setPosition(px, py)
@@ -549,15 +550,15 @@ export class UnitSprites {
             : u.turrets[u.muzzleGun] ?? u.turret;
         const jitS = u.muzzleJitS ?? 1;
         const jitR = u.muzzleJitR ?? 0;
-        const tipScr = worldToScreen(tip.x, tip.y, u.z);
-        const flashDepth = worldDepth(u.z, gunDepth + 0.4 + zBias, u.y);
+        const tipScr = worldToScreen(tip.x, tip.y, drawZ);
+        const flashDepth = worldDepth(drawZ, gunDepth + 0.4 + zBias, u.y);
         flash.setVisible(true);
         if (flash.texture.key !== "fx_muzzle") flash.setTexture("fx_muzzle");
         flash
           .setFrame(u.muzzleFrame ?? 0)
           .setOrigin(0.15, 0.5)
           .setPosition(tipScr.x, tipScr.y)
-          .setRotation(projectHeading(ang + jitR, tip.x, tip.y, u.z))
+          .setRotation(projectHeading(ang + jitR, tip.x, tip.y, drawZ))
           .setScale((sp.organic ? 0.7 : 1.15) * zs * jitS)
           .setAlpha(Phaser.Math.Clamp(u.muzzleT / 0.07, 0, 1));
         if (this.s.thermal.on) {

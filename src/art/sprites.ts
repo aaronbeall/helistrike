@@ -199,6 +199,8 @@ const CRAFT_ART: { key: string; file: string; fit: number; rotor?: boolean; keyP
 ];
 
 export const BIOME_TILE_NAMES = ["water", "sand", "grass", "forest", "rock", "peak"] as const;
+/** Doodad art is baked near the terrain's texel density (live foliage matches the printed ground). */
+const DOODAD_BAKE_SCALE = 0.4;
 export const DOODAD_ART: { key: string; size: number }[] = [
   { key: "tree", size: 42 },
   { key: "pine", size: 44 },
@@ -945,7 +947,7 @@ export function prepareArt(textures: Phaser.Textures.TextureManager): void {
   for (const d of DOODAD_ART) {
     const srcKey = `src_doodad_${d.key}`;
     if (!textures.exists(srcKey)) continue;
-    put(textures, `doodad_${d.key}`, fit(keyDoodad(src(textures, srcKey)), d.size));
+    put(textures, `doodad_${d.key}`, fit(keyDoodad(src(textures, srcKey)), d.size * DOODAD_BAKE_SCALE));
   }
   for (const f of FOLIAGE_TINTS) {
     const from = `doodad_${f.from}`;

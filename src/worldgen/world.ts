@@ -5,6 +5,7 @@ import { lookColor, themedTiles, themeOf, waterBandLooks, type TerrainTheme, typ
 import { Rng } from "../util/rng";
 import { isGroundVehicle, isInfantry, pickTroop, type UnitKind } from "../sim/roster";
 import { UNIT_SPECS } from "../catalog/units";
+import { DOODAD_SPECS } from "../catalog/doodads";
 import { drawRoadStamp } from "../art/artGen";
 import { roadImage } from "../art/roadArt";
 import { decorImage } from "../art/decorArt";
@@ -75,6 +76,8 @@ export interface Doodad {
   y: number;
   size: number;
   rot: number;
+  /** Printed into the terrain even if its kind is foliage (undergrowth). */
+  print?: boolean;
 }
 
 export interface RoadNode {
@@ -904,7 +907,7 @@ export function generateWorld(
   spawns.push(...bridgeSpawns(bridges, spawns, seed));
   // Road sprites stamp on the main-thread canvas (worker has no document canvas).
   // Keep trees / rocks off settlement footprints.
-  const doodads = placeDoodads(biome, rng, theme).filter(
+  const doodads = growFoliage(placeDoodads(biome, rng, theme), biome, theme, seed).filter(
     (d) => !settlements.some((st) => st.parts.some((p) => Math.hypot(d.x - p.x, d.y - p.y) < Math.max(p.w, p.l) * 0.6 + 6))
   );
   const trees = doodads.filter((d) => d.kind === "tree" || d.kind.startsWith("tree_") || d.kind === "pine" || d.kind === "palm").map((d) => ({ x: d.x, y: d.y }));
@@ -2354,6 +2357,59 @@ function placeDoodads(biome: Uint8Array, rng: Rng, theme: ThemeSpec): Doodad[] {
     pushGroup(out, biome, rng, BIOME_ID.shore, ["reed", "shrub"], 5 + rng.int(0, 4), 5 * u, 3.2 * u, 6.5 * u, c, theme.doodads, room);
   }
   return out;
+}
+
+/** Undergrowth printed around each live foliage object (× theme foliage), within this many of its sizes, at this fraction of its size. */
+const UNDERGROWTH_PER_OBJECT = 7;
+const UNDERGROWTH_REACH = 1.6;
+const UNDERGROWTH_SIZE = [0.3, 0.6] as const;
+
+/**
+ * Theme foliage density on top of the base layout (own RNG stream, so the rest of the map is unchanged per seed):
+ * below 1 thins live foliage, above 1 adds groves; then undergrowth is printed in clusters around each foliage object.
+ */
+function growFoliage(base: Doodad[], biome: Uint8Array, theme: ThemeSpec, seed: number): Doodad[] {
+  const rng = new Rng((seed ^ 0x5f0a17) >>> 0);
+  const density = theme.foliage;
+  const isFoliage = (d: Doodad) => DOODAD_SPECS[d.kind].layer === "foliage";
+  const out = base.filter((d) => !isFoliage(d) || density >= 1 || rng.next() < density);
+  if (density > 1) {
+    const u = TEX / 1400;
+    const room = new DecorSpacing(8 * u);
+    for (const d of out) room.add(d.x / SCALE - 0.5, d.y / SCALE - 0.5);
+    const extra = density - 1;
+    for (let i = 0; i < Math.round(52 * extra); i++)
+      pushGroup(out, biome, rng, BIOME_ID.woods, ["tree", "tree", "pine", "bush"], 6 + rng.int(0, 5), 7 * u, 5.5 * u, 13 * u, undefined, theme.doodads, room);
+    for (let i = 0; i < Math.round(22 * extra); i++)
+      pushGroup(out, biome, rng, BIOME_ID.lowland, ["tree", "bush", "shrub"], 4 + rng.int(0, 4), 9 * u, 4.5 * u, 10 * u, undefined, theme.doodads, room);
+  }
+  const under: Doodad[] = [];
+  for (const d of out) {
+    if (!isFoliage(d)) continue;
+    const n = Math.round(UNDERGROWTH_PER_OBJECT * density * rng.range(0.6, 1.4));
+    for (let k = 0; k < n; k++) {
+      const a = rng.range(0, Math.PI * 2);
+      const r = d.size * SCALE * rng.range(0.3, UNDERGROWTH_REACH);
+      const x = d.x + Math.cos(a) * r;
+      const y = d.y + Math.sin(a) * r;
+      const tx = Math.floor(x / SCALE);
+      const ty = Math.floor(y / SCALE);
+      if (tx < 0 || ty < 0 || tx >= TEX || ty >= TEX) continue;
+      const b = biome[ty * TEX + tx]!;
+      if (b === BIOME_ID.water || b === BIOME_ID.river) continue;
+      const kind = rng.pick<DoodadKind>(["bush", "shrub"]);
+      const alt = theme.doodads[kind];
+      under.push({
+        kind: alt ? rng.pick(alt) : kind,
+        x,
+        y,
+        size: d.size * rng.range(UNDERGROWTH_SIZE[0], UNDERGROWTH_SIZE[1]),
+        rot: rng.range(0, Math.PI * 2),
+        print: true,
+      });
+    }
+  }
+  return out.concat(under);
 }
 
 export function paintHeightMap(height: Float32Array, roads?: Road[]): HTMLCanvasElement {
