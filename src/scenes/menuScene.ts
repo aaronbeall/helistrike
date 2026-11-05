@@ -17,7 +17,7 @@ import {
 import { allMissions, missionOf, selectMission } from "../sim/mission";
 import { MAP_SHAPES } from "../worldgen/shape";
 import { LANDFORM_KINDS } from "../worldgen/landforms";
-import { OBJECTIVE_SITINGS } from "../worldgen/world";
+import { FOLIAGE_MAX, OBJECTIVE_SITINGS } from "../worldgen/world";
 import { TERRAIN_THEME_IDS, themeOf } from "../worldgen/theme";
 import { craftFirepowerRating } from "../sim/remote";
 import { installRigHotkeys, rigsAnyOpen } from "../rigs/rigs";
@@ -963,6 +963,15 @@ export class MenuScene extends Phaser.Scene {
         value: (p: typeof customProfile) => p.settlement.toFixed(2),
         adjust: (dir: number) => {
           customProfile.settlement = Phaser.Math.Clamp(Math.round((customProfile.settlement + dir * 0.25) * 100) / 100, 0, 2);
+        },
+      },
+      {
+        label: "FOLIAGE",
+        group: "WORLD",
+        description: "Trees and bushes that ground forces hide under. 0 is bare ground; higher grows into heavy forest cover.",
+        value: (p: typeof customProfile) => p.foliage.toFixed(2),
+        adjust: (dir: number) => {
+          customProfile.foliage = Phaser.Math.Clamp(Math.round((customProfile.foliage + dir * 0.25) * 100) / 100, 0, FOLIAGE_MAX);
         },
       },
       {

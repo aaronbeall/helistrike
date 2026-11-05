@@ -30,8 +30,10 @@ interface SpriteBlock {
   /** Dish tilt container, once a part has been wrapped. */
   wrap?: Phaser.GameObjects.Container;
 }
-/** Roofless buildings draw (and cast their shadow) at this fraction of their height; render only, physics keep `u.z`. */
+/** Roofless buildings draw at this fraction of their height; render only, physics keep `u.z`. */
 const BUILDING_DRAW_HEIGHT = 0.5;
+/** Buildings cast their shadow from this fraction of their height (below the drawn height, so tall ones stay attached). */
+const BUILDING_SHADOW_HEIGHT = 0.25;
 /** Deck shadows: full length so spans join, inset width so the edges don't peek out. */
 const DECK_SHADOW_SCALE = { x: 1, y: 0.92 } as const;
 /** Ground vehicles cast their shadow from this fraction of their height. */
@@ -390,7 +392,7 @@ export class UnitSprites {
         sp.roof
           ? roofZ
           : sp.building
-            ? drawZ
+            ? u.z + heightOf(u.kind) * BUILDING_SHADOW_HEIGHT
             : isGroundVehicle(u.kind)
               ? u.z + heightOf(u.kind) * VEHICLE_SHADOW_HEIGHT
               : u.z,

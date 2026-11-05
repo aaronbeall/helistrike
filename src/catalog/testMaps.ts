@@ -101,6 +101,15 @@ export const TEST_MAPS: TestMap[] = [
     ],
   },
   {
+    id: "swamp_forest",
+    label: "Blackwater swamp, no forces or settlements: dense woods along the spawn heading",
+    mission: "blackwater",
+    seed: 1,
+    profile: { settlement: 0, foliage: 1.7 },
+    craft: "apache",
+    forces: "none",
+  },
+  {
     id: "river_run_s0",
     label: "River Run, generated forces, no settlements",
     mission: "river_run",

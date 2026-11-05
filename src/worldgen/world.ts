@@ -5,7 +5,7 @@ import { lookColor, themedTiles, themeOf, waterBandLooks, type TerrainTheme, typ
 import { Rng } from "../util/rng";
 import { isGroundVehicle, isInfantry, pickTroop, type UnitKind } from "../sim/roster";
 import { UNIT_SPECS } from "../catalog/units";
-import { DOODAD_SPECS } from "../catalog/doodads";
+import { isFoliageKind } from "../catalog/doodads";
 import { drawRoadStamp } from "../art/artGen";
 import { roadImage } from "../art/roadArt";
 import { decorImage } from "../art/decorArt";
@@ -163,6 +163,8 @@ export interface WorldGenProfile {
   roadDensity: number;
   /** Settlement density (0 = none … 2 = dense): towns, plus a port / airfield / dam where the terrain suits. */
   settlement: number;
+  /** Live foliage amount (0 = bare, 1 = standard … `FOLIAGE_MAX` = heavy forest): × the base layout's trees and bushes. */
+  foliage: number;
   /** Water settlements: ports, dams and offshore oil fields (off for e.g. lava seas). */
   waterSites: boolean;
   /** Cloud cover multiplier (visual only; 0 = clear, 1 = standard, 2 = heavy). Not used by world gen. */
@@ -188,6 +190,7 @@ export const DEFAULT_WORLD_PROFILE: WorldGenProfile = {
   forceMix: "mixed",
   roadDensity: 1,
   settlement: 1,
+  foliage: 1,
   waterSites: true,
   clouds: 1,
 };
@@ -907,7 +910,7 @@ export function generateWorld(
   spawns.push(...bridgeSpawns(bridges, spawns, seed));
   // Road sprites stamp on the main-thread canvas (worker has no document canvas).
   // Keep trees / rocks off settlement footprints.
-  const doodads = growFoliage(placeDoodads(biome, rng, theme), biome, theme, seed).filter(
+  const doodads = growFoliage(placeDoodads(biome, rng, theme), biome, theme, profile.foliage, seed).filter(
     (d) => !settlements.some((st) => st.parts.some((p) => Math.hypot(d.x - p.x, d.y - p.y) < Math.max(p.w, p.l) * 0.6 + 6))
   );
   const trees = doodads.filter((d) => d.kind === "tree" || d.kind.startsWith("tree_") || d.kind === "pine" || d.kind === "palm").map((d) => ({ x: d.x, y: d.y }));
@@ -2321,14 +2324,23 @@ function pushGroup(
 /** Closest two doodads may sit, as a fraction of their clump spacing (a little overlap is fine). */
 const DOODAD_MIN_GAP = 0.65;
 
+/** Doodad texel unit: layouts are tuned for a 1400-texel map. */
+const DOODAD_U = TEX / 1400;
+
+/** Woodland and lowland tree groves: `n` × the base layout's count, spacing × `tight`. */
+function pushGroves(out: Doodad[], biome: Uint8Array, rng: Rng, theme: ThemeSpec, room: DecorSpacing, n: number, tight: number): void {
+  const u = DOODAD_U;
+  for (let i = 0; i < Math.round(52 * n); i++)
+    pushGroup(out, biome, rng, BIOME_ID.woods, ["tree", "tree", "pine", "bush"], 6 + rng.int(0, 5), 7 * u * tight, 5.5 * u, 13 * u, undefined, theme.doodads, room);
+  for (let i = 0; i < Math.round(22 * n); i++)
+    pushGroup(out, biome, rng, BIOME_ID.lowland, ["tree", "bush", "shrub"], 4 + rng.int(0, 4), 9 * u * tight, 4.5 * u, 10 * u, undefined, theme.doodads, room);
+}
+
 function placeDoodads(biome: Uint8Array, rng: Rng, theme: ThemeSpec): Doodad[] {
   const out: Doodad[] = [];
-  const u = TEX / 1400;
+  const u = DOODAD_U;
   const room = new DecorSpacing(8 * u);
-  for (let i = 0; i < 52; i++)
-    pushGroup(out, biome, rng, BIOME_ID.woods, ["tree", "tree", "pine", "bush"], 6 + rng.int(0, 5), 7 * u, 5.5 * u, 13 * u, undefined, theme.doodads, room);
-  for (let i = 0; i < 22; i++)
-    pushGroup(out, biome, rng, BIOME_ID.lowland, ["tree", "bush", "shrub"], 4 + rng.int(0, 4), 9 * u, 4.5 * u, 10 * u, undefined, theme.doodads, room);
+  pushGroves(out, biome, rng, theme, room, 1, 1);
   for (let i = 0; i < 18; i++)
     pushGroup(out, biome, rng, BIOME_ID.lowland, ["shrub", "bush", "rock"], 5 + rng.int(0, 3), 6 * u, 3.5 * u, 7 * u, undefined, theme.doodads, room);
   for (let i = 0; i < 24; i++)
@@ -2359,34 +2371,52 @@ function placeDoodads(biome: Uint8Array, rng: Rng, theme: ThemeSpec): Doodad[] {
   return out;
 }
 
-/** Undergrowth printed around each live foliage object (× theme foliage), within this many of its sizes, at this fraction of its size. */
+/** Highest profile `foliage`: heavy forest cover. */
+export const FOLIAGE_MAX = 4;
+/** Undergrowth printed around each live foliage object (× foliage, capped), within this many of its sizes, at this fraction of its size. */
 const UNDERGROWTH_PER_OBJECT = 7;
+const UNDERGROWTH_DENSITY_MAX = 2;
 const UNDERGROWTH_REACH = 1.6;
 const UNDERGROWTH_SIZE = [0.3, 0.6] as const;
+/** Grove passes toward the foliage target: half a base layout each; spacing × TIGHTEN (down to TIGHT_MIN) after a pass adding under SLOW_PASS. */
+const GROVE_PASS = 0.5;
+const GROVE_PASSES_MAX = 200;
+const GROVE_SLOW_PASS = 100;
+const GROVE_TIGHTEN = 0.85;
+const GROVE_TIGHT_MIN = 0.3;
 
 /**
- * Theme foliage density on top of the base layout (own RNG stream, so the rest of the map is unchanged per seed):
- * below 1 thins live foliage, above 1 adds groves; then undergrowth is printed in clusters around each foliage object.
+ * Profile foliage density on top of the base layout (own RNG stream, so the rest of the map is unchanged per seed):
+ * below 1 thins live foliage, above 1 adds groves (tightening spacing as the woods fill) until the live count is
+ * × density; then undergrowth is printed in clusters around each foliage object.
  */
-function growFoliage(base: Doodad[], biome: Uint8Array, theme: ThemeSpec, seed: number): Doodad[] {
+function growFoliage(base: Doodad[], biome: Uint8Array, theme: ThemeSpec, foliage: number, seed: number): Doodad[] {
   const rng = new Rng((seed ^ 0x5f0a17) >>> 0);
-  const density = theme.foliage;
-  const isFoliage = (d: Doodad) => DOODAD_SPECS[d.kind].layer === "foliage";
+  const density = clamp(foliage, 0, FOLIAGE_MAX);
+  const isFoliage = (d: Doodad) => isFoliageKind(d.kind);
   const out = base.filter((d) => !isFoliage(d) || density >= 1 || rng.next() < density);
+  const room = new DecorSpacing(8 * DOODAD_U);
+  for (const d of out) room.add(d.x / SCALE - 0.5, d.y / SCALE - 0.5);
   if (density > 1) {
-    const u = TEX / 1400;
-    const room = new DecorSpacing(8 * u);
-    for (const d of out) room.add(d.x / SCALE - 0.5, d.y / SCALE - 0.5);
-    const extra = density - 1;
-    for (let i = 0; i < Math.round(52 * extra); i++)
-      pushGroup(out, biome, rng, BIOME_ID.woods, ["tree", "tree", "pine", "bush"], 6 + rng.int(0, 5), 7 * u, 5.5 * u, 13 * u, undefined, theme.doodads, room);
-    for (let i = 0; i < Math.round(22 * extra); i++)
-      pushGroup(out, biome, rng, BIOME_ID.lowland, ["tree", "bush", "shrub"], 4 + rng.int(0, 4), 9 * u, 4.5 * u, 10 * u, undefined, theme.doodads, room);
+    let live = out.filter(isFoliage).length;
+    const target = Math.round(live * density);
+    let tight = 1;
+    for (let pass = 0; live < target && pass < GROVE_PASSES_MAX; pass++) {
+      const before = out.length;
+      pushGroves(out, biome, rng, theme, room, GROVE_PASS, tight);
+      let added = 0;
+      for (let i = before; i < out.length; i++) if (isFoliage(out[i]!)) added++;
+      // Woods full even at the tightest spacing.
+      if (!added && tight === GROVE_TIGHT_MIN) break;
+      live += added;
+      if (added < GROVE_SLOW_PASS) tight = Math.max(GROVE_TIGHT_MIN, tight * GROVE_TIGHTEN);
+    }
   }
   const under: Doodad[] = [];
+  const underDensity = Math.min(density, UNDERGROWTH_DENSITY_MAX);
   for (const d of out) {
     if (!isFoliage(d)) continue;
-    const n = Math.round(UNDERGROWTH_PER_OBJECT * density * rng.range(0.6, 1.4));
+    const n = Math.round(UNDERGROWTH_PER_OBJECT * underDensity * rng.range(0.6, 1.4));
     for (let k = 0; k < n; k++) {
       const a = rng.range(0, Math.PI * 2);
       const r = d.size * SCALE * rng.range(0.3, UNDERGROWTH_REACH);

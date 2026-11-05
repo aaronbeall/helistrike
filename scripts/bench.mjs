@@ -214,6 +214,9 @@ async function setUp(page, sc) {
   await page.goto(`${base}/?test=${sc.map}&cheats=ammo,god`);
   await page.waitForFunction(() => !!window.__heli?.scene?.player && !!window.__heli.scene.perf, null, { timeout: LOAD_TIMEOUT_MS, polling: 200 });
   await sleep(300);
+  // Aim before lift-off, so the craft doesn't yaw toward wherever the pointer was left.
+  const at = await page.evaluate(aimPoint);
+  await page.mouse.move(at.x, at.y);
   await page.keyboard.press("KeyP");
   const phase = () => page.evaluate(() => window.__heli.scene.player.phase);
   await page.waitForFunction(() => ["ready", "flight"].includes(window.__heli.scene.player.phase), null, { timeout: 30000, polling: 100 });
@@ -391,6 +394,7 @@ try {
 
   const runOne = async (sc) => {
     await setUp(page, sc);
+    if (sc.thrust) await page.keyboard.down("KeyW");
     const t0 = Date.now();
     await play(page, sc, sc.warmupS, t0);
     const heapUsed = cdp ? await startProfile(cdp) : 0;
@@ -399,6 +403,7 @@ try {
     const report = await page.evaluate(([id, label, s]) => window.__probe.stop(id, label, s), [sc.id, sc.label, sc.measureS]);
     if (cdp) await stopProfile(cdp, sc.id, sc.measureS, heapUsed, profileDir);
     if (down) await page.mouse.up();
+    if (sc.thrust) await page.keyboard.up("KeyW");
     return report;
   };
   const allRuns = [];
@@ -415,6 +420,7 @@ try {
           if (attempt >= 2) throw err;
           console.log(`failed (${String(err.message ?? err).split("\n")[0]}), retrying`);
           await page.mouse.up().catch(() => {});
+          await page.keyboard.up("KeyW").catch(() => {});
         }
       }
       results.push(report);

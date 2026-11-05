@@ -1,7 +1,7 @@
 /**
  * Dev launch (dev builds only): boot straight into a mission from the URL, for repro and perf runs.
  *   ?test=desert_cluster                     a named test map (catalog/testMaps)
- *   ?mission=river_run&craft=apache&seed=42  any mission; &settlement=0 overrides that profile value
+ *   ?mission=river_run&craft=apache&seed=42  any mission; &settlement=0 / &foliage=2 override those profile values
  *   &cheats=ammo,god                         debug-menu infinite ammo / no damage
  */
 import type Phaser from "phaser";
@@ -37,11 +37,15 @@ export function devLaunchFromUrl(): DevLaunch | undefined {
   const craft = q.get("craft");
   const seed = q.get("seed");
   const settlement = q.get("settlement");
+  const foliage = q.get("foliage");
+  const profile: TestMap["profile"] = {};
+  if (settlement != null) profile.settlement = Number(settlement);
+  if (foliage != null) profile.foliage = Number(foliage);
   return {
     mission: mission as MissionKind,
     craft: craft && craft in CRAFTS ? (craft as CraftKind) : "apache",
     seed: seed != null ? Number(seed) >>> 0 : undefined,
-    profile: settlement != null ? { settlement: Number(settlement) } : undefined,
+    profile: Object.keys(profile).length ? profile : undefined,
     cheats: flags,
   };
 }

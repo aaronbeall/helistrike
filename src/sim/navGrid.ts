@@ -14,7 +14,7 @@ export const LAND_DRY = 1;
 export const LAND_SHALLOW = 2;
 /** Route cost multiplier through shallow water (avoided, not blocked). */
 const SHALLOW_COST = 2.5;
-/** Route cost multiplier on ground cells without foliage cover (covered cells cost 1, so the heuristic stays admissible). */
+/** Route cost multiplier on land-layer cells without foliage cover (covered cells cost 1, so the heuristic stays admissible). */
 const OPEN_COST = 1.3;
 /** Passable cells — land: every ground unit (wades shallows, walks decks) · seabed: underwater hulls (+ deep water) · water: boats. */
 export type NavLayer = "land" | "seabed" | "water";
@@ -475,7 +475,7 @@ export class NavGrid {
         if (d & 1 && (!this.passable(mode, cy * NAV_N + nx) || !this.passable(mode, ny * NAV_N + cx))) continue;
         let cost = STEP[d]!;
         if (mode.layer !== "water" && this.land[j] === LAND_SHALLOW) cost *= SHALLOW_COST;
-        if (mode.layer !== "water" && !this.cover[j]) cost *= OPEN_COST;
+        if (mode.layer === "land" && !this.cover[j]) cost *= OPEN_COST;
         if (this.clearAt(mode, j) <= 1) cost *= 1.6;
         const ng = this.g[c]! + cost;
         if (this.seen[j] === st && ng >= this.g[j]!) continue;

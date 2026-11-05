@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { DOODAD_SPECS, FOLIAGE_TOP_MAX } from "../../../catalog/doodads";
+import { DOODAD_SPECS, FOLIAGE_TOP_MAX, isFoliageKind } from "../../../catalog/doodads";
 import { bakeShadows } from "../../../art/sprites";
 import { NAV_N } from "../../../sim/navGrid";
 import { ZOff, worldDepth } from "../../../render/depth";
@@ -13,14 +13,23 @@ const THERMAL_HEAT = 0.5;
 const THERMAL_ALPHA = 0.45;
 /** Blast-query grid cell (world units). */
 const CELL = 128;
-/** Death burst: fireball size, dirt count, scorch scale. */
+/** Death burst: fireball size, dirt count, scorch scale; spark density, flash floor (px), chance of fire trails. */
 const DEATH_BLAST = 22;
 const DEATH_DIRT = 7;
 const DEATH_SCORCH = 0.3;
+const DEATH_SPARKS = 0.3;
+const DEATH_FLASH_MIN = 48;
+const DEATH_TRAIL_CHANCE = 0.2;
+/** Player downwash: reach around the craft, fade-out height above a canopy, sway angle (rad), lean (world), flutter rate (rad/s). */
+const WASH_R = 80;
+const WASH_H = 40;
+const SWAY_ROT = 0.2;
+const SWAY_PUSH = 3;
+const SWAY_RATE = 14;
 
 /** Live (foliage object) vs printed into the terrain (decor kinds, undergrowth). */
 export function doodadIsObject(d: Doodad): boolean {
-  return !d.print && DOODAD_SPECS[d.kind].layer === "foliage";
+  return !d.print && isFoliageKind(d.kind);
 }
 
 /** Prints every non-object doodad into the terrain canvas (once, before terrain lighting). */
@@ -126,6 +135,9 @@ export class Doodads {
   sync(): void {
     const hidden = this.s.camera.mapWorldHidden;
     const thermal = this.s.thermal.on;
+    const h = this.s.player;
+    const wash = this.washPower();
+    const t = this.s.time.now * 0.001;
     for (const d of this.list) {
       const on = !d.dead && !hidden && cameraPointVisible(d.top, d.y) && this.inView(d);
       if (!on) {
@@ -136,11 +148,26 @@ export class Doodads {
       const body = this.bodies[d.slot]!;
       const sh = this.shadows[d.slot]!;
       const at = this.scr;
+      let rot = d.rot;
+      const dx = d.x - h.x;
+      const dy = d.y - h.y;
+      if (wash > 0 && Math.abs(dx) < WASH_R && Math.abs(dy) < WASH_R) {
+        const dist = Math.hypot(dx, dy);
+        const above = h.z - d.top;
+        const k = wash * Math.max(0, 1 - dist / WASH_R) * (above <= 0 ? 1 : Math.max(0, 1 - above / WASH_H));
+        if (k > 0) {
+          // Lean away from the craft, fluttering; phase from position so neighbours don't sway in step.
+          const ph = t * SWAY_RATE + d.x * 0.031 + d.y * 0.017;
+          rot += Math.sin(ph) * SWAY_ROT * k;
+          const push = (SWAY_PUSH * k * (0.65 + 0.35 * Math.sin(ph * 1.7))) / Math.max(1, dist);
+          worldToScreen(d.x + dx * push, d.y + dy * push, d.top, at);
+        }
+      }
       if (body.texture.key !== d.tex) body.setTexture(d.tex);
       body
         .setVisible(true)
         .setPosition(at.x, at.y)
-        .setRotation(d.rot)
+        .setRotation(rot)
         .setScale((d.size / body.width) * at.scale)
         .setAlpha(thermal ? THERMAL_ALPHA : 1);
       const depth = worldDepth(d.top, ZOff.body, d.y);
@@ -154,6 +181,13 @@ export class Doodads {
       // Static: the ground cast is cached on this pair until it's released.
       this.s.hostCraft.applyCastShadow(sh, d.x, d.y, d.top, d.tex, d.rot, d.size / body.width, Infinity, d);
     }
+  }
+
+  /** Player rotor wash strength (0–1): builds through spool, full in flight. */
+  private washPower(): number {
+    const h = this.s.player;
+    if (h.phase === "spool" || h.phase === "ready") return h.dustPower;
+    return h.phase === "flight" ? 1 : 0;
   }
 
   private inView(d: LiveDoodad): boolean {
@@ -205,7 +239,11 @@ export class Doodads {
     d.dead = true;
     if (d.slot >= 0) this.release(d);
     this.cover(d, -1);
-    this.s.fx.heFireBurst(d.x, d.y, d.z + 2, 0, 0, 1, DEATH_BLAST, true, 0.6, 0.18, 0.5);
+    this.s.fx.heFireBurst(d.x, d.y, d.z + 2, 0, 0, 1, DEATH_BLAST, true, 0.6, 0.18, 0.5, 0, undefined, {
+      visMul: DEATH_SPARKS,
+      flashMin: DEATH_FLASH_MIN,
+      noTrails: Math.random() >= DEATH_TRAIL_CHANCE,
+    });
     this.s.fx.spawnDirtParticles(d.x, d.y, d.z + 2, { n: DEATH_DIRT, spdMin: 40, spdMax: 140, bx: 0, by: 0, bz: 180, tight: 0.5, scaleMul: 0.7 });
     this.s.groundMarks.stampBlastCrater(d.x, d.y, DEATH_SCORCH);
   }

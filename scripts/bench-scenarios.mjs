@@ -1,7 +1,8 @@
 /**
  * Perf scenarios for scripts/bench.mjs. `map` is a dev test map id (src/catalog/testMaps.ts); everything else is
  * real input the runner performs: lift off, select `weapon` (key 1–5), aim at the nearest enemies, and hold fire
- * for `onS` / release for `offS`. Times are real seconds.
+ * for `onS` / release for `offS`; `thrust` holds W the whole time (with no enemies near, aim stays ahead, so the
+ * craft flies straight). Times are real seconds.
  */
 const GUN = { weapon: 1, onS: 3, offS: 1 };
 const ROCKETS = { weapon: 2, onS: 1.5, offS: 0.5 };
@@ -22,5 +23,6 @@ export const SCENARIOS = [
   { id: "rockets_stress", label: "Rockets into the town cluster", map: "desert_stress", fire: ROCKETS, ...TIMING },
   { id: "mission_idle", label: "River Run, generated forces + settlements", map: "river_run", ...TIMING },
   { id: "mission_idle_s0", label: "River Run, no settlements", map: "river_run_s0", ...TIMING },
+  { id: "rockets_forest", label: "Fly across dense swamp woods, rockets into the trees ahead", map: "swamp_forest", fire: ROCKETS, thrust: true, ...TIMING },
   { id: "idle_coast", label: "Coastal Strike + 100 ground units near spawn (routing around water / cliffs)", map: "coast_nav", ...TIMING },
 ];

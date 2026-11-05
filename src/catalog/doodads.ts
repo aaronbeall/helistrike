@@ -18,6 +18,11 @@ const BUSH: DoodadSpec = { layer: "foliage", height: 0.35, health: 15 };
 const CACTUS: DoodadSpec = { layer: "foliage", height: 0.5, health: 30 };
 const DECOR: DoodadSpec = { layer: "decor", height: 0, health: 0 };
 
+/** Live object (cover, destructible) rather than a terrain print. */
+export function isFoliageKind(kind: DoodadKind): boolean {
+  return DOODAD_SPECS[kind].layer === "foliage";
+}
+
 export const DOODAD_SPECS: Record<DoodadKind, DoodadSpec> = {
   tree: TREE,
   pine: TREE,
