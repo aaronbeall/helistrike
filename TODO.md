@@ -8,8 +8,8 @@ Must-haves for a paid itch / Steam-shaped build (see also `docs/selling.md`):
 * [ ] **Settings** — pause already exists; add fullscreen, master/SFX/music volume, documented keys (rebinds optional)
 * [ ] **Desktop package** — Windows (and ideally macOS) wrapper over the Vite build (Tauri/Electron); not “open a URL”
 * [ ] **Mission wrapper polish** — clearer briefing → play → outcome/debrief with basic mission stats (kills, time, HV)
-* [ ] **Content honesty** — 2–3 theaters or gen presets that *feel* different, or ship with explicit “skirmish / proc-gen” framing
-* [ ] **Persistence** — options + unlocks/progress (even a thin Skirmish unlock table beats session-only selection)
+* [x] **Content honesty** — 2–3 theaters or gen presets that *feel* different, or ship with explicit “skirmish / proc-gen” framing (10 themed presets: arctic, desert, tropic, swamp, volcanic, alien…)
+* [ ] **Persistence** — options + unlocks/progress (even a thin Skirmish unlock table beats session-only selection) — mission history, lifetime stats, tips saved; options + unlocks open
 * [ ] **Ship hygiene** — gate rig/debug hotkeys out of public builds; trademark-safe display names for store
 * [ ] **Store packaging** — capsules, 5+ screenshots, trailer, demo App ID (Steam); credits/legal in-game or on page
 
@@ -31,7 +31,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
     * [x] Civilian buildings + boats are destructible neutral units (no HP bar, gray on minimap, never auto-targeted)
     * [x] Oil rigs: chained inferno deaths; pylons: electrical short (tesla zaps) + live wires
     * [ ] Critters: cows, deer, birds, fish, sharks, etc.
-    * [ ] Building roof height: draw building art at its roof (`z + height`) so tall buildings sit up in 2.5D, not flat on the ground
+    * [x] Building roof height: draw building art at its roof (`z + height`) so tall buildings sit up in 2.5D, not flat on the ground (roofed structures at the roof, roofless art at ½ height)
     * [x] Building cast shadows: buildings cast shadows from their height across the terrain (simple: footprint shadow offset from roof height, not an extruded silhouette)
 * [x] Multiple helicopters / craft (playable roster in `craft.ts`; menu select)
   * [x] Apache
@@ -129,6 +129,7 @@ Not required for 1.0: full campaign, Rogue Operation, Steam achievements, contro
   * [ ] Trains
   * [ ] Flak cannon (close range scatter shot)
 * More doodads:
+  * [x] Live foliage: trees + bushes at canopy height that ground units hide under, cover routes prefer, destructible, rotor-wash sway; per-map `foliage` density
   * [ ] destroyed buildings
   * [ ] Pre-baked crashed vehicles
   * [ ] easter egg: waldo, crashed alien spacecraft
